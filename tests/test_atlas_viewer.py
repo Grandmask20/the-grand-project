@@ -418,6 +418,9 @@ if crawl.exists() and crawl_cache.exists():
     new = work / "watch.json"
     core.Atlas().save(new)
     app.open_atlas(new)
+    app.settings.pop("watch_folder", None)
+    check("auto-add watches the atlas's own folder by default", app._watch_dir() == str(new.parent),
+          app._watch_dir())
     app.settings["watch_folder"] = str(sdir)
     app.watch_var.set(True)
     app.start_watch()

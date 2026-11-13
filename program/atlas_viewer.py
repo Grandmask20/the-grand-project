@@ -487,10 +487,11 @@ class Viewer:
                     core.Atlas().save(d)
                 self.open_atlas(d)
                 self.log("Welcome! This is the default atlas (atlases/default). Put screenshots in that folder and "
-                         "use Atlas > default > Add new screenshots from its folder, or Auto-add > Watch folder.")
+                         "use Atlas > default > Add new screenshots from its folder. Or set Steam's external screenshot folder to "
+                         "it and tick Auto-add > Add new screenshots automatically.")
         self.root.after(100, self._poll_queue)
         threading.Thread(target=self._worker, daemon=True).start()
-        if self.settings.get("watch_on") and self.settings.get("watch_folder"):
+        if self.settings.get("watch_on") and self._watch_dir():
             self.watch_var.set(True)
             self.start_watch(initial=True)
 
@@ -654,17 +655,19 @@ class Viewer:
         self.tabs.add(fil, text="Auto-add")
         self.tab_auto = fil
         ttk.Label(fil, wraplength=320, justify="left",
-                  text="Watch the folder your screenshots are saved to: every new screenshot is detected and "
+                  text="Point Steam's screenshot folder at this atlas's folder (Steam > Settings > In Game > "
+                       "External screenshots folder) and tick the box below: every new screenshot is detected and "
                        "added on its own, wherever it fits in the atlas. A rare weak match is shown to you "
-                       "before it is added.\n\n"
+                       "before it is added. (Watch folder… watches another folder instead.)\n\n"
                        "You can also drag a screenshot onto the map to place it by hand.").pack(anchor="w")
         wrow = ttk.Frame(fil)
         wrow.pack(fill="x", pady=(8, 2))
-        ttk.Button(wrow, text="Watch folder…", command=self.ask_watch_folder).pack(side="left")
         self.watch_var = tk.BooleanVar(value=False)
         ttk.Checkbutton(wrow, text="Add new screenshots automatically", variable=self.watch_var,
-                        command=self.toggle_watch).pack(side="left", padx=6)
-        self.watch_label = tk.StringVar(value=self.settings.get("watch_folder") or "no folder chosen")
+                        command=self.toggle_watch).pack(side="left")
+        ttk.Button(wrow, text="Watch folder…", command=self.ask_watch_folder).pack(side="left", padx=6)
+        ttk.Button(wrow, text="Atlas folder", command=self.use_atlas_folder).pack(side="left")
+        self.watch_label = tk.StringVar(value="")
         ttk.Label(fil, textvariable=self.watch_label, foreground="#555", wraplength=320).pack(anchor="w")
 
         ttk.Separator(fil).pack(fill="x", pady=8)
@@ -1498,6 +1501,8 @@ class Viewer:
         missing = [f["name"] for f in self.atlas.frames if not Path(f["path"]).exists()]
         if missing:
             self.log(f"screenshots not found (terrain missing there): {', '.join(missing)}")
+        if self.watch_var.get() and not self.settings.get("watch_folder"):
+            self.start_watch()                          # auto-add follows the atlas: now its folder is watched
 
     def _after_load(self, fit=False):
         self.sel = None
@@ -1506,6 +1511,7 @@ class Viewer:
         self.rebuild_terrain()
         self.scan_locks()
         self.root.title(f"The Grand Project v{VERSION}{rc_paths.title_tag()} - {self.path.name if self.path else ''}")
+        self._show_watch_label()
         if self.path:
             self.remember_atlas(self.path)
         if fit:
@@ -2388,22 +2394,41 @@ class Viewer:
             self._q.put(("log", f"PNG export failed: {e}"))
 
     # ------------------------------------------------------------------ watched folder
+    def _watch_dir(self) -> str:
+        """the folder auto-add watches: one chosen by hand, otherwise the open atlas's own folder (where Steam
+        should save the screenshots while you map: README)"""
+        if self.settings.get("watch_folder"):
+            return self.settings["watch_folder"]
+        return str(self.path.parent) if getattr(self, "path", None) else ""
+
+    def _show_watch_label(self):
+        d = self._watch_dir()
+        self.watch_label.set(("watching: " if self.settings.get("watch_folder") else "watching this atlas's folder: ")
+                             + d if d else "open an atlas first")
+
+    def use_atlas_folder(self):
+        """forget a hand-picked folder: watch the open atlas's own folder again"""
+        self.settings.pop("watch_folder", None)
+        save_settings(self.settings)
+        self._show_watch_label()
+        if self.watch_var.get():
+            self.start_watch()
+
     def ask_watch_folder(self):
         d = filedialog.askdirectory(title="Folder your screenshots are saved to",
                                     initialdir=self.settings.get("watch_folder") or self.settings.get("shots_dir")
                                     or self._initial_dir())
         if d:
             self.settings["watch_folder"] = d
-            self.watch_label.set(d)
+            self._show_watch_label()
             save_settings(self.settings)
             if self.watch_var.get():
                 self.start_watch()
 
     def toggle_watch(self):
         if self.watch_var.get():
-            if not self.settings.get("watch_folder"):
-                self.ask_watch_folder()
-            if not self.settings.get("watch_folder"):
+            if not self._watch_dir():
+                self.status.set("open or create an atlas first")
                 self.watch_var.set(False)
                 return
             self.start_watch()
@@ -2413,7 +2438,7 @@ class Viewer:
         save_settings(self.settings)
 
     def _watch_files(self) -> dict[str, int]:
-        folder = Path(self.settings.get("watch_folder", ""))
+        folder = Path(self._watch_dir())
         out = {}
         try:
             for f in core.screenshots_in(folder):
@@ -2434,8 +2459,9 @@ class Viewer:
         files = self._watch_files()
         self._watch_seen = {k: -1 for k in files}                    # -1: handled (not watched for changes)
         todo = self._not_in_atlas(files)
-        self.status.set(f"watching {self.settings['watch_folder']} for new screenshots")
-        self.log(f"auto-add: watching {self.settings['watch_folder']}"
+        self._show_watch_label()
+        self.status.set(f"watching {self._watch_dir()} for new screenshots")
+        self.log(f"auto-add: watching {self._watch_dir()}"
                  + (f"; {len(todo)} screenshot(s) there are not in the atlas yet: adding them" if todo else ""))
         if todo:
             self.add_screenshots(todo, mode="watch")

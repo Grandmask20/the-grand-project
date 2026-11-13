@@ -22,17 +22,17 @@ In Steam, open **Settings → In Game → Screenshots** and:
 
 - turn on **Save an external copy of my screenshots**: this saves a full-quality PNG, which the program needs (Steam's own library copies are JPG, and the compression blurs the path dashes)
 - leave **Save external HDR screenshots as AVIF** off, so the copies stay PNG
-- set the **External screenshots folder** to one you can find. You can point it straight at the atlas folder, for example `atlases/default/`
+- set the **External screenshots folder** to the atlas you are building: `atlases/default/` inside this program's folder (click **Change folder** and pick it)
 
-Screenshots then land there as `2694490_<date>_1.png`.
+Screenshots then land straight in the atlas folder as `2694490_<date>_1.png`, and the viewer picks them up from there. Point the folder back to your usual one when you are done mapping, so your other screenshots don't end up in the atlas.
 
 ## 1. Start an atlas
 
-1. Open the atlas in game, centred on the **fortress** (the giant walled structure in the middle). Press F12; the HUD can stay on screen, it is masked out.
-2. Pan a little (keep about half the screen overlapping) and press F12 again. Repeat outward from the fortress in any direction.
-3. In the viewer, go to the **Auto-add tab → Watch folder…**, pick your Steam screenshot folder, and tick *Add new screenshots automatically*. Each screenshot is now added while you play.
+1. In the viewer, go to the **Auto-add tab** and tick *Add new screenshots automatically*. The viewer watches the open atlas's own folder, which is where Steam is now saving.
+2. In game, open the atlas centred on the **fortress** (the giant walled structure in the middle) and press F12. The HUD can stay on screen; it is masked out.
+3. Pan a little (keep about half the screen overlapping) and press F12 again. Repeat outward from the fortress in any direction. Each screenshot is added while you play.
 
-   For screenshots you already have, copy them into `atlases/default/` and use the **Atlas ▾** button → `default` → **Add new screenshots from its folder**.
+For screenshots you already have, copy them into `atlases/default/` and use the **Atlas ▾** button → `default` → **Add new screenshots from its folder**.
 
 The first screenshot becomes the centre, and every next one is placed where it overlaps the ones already in the atlas.
 
@@ -42,7 +42,7 @@ The fortress itself places poorly, because its walls cut the paths. Start right 
 
 Any of these adds screenshots. Screenshots already in the atlas are skipped.
 
-- **Auto-add tab → Watch folder…** Pick your Steam screenshot folder and tick *Add new screenshots automatically*. Each new screenshot is added while you play. When the viewer starts (or you start watching), screenshots already in that folder that the atlas doesn't have yet are added too.
+- **Auto-add tab → Add new screenshots automatically.** Each new screenshot that Steam saves into the atlas folder is added while you play. When the viewer starts (or you start watching), screenshots already in that folder that the atlas doesn't have yet are added too. **Watch folder…** watches a different folder instead, and **Atlas folder** switches back.
 - **Drag and drop** screenshot files onto the map.
 - **File ▾ → Add screenshots…** (File ▾ is the first button on the toolbar)
 - **Atlas ▾ → (atlas) → Add new screenshots from its folder.**
