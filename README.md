@@ -14,6 +14,8 @@ On first start the viewer opens the empty atlas **`atlases/default`**.
 
 ## Before you start: Steam screenshots
 
+**Play at 1920×1080 (1080p).** The detector was trained only on 1080p screenshots, and map, badge and tower sizes are measured in 1080p pixels. Screenshots at other resolutions (1440p, 4K, ultrawide) are not scaled and will not be recognised. If your monitor is larger, set the game to 1920×1080 (windowed or fullscreen) while taking atlas screenshots.
+
 Use Steam's screenshot key (**F12** by default); it's the fastest and most reliable way.
 
 In Steam, open **Settings → In Game** and:
