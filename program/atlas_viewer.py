@@ -6,7 +6,7 @@
 Mouse:  wheel = zoom at cursor, drag = pan, click = select, double-click = zoom in,
         right-click = bookmark here / show source screenshots.
 Keys:   + / - zoom, 0 fit, arrows pan, Ctrl+F search, Ctrl+B bookmark selection,
-        Ctrl+O open, Ctrl+S save, Delete remove selected bookmark.
+        Ctrl+O open, Ctrl+S save (Cmd instead of Ctrl on macOS), Delete remove selected bookmark.
 
 Shows the atlas-wide result (atlas["final"]): nodes and paths checked against every screenshot.
 The atlas file is the same JSON the command-line builder writes; bookmarks are stored in it.
@@ -39,6 +39,21 @@ try:                                         # drag and drop of screenshot files
     from tkinterdnd2 import DND_FILES, TkinterDnD
 except Exception:
     TkinterDnD = None
+
+# --- platform differences (Windows / macOS / Linux) ---
+IS_MAC = sys.platform == "darwin"
+IS_WIN = sys.platform == "win32"
+MOD = "Command" if IS_MAC else "Control"          # shortcut modifier: Cmd on macOS, Ctrl elsewhere
+MOD_LABEL = "Cmd" if IS_MAC else "Ctrl"
+# Tk numbers the mouse buttons differently on macOS: 2 is the right button and 3 the middle one
+BTN_MIDDLE, BTN_RIGHT = (3, 2) if IS_MAC else (2, 3)
+MONO_FONT = "Menlo" if IS_MAC else ("Consolas" if IS_WIN else "DejaVu Sans Mono")
+
+
+def wheel_steps(e) -> float:
+    """mouse-wheel notches from a <MouseWheel> event: Windows reports multiples of 120, macOS small integers"""
+    return e.delta / (1 if IS_MAC else 120)
+
 
 VERSION = "1.04"                   # +1 per round of changes (v0.18 was the last ChatGPT release); same in internal + rc-1
 HERE = Path(__file__).resolve().parent
@@ -520,8 +535,8 @@ class Viewer:
         self.file_btn = ttk.Menubutton(bar, text="File \u25be", style="File.TMenubutton")   # user: a menu bar did not
         fm = tk.Menu(self.file_btn, tearoff=0)                                             # read as a button
         fm.add_command(label="New atlas…", command=self.new_atlas)
-        fm.add_command(label="Open atlas…", command=self.ask_open, accelerator="Ctrl+O")
-        fm.add_command(label="Save", command=self.save, accelerator="Ctrl+S")
+        fm.add_command(label="Open atlas…", command=self.ask_open, accelerator=f"{MOD_LABEL}+O")
+        fm.add_command(label="Save", command=self.save, accelerator=f"{MOD_LABEL}+S")
         fm.add_separator()
         fm.add_command(label="Open / add atlas folder…", command=self.select_atlas_folder)
         fm.add_command(label="Add screenshots…", command=self.ask_add)
@@ -611,6 +626,8 @@ class Viewer:
             scrollregion=self.icon_canvas.bbox("all")))
         self.icon_canvas.configure(yscrollincrement=12)
         self.icon_canvas.bind("<MouseWheel>", self._scroll_icons)
+        self.icon_canvas.bind("<Button-4>", self._scroll_icons)
+        self.icon_canvas.bind("<Button-5>", self._scroll_icons)
         self.icon_vars: dict[str, tk.BooleanVar] = {}
         self.icon_hidden: set[str] = set(self.settings.get("icons_hidden", []))
         self._thumb_photos: list = []
@@ -749,7 +766,7 @@ class Viewer:
         # --- Log
         lgf = ttk.Frame(self.tabs, padding=6)
         self.tabs.add(lgf, text="Log")
-        self.log_box = tk.Text(lgf, wrap="word", state="disabled", relief="solid", bd=1, font=("Consolas", 8),
+        self.log_box = tk.Text(lgf, wrap="word", state="disabled", relief="solid", bd=1, font=(MONO_FONT, 8),
                                background="white")
         self.log_box.pack(fill="both", expand=True)
 
@@ -758,14 +775,16 @@ class Viewer:
         c.bind("<ButtonPress-1>", self.on_press)
         c.bind("<B1-Motion>", self.on_drag)
         c.bind("<ButtonRelease-1>", self.on_release)
-        c.bind("<ButtonPress-2>", self.on_press)
-        c.bind("<B2-Motion>", self.on_drag)
-        c.bind("<ButtonRelease-2>", self.on_release)
+        c.bind(f"<ButtonPress-{BTN_MIDDLE}>", self.on_press)
+        c.bind(f"<B{BTN_MIDDLE}-Motion>", self.on_drag)
+        c.bind(f"<ButtonRelease-{BTN_MIDDLE}>", self.on_release)
         c.bind("<Double-Button-1>", self.on_double)
         c.bind("<MouseWheel>", self.on_wheel)
         c.bind("<Button-4>", lambda e: self.zoom_at(e.x, e.y, 1.25))
         c.bind("<Button-5>", lambda e: self.zoom_at(e.x, e.y, 0.8))
-        c.bind("<ButtonPress-3>", self.on_right)
+        c.bind(f"<ButtonPress-{BTN_RIGHT}>", self.on_right)
+        if IS_MAC:                                  # one-button trackpad: Ctrl+click is a right click
+            c.bind("<Control-Button-1>", self.on_right)
         c.bind("<Motion>", self.on_motion)
         c.bind("<Escape>", lambda _e: self._cancel_lasso() if getattr(self, "_lasso", None) is not None
                else self.cancel_ghost() if self._ghost else self._cancel_bm_mode())
@@ -778,16 +797,18 @@ class Viewer:
                 self.dnd = True
             except tk.TclError:
                 pass
-        r.bind("<Control-o>", lambda _e: self.ask_open())
-        r.bind("<Control-s>", lambda _e: self.save())
-        r.bind("<Control-f>", lambda _e: (self.tabs.select(0), self.search_entry.focus_set(),
+        r.bind(f"<{MOD}-o>", lambda _e: self.ask_open())
+        r.bind(f"<{MOD}-s>", lambda _e: self.save())
+        r.bind(f"<{MOD}-f>", lambda _e: (self.tabs.select(0), self.search_entry.focus_set(),
                                           self.search_entry.select_range(0, "end")))
-        r.bind("<Control-b>", lambda _e: self.bookmark_selection())
-        r.bind("<Control-z>", lambda _e: self.undo_last())
+        r.bind(f"<{MOD}-b>", lambda _e: self.bookmark_selection())
+        r.bind(f"<{MOD}-z>", lambda _e: self.undo_last())
         for key, f in (("plus", 1.25), ("equal", 1.25), ("KP_Add", 1.25), ("minus", 0.8), ("KP_Subtract", 0.8)):
             c.bind(f"<{key}>", lambda _e, f=f: self.zoom_at(*self.canvas_size_half(), f))
         c.bind("0", lambda _e: self.fit())
         c.bind("<Delete>", lambda _e: self.delete_bookmark())
+        if IS_MAC:                                  # Mac keyboards label the Delete key "delete" = BackSpace
+            c.bind("<BackSpace>", lambda _e: self.delete_bookmark())
         for key, dx, dy in (("Left", -1, 0), ("Right", 1, 0), ("Up", 0, -1), ("Down", 0, 1)):
             c.bind(f"<{key}>", lambda _e, dx=dx, dy=dy: self.pan_by(dx * 120, dy * 120))
         c.bind("<Enter>", lambda _e: c.focus_set())
@@ -852,14 +873,15 @@ class Viewer:
                 name.pack(side="left")
                 name.bind("<Button-1>", lambda _e, lb=lab: self.list_type(lb))
                 for wdg in row.winfo_children() + [row]:
-                    wdg.bind("<MouseWheel>", self._scroll_icons)
+                    for seq in ("<MouseWheel>", "<Button-4>", "<Button-5>"):
+                        wdg.bind(seq, self._scroll_icons)
         self.icon_canvas.yview_moveto(0)
 
     def _scroll_icons(self, e):
         """scroll the type list, never past its ends (that left smeared copies of the rows on Windows)"""
         c = self.icon_canvas
         first, last = c.yview()
-        step = -1 if e.delta > 0 else 1
+        step = -1 if (e.num == 4 or getattr(e, "delta", 0) > 0) else 1
         if (step < 0 and first <= 0.0) or (step > 0 and last >= 1.0):
             return "break"
         c.yview_scroll(step * 3, "units")
@@ -2806,7 +2828,7 @@ class Viewer:
         # some Tk builds give wheel x/y relative to the screen: derive canvas coords from root coords
         x = e.x_root - self.canvas.winfo_rootx()
         y = e.y_root - self.canvas.winfo_rooty()
-        self.zoom_at(x, y, 1.2 ** (e.delta / 120))
+        self.zoom_at(x, y, 1.2 ** max(-5.0, min(5.0, wheel_steps(e))))
 
     def on_motion(self, e):
         if not self.atlas:
@@ -3947,11 +3969,12 @@ class Viewer:
 
 def main(argv=None) -> int:
     argv = sys.argv[1:] if argv is None else argv
-    try:                                    # crisp on high-DPI Windows displays
-        import ctypes
-        ctypes.windll.shcore.SetProcessDpiAwareness(1)
-    except Exception:
-        pass
+    if IS_WIN:                              # crisp on high-DPI Windows displays
+        try:
+            import ctypes
+            ctypes.windll.shcore.SetProcessDpiAwareness(1)
+        except Exception:
+            pass
     root = TkinterDnD.Tk() if TkinterDnD is not None else tk.Tk()
     Viewer(root, argv[0] if argv else None)
     root.mainloop()
