@@ -80,4 +80,7 @@ check(sorted(p.name for p in old.iterdir() if p.is_file()) == [crawl[0].name], "
 shutil.rmtree(work, ignore_errors=True)
 shutil.rmtree(old, ignore_errors=True)
 print("PASS: atlas folder = screenshot folder" if ok else "FAILED: atlas folder = screenshot folder")
-sys.exit(0 if ok else 1)
+if "pytest" in sys.modules:                # under pytest: a failure, not an exit
+    assert ok, "see the FAIL lines above"
+else:
+    sys.exit(0 if ok else 1)

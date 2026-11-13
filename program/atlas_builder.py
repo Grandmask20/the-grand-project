@@ -52,7 +52,9 @@ def extract_frame_new(image_path: Path, cache_dir: Path) -> core.Frame:
     digest = hashlib.sha256(image_path.read_bytes()).hexdigest()
     cache = cache_dir / f"{digest[:16]}_{atlas_detect.DETECTOR_ID}.json"
     if cache.exists():
-        return core.Frame.from_json(json.loads(cache.read_text(encoding="utf-8")))
+        data = json.loads(cache.read_text(encoding="utf-8"))
+        data["path"] = str(image_path.resolve())     # the file as it is now (moved / another computer)
+        return core.Frame.from_json(data)
     img = cv2.imdecode(np.fromfile(str(image_path), np.uint8), cv2.IMREAD_COLOR)
     r = atlas_detect.detect(img)
     data = {"name": image_path.stem, "path": str(image_path.resolve()), "sha256": digest,

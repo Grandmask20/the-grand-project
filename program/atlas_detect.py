@@ -1411,6 +1411,8 @@ def _tower_refs() -> tuple[np.ndarray, np.ndarray]:
             continue
         X.append(tower_features(img, [(i["x"], i["y"]) for i in v["items"]], v["old_towers"]))
         y += [int(i["tower"]) for i in v["items"]]
+    if not X:                                    # (the tower shots are not in the public test data)
+        return np.zeros((0, 0)), np.zeros(0)
     return np.vstack(X), np.array(y)
 
 
@@ -1494,7 +1496,7 @@ def _fit(data: dict, names, stage: str, weight: float = 5, leaf: int = 20):
         y = np.concatenate([y, data["_trees"][1]])
         # hand-labelled look-alikes (orange trees, beams, Corruption ground) weigh like the maps (class 1 x weight)
         sw = np.concatenate([sw, np.where(data["_trees"][1] == 0, TREE_NEG_WEIGHT, 1.0)])
-    if stage == "towers" and "_tower_refs" in data:
+    if stage == "towers" and "_tower_refs" in data and len(data["_tower_refs"][1]):
         X = np.vstack([X, data["_tower_refs"][0]])
         y = np.concatenate([y, data["_tower_refs"][1]])
         sw = np.ones(len(y))

@@ -1,4 +1,4 @@
-# The Grand Project — v1.04
+# The Grand Project — v1.05
 
 Builds one big map of your Path of Exile 2 atlas from your screenshots. Named after the in-game tablet, *The Grand Project*. It finds maps, paths, icons, towers and cities, and lets you search and bookmark them.
 
@@ -117,12 +117,18 @@ A screenshot that overlaps nothing yet goes to **Waiting** (Auto-add tab). Waiti
 | `tools/` | Helpers for improving the detector (mark checks, icon teaching, badge sheets, coverage). |
 | `tests/` | Regression tests. Their screenshots and hand-made truth are not included (see below). |
 | `user_data/` | Settings and the log, created on first run. |
+| `atlas_test_data/` | Trimmed test data, in Git LFS and not downloaded by default (see below). |
 
 ## For developers
 
-This folder is shareable and contains no screenshots from anyone's atlas.
+**Test data.** The GitHub repository has a trimmed test set in `atlas_test_data/` (about 500 MB: 20 hand-labelled screenshots with their truth, 115 crawl screenshots and two finished test atlases). It is stored with Git LFS and is **not** downloaded by a normal clone or by *Download ZIP*, so players only get the program. To get it:
 
-The test and training data (screenshots, hand-made truth and marks, and two finished test atlases) are kept outside it, in a folder named `atlas_test_data` next to this one. You can also set the `ATLAS_TEST_DATA` environment variable to its location. Without that folder, the tests and tools that need it print `SKIP` and stop. `test_atlas_builder.py` needs no data.
+```bash
+git lfs install
+git lfs pull --include="atlas_test_data/**"
+```
+
+The tests look for the data in `ATLAS_TEST_DATA` (environment variable) if set, then `atlas_test_data/` inside this folder, then `atlas_test_data` next to it. Without it, the tests that need it skip (under pytest they are reported as skipped). `test_atlas_builder.py` and `test_model_safety.py` need no data. Retraining the detector needs more data than the trimmed set (tower shots, painted walls), which is not included.
 
 Run these from the folder named:
 

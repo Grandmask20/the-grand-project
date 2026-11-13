@@ -54,8 +54,8 @@ def wheel_steps(e) -> float:
     """mouse-wheel notches from a <MouseWheel> event: Windows reports multiples of 120, macOS small integers"""
     return e.delta / (1 if IS_MAC else 120)
 
+VERSION = "1.05"                   # +1 per round of changes (v0.18 was the last ChatGPT release); same in internal + rc-1
 
-VERSION = "1.04"                   # +1 per round of changes (v0.18 was the last ChatGPT release); same in internal + rc-1
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
 import atlas_builder as builder            # noqa: E402

@@ -42,4 +42,7 @@ for evil in (_System(), _Eval()):
         check(f"{type(evil).__name__} payload refused", True, str(e).split(",")[0])
 
 print("PASS: model loading is restricted" if not fails else f"FAILED: {fails}")
-sys.exit(1 if fails else 0)
+if "pytest" in sys.modules:                # under pytest: a failure, not an exit
+    assert not fails, "see the FAIL lines above"
+else:
+    sys.exit(1 if fails else 0)

@@ -39,7 +39,10 @@ src = Path(args[0]).resolve()
 shots = [Path(a).resolve() for a in args[1:]]
 work = Path(tempfile.mkdtemp())
 atlas_copy = work / "atlas.json"
-shutil.copy(src, atlas_copy)
+_d = json.loads(src.read_text(encoding="utf-8"))
+for _f in _d["frames"]:                      # the copy lives elsewhere: screenshot paths as they resolve here
+    _f["path"] = core._find_screenshot(_f["path"], src.parent)
+atlas_copy.write_text(json.dumps(_d), encoding="utf-8")
 if src.with_name(src.stem + "_frames").exists():
     shutil.copytree(src.with_name(src.stem + "_frames"), work / "atlas_frames")
 V.SETTINGS = work / "settings.json"          # never touch the user's viewer settings
@@ -529,4 +532,7 @@ if crawl.exists() and crawl_cache.exists():
 print(f"\nwindow grabs in {out}")
 print("PASS: atlas viewer" if not fails else f"FAILED: {fails}")
 root.destroy()
-sys.exit(1 if fails else 0)
+if "pytest" in sys.modules:                # under pytest: a failure, not an exit
+    assert not fails, "see the FAIL lines above"
+else:
+    sys.exit(1 if fails else 0)
