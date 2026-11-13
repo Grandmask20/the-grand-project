@@ -18,10 +18,11 @@ On first start the viewer opens the empty atlas **`atlases/default`**.
 
 Use Steam's screenshot key (**F12** by default); it's the fastest and most reliable way.
 
-In Steam, open **Settings → In Game** and:
+In Steam, open **Settings → In Game → Screenshots** and:
 
-- turn on **Save an uncompressed copy**: the program needs the PNG, because JPG compression blurs the path dashes
-- set the **screenshot folder** to one you can find
+- turn on **Save an external copy of my screenshots**: this saves a full-quality PNG, which the program needs (Steam's own library copies are JPG, and the compression blurs the path dashes)
+- leave **Save external HDR screenshots as AVIF** off, so the copies stay PNG
+- set the **External screenshots folder** to one you can find. You can point it straight at the atlas folder, for example `atlases/default/`
 
 Screenshots then land there as `2694490_<date>_1.png`.
 
