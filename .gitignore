@@ -7,3 +7,4 @@ atlases/default/*
 !atlases/default/.gitkeep
 local_paths.json
 .venv/
+atlas_test_data/detect_pairs_out/
