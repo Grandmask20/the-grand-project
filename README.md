@@ -95,7 +95,7 @@ A screenshot that overlaps nothing yet goes to **Waiting** (Auto-add tab). Waiti
 
 - **Log tab:** what the program did and any problems. The full log is `user_data/atlas_debug.log`.
 - **Settings** (last atlas, window, watched folder) are in `user_data/viewer_settings.json`. Delete that file to start fresh on the default atlas.
-- **Detector database:** `references/atlas_references.sqlite3`. It holds only the trained detector models and the icon (badge) reference pictures, with no data from anyone's atlas. *File → Detector database…* picks another one. The models are stored as Python pickles, so the program only loads the scikit-learn / numpy classes a trained model is made of, and refuses a database that contains anything else. Still, only use detector databases from people you trust.
+- **Detector database:** `references/atlas_references.sqlite3`. It holds only the trained detector models and the icon (badge) reference pictures, with no data from anyone's atlas. *File → Detector database…* picks another one. The models are stored as skops archives, and the program only trusts the scikit-learn / numpy classes a trained model is made of. Still, only use detector databases from people you trust.
 
 ---
 
