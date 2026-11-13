@@ -21,11 +21,27 @@ for k in ("maps", "badges", "towers", "fortress"):
     except ad.UnsafeModel as e:
         check(f"shipped model '{k}' loads", False, str(e))
 
-try:
-    ad.safe_model_loads(b"not a skops model")
-    check("invalid model archive refused", False, "it was loaded")
-except ad.UnsafeModel as e:
-    check("invalid model archive refused", True, str(e))
+import os  # noqa: E402
+import pickle  # noqa: E402
+
+import skops.io as sio  # noqa: E402
+
+
+class _PickleSystem:                       # an old-style pickle that would run a command when loaded
+    def __reduce__(self):
+        return (os.system, ("echo this must never run",))
+
+
+attacks = [("invalid model archive", b"not a skops model"),
+           ("old pickle with os.system", pickle.dumps(_PickleSystem())),
+           ("skops archive with os.system", sio.dumps(os.system)),
+           ("skops archive with eval inside a model dict", sio.dumps({"clf": eval, "names": ["x"]}))]
+for label, blob in attacks:
+    try:
+        ad.safe_model_loads(blob)
+        check(f"{label} refused", False, "it was loaded")
+    except ad.UnsafeModel as e:
+        check(f"{label} refused", True, str(e).split(",")[0][:80])
 
 print("PASS: model loading is restricted" if not fails else f"FAILED: {fails}")
 if "pytest" in sys.modules:                # under pytest: a failure, not an exit

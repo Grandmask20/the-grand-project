@@ -1,4 +1,4 @@
-# The Grand Project — v1.05
+# The Grand Project — v1.06
 
 Builds one big map of your Path of Exile 2 atlas from your screenshots. Named after the in-game tablet, *The Grand Project*. It finds maps, paths, icons, towers and cities, and lets you search and bookmark them.
 
