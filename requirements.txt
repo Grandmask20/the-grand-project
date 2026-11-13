@@ -3,4 +3,5 @@ numpy
 pillow
 scipy
 scikit-learn
+skops
 tkinterdnd2

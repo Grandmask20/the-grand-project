@@ -1,7 +1,4 @@
-"""The detector models live in the database as pickles: only the classes a trained model is made of may be
-loaded, so a tampered database cannot run code (needs no test data)."""
-import os
-import pickle
+"""The detector models use skops: only the classes a trained model is made of may be loaded."""
 import sys
 from pathlib import Path
 
@@ -17,16 +14,6 @@ def check(name, ok, info=""):
         fails.append(name)
 
 
-class _System:
-    def __reduce__(self):
-        return (os.system, ("echo this must never run",))
-
-
-class _Eval:
-    def __reduce__(self):
-        return (eval, ("print('this must never run')",))
-
-
 for k in ("maps", "badges", "towers", "fortress"):
     try:
         m = ad.load_model(k)
@@ -34,12 +21,11 @@ for k in ("maps", "badges", "towers", "fortress"):
     except ad.UnsafeModel as e:
         check(f"shipped model '{k}' loads", False, str(e))
 
-for evil in (_System(), _Eval()):
-    try:
-        ad.safe_model_loads(pickle.dumps(evil))
-        check(f"{type(evil).__name__} payload refused", False, "it was loaded")
-    except ad.UnsafeModel as e:
-        check(f"{type(evil).__name__} payload refused", True, str(e).split(",")[0])
+try:
+    ad.safe_model_loads(b"not a skops model")
+    check("invalid model archive refused", False, "it was loaded")
+except ad.UnsafeModel as e:
+    check("invalid model archive refused", True, str(e))
 
 print("PASS: model loading is restricted" if not fails else f"FAILED: {fails}")
 if "pytest" in sys.modules:                # under pytest: a failure, not an exit

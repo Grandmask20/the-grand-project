@@ -23,9 +23,7 @@ Modes: TRAINING fits models from the hand-labelled truth and stores them in the 
 from __future__ import annotations
 
 import hashlib
-import io
 import json
-import pickle
 import sqlite3
 import sys
 import time
@@ -34,6 +32,7 @@ from pathlib import Path
 
 import cv2
 import numpy as np
+import skops.io as sio
 
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
@@ -1318,16 +1317,14 @@ def _db() -> sqlite3.Connection:
 
 def save_model(name: str, model, info: dict) -> None:
     """training mode only"""
-    buf = io.BytesIO()
-    pickle.dump(model, buf)
+    buf = sio.dumps(model)
     with _db() as c:
         c.execute("INSERT OR REPLACE INTO detector_models VALUES (?, ?, ?, ?)",
-                  (name, buf.getvalue(), json.dumps(info), datetime.now().isoformat(timespec="seconds")))
+                  (name, buf, json.dumps(info), datetime.now().isoformat(timespec="seconds")))
 
 
-# The models are scikit-learn objects stored as pickles. A plain pickle.loads would run any code a tampered
-# database carried (e.g. one picked with File > Detector database...), so only the classes a trained model is
-# made of may be loaded; anything else is refused before it runs.
+# The models are skops archives. Only the classes a trained detector model is made of are trusted; anything
+# else is refused before it can be reconstructed.
 _MODEL_CLASSES = {
     ("numpy", "dtype"), ("numpy", "ndarray"),
     ("numpy._core.multiarray", "_reconstruct"), ("numpy._core.multiarray", "scalar"),
@@ -1342,23 +1339,28 @@ _MODEL_CLASSES = {
     ("sklearn.ensemble._hist_gradient_boosting.predictor", "TreePredictor"),
     ("sklearn.preprocessing._label", "LabelEncoder"),
 }
+_TRUSTED_MODEL_TYPES = {f"{module}.{name}" for module, name in _MODEL_CLASSES}
 
 
 class UnsafeModel(Exception):
     """a stored model refers to something that is not part of a trained detector model"""
 
 
-class _ModelUnpickler(pickle.Unpickler):
-    def find_class(self, module, name):
-        if (module, name) not in _MODEL_CLASSES:
-            raise UnsafeModel(f"the detector database contains {module}.{name}, which is not part of a detector "
-                              "model: refused (use the database that came with the program)")
-        return super().find_class(module, name)
-
-
 def safe_model_loads(blob: bytes):
-    """unpickle a stored detector model, allowing only the classes such a model is made of"""
-    return _ModelUnpickler(io.BytesIO(blob)).load()
+    """Load a detector model without executing arbitrary pickle globals."""
+    try:
+        untrusted = set(sio.get_untrusted_types(data=blob))
+    except Exception as exc:
+        raise UnsafeModel("the detector database contains an invalid model archive: refused") from exc
+    unexpected = untrusted - _TRUSTED_MODEL_TYPES
+    if unexpected:
+        names = ", ".join(sorted(unexpected))
+        raise UnsafeModel(f"the detector database contains {names}, which is not part of a detector model: refused "
+                          "(use the database that came with the program)")
+    try:
+        return sio.loads(blob, trusted=sorted(_TRUSTED_MODEL_TYPES))
+    except Exception as exc:
+        raise UnsafeModel("the detector database contains an invalid or unsupported model: refused") from exc
 
 
 def load_model(name: str):
