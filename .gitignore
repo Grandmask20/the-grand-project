@@ -6,3 +6,4 @@ atlases/*
 atlases/default/*
 !atlases/default/.gitkeep
 local_paths.json
+.venv/

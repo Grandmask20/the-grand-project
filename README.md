@@ -8,6 +8,14 @@ Builds one big map of your Path of Exile 2 atlas from your screenshots. Named af
 2. Double-click **`Install (run once).bat`**.
 3. Double-click **`Start Atlas Viewer.bat`**.
 
+**macOS / Linux:**
+
+1. Install Python 3.11 or newer with Tk (macOS: the installer from python.org, or `brew install python-tk`; Debian/Ubuntu: `sudo apt install python3-tk`).
+2. In a terminal, in this folder, run `./install.sh` (once). It makes a `.venv` folder and installs the packages there.
+3. Run `./start.sh`.
+
+On macOS the shortcuts use **Cmd** instead of Ctrl, and right-click is a two-finger click (or Ctrl+click).
+
 On first start the viewer opens the empty atlas **`atlases/default`**.
 
 ---
