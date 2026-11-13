@@ -20,9 +20,17 @@ DATABASE = REFERENCES / "atlas_references.sqlite3"
 ATLASES = ROOT / "atlases"
 DEFAULT_ATLAS = ATLASES / "default" / "atlas.json"
 USER_DATA = ROOT / "user_data"
-# test / training data (screenshots of a real atlas, hand-made truth): kept OUTSIDE the shareable folder.
-# Default: a folder "atlas_test_data" next to this one; or set the ATLAS_TEST_DATA environment variable.
-TEST_DATA = Path(os.environ.get("ATLAS_TEST_DATA") or ROOT.parent / "atlas_test_data")
+# test / training data (screenshots of a real atlas, hand-made truth). Looked for in this order: the
+# ATLAS_TEST_DATA environment variable; "atlas_test_data" inside this folder (the GitHub repo keeps a trimmed
+# set there, in Git LFS); "atlas_test_data" next to this folder (the full private set).
+def _test_data() -> Path:
+    if os.environ.get("ATLAS_TEST_DATA"):
+        return Path(os.environ["ATLAS_TEST_DATA"])
+    inside = ROOT / "atlas_test_data"
+    return inside if (inside / "screenshots").is_dir() else ROOT.parent / "atlas_test_data"
+
+
+TEST_DATA = _test_data()
 SCREENSHOTS = TEST_DATA / "screenshots"
 
 # a working copy can point at private data with ROOT/local_paths.json (NOT in the shared release), e.g.
@@ -46,9 +54,15 @@ def ref(name: str) -> Path:
 
 def need_test_data() -> None:
     """for tests / tools that need the (not shipped) test screenshots: explain and stop if they are missing"""
-    if not (TEST_DATA / "screenshots").exists():
-        print(f"SKIP: test data not found at {TEST_DATA}")
-        print("      (not part of the shared folder; set ATLAS_TEST_DATA to its location)")
+    shot = next((TEST_DATA / "screenshots").rglob("*.png"), None) if (TEST_DATA / "screenshots").is_dir() else None
+    pointer = shot is not None and shot.stat().st_size < 1024 and shot.read_bytes()[:20].startswith(b"version https")
+    if shot is None or pointer:
+        why = (f"test data {'not downloaded (Git LFS placeholders)' if pointer else 'not found'} at {TEST_DATA} "
+               "(in the GitHub repo: git lfs pull --include=\"atlas_test_data/**\"; or set ATLAS_TEST_DATA)")
+        if "pytest" in sys.modules:                     # under pytest: skip this file, don't end the whole run
+            import pytest
+            pytest.skip(why, allow_module_level=True)
+        print("SKIP: " + why)
         sys.exit(0)
 
 

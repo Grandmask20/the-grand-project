@@ -1,0 +1,3 @@
+# the trimmed test data (make_test_pack.py) lives in Git LFS
+atlas_test_data/** filter=lfs diff=lfs merge=lfs -text
+atlas_test_data/README.md -filter -diff -merge text

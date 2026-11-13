@@ -320,6 +320,18 @@ def refine(src: np.ndarray, dst: np.ndarray, t0) -> tuple[np.ndarray, list, floa
 
 
 # ------------------------------------------------------------------ terrain verification
+def _find_screenshot(p: str, atlas_dir: Path) -> str:
+    """a screenshot path saved in an atlas, wherever the atlas now is: relative paths are relative to the
+    atlas file; an absolute path that no longer exists (atlas folder moved, or copied to another computer)
+    falls back to the same file name next to the atlas"""
+    q = Path(p)
+    if not q.is_absolute():
+        return str((atlas_dir / q).resolve())
+    if not q.exists() and (atlas_dir / q.name).exists():
+        return str(atlas_dir / q.name)
+    return p
+
+
 _MASKS: dict = {}            # id(image) -> (weak ref to the image, its mask): one screenshot is compared
 _MASK_CACHE = 64            # with ~30 neighbours per placement (v1.01: the mask was rebuilt every time)
 
@@ -918,6 +930,9 @@ class Atlas:
         keys = ("inliers", "rmse", "ncc", "ratio", "reference", "reason")
         at.frames = [{**{k: v for k, v in f.items() if k not in keys},
                       "stats": {k: f.get(k) for k in keys}} for f in d["frames"]]
+        base = Path(path).resolve().parent
+        for f in at.frames:
+            f["path"] = _find_screenshot(f["path"], base)
         return at
 
     # -------- composite image

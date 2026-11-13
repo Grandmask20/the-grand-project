@@ -46,7 +46,12 @@ ATLAS = TD / "crawl_atlas" / "atlas.json"
 
 def frames() -> dict:
     d = json.loads(ATLAS.read_text(encoding="utf-8"))
-    return {Path(f["path"]).name: f for f in d["frames"] if Path(f["path"]).exists()}
+    out = {}
+    for f in d["frames"]:
+        f["path"] = core._find_screenshot(f["path"], ATLAS.parent)      # relative in the GitHub test data
+        if Path(f["path"]).exists():
+            out[Path(f["path"]).name] = f
+    return out
 
 
 def H_of(f) -> np.ndarray:
