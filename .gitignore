@@ -1,0 +1,8 @@
+__pycache__/
+*.pyc
+user_data/
+atlases/*
+!atlases/default/
+atlases/default/*
+!atlases/default/.gitkeep
+local_paths.json
