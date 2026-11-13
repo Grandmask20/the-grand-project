@@ -25,6 +25,7 @@ import cv2
 import numpy as np
 
 import atlas_builder_core as core
+import atlas_io
 import atlas_log
 import rc_paths
 
@@ -124,7 +125,7 @@ def _dashes(atlas, f):
     return _DASHES[key]
 
 
-TRACE_WORKERS = 6           # screenshots traced at once in worker processes (when there are many)
+TRACE_WORKERS = atlas_io.workers(6)          # screenshots traced at once in worker processes (when there are many)
 TRACE_PARALLEL_MIN = 12
 
 
@@ -141,9 +142,8 @@ def _trace_views(atlas, views, tower, log=None):
     (each screenshot is independent), otherwise in this process with the dashes cache"""
     if len(views) >= TRACE_PARALLEL_MIN and TRACE_WORKERS > 1:
         try:
-            from concurrent.futures import ProcessPoolExecutor
             jobs = [(f["path"], sp, ok, tower) for f, sp, ok in views]
-            with ProcessPoolExecutor(max_workers=TRACE_WORKERS) as ex:
+            with atlas_io.process_pool(TRACE_WORKERS) as ex:
                 res = list(ex.map(_trace_one, jobs, chunksize=4))
             return [(f, sp, ok, r) for (f, sp, ok), r in zip(views, res)]
         except Exception:
@@ -198,13 +198,15 @@ def _saved(atlas, f):
         return None
     import json
     from scipy.spatial import cKDTree
-    data = json.loads(cf.read_text(encoding="utf-8"))
+    data = atlas_io.read_json(cf)
+    if data is None:                                 # cut-off cache: treated as not cached
+        return None
     if any(k not in data for k in ("dash_pts", "seen_grid", "wall_grid", "amber_pts")):
         img = atlas.image(f["path"]) if Path(f["path"]).exists() else None
         if img is None:
             return None
         data.update(atlas_detect.dash_record(img))
-        cf.write_text(json.dumps(data), encoding="utf-8")
+        atlas_io.write_text_atomic(cf, json.dumps(data))
     D = np.asarray(data["dash_pts"], float).reshape(-1, 2)
     rec = {"P": np.array([[n["x"], n["y"]] for n in data["nodes"]], float).reshape(-1, 2),
            "hidden": np.array([bool(n.get("hidden")) for n in data["nodes"]], bool),

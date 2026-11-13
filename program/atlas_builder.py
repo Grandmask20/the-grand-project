@@ -27,6 +27,7 @@ except ImportError:
     sys.modules["tkinter"] = types.ModuleType("tkinter")
 
 import atlas_builder_core as core       # noqa: E402
+import atlas_io                         # noqa: E402
 import atlas_finalize                   # noqa: E402
 import atlas_log                        # noqa: E402
 
@@ -51,11 +52,13 @@ def extract_frame_new(image_path: Path, cache_dir: Path) -> core.Frame:
     import numpy as np
     digest = hashlib.sha256(image_path.read_bytes()).hexdigest()
     cache = cache_dir / f"{digest[:16]}_{atlas_detect.DETECTOR_ID}.json"
-    if cache.exists():
-        data = json.loads(cache.read_text(encoding="utf-8"))
-        data["path"] = str(image_path.resolve())     # the file as it is now (moved / another computer)
-        return core.Frame.from_json(data)
+    cached = atlas_io.read_json(cache) if cache.exists() else None
+    if cached is not None:                  # a cut-off cache (crash mid-write) is detected again
+        cached["path"] = str(image_path.resolve())     # the file as it is now (moved / another computer)
+        return core.Frame.from_json(cached)
     img = cv2.imdecode(np.fromfile(str(image_path), np.uint8), cv2.IMREAD_COLOR)
+    if img is None:
+        raise ValueError(f"{image_path.name} is not a readable image (damaged or not fully written)")
     r = atlas_detect.detect(img)
     data = {"name": image_path.stem, "path": str(image_path.resolve()), "sha256": digest,
             "detector": atlas_detect.DETECTOR_ID, "width": img.shape[1], "height": img.shape[0],
@@ -72,11 +75,11 @@ def extract_frame_new(image_path: Path, cache_dir: Path) -> core.Frame:
                        "score": float(b_.get("score", 0)), "source": "atlas_detect"} for b_ in r["icons"]],
             **atlas_detect.dash_record(img)}
     cache_dir.mkdir(parents=True, exist_ok=True)
-    cache.write_text(json.dumps(data), encoding="utf-8")
+    atlas_io.write_text_atomic(cache, json.dumps(data))
     return core.Frame.from_json(data)
 
 
-DETECT_WORKERS = 4         # new screenshots detected at once (each ~8 s alone; v1.01)
+DETECT_WORKERS = atlas_io.workers(4)        # new screenshots detected at once (each ~8 s alone; v1.01)
 
 
 def is_cached(image_path: Path, cache_dir: Path) -> bool:
@@ -94,8 +97,7 @@ def detect_uncached(paths: list, cache_dir: Path, log=None) -> dict:
     cache_dir.mkdir(parents=True, exist_ok=True)
     errors = {}
     try:
-        from concurrent.futures import ProcessPoolExecutor
-        with ProcessPoolExecutor(max_workers=min(DETECT_WORKERS, len(todo))) as ex:
+        with atlas_io.process_pool(min(DETECT_WORKERS, len(todo))) as ex:
             for p, err in ex.map(_detect_one, [(str(p), "", str(cache_dir)) for p in todo]):
                 if err:
                     errors[p] = err
@@ -217,8 +219,8 @@ def detect_many(images: list, database: Path, cache_dir: Path, workers: int = 1,
     """Detect every screenshot (cached ones are instant), several at once when workers > 1."""
     todo = [i for i in images]
     if workers > 1 and len(todo) > 1:
-        from concurrent.futures import ProcessPoolExecutor, as_completed
-        with ProcessPoolExecutor(max_workers=workers) as ex:
+        from concurrent.futures import as_completed
+        with atlas_io.process_pool(workers) as ex:
             futs = [ex.submit(_detect_one, (str(i), str(database), str(cache_dir))) for i in todo]
             for k, fu in enumerate(as_completed(futs), 1):
                 image, err = fu.result()
@@ -275,7 +277,11 @@ def cached_frames(atlas_path: Path) -> dict:
     """the cached detection of every screenshot of an atlas, by name"""
     out = {}
     for cf in atlas_path.with_name(atlas_path.stem + "_frames").glob("*.json"):
-        fr = core.Frame.from_json(json.loads(cf.read_text(encoding="utf-8")))
+        data = atlas_io.read_json(cf)
+        if data is None:                    # cut-off cache: skipped (re-detected when that screenshot is next added)
+            _log(f"skipping damaged detection cache {cf.name}")
+            continue
+        fr = core.Frame.from_json(data)
         out[fr.name] = fr
     return out
 

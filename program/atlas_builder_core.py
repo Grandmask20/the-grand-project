@@ -24,6 +24,8 @@ from pathlib import Path
 import cv2
 import numpy as np
 
+import atlas_io
+
 # ------------------------------------------------------------------ tunables
 VOTE_BIN = 8            # px, translation histogram bin
 SIG_DIST1, SIG_DIST2 = 8.0, 10.0   # neighbour-spacing agreement for a "good" pair
@@ -899,7 +901,7 @@ class Atlas:
         }
 
     def save(self, path) -> None:
-        Path(path).write_text(json.dumps(self.to_json(), indent=1), encoding="utf-8")
+        atlas_io.write_text_atomic(path, json.dumps(self.to_json(), indent=1))
         # saved detections live next to the atlas; a copy saved elsewhere (undo snapshot) has none, so keep
         # pointing at the real ones (v1.00: every auto-add re-traced ~100 screenshots from their images)
         new_dir = Path(path).with_name(Path(path).stem + "_frames")

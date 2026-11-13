@@ -47,6 +47,7 @@ import atlas_builder as builder            # noqa: E402
 import atlas_builder_core as core          # noqa: E402
 import atlas_finalize                      # noqa: E402
 import atlas_cities                        # noqa: E402
+import atlas_io                            # noqa: E402
 import atlas_log                           # noqa: E402
 
 LOG = atlas_log.get("viewer")
@@ -326,9 +327,9 @@ def load_settings() -> dict:
 
 def save_settings(s: dict) -> None:
     try:
-        SETTINGS.write_text(json.dumps(s, indent=1), encoding="utf-8")
+        atlas_io.write_text_atomic(SETTINGS, json.dumps(s, indent=1))
     except Exception:
-        pass
+        LOG.warning("settings could not be saved", exc_info=True)
 
 
 def put_text(img, text, org, col, scale=0.5, thick=1):
@@ -1017,6 +1018,9 @@ class Viewer:
 
     # ------------------------------------------------------------------ files
     def ask_open(self):
+        if self._busy:
+            self.status.set("wait until the screenshots being added are done")
+            return
         self.save_if_dirty()
         p = filedialog.askopenfilename(title="Open atlas", filetypes=[("Atlas JSON", "*.json"), ("All", "*.*")],
                                        initialdir=self._initial_dir())
@@ -1024,12 +1028,16 @@ class Viewer:
             self.open_atlas(Path(p))
 
     def new_atlas(self):
+        if self._busy:
+            self.status.set("wait until the screenshots being added are done")
+            return
         self.save_if_dirty()
         p = filedialog.asksaveasfilename(title="New atlas: choose where to save it", defaultextension=".json",
                                          filetypes=[("Atlas JSON", "*.json")], initialdir=self._initial_dir(),
                                          initialfile="my_atlas.json")
         if not p:
             return
+        self._forget_session()
         self.atlas, self.path = core.Atlas(), Path(p)
         self.atlas.save(self.path)
         self.settings["last_atlas"] = str(self.path)
@@ -1480,11 +1488,15 @@ class Viewer:
 
     def open_atlas(self, p: Path):
         try:
-            self.atlas = core.Atlas.load(p)
+            atlas = core.Atlas.load(p)
         except Exception as e:
             LOG.exception(f"could not read atlas {p}")
             messagebox.showerror("Open atlas", f"Could not read {p}:\n{e}")
             return
+        if self.path is None or Path(p).resolve() != Path(self.path).resolve():
+            self._forget_session()
+            self._drop_stale_snapshots(Path(p))
+        self.atlas = atlas
         LOG.info(f"opened atlas {p}: {len(self.atlas.frames)} screenshots, "
                  f"{len((self.atlas.final or {}).get('nodes', []))} maps")
         self.path = p
@@ -1503,6 +1515,30 @@ class Viewer:
             self.log(f"screenshots not found (terrain missing there): {', '.join(missing)}")
         if self.watch_var.get() and not self.settings.get("watch_folder"):
             self.start_watch()                          # auto-add follows the atlas: now its folder is watched
+
+    def _forget_session(self):
+        """undo / recently added / waiting belong to the atlas they were made in: cleared when another atlas
+        is opened (undo after a switch put the old atlas's maps into the new one)"""
+        for entry in self._undo:
+            try:
+                Path(entry["file"]).unlink()
+            except OSError:
+                pass
+        self._undo, self.recent, self._pending_watch = [], [], []
+        self._wait_tries = {}
+        if hasattr(self, "recent_list"):
+            self._refresh_recent()
+
+    @staticmethod
+    def _drop_stale_snapshots(atlas_path: Path):
+        """undo snapshots left by an earlier session (undo only reaches this session's adds): a full copy
+        of the atlas each, so they are removed instead of piling up"""
+        d = core.atlas_files(atlas_path) / (atlas_path.stem + "_undo")
+        for f in d.glob("before_*.json") if d.is_dir() else ():
+            try:
+                f.unlink()
+            except OSError:
+                pass
 
     def _after_load(self, fit=False):
         self.sel = None
@@ -2136,6 +2172,11 @@ class Viewer:
                     builder.recheck(self.atlas, [f["name"] for f in new], log=lambda t: self._q.put(("log", t)))
                 self._q.put(("progress", "saving"))
                 self.atlas.save(self.path)
+            else:                                           # nothing added: nothing to undo
+                try:
+                    snapshot.unlink()
+                except OSError:
+                    pass
         self._q.put(("placed", (mode, added, refused, before)))
 
     # ------------------------------------------------------------------ undo / recent additions
