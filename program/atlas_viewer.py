@@ -54,7 +54,7 @@ def wheel_steps(e) -> float:
     """mouse-wheel notches from a <MouseWheel> event: Windows reports multiples of 120, macOS small integers"""
     return e.delta / (1 if IS_MAC else 120)
 
-VERSION = "1.06"                   # +1 per round of changes (v0.18 was the last ChatGPT release); same in internal + rc-1
+VERSION = "1.07"                   # +1 per round of changes (v0.18 was the last ChatGPT release); same in internal + rc-1
 
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
@@ -646,7 +646,7 @@ class Viewer:
         ttk.Label(frow, text="★ = bookmarked", foreground="#555").pack(side="right")
         ttk.Label(find, text="Selected").pack(anchor="w")
         self.info = tk.Text(find, height=7, width=40, wrap="word", state="disabled", relief="solid", bd=1,
-                            background="white", font="TkDefaultFont")
+                            background="white", foreground="black", insertbackground="black", font="TkDefaultFont")
         self.info.pack(fill="x")
         row = ttk.Frame(find)
         row.pack(fill="x", pady=(6, 0))
@@ -768,7 +768,7 @@ class Viewer:
         lgf = ttk.Frame(self.tabs, padding=6)
         self.tabs.add(lgf, text="Log")
         self.log_box = tk.Text(lgf, wrap="word", state="disabled", relief="solid", bd=1, font=(MONO_FONT, 8),
-                               background="white")
+                               background="white", foreground="black")
         self.log_box.pack(fill="both", expand=True)
 
         c = self.canvas
@@ -864,13 +864,15 @@ class Viewer:
                 row.grid(row=r, column=0, sticky="w")
                 r += 1
                 tk.Checkbutton(row, variable=self.icon_vars[lab], background="white", activebackground="white",
+                               foreground="black", selectcolor="white",
                                command=self.on_icon_filter).pack(side="left")
                 photo = photos.get(raw or "Unidentified")
                 if photo is None:
                     photo = photos[raw or "Unidentified"] = ImageTk.PhotoImage(icon_thumb(raw or "Unidentified"))
                 self._thumb_photos.append(photo)
                 tk.Label(row, image=photo, background="white").pack(side="left", padx=(0, 4))
-                name = tk.Label(row, text=f"{lab}  ({counts.get(lab, 0)})", background="white", cursor="hand2")
+                name = tk.Label(row, text=f"{lab}  ({counts.get(lab, 0)})", background="white", foreground="black",
+                                cursor="hand2")
                 name.pack(side="left")
                 name.bind("<Button-1>", lambda _e, lb=lab: self.list_type(lb))
                 for wdg in row.winfo_children() + [row]:
@@ -1291,7 +1293,9 @@ class Viewer:
             self._layer_photos.append(ph)
             b = tk.Checkbutton(g, text=label, image=ph, compound="top", variable=self.layers[layer],
                                indicatoron=False, command=self.request_redraw, width=72, font=("TkDefaultFont", 8),
-                               selectcolor="#cfe3ff", relief="raised", offrelief="flat", bd=1)
+                               selectcolor="#cfe3ff", relief="raised", offrelief="flat", bd=1,
+                               background="#ececec", activebackground="#dde8f7", foreground="black",
+                               activeforeground="black")
             b.grid(row=1 + k // 4, column=k % 4, padx=1, pady=1, sticky="ew")
         for c in range(4):
             g.columnconfigure(c, weight=1)
