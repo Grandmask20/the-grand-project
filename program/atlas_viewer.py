@@ -40,7 +40,7 @@ try:                                         # drag and drop of screenshot files
 except Exception:
     TkinterDnD = None
 
-VERSION = "1.03"                   # +1 per round of changes (v0.18 was the last ChatGPT release); same in internal + rc-1
+VERSION = "1.04"                   # +1 per round of changes (v0.18 was the last ChatGPT release); same in internal + rc-1
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
 import atlas_builder as builder            # noqa: E402

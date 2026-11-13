@@ -1325,6 +1325,42 @@ def save_model(name: str, model, info: dict) -> None:
                   (name, buf.getvalue(), json.dumps(info), datetime.now().isoformat(timespec="seconds")))
 
 
+# The models are scikit-learn objects stored as pickles. A plain pickle.loads would run any code a tampered
+# database carried (e.g. one picked with File > Detector database...), so only the classes a trained model is
+# made of may be loaded; anything else is refused before it runs.
+_MODEL_CLASSES = {
+    ("numpy", "dtype"), ("numpy", "ndarray"),
+    ("numpy._core.multiarray", "_reconstruct"), ("numpy._core.multiarray", "scalar"),
+    ("numpy.core.multiarray", "_reconstruct"), ("numpy.core.multiarray", "scalar"),     # numpy < 2
+    ("numpy.random._pcg64", "PCG64"), ("numpy.random._pickle", "__bit_generator_ctor"),
+    ("numpy.random._pickle", "__generator_ctor"), ("numpy.random.bit_generator", "SeedSequence"),
+    ("numpy.random.bit_generator", "__pyx_unpickle_SeedSequence"),
+    ("sklearn._loss._loss", "CyHalfBinomialLoss"), ("sklearn._loss.link", "Interval"),
+    ("sklearn._loss.link", "LogitLink"), ("sklearn._loss.loss", "HalfBinomialLoss"),
+    ("sklearn.ensemble._hist_gradient_boosting.binning", "_BinMapper"),
+    ("sklearn.ensemble._hist_gradient_boosting.gradient_boosting", "HistGradientBoostingClassifier"),
+    ("sklearn.ensemble._hist_gradient_boosting.predictor", "TreePredictor"),
+    ("sklearn.preprocessing._label", "LabelEncoder"),
+}
+
+
+class UnsafeModel(Exception):
+    """a stored model refers to something that is not part of a trained detector model"""
+
+
+class _ModelUnpickler(pickle.Unpickler):
+    def find_class(self, module, name):
+        if (module, name) not in _MODEL_CLASSES:
+            raise UnsafeModel(f"the detector database contains {module}.{name}, which is not part of a detector "
+                              "model: refused (use the database that came with the program)")
+        return super().find_class(module, name)
+
+
+def safe_model_loads(blob: bytes):
+    """unpickle a stored detector model, allowing only the classes such a model is made of"""
+    return _ModelUnpickler(io.BytesIO(blob)).load()
+
+
 def load_model(name: str):
     """live mode: read-only"""
     c = sqlite3.connect(f"file:{DB_PATH.as_posix()}?mode=ro", uri=True)
@@ -1334,7 +1370,7 @@ def load_model(name: str):
         row = None
     finally:
         c.close()
-    return pickle.loads(row[0]) if row else None
+    return safe_model_loads(row[0]) if row else None
 
 
 # ---------------------------------------------------------------- commands
