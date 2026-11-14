@@ -1,27 +1,42 @@
-"""Publish this internal working copy to a shareable folder (same version, same code).
+"""Build the player release (GitHub main) from this working copy (GitHub develop).
 
-    py make_release.py                # -> ../rc-1  (test release; title says "rc-1")
-    py make_release.py --to 1.0       # -> ../1.0   (the public GitHub release: + LICENSE, .gitignore, Git LFS
-                                      #    settings; the test data itself comes from make_test_pack.py)
-    py make_release.py --check        # only list what differs
+    py make_release.py            build into ../1.0 on a new branch release/v<version> from origin/main,
+                                  commit and push it; then open a pull request into main (main is protected)
+    py make_release.py --check    only list what the release would contain
+    py make_release.py --db       first refresh references/atlas_references.sqlite3 from the private database
+                                  (keeps only badge_refs + detector_models: nothing from anyone's atlas)
 
-Copies grand_project/, tools/, tests/ (code only), references/ (pictures / data) and the launchers;
-README_release.md becomes rc-1/README.md; the database copy keeps only the reference tables the
-detector reads (badge_refs, detector_models) - nothing from your atlas.  rc-1's atlases/ and
-user_data/ are left alone (only created if missing); local_paths.json is never copied.
+The player build has the program, the reference files, the launchers, LICENSE and README, and only the model
+safety test: no dev tests, tools, test data, Makefile or debug tools (channel.txt = "release").
 """
 
-import filecmp
+from __future__ import annotations
+
+import re
 import shutil
 import sqlite3
+import subprocess
 import sys
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
-from grand_project import paths as rc_paths  # noqa: E402
+TARGET = HERE.parent / "1.0"
+REPO = "https://github.com/Grandmask20/the-grand-project"
 
-TARGET = HERE.parent / (sys.argv[sys.argv.index("--to") + 1] if "--to" in sys.argv else "rc-1")
-PUBLIC = TARGET.name != "rc-1"  # the GitHub release
+# what the player build contains (paths relative to this folder)
+TREES = ("grand_project", "references")
+FILES = (
+    "LICENSE",
+    "requirements.txt",
+    "pyproject.toml",
+    "Start Atlas Viewer.bat",
+    "Install (run once).bat",
+    "install.sh",
+    "start.sh",
+)
+TESTS = ("tests/__init__.py", "tests/test_model_safety.py")
+KEEP_TABLES = ("badge_refs", "detector_models")
+
 GITIGNORE = """__pycache__/
 *.pyc
 user_data/
@@ -31,110 +46,70 @@ atlases/default/*
 !atlases/default/.gitkeep
 local_paths.json
 .venv/
-atlas_test_data/detect_pairs_out/
 *.egg-info
-.ruff_cache/
 """
-GITATTRIBUTES = """# the trimmed test data (make_test_pack.py) lives in Git LFS
-atlas_test_data/** filter=lfs diff=lfs merge=lfs -text
-atlas_test_data/README.md -filter -diff -merge text
-# shell scripts must keep Unix line endings to run on macOS / Linux
-*.sh text eol=lf
+GITATTRIBUTES = """* text=auto eol=lf
+*.bat text eol=crlf
+*.png binary
+*.webp binary
+*.zip binary
+*.npz binary
+*.sqlite3 binary
 """
-LFSCONFIG = """# a normal clone does NOT download the test data; developers get it with
-#   git lfs pull --include="atlas_test_data/**"
-[lfs]
-	fetchexclude = atlas_test_data/**
+CI = """name: safety
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  test:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, macos-latest, ubuntu-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+          cache: pip
+      - run: python -m pip install -r requirements.txt
+      - name: the stored detector models load, and a tampered database is refused
+        run: python -m tests.test_model_safety
 """
-LICENSE = """MIT License
-
-Copyright (c) 2026 The Grand Project contributors
-
-Permission is hereby granted, free of charge, to any person obtaining a copy
-of this software and associated documentation files (the "Software"), to deal
-in the Software without restriction, including without limitation the rights
-to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
-copies of the Software, and to permit persons to whom the Software is
-furnished to do so, subject to the following conditions:
-
-The above copyright notice and this permission notice shall be included in all
-copies or substantial portions of the Software.
-
-THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
-FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
-AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
-LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
-OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
-SOFTWARE.
-"""
-CODE = ("grand_project", "tools", "tests")
-FILES = (
-    "Start Atlas Viewer.bat",
-    "Install (run once).bat",
-    "requirements.txt",
-    "install.sh",
-    "start.sh",
-    "pyproject.toml",
-    "Makefile",
-)
-KEEP_TABLES = ("badge_refs", "detector_models")
 
 
-def code_files(root: Path):
-    for d in CODE:
-        for f in sorted((root / d).rglob("*")):
-            if f.is_file() and "__pycache__" not in f.parts and f.suffix in (".py", ".bat", ".sh"):
-                yield f.relative_to(root)
+def version() -> str:
+    m = re.search(r'__version__ = "([^"]+)"', (HERE / "grand_project" / "__init__.py").read_text(encoding="utf-8"))
+    return m.group(1)
 
 
-def differences() -> list[str]:
-    out = []
-    for rel in sorted(set(code_files(HERE)) | set(code_files(TARGET)) if TARGET.exists() else code_files(HERE)):
-        a, b = HERE / rel, TARGET / rel
-        if not b.exists():
-            out.append(f"new      {rel}")
-        elif not a.exists():
-            out.append(f"removed  {rel}")
-        elif not filecmp.cmp(a, b, shallow=False):
-            out.append(f"changed  {rel}")
-    return out
+def player_readme() -> str:
+    """the README without the developer section (that part lives on the develop branch)"""
+    s = (HERE / "README.md").read_text(encoding="utf-8")
+    a, b = s.find("## For developers"), s.find("## License and credits")
+    if a != -1 and b > a:
+        s = (
+            s[:a]
+            + (
+                "## For developers\n\nThis is the player release. The code with its tests, tools, test data and debug "
+                f"tools is on the [`develop` branch]({REPO}/tree/develop).\n\n"
+            )
+            + s[b:]
+        )
+    return s
 
 
-def release() -> None:
-    TARGET.mkdir(exist_ok=True)
-    for d in CODE:  # code: replaced as a whole (no stale files)
-        if (TARGET / d).exists():
-            shutil.rmtree(TARGET / d)
-        shutil.copytree(HERE / d, TARGET / d, ignore=shutil.ignore_patterns("__pycache__", "*.pyc"))
-    ref = TARGET / "references"
-    ref.mkdir(exist_ok=True)
-    have = {f.name for f in (HERE / "references").iterdir() if f.is_file()}
-    for f in ref.iterdir():  # pictures the program no longer reads
-        if f.is_file() and f.name not in have and f.name != "atlas_references.sqlite3":
-            f.unlink()
-    for f in (HERE / "references").iterdir():
-        if f.is_file():
-            shutil.copy2(f, ref / f.name)
-    for f in FILES:
-        shutil.copy2(HERE / f, TARGET / f)
-    readme = (HERE / "README_release.md").read_text(encoding="utf-8")
-    if PUBLIC:
-        readme = readme.replace(" (rc-1)", "", 1)
-        (TARGET / "LICENSE").write_text(LICENSE, encoding="utf-8")
-        (TARGET / ".gitignore").write_text(GITIGNORE, encoding="utf-8")
-        (TARGET / ".gitattributes").write_text(GITATTRIBUTES, encoding="utf-8")
-        (TARGET / ".lfsconfig").write_text(LFSCONFIG, encoding="utf-8")
-        if (HERE / ".github").exists():  # CI: the offline tests on Windows / macOS / Linux
-            shutil.rmtree(TARGET / ".github", ignore_errors=True)
-            shutil.copytree(HERE / ".github", TARGET / ".github")
-    (TARGET / "README.md").write_text(readme, encoding="utf-8")
-    (TARGET / "channel.txt").write_text("release" if PUBLIC else "rc-1", encoding="utf-8")
-    # database: reference tables only
-    db = ref / "atlas_references.sqlite3"
-    tmp = db.with_suffix(".tmp")
+def refresh_db() -> None:
+    sys.path.insert(0, str(HERE))
+    from grand_project import paths
+
+    dst = HERE / "references" / "atlas_references.sqlite3"
+    tmp = dst.with_suffix(".tmp")
     tmp.unlink(missing_ok=True)
-    shutil.copy2(rc_paths.DATABASE, tmp)
+    shutil.copy2(paths.DATABASE, tmp)
     c = sqlite3.connect(tmp)
     for (n,) in list(c.execute("SELECT name FROM sqlite_master WHERE type='table'")):
         if n not in KEEP_TABLES and not n.startswith("sqlite_"):
@@ -142,16 +117,79 @@ def release() -> None:
     c.commit()
     c.execute("VACUUM")
     c.close()
-    tmp.replace(db)
-    for d in ("atlases/default", "user_data"):
-        (TARGET / d).mkdir(parents=True, exist_ok=True)
-    (TARGET / "atlases/default/.gitkeep").touch()
-    (TARGET / "local_paths.json").unlink(missing_ok=True)
+    tmp.replace(dst)
+    print(f"references/atlas_references.sqlite3 refreshed from {paths.DATABASE} ({', '.join(KEEP_TABLES)})")
+
+
+def git(*args, cwd=TARGET, check=True) -> str:
+    r = subprocess.run(["git", *args], cwd=cwd, capture_output=True, text=True, encoding="utf-8")
+    if check and r.returncode:
+        raise SystemExit(f"git {' '.join(args)} failed:\n{r.stderr}")
+    return r.stdout.strip()
+
+
+def tracked(rel: str) -> list[str]:
+    """files under rel that git tracks here (never caches, never private files)"""
+    return [f for f in git("ls-files", rel, cwd=HERE).splitlines() if f]
+
+
+def build() -> list[str]:
+    files = []
+    for t in TREES:
+        files += tracked(t)
+    files += [f for f in FILES + TESTS if (HERE / f).exists()]
+    return sorted(files)
+
+
+def main() -> int:
+    if "--db" in sys.argv:
+        refresh_db()
+    files = build()
+    if "--check" in sys.argv:
+        print("\n".join(files))
+        print(f"{len(files)} files + README.md, .gitignore, .gitattributes, channel.txt, CI (release v{version()})")
+        return 0
+    if git("status", "--porcelain", cwd=HERE):
+        print("note: this working copy has uncommitted changes; they are released too (commit them to develop)")
+    v = version()
+    branch = f"release/v{v}"
+    git("fetch", "-q", "origin")
+    git("checkout", "-q", "-B", branch, "origin/main")
+    for f in git("ls-files").splitlines():  # start from nothing: the release is exactly the list below
+        p = TARGET / f
+        if p.exists():
+            p.unlink()
+    for f in files:
+        (TARGET / f).parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(HERE / f, TARGET / f)
+    (TARGET / "README.md").write_text(player_readme(), encoding="utf-8")
+    (TARGET / ".gitignore").write_text(GITIGNORE, encoding="utf-8")
+    (TARGET / ".gitattributes").write_text(GITATTRIBUTES, encoding="utf-8")
+    (TARGET / "channel.txt").write_text("release\n", encoding="utf-8")
+    (TARGET / "atlases" / "default").mkdir(parents=True, exist_ok=True)
+    (TARGET / "atlases" / "default" / ".gitkeep").touch()
+    (TARGET / ".github" / "workflows").mkdir(parents=True, exist_ok=True)
+    (TARGET / ".github" / "workflows" / "safety.yml").write_text(CI, encoding="utf-8")
+    for leftover in (TARGET / "atlas_test_data", TARGET / "tools", TARGET / ".lfsconfig"):
+        if leftover.is_dir():
+            shutil.rmtree(leftover, ignore_errors=True)
+        elif leftover.exists():
+            leftover.unlink()
+    git("add", "-A")
+    if not git("status", "--porcelain"):
+        print(f"nothing to release: main already matches v{v}")
+        return 0
+    git(
+        "commit",
+        "-q",
+        "-m",
+        f"Release v{v}\n\nPlayer build from develop ({git('rev-parse', '--short', 'HEAD', cwd=HERE)}).",
+    )
+    git("push", "-q", "-u", "origin", branch, "--force")
+    print(f"pushed {branch}: open the pull request into main at\n  {REPO}/compare/main...{branch}?expand=1")
+    print("after merging it:  git -C ../1.0 checkout main && git -C ../1.0 pull")
+    return 0
 
 
 if __name__ == "__main__":
-    diff = differences()
-    print("\n".join(diff) or "code identical")
-    if "--check" not in sys.argv:
-        release()
-        print(f"released to {TARGET} (database: {', '.join(KEEP_TABLES)} only)")
+    raise SystemExit(main())
