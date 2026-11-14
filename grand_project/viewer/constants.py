@@ -114,6 +114,7 @@ IMAGE_EXT = core.IMAGE_EXT
 WATCH_BATCH = 24  # auto-add: screenshots waiting in the queue are added together (one re-check)
 
 
+WATCH_ASK = 50  # a hand-picked folder (not the atlas's own) with more screenshots the atlas lacks: ask first
 WATCH_POLL_MS = 2000  # how often the watched folder is checked
 
 

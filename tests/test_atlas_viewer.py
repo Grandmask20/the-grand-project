@@ -541,9 +541,20 @@ if crawl.exists() and crawl_cache.exists():
     new = work / "watch.json"
     core.Atlas().save(new)
     app.open_atlas(new)
-    app.settings.pop("watch_folder", None)
+    app.settings.pop("watch_folders", None)
     check("auto-add watches the atlas's own folder by default", app._watch_dir() == str(new.parent), app._watch_dir())
-    app.settings["watch_folder"] = str(sdir)
+    app.settings["watch_folders"] = {app._atlas_key(): str(sdir)}
+    other = work / "other" / "atlas.json"
+    other.parent.mkdir(exist_ok=True)
+    core.Atlas().save(other)
+    app.open_atlas(other)
+    check(
+        "a folder picked for one atlas doesn't follow you to another",
+        app._watch_dir() == str(other.parent),
+        app._watch_dir(),
+    )
+    app.open_atlas(new)
+    check("... and is back when its atlas is opened again", app._watch_dir() == str(sdir), app._watch_dir())
     app.watch_var.set(True)
     app.start_watch()
     asked = []
