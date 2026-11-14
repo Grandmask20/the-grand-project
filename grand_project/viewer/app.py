@@ -141,9 +141,7 @@ class Viewer(
         bg = "#eceff3"
         r.configure(bg=bg)
         style.configure(".", background=bg)
-        style.configure(
-            "TNotebook.Tab", padding=(6 if rc_paths.DEBUG else 10, 4)
-        )  # internal has a Debug tab too
+        style.configure("TNotebook.Tab", padding=(6 if rc_paths.DEBUG else 10, 4))  # internal has a Debug tab too
         style.configure("Side.TFrame", background=bg)
 
         r.columnconfigure(0, weight=1)
