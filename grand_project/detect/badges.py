@@ -128,7 +128,8 @@ def _row_slot(x: float, y: float, maps: list[dict]) -> bool:
 
 
 def name_badge(img: np.ndarray, x: float, y: float, names: list[str], F: np.ndarray) -> tuple[str, float]:
-    """closest badge picture (stored + labelled), trying +-3 px shifts -> (name, 1 - correlation)"""
+    """closest badge picture (stored + labelled), trying +-3 px shifts -> (name, 1 - correlation); only names
+    whose stored pictures have a bright part of the same colour (icon_refs.colour_ok)"""
     big = icon_refs.crop(img, x, y, icon_refs.SIZE + 2 * icon_refs.SHIFT)
     if big is None or not len(names):
         return "Unidentified", 9.0
@@ -136,6 +137,8 @@ def name_badge(img: np.ndarray, x: float, y: float, names: list[str], F: np.ndar
     for dy in range(2 * icon_refs.SHIFT + 1):
         for dx in range(2 * icon_refs.SHIFT + 1):
             d = np.minimum(d, 1 - F @ icon_refs.feature(big[dy : dy + icon_refs.SIZE, dx : dx + icon_refs.SIZE]))
+    s = icon_refs.SHIFT
+    d[~icon_refs.colour_ok(names, icon_refs.refs().colours, big[s : s + icon_refs.SIZE, s : s + icon_refs.SIZE])] = 9.0
     k = int(np.argmin(d))
     return (names[k] if d[k] <= icon_refs.MAX_DIST else "Unidentified"), float(d[k])
 

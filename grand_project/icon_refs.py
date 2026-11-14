@@ -45,6 +45,13 @@ CONFIRM = {
     "NamelessSeer",
 }
 MARGIN = 0.75  # best distance must beat the nearest OTHER name by this factor
+# The pattern match removes each badge's average colour, so a bright blue blob (Azmeri Spirit) and a bright white
+# fleur-de-lis (Hideout) correlate well. The colour of the brightest quarter tells them apart: a badge can only take
+# a name whose stored pictures have a bright part this close in colour (Lab a/b units; pictures of one name differ
+# by up to ~12, Azmeri Spirit vs Hideout 17, Hideout vs the red hideout 34).
+BRIGHT_TOL = 12.0
+# only these look-alikes are checked (other names' bright parts vary more, e.g. MapBoss up to 34)
+COLOUR_CHECKED = {"AzmeriSpirit", "Hideout", "HideoutRed"}
 NOT_A_BADGE = "NotABadge"
 
 _yy, _xx = np.mgrid[:SIZE, :SIZE]
@@ -63,6 +70,24 @@ def feature(c: np.ndarray) -> np.ndarray:
     v -= v.mean(axis=0)
     n = np.linalg.norm(v)
     return (v / n).ravel() if n > 1e-6 else v.ravel()
+
+
+def bright_colour(c: np.ndarray) -> np.ndarray:
+    """(a, b) colour of the brightest quarter inside the rim, 0 = grey / white"""
+    lab = cv2.cvtColor(cv2.GaussianBlur(c, (0, 0), 1.0), cv2.COLOR_BGR2LAB)[_MASK].astype(np.float32)
+    top = lab[lab[:, 0] >= np.percentile(lab[:, 0], 75)]
+    return top[:, 1:].mean(axis=0) - 128.0
+
+
+def colour_ok(names: list[str], profiles: dict[str, np.ndarray], c: np.ndarray) -> np.ndarray:
+    """per name: may a badge with crop c take it? (names outside COLOUR_CHECKED or without pictures: always)"""
+    col = bright_colour(c)
+    ok = {
+        n: bool(np.linalg.norm(P - col, axis=1).min() <= BRIGHT_TOL)
+        for n, P in profiles.items()
+        if n in COLOUR_CHECKED and len(P)
+    }
+    return np.array([ok.get(n, True) for n in names])
 
 
 def _db(path: Path | None = None) -> sqlite3.Connection:
@@ -113,13 +138,17 @@ def load(name: str | None = None) -> list[tuple[str, np.ndarray]]:
 class Refs:
     def __init__(self):
         self.names: list[str] = []
-        feats = []
+        feats, cols = [], {}
         for name, img in load():
             if img.shape[:2] != (SIZE, SIZE):
                 continue
             self.names.append(name)
             feats.append(feature(img))
+            if name != NOT_A_BADGE:
+                cols.setdefault(name, []).append(bright_colour(img))
         self.F = np.array(feats, np.float32) if feats else np.zeros((0, int(_MASK.sum()) * 3), np.float32)
+        # per name: bright-part colours of its stored pictures (the colour check, BRIGHT_TOL)
+        self.colours = {n: np.array(v, np.float32) for n, v in cols.items()}
 
     def __len__(self):
         return len(self.names)
@@ -137,6 +166,7 @@ class Refs:
             for dx in range(0, 2 * SHIFT + 1, 1):
                 f = feature(big[dy : dy + SIZE, dx : dx + SIZE])
                 dmin = np.minimum(dmin, 1.0 - self.F @ f)
+        dmin[~colour_ok(self.names, self.colours, big[SHIFT : SHIFT + SIZE, SHIFT : SHIFT + SIZE])] = 9.0
         if exclude is not None:
             dmin[exclude] = 9.0
         k = int(np.argmin(dmin))

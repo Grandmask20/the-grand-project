@@ -218,6 +218,7 @@ SETTLE_BADGE = 200.0  # a Hall / City has a Deadly Map Boss badge this close (cr
 # map boss, breach stronghold, merchant, abyss.  Badge families of one type are listed together.
 EXCLUSIVE = {
     "Hideout": "hideout",
+    "HideoutRed": "hideout",
     "Corruption": "corruption",
     "CorruptionNexus": "corruption",
     "CorruptionNexusNoGrowth": "corruption",

@@ -185,7 +185,8 @@ ICON_INFO = {
     "SanctificationBoss": ("Immured Fury", (200, 220, 255), "doryani"),
     "Trader": ("Wandering Trader", (120, 220, 255), "trader"),
     "NamelessSeer": ("Nameless Seer", (200, 140, 255), "seer"),
-    "Hideout": ("Hideout", (200, 255, 200), ""),
+    "Hideout": ("Hideout", (200, 255, 200), "felled hideout"),
+    "HideoutRed": ("Red hideout", (230, 90, 90), "hideout, red fleur-de-lis (user: kept apart from Hideout)"),
     "LostTower": ("Precursor Tower", (100, 235, 100), "lost tower, tower"),
     "Unidentified": ("Unidentified badge", (160, 160, 160), "unknown"),
     # taught by hand on the badge sheet (atlas_icon_refs, badge_refs table in the icon database);
