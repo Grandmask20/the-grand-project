@@ -5,6 +5,7 @@ from __future__ import annotations
 from grand_project import paths as rc_paths
 
 # ------------------------------------------------------------------ tunables
+SCREEN_HEIGHT = 1080  # px: every screenshot is scaled to this height when read (the detector's size)
 VOTE_BIN = 8  # px, translation histogram bin
 
 
@@ -75,12 +76,12 @@ DROP_MIN_INLIERS = 5  # placing by hand: maps that must agree near the drop poin
 TERRAIN_MIN_NCC = 0.40  # ...and a stricter whole-overlap pixel check than the map route (0.35)
 
 
-# Game HUD on a full, uncropped window: hud_mask_full.png (white = HUD), drawn by the user on a
-# 1919x1079 screenshot and scaled for other full-window sizes. Nodes / towers / badges "found" there
-# are detector mistakes on the UI.
-# A spot counts as UI only HUD_DEPTH px inside the outline: it is hand-drawn, real maps sat up to
-# 30 px inside it, UI pieces 44+ px (random_samples_truth).
-HUD_DEPTH = 35
+# Game HUD on a full, uncropped window: hud_mask_full.png (white = HUD), from a 1920x1080 screenshot taken
+# over black unexplored fog (everything not black is interface; the stat text blocks are filled whole, their
+# numbers change width), scaled for other full-window sizes. Nodes / towers / badges "found" there are detector
+# mistakes on the UI. A spot counts as UI HUD_DEPTH px inside the outline: map nodes half behind the HUD
+# have their middle just inside it.
+HUD_DEPTH = 8
 
 
 HUD_MASK_FILE = rc_paths.ref("hud_mask_full.png")

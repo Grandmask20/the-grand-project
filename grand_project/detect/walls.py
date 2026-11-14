@@ -125,7 +125,7 @@ def cmd_train_fortress() -> int:
         + sorted(glob.glob(str(S_ / "ocean" / "*.png")))[::10]
     )
     for p in pool:
-        img = cv2.imdecode(np.fromfile(p, np.uint8), cv2.IMREAD_COLOR)
+        img = core.read_screenshot(p)
         if _lit_walls(img).any():
             continue
         hud = (core.hud_mask(img.shape[1], img.shape[0]) > 0)[o::st, o::st]

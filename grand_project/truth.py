@@ -100,7 +100,7 @@ def cmd_sheet(a) -> int:
         if not cf.exists():
             continue
         d = json.loads(cf.read_text(encoding="utf-8"))
-        img = cv2.imdecode(np.fromfile(str(p), np.uint8), cv2.IMREAD_COLOR)
+        img = core.read_screenshot(str(p))
         S = chr(ord("A") + letter)
         letter += 1
         key["shots"][S] = {"name": p.name, "path": str(p)}
@@ -168,7 +168,7 @@ def cmd_more(a) -> int:
         have = np.array([[m["x"], m["y"]] for m in key["maps"].values() if m["shot"] == S], float).reshape(-1, 2)
         n = max(int(mid[1:]) for mid in key["maps"] if mid[0] == S)
         sp = Path(s["path"])
-        img = cv2.imdecode(np.fromfile(str(sp), np.uint8), cv2.IMREAD_COLOR)
+        img = core.read_screenshot(str(sp))
         tiles = []
         for x, y, _sc in sorted(props.get(s["name"], []), key=lambda t: -t[2]):
             if len(have) and np.min(np.hypot(have[:, 0] - x, have[:, 1] - y)) < 20:

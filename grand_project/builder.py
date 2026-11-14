@@ -48,8 +48,6 @@ NEW_DETECTOR_ID = "detect1"  # = atlas_detect.DETECTOR_ID, in cache file names (
 def extract_frame_new(image_path: Path, cache_dir: Path) -> core.Frame:
     """atlas_detect in live mode (reads its trained models from the reference DB, never writes it);
     cached by file hash + detector id"""
-    import cv2
-    import numpy as np
 
     from grand_project import detect as atlas_detect
 
@@ -59,7 +57,7 @@ def extract_frame_new(image_path: Path, cache_dir: Path) -> core.Frame:
     if cached is not None:  # a cut-off cache (crash mid-write) is detected again
         cached["path"] = str(image_path.resolve())  # the file as it is now (moved / another computer)
         return core.Frame.from_json(cached)
-    img = cv2.imdecode(np.fromfile(str(image_path), np.uint8), cv2.IMREAD_COLOR)
+    img = core.read_screenshot(str(image_path))
     if img is None:
         raise ValueError(f"{image_path.name} is not a readable image (damaged or not fully written)")
     r = atlas_detect.detect(img)

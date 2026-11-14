@@ -487,8 +487,9 @@ class CitiesMixin:
                 canvas = cv2.imdecode(np.fromfile(str(png), np.uint8), cv2.IMREAD_COLOR)
                 weight = meta["weight"].astype(np.float32)
                 origin = tuple(float(v) for v in meta["origin"])
+                labels = (meta["labels"], [str(n) for n in meta["names"]]) if "labels" in meta.files else None
                 if canvas is not None and canvas.shape[:2] == weight.shape:
-                    self._set_terrain(canvas, weight, origin, save=False)
+                    self._set_terrain(canvas, weight, origin, save=False, labels=labels)
                     return
         except Exception:
             LOG.debug("map image cache not usable, rebuilding", exc_info=True)
@@ -510,7 +511,9 @@ class CitiesMixin:
             work()
             self._drain_queue()
 
-    def _set_terrain(self, canvas, weight, origin, save=True):
+    def _set_terrain(self, canvas, weight, origin, save=True, labels=None):
+        """labels: (ownership map, screenshot names) of a clean map (Fix seams); None for the quick map"""
+        self._labels = labels
         self.root.after(50, self._build_layer_grid)  # the Terrain toggle shows a piece of this map
         self._terrain = (canvas, weight, origin)
         self.t_origin = origin
@@ -529,7 +532,10 @@ class CitiesMixin:
             def write():
                 try:
                     cv2.imencode(".png", canvas)[1].tofile(str(png))
-                    np.savez_compressed(npz, key=key, origin=np.array(origin, float), weight=weight.astype(np.float16))
+                    extra = {} if labels is None else {"labels": labels[0], "names": np.array(labels[1])}
+                    np.savez_compressed(
+                        npz, key=key, origin=np.array(origin, float), weight=weight.astype(np.float16), **extra
+                    )
                 except Exception:
                     LOG.warning("map image cache could not be saved", exc_info=True)
 
@@ -543,7 +549,88 @@ class CitiesMixin:
             return False
         canvas, weight, origin = self._terrain
         canvas, weight = canvas.copy(), weight.copy()
-        if not self.atlas.paste_into(canvas, weight, origin, frames):
+        lab = getattr(self, "_labels", None)
+        labels, names = (lab[0].copy(), list(lab[1])) if lab is not None else (None, None)
+        if not self.atlas.paste_into(canvas, weight, origin, frames, labels=labels, names=names):
             return False
-        self._q.put(("terrain_img", (None, canvas, weight, origin)))
+        kept = (labels, names) if labels is not None else None
+        self._q.put(("terrain_img", (None, canvas, weight, origin, kept)))
         return True
+
+    def fix_seams(self):
+        """build the clean map (core.seams) in a separate process: map nodes and icons whole, seams off paths
+        and away from screenshot edges. Minutes on a large atlas; the viewer and the quick map stay usable."""
+        if not self.atlas or not self.atlas.frames:
+            return
+        if self.seams_running():
+            self.log("Fix seams is already running")
+            return
+        import os
+        import pickle
+        import shutil
+        import subprocess
+        import sys
+        import tempfile
+
+        tmp = Path(tempfile.mkdtemp(prefix="grand_seams_"))
+        src, out, err = tmp / "atlas.pkl", tmp / "clean.npz", tmp / "errors.txt"
+        src.write_bytes(pickle.dumps(self.atlas))
+        root = Path(__file__).resolve().parents[2]  # the folder holding the grand_project package
+        with open(err, "w", encoding="utf-8") as errf:
+            proc = subprocess.Popen(
+                [sys.executable, "-m", "grand_project.core.seams", str(src), str(out), str(TERRAIN_PIXELS)],
+                cwd=str(root),
+                stdout=subprocess.PIPE,
+                stderr=errf,
+                text=True,
+                creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0) if os.name == "nt" else 0,
+            )
+        self._seams_proc = proc
+        self._set_progress("fixing seams: building the clean map...")
+        self.log("Fix seams: building the clean map in the background")
+
+        def watch():
+            for line in proc.stdout:
+                if line.strip() and line.strip() != "done":
+                    self._q.put(("progress", line.strip()))
+            proc.wait()
+            try:
+                if proc.returncode == 0 and out.exists():
+                    with np.load(out) as r:
+                        canvas, weight, labels = r["canvas"], r["weight"], r["labels"]
+                        origin = tuple(float(v) for v in r["origin"])
+                        names = [str(n) for n in r["names"]]
+                    self._q.put(("terrain_img", ("seams", canvas, weight, origin, (labels, names))))
+                    self._q.put(("log", "Fix seams: clean map ready"))
+                elif proc.returncode in (-9, -15, 1) and getattr(self, "_seams_stopped", False):
+                    pass
+                else:
+                    text = err.read_text(encoding="utf-8", errors="replace").strip().splitlines()
+                    LOG.error("clean map could not be built: %s", " | ".join(text[-30:]))
+                    self._q.put(("log", f"clean map could not be built: {text[-1] if text else proc.returncode}"))
+            finally:
+                shutil.rmtree(tmp, ignore_errors=True)
+                self._q.put(("progress", None))
+
+        threading.Thread(target=watch, daemon=True).start()
+
+    def seams_running(self) -> bool:
+        proc = getattr(self, "_seams_proc", None)
+        return proc is not None and proc.poll() is None
+
+    def stop_seams(self):
+        if self.seams_running():
+            self._seams_stopped = True
+            self._seams_proc.terminate()
+
+    def _seams_ready(self, names):
+        """a clean map arrived: screenshots added while it was being built are pasted in on top"""
+        have = set(names)
+        missing = [f for f in self.atlas.frames if f["name"] not in have]
+        if missing:
+
+            def paste():
+                if not self._paste_terrain(missing):
+                    self._q.put(("rebuild_terrain", None))
+
+            threading.Thread(target=paste, daemon=True).start()

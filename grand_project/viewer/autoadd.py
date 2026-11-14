@@ -20,6 +20,7 @@ from grand_project import builder, core
 from grand_project import cities as atlas_cities
 from grand_project import finalize as atlas_finalize
 from grand_project import paths as rc_paths
+from grand_project.core import islands
 
 from .constants import (
     PROFILE,
@@ -75,7 +76,7 @@ class AutoAddMixin:
         if not self.atlas or not self.path:
             self.status.set("open or create an atlas first")
             return
-        img = cv2.imdecode(np.fromfile(str(path), np.uint8), cv2.IMREAD_COLOR)
+        img = core.read_screenshot(str(path))
         if img is None:
             self.status.set(f"not an image: {path.name}")
             return
@@ -198,6 +199,7 @@ class AutoAddMixin:
     def on_close(self):
         if self._busy and not messagebox.askyesno("Atlas viewer", "Screenshots are still being added. Quit anyway?"):
             return
+        self.stop_seams()
         self.save_if_dirty()
         self.settings["geometry"] = self.root.geometry()
         self.settings["layers"] = {k: v.get() for k, v in self.layers.items()}
@@ -554,6 +556,14 @@ class AutoAddMixin:
                 progress = True
                 self._q.put(("log", f"{name}: added ({reg.inliers} maps agree, terrain {reg.ncc:.2f})"))
             todo = left
+            if not progress and len(todo) >= islands.ISLAND_MIN:
+                # still waiting: the waiting screenshots joined to each other (mini-atlases) may fit as a group
+                joined = islands.merge_waiting(self.atlas, todo, log=lambda t: self._q.put(("log", t)))
+                if joined:
+                    added += len(joined)
+                    progress = True  # others may fit next to the group now
+                    shas = {f.sha for f in joined}
+                    todo = [f for f in todo if f.sha not in shas]
         self._pending_watch = todo
         return added, [Path(f.path).name for f in todo]
 
@@ -773,9 +783,11 @@ class AutoAddMixin:
             elif kind == "rebuild_terrain":
                 self.rebuild_terrain()
             elif kind == "terrain_img":
-                job, canvas, weight, origin = val
-                if job is None or job == self._terrain_job:
-                    self._set_terrain(canvas, weight, origin)
+                job, canvas, weight, origin, labels = (*val, None)[:5]
+                if job is None or job == "seams" or job == self._terrain_job:
+                    self._set_terrain(canvas, weight, origin, labels=labels)
+                    if job == "seams":
+                        self._seams_ready(labels[1])
                     self.footprints = [
                         (poly, (*poly.min(axis=0), *poly.max(axis=0)))
                         for poly in (self._poly(f) for f in self.atlas.frames)

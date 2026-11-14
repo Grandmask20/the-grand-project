@@ -22,6 +22,7 @@ import cv2
 import numpy as np
 
 HERE = Path(__file__).resolve().parent
+from grand_project import core  # noqa: E402
 from grand_project import detect as ad  # noqa: E402
 from grand_project import paths as rc_paths  # noqa: E402
 
@@ -158,7 +159,7 @@ def main() -> int:
     t0 = time.time()
     results = {}
     for shot in marks:
-        img = cv2.imdecode(np.fromfile(shot, np.uint8), cv2.IMREAD_COLOR)
+        img = core.read_screenshot(shot)
         results[shot] = ad.detect(img)
     s = check(results, marks)
     hist = json.loads(HISTORY.read_text(encoding="utf-8")) if HISTORY.exists() else []

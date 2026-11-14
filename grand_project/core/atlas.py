@@ -12,6 +12,7 @@ import numpy as np
 
 from grand_project import fileio as atlas_io
 
+from . import frame as _frame
 from .constants import (
     DROP_MIN_INLIERS,
     ICON_MERGE,
@@ -78,7 +79,7 @@ class Atlas:
                 img = self._images.pop(path)
                 self._images[path] = img  # most recently used last
                 return img
-        img = cv2.imdecode(np.fromfile(path, np.uint8), cv2.IMREAD_COLOR)
+        img = _frame.read_screenshot(path)
         with Atlas._image_lock:
             self._images[path] = img
             while len(self._images) > self.IMAGE_CACHE:
@@ -628,7 +629,7 @@ class Atlas:
             return canvas, (x0, y0, scale), best_w
         return canvas, (x0, y0, scale)
 
-    def paste_into(self, canvas, best_w, origin, frames) -> bool:
+    def paste_into(self, canvas, best_w, origin, frames, labels=None, names=None) -> bool:
         """warp screenshots into an existing stitched canvas, each only into its own patch.
         False when one falls outside the canvas (then rebuild with composite)."""
         x0, y0, scale = origin
@@ -657,4 +658,8 @@ class Atlas:
             take = wmap > sub_w
             canvas[by0:by1, bx0:bx1][take] = pix[take]
             sub_w[take] = wmap[take]
+            if labels is not None:  # a clean map's ownership map (core.seams): these pixels are this shot's now
+                if f["name"] not in names:
+                    names.append(f["name"])
+                labels[by0:by1, bx0:bx1][take] = names.index(f["name"])
         return inside

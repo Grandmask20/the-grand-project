@@ -82,10 +82,9 @@ def _dashes(atlas, f):
 
 def _trace_one(job):
     """worker: the new detector's paths between given map positions in one screenshot"""
-    import cv2
 
     path, sp, ok, tower = job
-    img = cv2.imdecode(np.fromfile(path, np.uint8), cv2.IMREAD_COLOR)
+    img = core.read_screenshot(path)
     return atlas_detect.screen_paths((atlas_detect.path_dashes(img), atlas_detect.amber_dashes(img)), sp, ok, tower)
 
 

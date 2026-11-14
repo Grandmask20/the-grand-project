@@ -1,4 +1,4 @@
-# The Grand Project — v1.09
+# The Grand Project — v1.10
 
 Builds one big map of your Path of Exile 2 atlas from your screenshots. Named after the in-game tablet, *The Grand Project*. It finds maps, paths, icons, towers and cities, and lets you search and bookmark them.
 
@@ -22,7 +22,7 @@ On first start the viewer opens the empty atlas **`atlases/default`**.
 
 ## Before you start: Steam screenshots
 
-**Play at 1920×1080 (1080p).** The detector was trained only on 1080p screenshots, and map, badge and tower sizes are measured in 1080p pixels. Screenshots at other resolutions (1440p, 4K, ultrawide) are not scaled and will not be recognised. If your monitor is larger, set the game to 1920×1080 (windowed or fullscreen) while taking atlas screenshots.
+**Resolution:** the detector was trained on 1080p screenshots. 1440p and 4K screenshots are scaled down to 1080p and work too (4K files are about 4 times larger). Keep the game's **render resolution at 100%**: lower settings blur the maps and paths, and fewer of them are found.
 
 Use Steam's screenshot key (**F12** by default); it's the fastest and most reliable way.
 
@@ -97,6 +97,7 @@ A screenshot that overlaps nothing yet goes to **Waiting** (Auto-add tab). Waiti
 - **File menu:**
   - *New atlas*, *Open atlas*, *Save* (Ctrl+S; adding screenshots also saves).
   - *Re-check whole atlas* runs the full clean-up pass again (a few minutes on a big atlas).
+  - *Fix seams (clean map)* rebuilds the map image with care: each map node comes whole from one screenshot with its icons, seams stay off paths and away from screenshot edges, and lit copies win over fogged ones. It takes several minutes on a big atlas and runs in the background.
   - *Export map PNGs*.
 
 ## 5. Other things
@@ -137,6 +138,7 @@ Run these from this folder:
 - `python -m grand_project.detect score` scores the detector on the hand-labelled screenshots; `python -m grand_project.detect train` retrains it into the database. Both need the test data.
 - `python -m grand_project.builder add --atlas X.json --image FOLDER` builds an atlas without the window.
 - `python -m tools.atlas_marks` checks the detector against all hand-drawn mark layers and true paths.
+- `python -m tools.make_hud_mask SCREENSHOT` rebuilds `references/hud_mask_full.png` from a 1920×1080 atlas screenshot taken over black unexplored fog (everything not black is interface).
 - Tests: `make test`, `tests/Run all tests.bat`, `tests/run_all_tests.sh`, or one at a time with `python -m tests.test_atlas_builder`. `test_atlas_viewer` opens a window for about 20 s.
 - Lint: `make lint` (ruff check + format); CI runs the same on every push and pull request.
 
@@ -145,7 +147,7 @@ Run these from this folder:
 | Part | What it does |
 |---|---|
 | `paths.py` | every folder location (atlases, references, user data, test data) |
-| `core/` | screenshots and their geometry, placing a screenshot (`register.py`), terrain matching, the atlas file (`atlas.py`) |
+| `core/` | screenshots and their geometry, placing a screenshot (`register.py`), terrain matching, the atlas file (`atlas.py`), joining groups of waiting screenshots (`islands.py`), the clean map (`seams.py`) |
 | `detect/` | the screenshot detector: maps, badges, landmarks, path dashes, fortress walls, the stored models, training |
 | `finalize/` | the atlas-wide check after screenshots are added: path evidence, map rules, settlements, local re-checks |
 | `builder.py` | detecting and adding screenshots (also a command line) |

@@ -81,7 +81,20 @@ class TerrainMixin:
             ctr = sp.mean(axis=0)
             frames.append((math.hypot(ctr[0] - w / 2, ctr[1] - h / 2), f, (x0, y0, x1, y1)))
         frames.sort(key=lambda t: t[0])
-        for _, f, (x0, y0, x1, y1) in frames[:HIRES_MAX_FRAMES]:
+        lab = getattr(self, "_labels", None)
+        owner_view, idx_of, limit = None, {}, HIRES_MAX_FRAMES
+        if lab is not None and self._terrain is not None:
+            # which screenshot owns each view pixel: the clean map's ownership map, warped into the view
+            ox, oy, sc = self._terrain[2]
+            C2V = V @ np.array([[1 / sc, 0, ox], [0, 1 / sc, oy], [0, 0, 1]])
+            owner_view = cv2.warpPerspective(
+                lab[0], C2V, (w, h), flags=cv2.INTER_NEAREST, borderMode=cv2.BORDER_CONSTANT, borderValue=-1
+            )
+            idx_of = {n: i for i, n in enumerate(lab[1])}
+            present = set(np.unique(owner_view).tolist())
+            frames = [t for t in frames if idx_of.get(t[1]["name"], -2) in present]
+            limit = len(frames)
+        for _, f, (x0, y0, x1, y1) in frames[:limit]:
             Hf = core.screen_to_atlas(np.array(f["M"], float), self.atlas.frame_R(f))
             T = np.array([[1, 0, -x0], [0, 1, -y0], [0, 0, 1]]) @ V @ Hf
             size = (x1 - x0, y1 - y0)
@@ -94,6 +107,8 @@ class TerrainMixin:
             )
             sub_b = best[y0:y1, x0:x1]
             take = wt > sub_b
+            if owner_view is not None:  # the clean map's owner, wherever this screenshot shows it
+                take = (owner_view[y0:y1, x0:x1] == idx_of[f["name"]]) & (wt > 0)
             out[y0:y1, x0:x1][take] = pix[take]
             sub_b[take] = wt[take]
             if time.perf_counter() - t0 > 1.5 or getattr(self, "_hires_req", key) != key:

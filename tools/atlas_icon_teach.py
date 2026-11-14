@@ -14,7 +14,6 @@ import argparse
 import json
 from pathlib import Path
 
-import cv2
 import numpy as np
 
 HERE = Path(__file__).resolve().parent
@@ -61,7 +60,7 @@ def main() -> int:
 
     def image(p):
         if p not in imgs:
-            imgs[p] = cv2.imdecode(np.fromfile(p, np.uint8), cv2.IMREAD_COLOR)
+            imgs[p] = core.read_screenshot(p)
         return imgs[p]
 
     unk = badges.get("Unidentified", [])

@@ -10,6 +10,8 @@ from pathlib import Path
 import cv2
 import numpy as np
 
+from grand_project import core
+
 from .constants import SHOTS, TRUTH
 from .pipeline import detect
 
@@ -78,7 +80,7 @@ def cmd_show() -> int:
         files = [str(p) for p in random.sample(pool, int(files[1]) if len(files) > 1 else 3)]
     for f in files:
         t0 = time.time()
-        img = cv2.imdecode(np.fromfile(f, np.uint8), cv2.IMREAD_COLOR)
+        img = core.read_screenshot(f)
         r = detect(img)
         cv2.imwrite(str(out / f"{Path(f).stem}_annotated.png"), annotate(img, r))
         (out / f"{Path(f).stem}_detect.json").write_text(json.dumps(r, default=float), encoding="utf-8")

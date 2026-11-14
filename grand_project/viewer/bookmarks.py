@@ -404,7 +404,7 @@ class BookmarksMixin:
                 cv.delete("all")
                 cv.create_text(20, 20, anchor="nw", fill="white", text=f"missing file: {f['path']}")
                 return
-            img = cv2.imdecode(np.fromfile(f["path"], np.uint8), cv2.IMREAD_COLOR)
+            img = core.read_screenshot(f["path"])
             W, H = max(50, cv.winfo_width()), max(50, cv.winfo_height())
             s = min(W / img.shape[1], H / img.shape[0])
             img = cv2.resize(img, None, fx=s, fy=s, interpolation=cv2.INTER_AREA)

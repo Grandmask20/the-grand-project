@@ -6,7 +6,6 @@ import sys
 import time
 from pathlib import Path
 
-import cv2
 import numpy as np
 
 from grand_project import core
@@ -64,7 +63,7 @@ def detect(img: np.ndarray) -> dict:
 def cmd_run() -> int:  # noqa: E302
     for f in sys.argv[2:]:
         t0 = time.time()
-        r = detect(cv2.imdecode(np.fromfile(f, np.uint8), cv2.IMREAD_COLOR))
+        r = detect(core.read_screenshot(f))
         hid = sum(1 for n in r["nodes"] if n.get("hidden"))
         kinds = {}
         for landmark in r["landmarks"]:

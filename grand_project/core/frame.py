@@ -70,6 +70,23 @@ class Frame:
 _hud_cache: dict = {}
 
 
+def read_screenshot(path) -> np.ndarray | None:
+    """a screenshot as the detector sees it: scaled to SCREEN_HEIGHT (1080) px tall, keeping its shape
+
+    Everything the detector knows (map bases, badges, towers, dash sizes) was learned in 1080p pixels, and
+    the game draws the atlas and its interface in proportion to the screen, so a 1440p or 4K screenshot
+    scaled down looks like a 1080p one. 1080p files, and crops (not shaped like a whole game window: widescreen,
+    720+ px tall), come back unchanged. None when it can't be read."""
+    img = cv2.imdecode(np.fromfile(str(path), np.uint8), cv2.IMREAD_COLOR)
+    if img is None or img.shape[0] == K.SCREEN_HEIGHT:
+        return img
+    if img.shape[0] < 720 or not 1.5 <= img.shape[1] / img.shape[0] <= 2.5:
+        return img
+    s = K.SCREEN_HEIGHT / img.shape[0]
+    size = (max(1, round(img.shape[1] * s)), K.SCREEN_HEIGHT)
+    return cv2.resize(img, size, interpolation=cv2.INTER_AREA if s < 1 else cv2.INTER_CUBIC)
+
+
 def is_full_window(w: int, h: int) -> bool:
     return w >= 1850 and h >= 1040 and abs(w / h - 16 / 9) < 0.03
 

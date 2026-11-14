@@ -105,6 +105,29 @@ check("atlas-wide result shown", bool(app.V["stats"]), str(app.V["stats"]))
 check("terrain built", bool(app.pyr), f"{app.pyr[0].shape if app.pyr else None}")
 img = app.render(W, H)
 check("render not blank", img.std() > 10)
+# Fix seams: the clean map (core.seams) replaces the quick one, with its ownership map
+quick_shape = app.pyr[0].shape
+app.fix_seams()
+first = app._seams_proc
+app.fix_seams()  # a second click while it runs: refused, not a second build
+check("fix seams: one build at a time", app._seams_proc is first and app.seams_running())
+t_fix = time.time()
+longest, last = 0.0, time.perf_counter()
+while getattr(app, "_labels", None) is None and time.time() - t_fix < 180:
+    app.root.update()
+    now = time.perf_counter()
+    if getattr(app, "_labels", None) is None:  # still building (taking in the finished map is a step of its own)
+        longest = max(longest, now - last)
+    last = now
+    time.sleep(0.02)
+check("fix seams: window responsive while it builds", longest < 0.3, f"longest pause {longest:.2f}s")
+lab = getattr(app, "_labels", None)
+check(
+    "fix seams: clean map with ownership",
+    lab is not None and lab[0].shape == app.pyr[0].shape[:2] and (lab[0] >= 0).mean() > 0.3,
+    f"{time.time() - t_fix:.1f}s, {len(lab[1]) if lab else 0} screenshots, quick map was {quick_shape}",
+)
+check("fix seams: map still drawn", app.render(W, H).std() > 10)
 times = []
 for _k in range(15):
     t0 = time.perf_counter()

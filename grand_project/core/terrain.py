@@ -31,20 +31,25 @@ def _valid_mask(frame_img: np.ndarray) -> np.ndarray:
     return m
 
 
-def _valid_mask_calc(frame_img: np.ndarray) -> np.ndarray:
+def _valid_mask_calc(frame_img: np.ndarray, dark: bool = True) -> np.ndarray:
+    """255 = atlas ground of the screenshot; 0 = interface (and, with dark=True, black unexplored fog)"""
     h, w = frame_img.shape[:2]
     m = np.full((h, w), 255, np.uint8)
-    m[: max(112, 0), int(w * 0.20) : int(w * 0.74)] = 0  # world header / act tabs / search
-    m[:94, :92] = 0
-    m[:77, max(0, w - 200) :] = 0
-    m[max(0, h - 100) :, :110] = 0  # globe
-    m[max(0, h - 100) :, max(0, w - 110) :] = 0
-    m[max(0, h - 27) :, :] = 0
-    m[:, :210][int(h * 0.62) : int(h * 0.96), :] = 0  # stats / chat text, left edge
-    m[hud_mask(w, h) > 0] = 0  # skill bars, globes, side icon columns
-    dark = (cv2.cvtColor(frame_img, cv2.COLOR_BGR2GRAY) < 14).astype(np.uint8) * 255
-    dark = cv2.erode(dark, np.ones((9, 9), np.uint8))  # unexplored black fog has no texture
-    m[dark > 0] = 0
+    hud = hud_mask(w, h)
+    if hud.any():  # a full game window: the drawn HUD mask (skill bars, globes, header, side columns, stats)
+        m[hud > 0] = 0
+    else:  # cropped screenshot: rough boxes where the interface usually is
+        m[: max(112, 0), int(w * 0.20) : int(w * 0.74)] = 0  # world header / act tabs / search
+        m[:94, :92] = 0
+        m[:77, max(0, w - 200) :] = 0
+        m[max(0, h - 100) :, :110] = 0  # globe
+        m[max(0, h - 100) :, max(0, w - 110) :] = 0
+        m[max(0, h - 27) :, :] = 0
+        m[:, :210][int(h * 0.62) : int(h * 0.96), :] = 0  # stats / chat text, left edge
+    if dark:
+        fog = (cv2.cvtColor(frame_img, cv2.COLOR_BGR2GRAY) < 14).astype(np.uint8) * 255
+        fog = cv2.erode(fog, np.ones((9, 9), np.uint8))  # unexplored black fog has no texture
+        m[fog > 0] = 0
     return cv2.erode(m, np.ones((7, 7), np.uint8))
 
 

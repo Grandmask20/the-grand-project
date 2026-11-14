@@ -69,7 +69,7 @@ def main() -> int:
         if b[3] not in cache:
             if len(cache) > 30:
                 cache.pop(next(iter(cache)))
-            cache[b[3]] = cv2.imdecode(np.fromfile(b[3], np.uint8), cv2.IMREAD_COLOR)
+            cache[b[3]] = core.read_screenshot(b[3])
         img = cache[b[3]]
         x, y, r = int(b[4]), int(b[5]), CROP // 2
         c = img[max(0, y - r) : y + r, max(0, x - r) : x + r]
