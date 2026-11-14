@@ -1,6 +1,6 @@
 [project]
 name = "the-grand-project"
-version = "1.07"
+version = "1.08"
 description = "Builds one big map of your Path of Exile 2 atlas from screenshots: maps, paths, badges, towers and cities."
 readme = "README.md"
 requires-python = ">=3.11"
