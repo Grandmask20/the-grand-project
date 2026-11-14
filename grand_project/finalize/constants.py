@@ -242,3 +242,6 @@ CORE_PAD = 600.0  # around the new screenshots: this area's result is replaced
 
 
 CONTEXT_PAD = 700.0  # evidence margin: > the longest path (300) + parallax; tested identical to a full check
+
+
+SAME_MAP = 15.0  # atlas units: two map nodes this close are one map seen twice (the better-seen one counts)

@@ -18,6 +18,7 @@ from .constants import (
     OCEAN_R,
     OCEAN_WATER,
     PARALLAX_TOL,
+    SAME_MAP,
     SETTLE_BADGE,
     SETTLE_MERGE,
 )
@@ -35,8 +36,17 @@ def _barrel(img, x, y, nodes=None) -> bool:
 
 
 def _screen_nodes(atlas, f, x, y, reach: float = 80.0) -> np.ndarray:
-    """the atlas's map nodes near atlas point (x, y), in screenshot f's pixels"""
-    near = [[n["x"], n["y"]] for n in atlas.nodes if abs(n["x"] - x) < reach and abs(n["y"] - y) < reach]
+    """the atlas's map nodes near atlas point (x, y), in screenshot f's pixels. A map node seen in few
+    screenshots right next to a better-seen one is the same map (not yet merged): only the better-seen one counts,
+    or a rough point could snap onto the stray copy a few px off the map's middle."""
+    cand = sorted(
+        (n for n in atlas.nodes if abs(n["x"] - x) < reach and abs(n["y"] - y) < reach),
+        key=lambda n: -len(n.get("frames", [])),
+    )
+    near: list[list[float]] = []
+    for n in cand:
+        if all(math.hypot(n["x"] - a, n["y"] - b) > SAME_MAP for a, b in near):
+            near.append([n["x"], n["y"]])
     if not near:
         return np.zeros((0, 2))
     Hi = np.linalg.inv(core.screen_to_atlas(np.array(f["M"], float), atlas.frame_R(f)))
@@ -225,12 +235,15 @@ def _settlements(atlas, maps, landmarks, icons) -> list[dict]:
                 badge = None
         barrel = False
         if badge is not None:
+            # most of the screenshots that show it centrally must see the barrel: one view a few px off can look
+            # like one (a map node's orb seen too high)
             bx, by = badge.get("bx", badge["x"]), badge.get("by", badge["y"] + 24)
-            for _c, f, sp in atlas.central_views(bx, by, 3):
-                im = atlas.image(f["path"]) if Path(f["path"]).exists() else None
-                if im is not None and _barrel(im, sp[0], sp[1], _screen_nodes(atlas, f, bx, by)):
-                    barrel = True
-                    break
+            votes = [
+                _barrel(im, sp[0], sp[1], _screen_nodes(atlas, f, bx, by))
+                for _c, f, sp in atlas.central_views(bx, by, 3)
+                if (im := atlas.image(f["path"]) if Path(f["path"]).exists() else None) is not None
+            ]
+            barrel = bool(votes) and 2 * sum(votes) > len(votes)
         views = [
             (atlas.image(f["path"]), sp)
             for _c, f, sp in atlas.central_views(b["x"], b["y"], 3)

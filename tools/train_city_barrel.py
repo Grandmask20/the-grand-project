@@ -27,6 +27,8 @@ from grand_project.detect.constants import CITY_BARREL_FILE, CITY_P
 
 SNAP = 40  # px: a truth point belongs to the nearest detected map node this close
 C = 0.05  # regularisation: few cities, many features
+# robustness report only (training on them made the model worse): ordinary map nodes looked at a few px off
+OFF_SHIFTS = [(0, -8), (0, -5), (0, 5), (0, 8), (-6, 0), (6, 0)]
 
 
 def dataset(folders: list[Path]):
@@ -62,9 +64,14 @@ def _add(folder: Path, X, y, group, where):
         for k, (x, yy) in enumerate(nodes):
             if k in unsure:
                 continue
-            f = citybase.features(img, x, yy)
-            if f is not None:
-                X.append(f), y.append(int(k in cities)), group.append(g), where.append((name, x, yy))
+            # atlas positions are a few px off a screenshot's own: an ordinary map node looked at a few px off
+            # should still not look like a barrel (reported, not trained on)
+            shifts = [(0, 0)] + ([] if k in cities else OFF_SHIFTS)
+            for dx, dy in shifts:
+                f = citybase.features(img, x + dx, yy + dy)
+                if f is not None:
+                    X.append(f), y.append(int(k in cities)), group.append(g)
+                    where.append((name, x + dx, yy + dy, (dx, dy) != (0, 0)))
         print(f"  {name}: {len(nodes)} map nodes, {len(cities)} cities", flush=True)
     # detected map nodes are cached in the truth file: retraining doesn't re-detect
     (folder / "cities_truth.json").write_text(json.dumps(truth, indent=1), encoding="utf-8")
@@ -80,16 +87,24 @@ def main():
     if len(sys.argv) < 2:
         sys.exit(__doc__)
     X, y, group, where = dataset([Path(a) for a in sys.argv[1:]])
+    shifted = np.array([w[3] for w in where])
     p = np.zeros(len(y))
     for g in np.unique(group):
-        sc, m = fit(X[group != g], y[group != g])
+        tr = (group != g) & ~shifted
+        sc, m = fit(X[tr], y[tr])
         p[group == g] = m.predict_proba(sc.transform(X[group == g]))[:, 1]
+    off = shifted & (y == 0)  # ordinary map nodes looked at a few px off their middle
+    fooled = int((p[off] >= CITY_P).sum())
+    print(f"ordinary map nodes looked at a few px off: {fooled} of {int(off.sum())} look like a barrel")
+    X_all, y_all = X, y
+    keep = ~shifted  # the score is judged on the map nodes themselves
+    p, y, where = p[keep], y[keep], [w for w, k in zip(where, keep, strict=True) if k]
     found = int(((p >= CITY_P) & (y == 1)).sum())
     false = int(((p >= CITY_P) & (y == 0)).sum())
     print(f"fair score: {found} of {int(y.sum())} cities found, {false} false of {int((y == 0).sum())} map nodes")
     for k in np.nonzero((p >= CITY_P) != (y == 1))[0]:
         print(f"  {'missed' if y[k] else 'false '} {where[k][0]} ({where[k][1]:.0f}, {where[k][2]:.0f}) p {p[k]:.2f}")
-    sc, m = fit(X, y)
+    sc, m = fit(X_all[~shifted], y_all[~shifted])
     citybase.save_model(CITY_BARREL_FILE, sc.mean_, sc.scale_, m.coef_[0], m.intercept_[0])
     print(f"saved {CITY_BARREL_FILE}")
 
