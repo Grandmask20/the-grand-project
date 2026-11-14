@@ -1,6 +1,6 @@
 """Contact sheet of map badges for naming by hand.
 
-    py atlas_badge_sheet.py --atlas my_atlas.json [--out sheet.png]
+    python -m tools.atlas_badge_sheet --atlas my_atlas.json [--out sheet.png]
 
 Unidentified badges (HUD excluded, one crop per badge even if several screenshots saw it) are
 grouped by look; each row is one group labelled G1, G2, ...  Below them, samples of the icon
@@ -12,15 +12,13 @@ from __future__ import annotations
 
 import argparse
 import json
-import sys
 from pathlib import Path
 
 import cv2
 import numpy as np
 
 HERE = Path(__file__).resolve().parent
-sys.path.insert(0, str(HERE.parent / "program"))
-import atlas_builder_core as core  # noqa: E402
+from grand_project import core  # noqa: E402
 
 CHECK_TYPES = [
     "Sanctification",

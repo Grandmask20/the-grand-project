@@ -1,7 +1,7 @@
 """Two adjacent screenshots through the new detector (atlas_detect): do maps and paths agree where they
 overlap, and does adding the second shot complete paths the first could only see one end of?
 
-    py test_detect_pairs.py [N] [seed]      N random consecutive pairs from
+    python -m tests.test_detect_pairs [N] [seed]      N random consecutive pairs from
                                            atlas_test_data/screenshots/crawl (default 4)
 
 Placement: the builder's own placements of the crawl shots (atlas_test_data/crawl_atlas/atlas.json:
@@ -26,13 +26,12 @@ import cv2
 import numpy as np
 
 HERE = Path(__file__).resolve().parent
-sys.path.insert(0, str(HERE.parent / "program"))
-import rc_paths  # noqa: E402
+from grand_project import paths as rc_paths  # noqa: E402
 
 rc_paths.need_test_data()
 TD = rc_paths.TEST_DATA
-import atlas_builder_core as core  # noqa: E402
-import atlas_detect as ad  # noqa: E402
+from grand_project import core  # noqa: E402
+from grand_project import detect as ad  # noqa: E402
 
 CRAWL = TD / "screenshots" / "crawl"
 OUT = TD / "detect_pairs_out"

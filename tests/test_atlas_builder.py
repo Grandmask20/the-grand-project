@@ -1,16 +1,15 @@
-"""Offline checks for the atlas builder core (no screenshots or detector needed).  py test_atlas_builder.py"""
+"""Offline checks for the atlas builder core (no screenshots or detector needed).  python -m tests.test_atlas_builder"""
 
 import json
-import sys
 import tempfile
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "program"))
-import atlas_builder_core as C
 import cv2
 import numpy as np
 
-C.HORIZON = None  # synthetic crops of one image: flat, no camera tilt
+from grand_project import core as C
+
+C.constants.HORIZON = None  # synthetic crops of one image: flat, no camera tilt
 
 
 def make_world(seed=1, w=1500, h=700, n=110):

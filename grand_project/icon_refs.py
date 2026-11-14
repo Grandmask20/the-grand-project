@@ -21,10 +21,8 @@ import numpy as np
 
 HERE = Path(__file__).resolve().parent
 REF_DIR = HERE / "icon_refs"  # old storage: imported into the database once, then unused
-import sys  # noqa: E402
 
-sys.path.insert(0, str(HERE))
-import rc_paths  # noqa: E402
+from grand_project import paths as rc_paths  # noqa: E402
 
 DB_PATH = rc_paths.DATABASE
 SIZE = 34  # badge crop, px at 1080p

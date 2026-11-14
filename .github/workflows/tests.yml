@@ -22,11 +22,10 @@ jobs:
       # the offline tests; the others skip without the (not shipped) test screenshots,
       # and test_atlas_viewer needs a desktop and an atlas
       - name: tests
-        working-directory: tests
         shell: bash
         run: |
           set -e
           for t in test_atlas_builder test_atlas_io test_model_safety test_atlas_folder test_random_sequence test_drop_placement test_false_merge test_detect_pairs; do
             echo "===== $t"
-            python "$t.py"
+            python -m "tests.$t"
           done

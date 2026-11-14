@@ -1,15 +1,12 @@
-"""Offline checks for safe saving and damaged caches (no screenshots needed).   py test_atlas_io.py"""
+"""Offline checks for safe saving and damaged caches (no screenshots needed).   python -m tests.test_atlas_io"""
 
 import json
 import os
-import sys
 import tempfile
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "program"))
-import atlas_builder as builder  # noqa: E402
-import atlas_builder_core as core  # noqa: E402
-import atlas_io  # noqa: E402
+from grand_project import builder, core
+from grand_project import fileio as atlas_io
 
 
 def test_atomic_write_replaces_and_leaves_no_temp_files():

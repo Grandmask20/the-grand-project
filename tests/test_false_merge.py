@@ -1,7 +1,7 @@
 """Randomised false-merge test: a screenshot must NOT be placed into an atlas built from a far-away
 part of the crawl (no real overlap).
 
-    py test_false_merge.py [--runs 10] [--seed N]
+    python -m tests.test_false_merge [--runs 10] [--seed N]
 """
 
 from __future__ import annotations
@@ -9,21 +9,20 @@ from __future__ import annotations
 import argparse
 import random
 import shutil
-import sys
 import tempfile
 from pathlib import Path
 
 import numpy as np
 
 HERE = Path(__file__).resolve().parent
-sys.path.insert(0, str(HERE.parent / "program"))
-import rc_paths  # noqa: E402
+from grand_project import paths as rc_paths  # noqa: E402
 
 rc_paths.need_test_data()
 TD = rc_paths.TEST_DATA
-import atlas_builder as B  # noqa: E402
-import atlas_builder_core as C  # noqa: E402
-import test_random_sequence as T  # noqa: E402
+from tests import test_random_sequence as T  # noqa: E402, I001
+
+from grand_project import builder as B  # noqa: E402
+from grand_project import core as C  # noqa: E402
 
 
 def main() -> int:

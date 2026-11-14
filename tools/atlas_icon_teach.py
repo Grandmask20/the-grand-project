@@ -1,6 +1,6 @@
 """Save badge-sheet labels as reference crops in the icon database (badge_refs table).
 
-    py atlas_icon_teach.py --atlas my_atlas.json --labels labels.txt
+    python -m tools.atlas_icon_teach --atlas my_atlas.json --labels labels.txt
 
 labels.txt, one per line:  G4.10 PowerOfFaith    |  G2 Corruption  (whole group, the 14 shown)
                            RogueExile.13 HuntingGrounds   (rows of matched types)
@@ -12,17 +12,16 @@ from __future__ import annotations
 
 import argparse
 import json
-import sys
 from pathlib import Path
 
 import cv2
 import numpy as np
 
 HERE = Path(__file__).resolve().parent
-sys.path.insert(0, str(HERE.parent / "program"))
-import atlas_builder_core as core  # noqa: E402
-import atlas_icon_refs as R  # noqa: E402
-from atlas_badge_sheet import CHECK_TYPES, PER_ROW  # noqa: E402
+from tools.atlas_badge_sheet import CHECK_TYPES, PER_ROW  # noqa: E402, I001
+
+from grand_project import core  # noqa: E402
+from grand_project import icon_refs as R  # noqa: E402
 
 
 def sheet_badges(atlas_path: Path):

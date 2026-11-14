@@ -1,4 +1,4 @@
-# The Grand Project — v1.08
+# The Grand Project — v1.09
 
 Builds one big map of your Path of Exile 2 atlas from your screenshots. Named after the in-game tablet, *The Grand Project*. It finds maps, paths, icons, towers and cities, and lets you search and bookmark them.
 
@@ -112,7 +112,7 @@ A screenshot that overlaps nothing yet goes to **Waiting** (Auto-add tab). Waiti
 | Folder | What is in it |
 |---|---|
 | `atlases/` | Your atlases. `default/` opens on first start. |
-| `program/` | The program. `atlas_viewer.py` is the window and `atlas_detect.py` the screenshot detector. `atlas_builder*.py` and `atlas_finalize.py` place screenshots and clean up the atlas. All folder locations are in `rc_paths.py`. |
+| `grand_project/` | The program, a Python package (see *Code layout* below). |
 | `references/` | Every file the program reads: the database copy, HUD mask, icons and tower / city templates. |
 | `tools/` | Helpers for improving the detector (mark checks, icon teaching, badge sheets, coverage). |
 | `tests/` | Regression tests. Their screenshots and hand-made truth are not included (see below). |
@@ -130,12 +130,29 @@ git lfs pull --include="atlas_test_data/**"
 
 The tests look for the data in `ATLAS_TEST_DATA` (environment variable) if set, then `atlas_test_data/` inside this folder, then `atlas_test_data` next to it. Without it, the tests that need it skip (under pytest they are reported as skipped). `test_atlas_builder.py` and `test_model_safety.py` need no data. Retraining the detector needs more data than the trimmed set (tower shots, painted walls), which is not included.
 
-Run these from the folder named:
+**Setup.** `pip install -e ".[dev]"` (or `make install`) installs the program as the `grand_project` package with pytest and ruff; `grand-project` then starts the viewer. Without installing, run everything from this folder with `python -m ...`.
 
-- `program/`: `py atlas_detect.py score` scores the detector on the 10 hand-labelled screenshots. `py atlas_detect.py train` retrains it into the database. Both need the test data.
-- `program/`: `py atlas_builder.py add --atlas X.json --image FOLDER` builds an atlas without the window.
-- `tools/`: `py atlas_marks.py` checks the detector against all hand-drawn mark layers and true paths.
-- `tests/`: double-click `Run all tests.bat`, or run any `test_*.py` on its own. `test_atlas_viewer.py` opens a window for about 20 s.
+Run these from this folder:
+
+- `python -m grand_project.detect score` scores the detector on the hand-labelled screenshots; `python -m grand_project.detect train` retrains it into the database. Both need the test data.
+- `python -m grand_project.builder add --atlas X.json --image FOLDER` builds an atlas without the window.
+- `python -m tools.atlas_marks` checks the detector against all hand-drawn mark layers and true paths.
+- Tests: `make test`, `tests/Run all tests.bat`, `tests/run_all_tests.sh`, or one at a time with `python -m tests.test_atlas_builder`. `test_atlas_viewer` opens a window for about 20 s.
+- Lint: `make lint` (ruff check + format); CI runs the same on every push and pull request.
+
+**Code layout** (`grand_project/`):
+
+| Part | What it does |
+|---|---|
+| `paths.py` | every folder location (atlases, references, user data, test data) |
+| `core/` | screenshots and their geometry, placing a screenshot (`register.py`), terrain matching, the atlas file (`atlas.py`) |
+| `detect/` | the screenshot detector: maps, badges, landmarks, path dashes, fortress walls, the stored models, training |
+| `finalize/` | the atlas-wide check after screenshots are added: path evidence, map rules, settlements, local re-checks |
+| `builder.py` | detecting and adding screenshots (also a command line) |
+| `cities.py`, `towers.py` | city types and biomes; hand-made tower / stronghold rules |
+| `viewer/` | the window: `app.py` builds it, each other file is one part of it (panels, auto-add, drawing, ...) |
+
+Each larger part keeps its tunable numbers in its own `constants.py`.
 
 ## License and credits
 

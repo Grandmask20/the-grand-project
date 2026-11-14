@@ -23,15 +23,13 @@ import argparse
 import hashlib
 import json
 import re
-import sys
 from pathlib import Path
 
 import cv2
 import numpy as np
 
 HERE = Path(__file__).resolve().parent
-sys.path.insert(0, str(HERE))
-import atlas_builder_core as core  # noqa: E402
+from grand_project import core as core  # noqa: E402
 
 MAP_CROP, MAP_TILE, MAP_ROW = 56, 64, 20
 LM_W, LM_H, LM_ROW = 170, 210, 10

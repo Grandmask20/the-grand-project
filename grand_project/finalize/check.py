@@ -1,346 +1,112 @@
-"""Atlas-wide clean-up that uses every screenshot at once.
-
-Run after screenshots are placed (the builder and the viewer both do).  Nothing here changes
-what was detected; it decides what to *believe*, and stores the result in atlas["final"]:
-
-1. Nodes: for each node, how many screenshots could see that spot vs. how many found a node
-   there.  Found by most -> kept.  Missed by most -> ghost, removed.  Two half-merged copies of
-   one node (each seen once, a few px apart) are joined.
-2. Icons: every badge is attached to the map base 24 px under it.  A named badge with no base
-   under it creates the node (icons are much more reliable than base detection).
-3. Abyss: Abyss badges along a river form a single chain - first icon to the final map with
-   two Abyss badges, one path between neighbours, nothing else touching the inner maps.
-   Ghost nodes and false Towers on the glowing river are removed.
-4. Paths: every candidate link is scored on the gold dotted line in EVERY screenshot that shows
-   both ends (the detector's own route_score, at the merged node positions), and the scores are
-   averaged.  The detector's selection rules then run once on the whole atlas: no crossings,
-   at most 5 exits, no shortcut past a nearer base, no diamond diagonals.
-"""
+"""finalize.check (from atlas_finalize.py)"""
 
 from __future__ import annotations
 
 import math
-from pathlib import Path
 
-import atlas_builder_core as core
-import atlas_detect
-import atlas_io
-import atlas_log
-import atlas_paths as gp
 import cv2
 import numpy as np
-import rc_paths
 
-_log = atlas_log.printer("finalize")
+from grand_project import core
+from grand_project import detect as atlas_detect
+from grand_project import gold_paths as gp
 
-FRAME_MARGIN = 22  # px from a screenshot edge: a node closer than this may be cut off
-PARALLAX_TOL = 52.0  # maps / badges on raised ground (mountains, outcrops) shift up to ~35-45
-# between screenshots: the atlas is 3D, the flattening assumes a plane
-TOWER_JOIN = 44.0  # atlas units: a tower base is wide (rim ~3x a map's, user). Where a screenshot did not
-# recognise the tower (cut off at the edge) it found two maps 31-40 px apart on its base;
-# real maps next to a tower sat 48+ px away. Anything this close to a tower IS the tower.
-TOWER_JOIN_SEEN = 2  # ...and only around a tower recognised in this many screenshots
-SHARED_MIN_ALONE = 6  # ...and only when this many screenshots found a single map there
-SHARED_OK, SHARED_FRAC = 1, 0.2  # copies seen together in at most 1 screenshot / 20% of them may still be one map
-DUP_TOL = 26.0  # atlas units: one map found at two spots by different screenshots.
-# Within one screenshot real maps are >= ~36 px apart (1st percentile).
-SAME_SPOT = 14.0  # badges this close on one map are one badge
-ICON_TWIN = 40.0  # a map placed from a badge this close to a found map with the same badge: one map
-RATIO_GHOST, RATIO_NEAR, RATIO_COULD = 0.35, 0.70, 8  # found in <= 25% of the shots that show it, while maps
-RATIO_REL, RATIO_REL_NEAR, RATIO_COULD_REL = (
-    0.0,
-    0.85,
-    4,
-)  # relative ghost rule OFF: removed ~14 real maps for 2 ghosts (atlas_test_data/ghost_check.png)
-GAP_ON = True  # user's ladder: badge -> visible base -> paths with a gap; only weak bases get the gap test
-GAP_FOUND = 0.6  # ...and only maps found in under 60% of their shots (user's dark real X4 3/3, X5 2/3)
-GAP_SEEN = 0.85  # map confidence that counts as a clearly visible base (judged: 12 of 14 real, 1 of 6 ghosts)
-GAP_R, GAP_MIN, GAP_SHOTS = 10.0, 2, 3  # px ring; a map with >= 2 amber dashes inside it in EVERY one of 3+ clear shots
-JUNCTION = 3  # maps where this many traced paths end are never ghosts (run-over / gap rules)
-LONELY_SEEN = 0.9  # ...and only when its base is never clearly seen (crawl: real ones 0.94+)
-LONELY_ON, LONELY_SHOTS = True, 3  # maps with no badge and no path are removed (user)
-RATIO_R = 200.0  # within 200 are found in >= 85% (and 8+ shots show it): a ghost (user's 2/12, 2/17)
-WALL_MAP = 0.6  # a map on the fortress wall in this share of the shots that show it: wall art (user)
-ICON_ATTACH_DX, ICON_ATTACH_DY = 24.0, 13.0  # base position tolerance under an icon
-ICON_TOWER_SPREAD = 40.0  # a badge whose copies lay this far apart, with no map right under it, is a tower's
-ICON_TOWER_REACH = (70.0, 260.0)  # ... its tower map: this far sideways, up to this far below the badge base
-ICON_PAIR = 32.0  # badges of one row whose map base was not detected share one new node
-ROW_GAP = 46.0  # neighbouring badges in one row over a single map (measured ~36 px)
-NO_NODE_ICONS = {
-    "Unidentified",
-    "LostTower",
-    "PlayerOrBookmark",
-}  # never create a map node  # these never create a node on their own
-ABYSS_NAMES = {"Abyss", "AbyssOverrun"}
-ABYSS_LINK = 150.0  # max gap between successive Abyss maps in a chain
-ABYSS_CLEAR = 42.0  # non-icon nodes this close to the chain line are river glow
-ABYSS_TOWER_CLEAR = 60.0
-PATH_THRESHOLD, TOWER_THRESHOLD, PROPOSE = 0.73, 0.63, 0.64
-MAX_EXITS = gp.MAX_EXITS
-PASS_CLEAR = 28.0  # a traced line running this close to a third map is not a real path
-
-
-class _Grid:
-    """Spatial index: points in square cells, so 'what is near here' looks at a few cells
-    instead of the whole atlas (the atlas-wide check was quadratic: 35 min for 8k maps)."""
-
-    def __init__(self, pts, cell: float):
-        self.pts = np.asarray(pts, float).reshape(-1, 2)
-        self.cell = float(cell)
-        self.cells: dict[tuple[int, int], list[int]] = {}
-        for i, (x, y) in enumerate(self.pts):
-            self.cells.setdefault((int(x // cell), int(y // cell)), []).append(i)
-
-    def near(self, p, r) -> list[int]:
-        """indices within distance r of p"""
-        c, k = self.cell, int(math.ceil(r / self.cell))
-        cx, cy = int(p[0] // c), int(p[1] // c)
-        cand = [
-            i
-            for gx in range(cx - k, cx + k + 1)
-            for gy in range(cy - k, cy + k + 1)
-            for i in self.cells.get((gx, gy), ())
-        ]
-        if not cand:
-            return []
-        d = np.hypot(self.pts[cand, 0] - p[0], self.pts[cand, 1] - p[1])
-        return [cand[q] for q in np.nonzero(d <= r)[0]]
-
-    def pairs(self, r):
-        """(distance, i, j) for every i < j closer than r"""
-        out = []
-        for i, q in enumerate(self.pts):
-            for j in self.near(q, r):
-                if j > i:
-                    out.append((float(np.hypot(*(self.pts[j] - q))), i, j))
-        return out
-
-
-_GOLD: dict = {}  # screenshot path -> (dash centres, distance-to-gold field, float16)
-GOLD_CACHE = 160  # ~4 MB each; kept between checks so local updates re-use them (a local
-# re-check reads ~110: at 80 every one was decoded again each time)
-
-
-_DASHES: dict = {}
-
-
-def _dashes(atlas, f):
-    """the new detector's path dashes of a screenshot (dim/fog dashes, amber dash strokes), computed once"""
-    key = f["path"]
-    if key in _DASHES:
-        _DASHES[key] = _DASHES.pop(key)
-        return _DASHES[key]
-    img = atlas.image(f["path"])
-    _DASHES[key] = (atlas_detect.path_dashes(img), atlas_detect.amber_dashes(img))
-    while len(_DASHES) > GOLD_CACHE:
-        _DASHES.pop(next(iter(_DASHES)))
-    return _DASHES[key]
-
-
-TRACE_WORKERS = atlas_io.workers(6)  # screenshots traced at once in worker processes (when there are many)
-TRACE_PARALLEL_MIN = 12
-
-
-def _trace_one(job):
-    """worker: the new detector's paths between given map positions in one screenshot"""
-    import cv2
-
-    path, sp, ok, tower = job
-    img = cv2.imdecode(np.fromfile(path, np.uint8), cv2.IMREAD_COLOR)
-    return atlas_detect.screen_paths((atlas_detect.path_dashes(img), atlas_detect.amber_dashes(img)), sp, ok, tower)
-
-
-def _trace_views(atlas, views, tower, log=None):
-    """(frame, screen pts, visible, traced paths) for every view; many views are traced in parallel
-    (each screenshot is independent), otherwise in this process with the dashes cache"""
-    if len(views) >= TRACE_PARALLEL_MIN and TRACE_WORKERS > 1:
-        try:
-            jobs = [(f["path"], sp, ok, tower) for f, sp, ok in views]
-            with atlas_io.process_pool(TRACE_WORKERS) as ex:
-                res = list(ex.map(_trace_one, jobs, chunksize=4))
-            return [(f, sp, ok, r) for (f, sp, ok), r in zip(views, res, strict=False)]
-        except Exception:
-            if log:
-                log("parallel path tracing failed, tracing one screenshot at a time")
-    return [(f, sp, ok, atlas_detect.screen_paths(_dashes(atlas, f), sp, ok, tower)) for f, sp, ok in views]
-
-
-_SAVED: dict = {}
-SAVED_CACHE = 400
-TRACE_MATCH = 30.0  # px: a saved trace's end map -> the atlas map at that spot in the screenshot
-CHECK_STEP = 8.0  # px between the points checked along a path
-CHECK_NEAR = 9.0  # px: a dash this close to a checked point covers it
-CHECK_SEEN = 0.6  # share of a path that must lie in clearly visible ground for a view to judge it
-CONFIRM, DENY = 0.35, 0.12  # share of the visible part covered by dashes: confirms / denies the path
-LOCAL_RETRACE = (
-    0.0  # px around a map a screenshot missed, traced again (0 = off: 3x slower, recovered 1 of 5 lost paths)
+from .constants import (
+    ABYSS_CLEAR,
+    ABYSS_LINK,
+    ABYSS_NAMES,
+    ABYSS_TOWER_CLEAR,
+    CHECK_SEEN,
+    CLUMP_N,
+    CLUMP_R,
+    CLUMP_SHARE,
+    CONFIRM,
+    DENY,
+    DUP_TOL,
+    END_CONE,
+    END_DASHES,
+    END_REACH,
+    END_VIEWS,
+    GAP_FOUND,
+    GAP_MIN,
+    GAP_ON,
+    GAP_R,
+    GAP_SEEN,
+    GAP_SHOTS,
+    ICON_ATTACH_DX,
+    ICON_ATTACH_DY,
+    ICON_PAIR,
+    ICON_TOWER_REACH,
+    ICON_TOWER_SPREAD,
+    ICON_TWIN,
+    JUNCTION,
+    LOCAL_RETRACE,
+    LONELY_ON,
+    LONELY_SEEN,
+    LONELY_SHOTS,
+    MAX_BOW,
+    MAX_BOW_STRONG,
+    MAX_EXITS,
+    NO_NODE_ICONS,
+    ONE_END_SHARE,
+    PARALLAX_TOL,
+    PASS_CLEAR,
+    PASS_WEAK,
+    PATH_THRESHOLD,
+    PROPOSE,
+    RATIO_COULD,
+    RATIO_COULD_REL,
+    RATIO_GHOST,
+    RATIO_NEAR,
+    RATIO_R,
+    RATIO_REL,
+    RATIO_REL_NEAR,
+    ROW_GAP,
+    RUN_OVER,
+    S_BOW,
+    S_BOW_PX,
+    S_TURN,
+    S_WOBBLE_PX,
+    SAME_SPOT,
+    SEAM_DASHES,
+    SEAM_MAX,
+    SEAM_MIN,
+    SEAM_ON,
+    SEAM_PAD,
+    SECTOR,
+    SECTOR_NEAR,
+    SECTOR_STRICT,
+    SETTLE_BADGE,
+    SHARED_FRAC,
+    SHARED_MIN_ALONE,
+    SHARED_OK,
+    START_LEN,
+    STRAIGHT_MAX,
+    STRAIGHT_VIEWS,
+    TOWER_JOIN,
+    TOWER_JOIN_SEEN,
+    TOWER_THRESHOLD,
+    TRACE_MATCH,
+    WALL_MAP,
 )
-SECTOR = 25.0  # deg: two real paths of one map are almost never closer (crawl: 3.6% under 25)
-SECTOR_STRICT = (
-    15.0  # deg: a nearer map this dead ahead blocks the path without further evidence (0.3% of trusted paths)
+from .landmarks import _clean_icons, _guessed, _one_map, _settlements
+from .traces import (
+    _along,
+    _bypasses_two,
+    _coverage,
+    _dashes,
+    _diamond_shortcut,
+    _gold,
+    _Grid,
+    _log,
+    _maps,
+    _mst,
+    _on_wall,
+    _saved,
+    _seg_dist,
+    _trace_views,
+    _visible,
 )
-SECTOR_NEAR = 0.88  # ...and a map in that sector this much nearer is where the path really goes
-START_LEN = 40.0  # px along a path that give its starting direction
-STRAIGHT_VIEWS, STRAIGHT_MAX = 2, 200.0  # untraced links: 2+ screenshots with gold along it, <= 200 long
-SEAM_ON = False  # seam joining: off (user: 0 of 10 fully right; ends snapped to wrong/doubled maps)
-SEAM_MAX, SEAM_MIN = 280.0, 50.0  # atlas units: map pairs no screenshot shows together, joined over the seam
-SEAM_DASHES = 6  # dashes a seam walk must run along
-SEAM_PAD = 70.0  # dashes / maps this far around the pair are used for the walk
-END_CONE, END_REACH, END_DASHES, END_VIEWS = 40.0, (15.0, 50.0), 2, 8  # both ends point (user)
-CLUMP_R, CLUMP_N, CLUMP_SHARE = 10.0, 4, 9.0  # dash-clump check OFF (user: 11 of 12 dropped paths were real)
-ONE_END_SHARE = 0.0  # OFF (debug run: rejected 15 real paths, 0 of the wrong ones) - was 0.5
-RUN_OVER = 12.0  # px: a ghost sits ON the dotted line (dashes taken for a base); a real neighbour beside it
-PASS_WEAK = 0.3  # a map found by under half its shots that a strong path runs through is dropped
-# never traced end to end: drawn by at least this share of the shots showing both (user)
-MAX_BOW_STRONG = 0.30  # traced end to end in 2+ shots (user's clear -3961,-539 path bowed more)
-MAX_BOW = 0.18  # max sideways bend / map distance (user: closer maps curve less; 99% of trusted paths <= 0.18)
-S_WOBBLE_PX = 0.0  # px floor for the summed-turn S test (3 let a wrong path back; seams with straight S15 are off)
-S_BOW, S_BOW_PX = 0.05, 5.0  # an S bows at least this share of its length / px to each side
-S_TURN = 14.0  # deg: a path bending one way and then this much the other way is not one path
-
-
-def _saved(atlas, f):
-    """a screenshot's saved detection for the path check: its maps (screen px), its traced paths, a tree of
-    its dashes and its clearly-visible grid. Detections saved before v0.92 get their dash record added
-    (from the image, once). None when no saved detection is found (then the view is traced the old way)."""
-    d = getattr(atlas, "frames_dir", None)
-    if d is None or not f.get("sha"):
-        return None
-    key = f["sha"]
-    if key in _SAVED:
-        _SAVED[key] = _SAVED.pop(key)
-        return _SAVED[key]
-    cf = Path(d) / f"{f['sha'][:16]}_{atlas_detect.DETECTOR_ID}.json"
-    if not cf.exists():
-        return None
-    import json
-
-    from scipy.spatial import cKDTree
-
-    data = atlas_io.read_json(cf)
-    if data is None:  # cut-off cache: treated as not cached
-        return None
-    if any(k not in data for k in ("dash_pts", "seen_grid", "wall_grid", "amber_pts")):
-        img = atlas.image(f["path"]) if Path(f["path"]).exists() else None
-        if img is None:
-            return None
-        data.update(atlas_detect.dash_record(img))
-        atlas_io.write_text_atomic(cf, json.dumps(data))
-    D = np.asarray(data["dash_pts"], float).reshape(-1, 2)
-    rec = {
-        "P": np.array([[n["x"], n["y"]] for n in data["nodes"]], float).reshape(-1, 2),
-        "hidden": np.array([bool(n.get("hidden")) for n in data["nodes"]], bool),
-        "score": np.array([float(n.get("score", 0.5)) for n in data["nodes"]], float),
-        "edges": data["edges"],
-        "tree": cKDTree(D) if len(D) else None,
-        "amber": (lambda A: cKDTree(A) if len(A) else None)(np.asarray(data["amber_pts"], float).reshape(-1, 2)),
-        "grid": np.array([[c == "1" for c in row] for row in data["seen_grid"]], bool),
-        "wall": np.array([[c == "1" for c in row] for row in data["wall_grid"]], bool),
-    }
-    _SAVED[key] = rec
-    while len(_SAVED) > SAVED_CACHE:
-        _SAVED.pop(next(iter(_SAVED)))
-    return rec
-
-
-def _along(line, step=CHECK_STEP, skip=18.0):
-    """points every `step` px along a polyline, leaving out `skip` px at both ends (the map bases)"""
-    line = np.asarray(line, float).reshape(-1, 2)
-    if len(line) < 2:
-        return np.zeros((0, 2))
-    seg = np.hypot(*np.diff(line, axis=0).T)
-    cum = np.concatenate([[0], np.cumsum(seg)])
-    if cum[-1] <= 2 * skip:
-        return np.zeros((0, 2))
-    t = np.arange(skip, cum[-1] - skip, step)
-    return np.column_stack([np.interp(t, cum, line[:, 0]), np.interp(t, cum, line[:, 1])])
-
-
-def _coverage(rec, f, line):
-    """(share of the path in clearly visible ground of this screenshot, share of that part covered by dashes)"""
-    q = _along(line)
-    if not len(q) or rec["tree"] is None:
-        return 0.0, 0.0
-    w, h = f["w"], f["h"]
-    inside = (q[:, 0] > 6) & (q[:, 0] < w - 6) & (q[:, 1] > 6) & (q[:, 1] < h - 6)
-    g = rec["grid"]
-    gx = np.clip((q[:, 0] // atlas_detect.SEEN_CELL).astype(int), 0, g.shape[1] - 1)
-    gy = np.clip((q[:, 1] // atlas_detect.SEEN_CELL).astype(int), 0, g.shape[0] - 1)
-    seen = inside & g[gy, gx]
-    if not seen.any():
-        return 0.0, 0.0
-    d, _ = rec["tree"].query(q[seen])
-    return float(seen.mean()), float((d <= CHECK_NEAR).mean())
-
-
-def _on_wall(rec, line_screen) -> float:
-    """share of a path's middle (screen px of this screenshot) on the fortress wall (user: never crossed)"""
-    if rec is None or not rec["wall"].any():
-        return 0.0
-    q = _along(line_screen, 6.0, 30.0)
-    if not len(q):
-        return 0.0
-    g, c = rec["wall"], atlas_detect.WALL_CELL
-    gx = np.clip((q[:, 0] // c).astype(int), 0, g.shape[1] - 1)
-    gy = np.clip((q[:, 1] // c).astype(int), 0, g.shape[0] - 1)
-    return float(g[gy, gx].mean())
-
-
-def _gold(atlas, f):
-    """gold path dashes of a screenshot: they depend only on the image, so they are computed once"""
-    key = f["path"]
-    if key in _GOLD:
-        _GOLD[key] = _GOLD.pop(key)
-        return _GOLD[key]
-    img = atlas.image(f["path"])
-    gold = gp.gold_stroke_mask(img)
-    _, _, _, cen = cv2.connectedComponentsWithStats(gold, 8)
-    dist = cv2.distanceTransform(255 - gold, cv2.DIST_L2, 3)
-    _GOLD[key] = (cen[1:].astype(float), np.minimum(dist, 255).astype(np.float16))  # fractions matter (3.5 px)
-    while len(_GOLD) > GOLD_CACHE:
-        _GOLD.pop(next(iter(_GOLD)))
-    return _GOLD[key]
-
-
-def _maps(atlas):
-    out = []
-    for f in atlas.frames:
-        H = core.screen_to_atlas(np.array(f["M"], float), atlas.frame_R(f))
-        out.append((f, np.linalg.inv(H)))
-    return out
-
-
-def _visible(f, Hi, pts, margin=FRAME_MARGIN):
-    pts = np.asarray(pts, float).reshape(-1, 2)
-    sp = core.persp(Hi, pts)
-    if not len(sp):
-        return sp, np.zeros(0, bool)
-    ok = (sp[:, 0] > margin) & (sp[:, 0] < f["w"] - margin) & (sp[:, 1] > margin) & (sp[:, 1] < f["h"] - margin)
-    ok &= ~core.on_hud_mask(sp, f["w"], f["h"])
-    return sp, ok
-
-
-def _seg_dist(p, a, b):
-    ab = b - a
-    t = float(np.clip(np.dot(p - a, ab) / max(1e-9, np.dot(ab, ab)), 0, 1))
-    return float(np.linalg.norm(p - (a + t * ab))), t
-
-
-def _mst(pts):
-    n = len(pts)
-    inside, edges = {0}, []
-    while len(inside) < n:
-        best = None
-        for i in inside:
-            for j in range(n):
-                if j in inside:
-                    continue
-                d = float(np.linalg.norm(pts[i] - pts[j]))
-                if best is None or d < best[0]:
-                    best = (d, i, j)
-        edges.append((best[1], best[2]))
-        inside.add(best[2])
-    return edges
 
 
 def finalize(atlas, log=_log) -> dict:
@@ -1487,460 +1253,4 @@ def finalize(atlas, log=_log) -> dict:
     atlas.final = {"nodes": out_nodes, "paths": out_paths, "landmarks": landmarks, "icons": out_icons, "stats": stats}
     if log:
         log("final: " + ", ".join(f"{k} {v}" for k, v in stats.items()))
-    return atlas.final
-
-
-ICON_DUP = 24.0  # same badge placed a few px apart by different screenshots
-SETTLE_MERGE = 90.0  # Hall / City detections this close are one building
-SETTLE_BADGE = 200.0  # a Hall / City has a Deadly Map Boss badge this close (crawl: 66 of 67
-# cities within 26; "Halls" with none within 350 were corruption / fog / forest)
-CITY_BASE = rc_paths.ref("city_base.png")  # the brass barrel a City's map stands on
-BARREL_NCC, BARREL_SAT = 0.42, 88  # fitted on 30 bases the user labelled: 17 of 18 cities, 2 of 12 halls
-_city_tpl = None
-# map types that never share a map (user's rule): hideout, city, corruption, cleansed, hall, deadly
-# map boss, breach stronghold, merchant, abyss.  Badge families of one type are listed together.
-EXCLUSIVE = {
-    "Hideout": "hideout",
-    "Corruption": "corruption",
-    "CorruptionNexus": "corruption",
-    "CorruptionNexusNoGrowth": "corruption",
-    "Sanctification": "cleansed",
-    "SanctificationBoss": "cleansed",
-    "Trader": "merchant",
-    "Abyss": "abyss",
-    "AbyssOverrun": "abyss",
-    "AbyssalDepths": "abyss",
-    "Expedition": "expedition",
-}  # ocean: never a Hall / City / Tower / Hideout (user)
-
-
-def _barrel(img, x, y, blue_lit: bool = False) -> bool:
-    """is the map base at screen (x, y) the brass barrel of a City (Halls stand on a normal base)?"""
-    global _city_tpl
-    if _city_tpl is None:
-        t = cv2.imdecode(np.fromfile(str(CITY_BASE), np.uint8), cv2.IMREAD_COLOR)
-        _city_tpl = cv2.cvtColor(t, cv2.COLOR_BGR2LAB).astype(np.float32)
-    th, tw = _city_tpl.shape[:2]
-    X, Y, P = int(round(x)), int(round(y)), 12
-    w = img[Y - 24 - P : Y - 24 + th + P, X - tw // 2 - P : X - tw // 2 + tw + P]
-    if w.shape[:2] != (th + 2 * P, tw + 2 * P):
-        return False
-    r = cv2.matchTemplate(cv2.cvtColor(w, cv2.COLOR_BGR2LAB).astype(np.float32), _city_tpl, cv2.TM_CCOEFF_NORMED)
-    _mn, mx, _l, (ax, ay) = cv2.minMaxLoc(r)
-    body = cv2.cvtColor(w[ay : ay + th, ax : ax + tw], cv2.COLOR_BGR2HSV)[26:50, 14:46]
-    hue = float(np.median(body[..., 0]))
-    # brass, not blue: the silver star base of ocean maps with its blue core also fits the template
-    # (crawl cities: barrel hue 17-24; ocean star bases 95-103) - unless a blue beam above lights the
-    # barrel blue (a slanted City beam: hue 101, only ~75-113 beam px in the column)
-    blue = BARREL_BLUE[0] <= hue <= BARREL_BLUE[1]
-    return mx >= BARREL_NCC and float(body[..., 1].mean()) >= BARREL_SAT and (blue_lit or not blue)
-
-
-BARREL_BLUE = (70, 130)
-BARREL_LIT = 60  # blue beam px above that make a blue-tinted barrel still count
-OCEAN_R, OCEAN_WATER = 350, 0.33  # water share within 350 px: ocean (Expedition) biome. 351 crawl cities: max 0.29
-_ocean_img = [None, None]
-
-
-def _ground_classes(hsv: np.ndarray) -> np.ndarray:
-    """per-pixel ground class: 0 water, 1 sand, 2 rock / snow, 3 grass, 4 forest, -1 unknown"""
-    H, S, V = hsv[..., 0].astype(int), hsv[..., 1].astype(int), hsv[..., 2].astype(int)
-    out = np.full(H.shape, -1, int)
-    out[(H >= 78) & (H <= 112) & (S >= 85) & (V >= 50)] = 0  # water (blue-grey rock shadow is less saturated)
-    out[(H >= 10) & (H <= 30) & (S >= 25) & (S <= 140) & (V >= 135)] = 1  # sand / desert
-    out[(S < 40) & (V >= 95)] = 2  # rock / snow
-    out[(H >= 30) & (H <= 55) & (S >= 70) & (V >= 95)] = 3  # bright grass
-    out[(H >= 33) & (H <= 90) & (S >= 50) & (V >= 30) & (V < 95)] = 4  # dark forest
-    return out
-
-
-def _ocean(img, x, y) -> bool:
-    """is (x, y) in the ocean / Expedition biome? There are NO cities there (nor corruption / cleansed),
-    user's rule. Judged by open water around the map (an ocean map may sit on an island, so a wide circle)."""
-    if _ocean_img[0] is not img:
-        cls = _ground_classes(cv2.cvtColor(img, cv2.COLOR_BGR2HSV))
-        bad = (
-            (gp.gold_stroke_mask(img) > 0) | (cv2.cvtColor(img, cv2.COLOR_BGR2GRAY) < 22) | (core._valid_mask(img) == 0)
-        )
-        _ocean_img[0], _ocean_img[1] = img, (cls, bad)
-    cls, bad = _ocean_img[1]
-    h, w = cls.shape
-    X, Y, R = int(round(x)), int(round(y)), OCEAN_R
-    x0, x1, y0, y1 = max(0, X - R), min(w, X + R + 1), max(0, Y - R), min(h, Y + R + 1)
-    yy, xx = np.mgrid[y0:y1, x0:x1]
-    m = (np.hypot(xx - X, yy - Y) <= R) & ~bad[y0:y1, x0:x1]
-    c = cls[y0:y1, x0:x1][m]
-    c = c[c >= 0]
-    return len(c) > 200 and float((c == 0).mean()) >= OCEAN_WATER
-
-
-SETTLE_BADGE = 110.0  # a special-boss badge this close belongs to that building
-
-
-def _guessed(n: dict) -> set:
-    """screenshots that only guessed this map (a hidden map from a badge row, no base seen). Atlases built
-    before v0.80 have no "guessed_in": then the badge-row sightings are taken from the sources list, which
-    runs parallel to the frames list."""
-    if "guessed_in" in n:
-        return set(n["guessed_in"])
-    fr, src = list(n.get("frames", [])), list(n.get("sources", []))
-    return {f for f, s in zip(fr, src, strict=False) if s == "badge row"} if len(fr) == len(src) else set()
-
-
-def _one_map(maps_by, a, b, ignore=()) -> bool:
-    """Two sightings (never in the same screenshot) are one object seen with parallax / a revisit offset
-    when the screenshots that found one of them also show the other's spot, yet found only one there.
-    A screenshot where the other spot is out of view (edge, HUD) has no say; each side needs at least one
-    screenshot that does show the other spot (a map at a screen edge used to block the join)."""
-    for this, other in ((a, b), (b, a)):
-        shown = 0
-        for name in this["frames"]:
-            if name in ignore:  # a screenshot that found both proves nothing either way
-                continue
-            if name not in maps_by:
-                return False
-            f, Hi = maps_by[name]
-            shown += bool(_visible(f, Hi, [[other["x"], other["y"]]], margin=FRAME_MARGIN)[1][0])
-        if not shown:
-            return False
-    return True
-
-
-def _clean_icons(atlas, maps) -> list[dict]:
-    """Merge copies of one badge from different screenshots; drop Lost-tower matches (towers are
-    landmarks, and the Lost-tower icon also matches Hall / City artwork)."""
-    maps_by = {f["name"]: (f, Hi) for f, Hi in maps}
-    icons = [dict(ic, frames=list(ic["frames"])) for ic in atlas.icons if ic["name"] != "LostTower"]
-    alive = [True] * len(icons)
-    pairs = []
-    for d, i, j in _Grid([[ic["x"], ic["y"]] for ic in icons], PARALLAX_TOL).pairs(PARALLAX_TOL):
-        a, b = icons[i], icons[j]
-        if a["name"] != b["name"] and "Unidentified" not in (a["name"], b["name"]):
-            continue
-        if d < PARALLAX_TOL:
-            pairs.append((d, i, j))
-    for d, i, j in sorted(pairs):
-        if not (alive[i] and alive[j]) or set(icons[i]["frames"]) & set(icons[j]["frames"]):
-            continue  # seen together in one screenshot: two real badges
-        a, b = icons[i], icons[j]
-        if d >= ICON_DUP and not _one_map(maps_by, a, b):
-            continue
-        wa, wb = a["n"], b["n"]
-        a["spread"] = max(a.get("spread", 0.0), b.get("spread", 0.0), float(d))  # how far its copies lay apart
-        for key in ("x", "y", "bx", "by"):
-            a[key] = (a[key] * wa + b[key] * wb) / (wa + wb)
-        a["n"] = wa + wb
-        a["frames"] = sorted(set(a["frames"]) | set(b["frames"]))
-        if a["name"] == "Unidentified":
-            a["name"], a["source"] = b["name"], b["source"]
-        a["score"] = max(a["score"], b["score"])
-        alive[j] = False
-    icons = [ic for ic, ok in zip(icons, alive, strict=False) if ok]
-    pts = np.array([[ic["x"], ic["y"]] for ic in icons], float).reshape(-1, 2)
-    could = np.zeros(len(icons), int)
-    for f, Hi in maps:
-        could += _visible(f, Hi, pts, margin=FRAME_MARGIN)[1]
-    for ic, c in zip(icons, could, strict=False):
-        ic["could"] = int(max(c, ic["n"]))
-    return icons
-
-
-def _beam(img, x, y, spread=0):
-    """blue / orange beam pixels in a narrow column above (x, y); with spread, the best column
-    within +-spread px (a special-boss badge sits next to its building, not under the beam)"""
-    h, w = img.shape[:2]
-    # a building's own beam rises right above it; for a badge-only spot look only low down, so a
-    # different Hall / City higher up the screen (whose beam is in the same column) doesn't count
-    y0, y1 = int(max(0, y - (150 if spread else 330))), int(max(0, y - 40))
-    if y1 - y0 < 40:
-        return 0, 0
-    best = (0, 0)
-    for cx in range(int(x - spread), int(x + spread) + 1, 20) if spread else [int(x)]:
-        x0, x1 = max(0, cx - 22), min(w, cx + 22)
-        if x1 <= x0:
-            continue
-        hsv = cv2.cvtColor(img[y0:y1, x0:x1], cv2.COLOR_BGR2HSV)
-        H, S, V = hsv[..., 0], hsv[..., 1], hsv[..., 2]
-        blue = int(((H >= 90) & (H <= 130) & (S >= 60) & (V >= 140)).sum())
-        orange = int((((H <= 22) | (H >= 170)) & (S >= 110) & (V >= 150)).sum())
-        if blue + orange > sum(best):
-            best = (blue, orange)
-    return best
-
-
-def _settlements(atlas, maps, landmarks, icons) -> list[dict]:
-    """Hall and City are the same kind of place with a special boss (user's rules): both have a
-    Deadly Map Boss badge (without one it is neither: removed); a City's map stands on a brass
-    barrel and usually has a blue beam (red beams happen too); a Hall has a normal map base with
-    the beam on a structure next to it.  Nearby detections are one building."""
-    keep = [lm for lm in landmarks if lm["kind"] not in ("City", "Hall")]
-    cand = [lm for lm in landmarks if lm["kind"] in ("City", "Hall") and not lm["status"].startswith("removed: abyss")]
-    groups: list[list[dict]] = []
-    for lm in sorted(cand, key=lambda landmark: -landmark["n"]):
-        for g in groups:
-            if math.hypot(g[0]["x"] - lm["x"], g[0]["y"] - lm["y"]) < SETTLE_MERGE:
-                g.append(lm)
-                break
-        else:
-            groups.append([lm])
-    focus = getattr(atlas, "_focus", None)  # local re-check: far ones are not kept anyway
-    if focus:
-        groups = [g for g in groups if focus[1](g[0]["x"], g[0]["y"])]
-    buildings = []
-    for g in groups:
-        n = sum(landmark["n"] for landmark in g)
-        votes = {}
-        for landmark in g:
-            votes[landmark["kind"]] = votes.get(landmark["kind"], 0) + landmark["n"]
-        buildings.append(
-            {
-                "x": sum(landmark["x"] * landmark["n"] for landmark in g) / n,
-                "y": sum(landmark["y"] * landmark["n"] for landmark in g) / n,
-                "n": n,
-                "conf": max(landmark["conf"] for landmark in g),
-                "source": g[0].get("source", ""),
-                "detected": votes,
-                "spread": 0,
-            }
-        )
-    # (a special-boss badge on its own is NOT a settlement: the red spiky trees carry one too)
-    deadly = [ic for ic in icons if ic["name"] == "MapBossSpecial"]
-    for b in buildings:
-        near = sorted((math.hypot(ic["x"] - b["x"], ic["y"] - b["y"]), k) for k, ic in enumerate(deadly))
-        badge = deadly[near[0][1]] if near and near[0][0] < SETTLE_BADGE else None
-        clash = None
-        if badge is not None:  # its map carries another exclusive type's badge
-            bx0, by0 = badge.get("bx", badge["x"]), badge.get("by", badge["y"])
-            clash = next(
-                (
-                    EXCLUSIVE[ic["name"]]
-                    for ic in icons
-                    if ic["name"] in EXCLUSIVE
-                    and math.hypot(ic.get("bx", ic["x"]) - bx0, ic.get("by", ic["y"]) - by0) < 30
-                ),
-                None,
-            )
-            if clash:
-                badge = None
-        barrel = False
-        if badge is not None:
-            bx, by = badge.get("bx", badge["x"]), badge.get("by", badge["y"] + 24)
-            for _c, f, sp in atlas.central_views(bx, by, 3):
-                im = atlas.image(f["path"]) if Path(f["path"]).exists() else None
-                if im is not None and _barrel(
-                    im, sp[0], sp[1], max(_beam(im, sp[0], sp[1])[0], _beam(im, sp[0], sp[1], 80)[0]) >= BARREL_LIT
-                ):
-                    barrel = True
-                    break
-        views = [
-            (atlas.image(f["path"]), sp)
-            for _c, f, sp in atlas.central_views(b["x"], b["y"], 3)
-            if Path(f["path"]).exists()
-        ]
-        ocean = bool(views) and 2 * sum(_ocean(im, sp[0], sp[1]) for im, sp in views) > len(views)
-        blue = orange = seen = 0
-        for f, Hi in maps:
-            sp, ok = _visible(f, Hi, [[b["x"], b["y"]]], margin=5)
-            if ok[0]:
-                bl, orr = _beam(atlas.image(f["path"]), sp[0, 0], sp[0, 1], b["spread"])
-                blue, orange, seen = blue + bl, orange + orr, seen + 1
-        status = "kept"
-        if badge is None and not clash and b["detected"].get("City", 0) >= b["detected"].get("Hall", 0):
-            # a completed City loses its badge (and beam): a green map with only its citadel
-            kind, why = "City", "no Deadly Map Boss badge: completed city?"
-        elif badge is None:
-            kind, why = "Hall", f"its map is a {clash} map" if clash else "no Deadly Map Boss badge"
-            status = f"removed: {why} (not a Hall or City)"
-        elif blue >= 60 and blue > 1.5 * orange:
-            kind, why = "City", "blue beam"
-        elif barrel:
-            kind, why = "City", "brass barrel map base"
-        else:
-            kind, why = "Hall", "normal map base" + (", orange beam" if orange >= 100 else "")
-        if ocean and kind == "City":
-            kind, why = "Deadly boss map", f"ocean (Expedition) biome: never a City (was: {why})"
-            if badge is None:
-                status = "removed: ocean biome, no badge (not a Hall or City)"
-        keep.append(
-            {
-                "kind": kind,
-                "x": b["x"],
-                "y": b["y"],
-                "n": b["n"],
-                "conf": b["conf"],
-                "source": b["source"],
-                "status": status,
-                "beam": why,
-                "beam_px": [blue, orange],
-                "could": max(seen, b["n"]),
-            }
-        )
-    return keep
-
-
-def _diamond_shortcut(points, grid, i, j, supported) -> bool:
-    """atlas_paths._is_diamond_shortcut, looking only at maps near the link (the original
-    walks every map in the atlas per link: 85% of a 22-minute check on a 8k-map atlas)."""
-    a, b = points[[i, j]]
-    axis = b - a
-    length = float(np.linalg.norm(axis))
-    if length < 48:
-        return False
-
-    def evidence(x, y):
-        return supported.get(tuple(sorted((x, y))), 0.0)
-
-    side_a, side_b = [], []
-    for k in grid.near(a, length):
-        if k in (i, j):
-            continue
-        p = points[k]
-        da, db = float(np.linalg.norm(p - a)), float(np.linalg.norm(p - b))
-        if max(da, db) > length * 0.96 or min(da, db) < 25:
-            continue
-        if min(evidence(i, k), evidence(k, j)) < 0.60:
-            continue
-        cross = float(axis[0] * (p[1] - a[1]) - axis[1] * (p[0] - a[0]))
-        if abs(cross) < length * 16:
-            continue
-        (side_a if cross > 0 else side_b).append(k)
-    return bool(side_a and side_b)
-
-
-def _bypasses_two(points, grid, i, j, supported) -> bool:
-    """atlas_paths._bypasses_two_shorter_paths, looking only at maps near the link."""
-    a, b = points[[i, j]]
-    length = float(np.linalg.norm(a - b))
-    if length < 76:
-        return False
-    for k in grid.near(a, length):
-        if k in (i, j):
-            continue
-        mid = points[k]
-        da = float(np.linalg.norm(a - mid))
-        db = float(np.linalg.norm(mid - b))
-        if not (30 < da < length * 0.85 and 30 < db < length * 0.85):
-            continue
-        left = supported.get(tuple(sorted((i, k))), 0.0)
-        right = supported.get(tuple(sorted((j, k))), 0.0)
-        if min(left, right) >= 0.64:
-            return True
-    return False
-
-
-# ---------------------------------------------------------------------------------- local update
-CORE_PAD = 600.0  # around the new screenshots: this area's result is replaced
-CONTEXT_PAD = 700.0  # evidence margin: > the longest path (300) + parallax; tested identical to a full check
-# every screenshot that sees the core is included)
-
-
-def _footprint(atlas, f):
-    H = core.screen_to_atlas(np.array(f["M"], float), atlas.frame_R(f))
-    return core.persp(H, [[0, 0], [f["w"], 0], [f["w"], f["h"]], [0, f["h"]]])
-
-
-def finalize_local(atlas, new_names: list[str], log=_log) -> dict:
-    """Re-check only the area around the screenshots in new_names and splice it into the existing
-    atlas-wide result.  The area gets exactly the evidence a full check would use (every
-    screenshot that shows any of it), so its result matches a full check; the rest is kept."""
-    if atlas.final is None:
-        return finalize(atlas, log)
-    polys = [_footprint(atlas, f) for f in atlas.frames if f["name"] in set(new_names)]
-    if not polys:
-        return atlas.final
-    # one box per new screenshot (v1.01: a single box around a batch that pans across the atlas covered
-    # half of it); every point of the core still has the full context margin around it
-    boxes = np.array([[*p.min(axis=0), *p.max(axis=0)] for p in polys], float)
-    core_b = boxes + [-CORE_PAD, -CORE_PAD, CORE_PAD, CORE_PAD]
-    ctx_b = core_b + [-CONTEXT_PAD, -CONTEXT_PAD, CONTEXT_PAD, CONTEXT_PAD]
-
-    def _in(b, x, y, pad=0.0):
-        return bool(np.any((b[:, 0] - pad <= x) & (x <= b[:, 2] + pad) & (b[:, 1] - pad <= y) & (y <= b[:, 3] + pad)))
-
-    def in_core(x, y):
-        return _in(core_b, x, y)
-
-    def in_ctx(x, y):
-        return _in(ctx_b, x, y)
-
-    sub = core.Atlas()
-    sub._images = atlas._images
-    sub.frames_dir = getattr(atlas, "frames_dir", None)
-    # only the core's result is kept: image checks that only set a map's colour or a settlement's kind
-    # are skipped further out (settlements: with a margin, a badge / merge can reach in from there)
-    sub._focus = (in_core, lambda x, y: _in(core_b, x, y, SETTLE_MERGE + SETTLE_BADGE + 50))
-    for f in atlas.frames:
-        p = _footprint(atlas, f)
-        x0, y0, x1, y1 = *p.min(axis=0), *p.max(axis=0)
-        if np.any((x1 >= ctx_b[:, 0]) & (x0 <= ctx_b[:, 2]) & (y1 >= ctx_b[:, 1]) & (y0 <= ctx_b[:, 3])):
-            sub.frames.append(f)
-    sub.nodes = [n for n in atlas.nodes if in_ctx(n["x"], n["y"])]
-    sub.icons = [i for i in atlas.icons if in_ctx(i["x"], i["y"])]
-    sub.landmarks = [landmark for landmark in atlas.landmarks if in_ctx(landmark["x"], landmark["y"])]
-    fin = finalize(sub, log=None)
-    old = atlas.final
-
-    nodes, old_map, sub_map = [], {}, {}
-    for i, n in enumerate(old["nodes"]):
-        if not in_core(n["x"], n["y"]):
-            old_map[i] = len(nodes)
-            nodes.append(dict(n, id=len(nodes)))
-    for i, n in enumerate(fin["nodes"]):
-        if in_core(n["x"], n["y"]):
-            sub_map[i] = len(nodes)
-            nodes.append(dict(n, id=len(nodes)))
-    kept_outside = np.array(
-        [[nodes[j]["x"], nodes[j]["y"]] for j in old_map.values() if nodes[j]["status"] != "removed"], float
-    ).reshape(-1, 2)
-    kept_ids = [j for j in old_map.values() if nodes[j]["status"] != "removed"]
-
-    def end_of(i):
-        """sub node -> spliced node id (outside the core: the existing node at that spot)"""
-        if i in sub_map:
-            return sub_map[i]
-        n = fin["nodes"][i]
-        if len(kept_outside):
-            d = np.hypot(kept_outside[:, 0] - n["x"], kept_outside[:, 1] - n["y"])
-            k = int(np.argmin(d))
-            if d[k] < 12:
-                return kept_ids[k]
-        sub_map[i] = len(nodes)
-        nodes.append(dict(n, id=len(nodes)))
-        return sub_map[i]
-
-    paths, pairs = [], set()
-    for p in old["paths"]:
-        if p["a"] in old_map and p["b"] in old_map:
-            q = dict(p, a=old_map[p["a"]], b=old_map[p["b"]])
-            paths.append(q)
-            pairs.add((min(q["a"], q["b"]), max(q["a"], q["b"])))
-    for p in fin["paths"]:
-        na, nb = fin["nodes"][p["a"]], fin["nodes"][p["b"]]
-        if not (in_core(na["x"], na["y"]) or in_core(nb["x"], nb["y"])):
-            continue
-        a, b = end_of(p["a"]), end_of(p["b"])
-        key = (min(a, b), max(a, b))
-        if a != b and key not in pairs:
-            pairs.add(key)
-            paths.append(dict(p, a=a, b=b))
-    landmarks = [landmark for landmark in old["landmarks"] if not in_core(landmark["x"], landmark["y"])] + [
-        landmark for landmark in fin["landmarks"] if in_core(landmark["x"], landmark["y"])
-    ]
-    icons = [i for i in old.get("icons", []) if not in_core(i["x"], i["y"])] + [
-        i for i in fin.get("icons", []) if in_core(i["x"], i["y"])
-    ]
-    stats = dict(old.get("stats", {}))
-    stats.update(
-        {
-            "nodes_kept": sum(n["status"] != "removed" for n in nodes),
-            "paths": len(paths),
-            "paths_multi": sum(p.get("seen_in", 0) >= 2 for p in paths),
-            "paths_traced": sum(p.get("kind") == "traced" for p in paths),
-            "icons_shown": len(icons),
-            "local_updates": stats.get("local_updates", 0) + 1,
-        }
-    )
-    atlas.final = {"nodes": nodes, "paths": paths, "landmarks": landmarks, "icons": icons, "stats": stats}
-    if log:
-        log(f"local re-check: {len(sub.frames)} of {len(atlas.frames)} screenshots, {len(sub_map)} maps updated")
     return atlas.final

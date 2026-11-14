@@ -10,7 +10,8 @@ from dataclasses import dataclass
 
 import cv2
 import numpy as np
-import rc_paths
+
+from grand_project import paths as rc_paths
 
 
 @functools.cache

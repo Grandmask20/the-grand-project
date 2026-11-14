@@ -1,6 +1,6 @@
 """Coverage map: where each screenshot landed, and where the chain broke.
 
-    py atlas_coverage.py --atlas my_atlas.json --folder screenshots_folder [--out coverage.png]
+    python -m tools.atlas_coverage --atlas my_atlas.json --folder screenshots_folder [--out coverage.png]
 
 Every placed screenshot is outlined and numbered in time order (file names sort by time).
 Screenshots that could not be placed are listed; the last placed screenshot before each run of
@@ -10,15 +10,13 @@ unplaced ones is outlined in red, so you know where to take another pass.
 from __future__ import annotations
 
 import argparse
-import sys
 from pathlib import Path
 
 import cv2
 import numpy as np
 
 HERE = Path(__file__).resolve().parent
-sys.path.insert(0, str(HERE.parent / "program"))
-import atlas_builder_core as core  # noqa: E402
+from grand_project import core  # noqa: E402
 
 
 def main() -> int:

@@ -73,10 +73,15 @@ def need_test_data() -> None:
         sys.exit(0)
 
 
-# which copy this is: "internal" (working copy with private data), "rc-1" (test release) or "release"
-# (the public one); make_release.py writes channel.txt
+# which copy this is: "internal" (the author's working copy: local_paths.json), "develop" (the GitHub develop
+# branch, channel.txt) or "release" (the player build on GitHub main, channel.txt; also the default)
 _CH = ROOT / "channel.txt"
 CHANNEL = "internal" if _LOCAL.exists() else (_CH.read_text(encoding="utf-8").strip() if _CH.exists() else "release")
+
+
+# the debug tools (Debug tab, right-click Debug menu, debug marks on the map): in the working copy and the
+# develop branch, never in the player release (main)
+DEBUG = CHANNEL != "release"
 
 
 def title_tag() -> str:

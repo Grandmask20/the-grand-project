@@ -1,10 +1,8 @@
 """The detector models use skops: only the classes a trained model is made of may be loaded."""
 
 import sys
-from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "program"))
-import atlas_detect as ad  # noqa: E402
+from grand_project import detect as ad
 
 fails = []
 

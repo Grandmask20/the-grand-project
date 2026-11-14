@@ -14,8 +14,8 @@ jobs:
       - name: ruff check
         uses: astral-sh/ruff-action@v3
         with:
-          args: check --output-format=github program tools tests
+          args: check --output-format=github grand_project tools tests
       - name: ruff format --check
         uses: astral-sh/ruff-action@v3
         with:
-          args: format --check program tools tests
+          args: format --check grand_project tools tests

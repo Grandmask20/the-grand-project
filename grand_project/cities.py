@@ -20,10 +20,11 @@ from __future__ import annotations
 
 from pathlib import Path
 
-import atlas_builder_core as core
 import cv2
 import numpy as np
-import rc_paths
+
+from grand_project import core
+from grand_project import paths as rc_paths
 
 TYPES = ("Ezomyte", "Vaal", "Faridun")
 TRIO_GAP = 680  # atlas px: closer cities always differ in type

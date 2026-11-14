@@ -1,6 +1,6 @@
 """Drives the real viewer window on a COPY of an atlas.  Opens a window for ~20 s.
 
-    py test_atlas_viewer.py ATLAS.json [SCREENSHOT ...] [--out DIR]
+    python -m tests.test_atlas_viewer ATLAS.json [SCREENSHOT ...] [--out DIR]
 
 Checks: render + fit, wheel zoom at cursor, drag pan, click select, search, bookmark
 add/persist/delete, source-screenshot lookup, and (when screenshots are given) building a NEW
@@ -20,13 +20,19 @@ import numpy as np
 from PIL import ImageGrab
 
 HERE = Path(__file__).resolve().parent
-sys.path.insert(0, str(HERE.parent / "program"))
-import rc_paths  # noqa: E402
+from grand_project import paths as rc_paths  # noqa: E402
 
 rc_paths.need_test_data()
 TD = rc_paths.TEST_DATA
-import atlas_builder_core as core  # noqa: E402
-import atlas_viewer as V  # noqa: E402
+from tkinter import messagebox  # noqa: E402
+
+import grand_project.viewer.app as V  # noqa: E402
+from grand_project import (  # noqa: E402
+    builder,  # noqa: E402
+    core,
+)
+from grand_project.viewer import constants as VC  # noqa: E402
+from grand_project.viewer import settings as VS  # noqa: E402
 
 args = sys.argv[1:]
 out = Path(tempfile.mkdtemp())
@@ -47,7 +53,7 @@ for _f in _d["frames"]:  # the copy lives elsewhere: screenshot paths as they re
 atlas_copy.write_text(json.dumps(_d), encoding="utf-8")
 if src.with_name(src.stem + "_frames").exists():
     shutil.copytree(src.with_name(src.stem + "_frames"), work / "atlas_frames")
-V.SETTINGS = work / "settings.json"  # never touch the user's viewer settings
+VS.SETTINGS = work / "settings.json"  # never touch the user's viewer settings
 
 fails = []
 
@@ -323,7 +329,7 @@ app.only_icon_maps.set(False)
 app.set_all_icons(True)
 
 # landmark edits: change a landmark's kind, delete it (Delete button), add one on a map; all saved
-import atlas_log  # noqa: E402
+from grand_project import logs as atlas_log  # noqa: E402
 
 log_size0 = atlas_log.LOG_FILE.stat().st_size if atlas_log.LOG_FILE.exists() else 0
 kept = [i for i, lm in enumerate(app.V["landmarks"]) if lm["status"] == "kept"]
@@ -338,7 +344,7 @@ check(
 )
 i = app.V["landmarks"].index(same[0])
 app.select(("landmark", i))
-V.messagebox.askyesno = lambda *a, **k: True  # the confirm dialog
+messagebox.askyesno = lambda *a, **k: True  # the confirm dialog
 app.delete_selected()
 gone = [landmark for landmark in app.V["landmarks"] if math.hypot(landmark["x"] - lm["x"], landmark["y"] - lm["y"]) < 1]
 check(
@@ -493,8 +499,8 @@ if crawl.exists() and crawl_cache.exists():
     weak = set()
     if crawl_atlas.exists():
         for f in json.loads(crawl_atlas.read_text(encoding="utf-8"))["frames"]:
-            few = str(f.get("reason", "")).startswith("terrain") or (f.get("inliers") or 0) <= V.WEAK_INLIERS
-            if few and (f.get("ncc") or 0) < V.WEAK_NCC:
+            few = str(f.get("reason", "")).startswith("terrain") or (f.get("inliers") or 0) <= VC.WEAK_INLIERS
+            if few and (f.get("ncc") or 0) < VC.WEAK_NCC:
                 weak.add(f["name"])
     rnd = random.Random(seed)
     while True:
@@ -518,7 +524,7 @@ if crawl.exists() and crawl_cache.exists():
     app.watch_var.set(True)
     app.start_watch()
     asked = []
-    V.messagebox.askyesno = lambda title, msg, **kw: (asked.append(msg), False)[1]
+    messagebox.askyesno = lambda title, msg, **kw: (asked.append(msg), False)[1]
 
     def drop(q, want):
         shutil.copy(q, sdir / q.name)
@@ -548,7 +554,7 @@ if crawl.exists() and crawl_cache.exists():
     )
     grab("12_newest.png")
     # undo the last add: back to 2 screenshots, the file too
-    V.messagebox.askyesno = lambda *a_, **k_: True
+    messagebox.askyesno = lambda *a_, **k_: True
     app.undo_last()
     end = time.time() + 30
     while time.time() < end and len(app.atlas.frames) != 2:
@@ -567,7 +573,7 @@ if crawl.exists() and crawl_cache.exists():
     while time.time() < end and len(app.V["frames"]) < 3:
         pump(0.5)
     pump(1.0)
-    V.messagebox.askyesno = lambda title, msg, **kw: (asked.append(msg), False)[1]
+    messagebox.askyesno = lambda title, msg, **kw: (asked.append(msg), False)[1]
     # a screenshot from far away waits and is listed (crawl #0 vs this run, if far enough)
     far = crawl_only[0] if k > 60 else crawl_only[-1]
     shutil.copy(crawl_cache / f"{hashlib.sha256(far.read_bytes()).hexdigest()[:16]}_detect1.json", wdir)
@@ -602,12 +608,12 @@ if crawl.exists() and crawl_cache.exists():
     )
     # program restarted with a screenshot in the folder that the atlas does not have: added on its own (user)
     app.watch_var.set(False)
-    V.messagebox.askyesno = lambda *a_, **k_: True
+    messagebox.askyesno = lambda *a_, **k_: True
     app.undo_last()  # seq[3] leaves the atlas, its file stays in the folder
     end = time.time() + 30
     while time.time() < end and len(app.atlas.frames) != 3:
         pump(0.3)
-    V.messagebox.askyesno = lambda title, msg, **kw: (asked.append(msg), False)[1]
+    messagebox.askyesno = lambda title, msg, **kw: (asked.append(msg), False)[1]
     app.watch_var.set(True)
     app.start_watch(initial=True)
     end = time.time() + 90
@@ -623,7 +629,7 @@ if crawl.exists() and crawl_cache.exists():
 
     # hand placement: the 5th screenshot, dropped ~300 units off, fitted with Enter
     r0 = app.atlas.add_frame(
-        builder_frame := V.builder.extract_frame(seq[4], None, wdir),
+        builder_frame := builder.extract_frame(seq[4], None, wdir),
         hints=[f["name"] for f in app.atlas.frames],
         commit=False,
     )

@@ -21,23 +21,22 @@ from pathlib import Path
 import numpy as np
 
 HERE = Path(__file__).resolve().parent
-sys.path.insert(0, str(HERE))
 try:  # the detector imports PIL.ImageTk; headless machines lack Tk
     import tkinter  # noqa: F401
 except ImportError:
     sys.modules["tkinter"] = types.ModuleType("tkinter")
 
-import atlas_builder_core as core  # noqa: E402
-import atlas_finalize  # noqa: E402
-import atlas_io  # noqa: E402
-import atlas_log  # noqa: E402
+from grand_project import core as core  # noqa: E402
+from grand_project import fileio as atlas_io  # noqa: E402
+from grand_project import finalize as atlas_finalize  # noqa: E402
+from grand_project import logs as atlas_log  # noqa: E402
 
 _log = atlas_log.printer("builder")
 
 
 def default_database() -> Path:
     """the reference DB the detector reads (the new detector: its trained models + badge pictures)"""
-    import rc_paths
+    from grand_project import paths as rc_paths
 
     return rc_paths.DATABASE
 
@@ -49,9 +48,10 @@ NEW_DETECTOR_ID = "detect1"  # = atlas_detect.DETECTOR_ID, in cache file names (
 def extract_frame_new(image_path: Path, cache_dir: Path) -> core.Frame:
     """atlas_detect in live mode (reads its trained models from the reference DB, never writes it);
     cached by file hash + detector id"""
-    import atlas_detect
     import cv2
     import numpy as np
+
+    from grand_project import detect as atlas_detect
 
     digest = hashlib.sha256(image_path.read_bytes()).hexdigest()
     cache = cache_dir / f"{digest[:16]}_{atlas_detect.DETECTOR_ID}.json"
@@ -122,7 +122,7 @@ DETECT_WORKERS = atlas_io.workers(4)  # new screenshots detected at once (each ~
 
 
 def is_cached(image_path: Path, cache_dir: Path) -> bool:
-    import atlas_detect
+    from grand_project import detect as atlas_detect
 
     digest = hashlib.sha256(image_path.read_bytes()).hexdigest()
     return (cache_dir / f"{digest[:16]}_{atlas_detect.DETECTOR_ID}.json").exists()

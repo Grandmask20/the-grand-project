@@ -1,6 +1,6 @@
 """Regression check against every mark layer the user has drawn on detector overlays.
 
-    py atlas_marks.py            run the live detector on all marked screenshots, compare with the marks,
+    python -m tools.atlas_marks            run the live detector on all marked screenshots, compare with the marks,
                                  print the result next to the previous run (atlas_marks_history.json)
 
 Marks (screen px of the original screenshot; overlays drew paths 5 px left, PATH_DRAW_SHIFT):
@@ -22,9 +22,8 @@ import cv2
 import numpy as np
 
 HERE = Path(__file__).resolve().parent
-sys.path.insert(0, str(HERE.parent / "program"))
-import atlas_detect as ad  # noqa: E402
-import rc_paths  # noqa: E402
+from grand_project import detect as ad  # noqa: E402
+from grand_project import paths as rc_paths  # noqa: E402
 
 rc_paths.need_test_data()
 TRUTH_DIR = rc_paths.TEST_DATA / "truth"

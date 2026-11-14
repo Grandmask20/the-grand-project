@@ -1,5 +1,5 @@
 """The atlas folder used as the screenshot folder (user's first choice): the atlas's own files must never be
-taken for screenshots.   py test_atlas_folder.py
+taken for screenshots.   python -m tests.test_atlas_folder
 
 1. 4 consecutive crawl screenshots copied into a folder; atlas.json made in that same folder; added twice
    (the second time nothing may be new: no atlas output counted as a screenshot)
@@ -15,16 +15,16 @@ import tempfile
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
-sys.path.insert(0, str(HERE.parent / "program"))
-import rc_paths  # noqa: E402
+from grand_project import paths as rc_paths  # noqa: E402
 
 rc_paths.need_test_data()
 TD = rc_paths.TEST_DATA
 
-import atlas_builder as B  # noqa: E402
-import atlas_builder_core as core  # noqa: E402
 import cv2  # noqa: E402
 import numpy as np  # noqa: E402
+
+from grand_project import builder as B  # noqa: E402
+from grand_project import core  # noqa: E402
 
 ok = True
 
