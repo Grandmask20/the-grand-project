@@ -12,11 +12,6 @@ from grand_project import core
 from grand_project import gold_paths as gp
 
 from .constants import (
-    BARREL_BLUE,
-    BARREL_LIT,
-    BARREL_NCC,
-    BARREL_SAT,
-    CITY_BASE,
     EXCLUSIVE,
     FRAME_MARGIN,
     ICON_DUP,
@@ -28,29 +23,24 @@ from .constants import (
 )
 from .traces import _Grid, _visible
 
-_city_tpl = None
+
+def _barrel(img, x, y, nodes=None) -> bool:
+    """is the map base at screen (x, y) the brass barrel of a City (Halls stand on a normal base)?
+    (detect.citybase: a model trained on the user's city screenshots; nodes: that screenshot's detected map
+    nodes, so a rough point is moved onto the map node's middle)"""
+    from grand_project.detect import citybase
+    from grand_project.detect.constants import CITY_P
+
+    return citybase.barrel_p(img, x, y, nodes) >= CITY_P
 
 
-def _barrel(img, x, y, blue_lit: bool = False) -> bool:
-    """is the map base at screen (x, y) the brass barrel of a City (Halls stand on a normal base)?"""
-    global _city_tpl
-    if _city_tpl is None:
-        t = cv2.imdecode(np.fromfile(str(CITY_BASE), np.uint8), cv2.IMREAD_COLOR)
-        _city_tpl = cv2.cvtColor(t, cv2.COLOR_BGR2LAB).astype(np.float32)
-    th, tw = _city_tpl.shape[:2]
-    X, Y, P = int(round(x)), int(round(y)), 12
-    w = img[Y - 24 - P : Y - 24 + th + P, X - tw // 2 - P : X - tw // 2 + tw + P]
-    if w.shape[:2] != (th + 2 * P, tw + 2 * P):
-        return False
-    r = cv2.matchTemplate(cv2.cvtColor(w, cv2.COLOR_BGR2LAB).astype(np.float32), _city_tpl, cv2.TM_CCOEFF_NORMED)
-    _mn, mx, _l, (ax, ay) = cv2.minMaxLoc(r)
-    body = cv2.cvtColor(w[ay : ay + th, ax : ax + tw], cv2.COLOR_BGR2HSV)[26:50, 14:46]
-    hue = float(np.median(body[..., 0]))
-    # brass, not blue: the silver star base of ocean maps with its blue core also fits the template
-    # (crawl cities: barrel hue 17-24; ocean star bases 95-103) - unless a blue beam above lights the
-    # barrel blue (a slanted City beam: hue 101, only ~75-113 beam px in the column)
-    blue = BARREL_BLUE[0] <= hue <= BARREL_BLUE[1]
-    return mx >= BARREL_NCC and float(body[..., 1].mean()) >= BARREL_SAT and (blue_lit or not blue)
+def _screen_nodes(atlas, f, x, y, reach: float = 80.0) -> np.ndarray:
+    """the atlas's map nodes near atlas point (x, y), in screenshot f's pixels"""
+    near = [[n["x"], n["y"]] for n in atlas.nodes if abs(n["x"] - x) < reach and abs(n["y"] - y) < reach]
+    if not near:
+        return np.zeros((0, 2))
+    Hi = np.linalg.inv(core.screen_to_atlas(np.array(f["M"], float), atlas.frame_R(f)))
+    return core.persp(Hi, near)
 
 
 _ocean_img = [None, None]
@@ -182,7 +172,7 @@ def _beam(img, x, y, spread=0):
 def _settlements(atlas, maps, landmarks, icons) -> list[dict]:
     """Hall and City are the same kind of place with a special boss (user's rules): both have a
     Deadly Map Boss badge (without one it is neither: removed); a City's map stands on a brass
-    barrel and usually has a blue beam (red beams happen too); a Hall has a normal map base with
+    barrel (always, user; beams vary: every type can show blue); a Hall has a normal map base with
     the beam on a structure next to it.  Nearby detections are one building."""
     keep = [lm for lm in landmarks if lm["kind"] not in ("City", "Hall")]
     cand = [lm for lm in landmarks if lm["kind"] in ("City", "Hall") and not lm["status"].startswith("removed: abyss")]
@@ -238,9 +228,7 @@ def _settlements(atlas, maps, landmarks, icons) -> list[dict]:
             bx, by = badge.get("bx", badge["x"]), badge.get("by", badge["y"] + 24)
             for _c, f, sp in atlas.central_views(bx, by, 3):
                 im = atlas.image(f["path"]) if Path(f["path"]).exists() else None
-                if im is not None and _barrel(
-                    im, sp[0], sp[1], max(_beam(im, sp[0], sp[1])[0], _beam(im, sp[0], sp[1], 80)[0]) >= BARREL_LIT
-                ):
+                if im is not None and _barrel(im, sp[0], sp[1], _screen_nodes(atlas, f, bx, by)):
                     barrel = True
                     break
         views = [
@@ -262,9 +250,7 @@ def _settlements(atlas, maps, landmarks, icons) -> list[dict]:
         elif badge is None:
             kind, why = "Hall", f"its map is a {clash} map" if clash else "no Deadly Map Boss badge"
             status = f"removed: {why} (not a Hall or City)"
-        elif blue >= 60 and blue > 1.5 * orange:
-            kind, why = "City", "blue beam"
-        elif barrel:
+        elif barrel:  # a City's map always stands on the barrel (user); every city type can have a blue beam
             kind, why = "City", "brass barrel map base"
         else:
             kind, why = "Hall", "normal map base" + (", orange beam" if orange >= 100 else "")

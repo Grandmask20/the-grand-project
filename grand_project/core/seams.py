@@ -3,7 +3,7 @@
 The quick map (Atlas.composite / paste_into) takes every spot from the screenshot that shows it most centrally.
 That cuts map nodes and their icons in half where two screenshots meet, lets a screenshot taken in fog paint
 dark blocks over lit ground, and puts seams across paths and tall terrain. Here an ownership map ("labels":
-which screenshot each spot comes from) is worked out first, on a grid of GRID atlas units, by trading off:
+which screenshot each spot comes from) is worked out first, on a grid of SEAM_GRID atlas units, by trading off:
 
 - each spot wants a screenshot that shows it centrally and lit (fogged ground scores low, so a lit copy wins)
 - each seam costs, per cell of its length, more
@@ -30,39 +30,46 @@ import numpy as np
 from scipy.sparse import csr_matrix
 from scipy.sparse.csgraph import breadth_first_order, maximum_flow
 
+from .constants import (
+    SEAM_CYCLES,
+    SEAM_DARK,
+    SEAM_DARK_FLOOR,
+    SEAM_DATA_W,
+    SEAM_EDGE_W,
+    SEAM_FLOW_SCALE,
+    SEAM_GRID,
+    SEAM_ICON_R,
+    SEAM_LIT,
+    SEAM_LIT_BLUR,
+    SEAM_MIDDLE_BOTTOM,
+    SEAM_MIDDLE_TOP,
+    SEAM_NEAR_FALL,
+    SEAM_NEAR_SHARE,
+    SEAM_NODE_R,
+    SEAM_NODE_W,
+    SEAM_OFF_W,
+    SEAM_PATH_HALF,
+    SEAM_PATH_W,
+    SEAM_S_FULL,
+    SEAM_SCORE_SCALE,
+    SEAM_SHIFT_W,
+    SEAM_TEX_W,
+)
 from .geometry import persp, screen_to_atlas
 from .terrain import _valid_mask_calc
 
-SCORE_SCALE = 4  # screenshot scores are worked out at 1/4 size (smooth anyway)
-DARK, LIT = 25, 60  # grey level: at or below DARK a spot counts as unseen fog, from LIT on as fully lit
-DARK_FLOOR = 0.35  # a dark spot keeps this share of its score: a lit copy wins clearly
-LIT_BLUR = 25  # (at 1/4 size: ~100 px) how lit an area is, not single dark rocks / water: no specks
-GRID = 8  # atlas units per ownership cell
-
-# costs (one unit = one cell of plain seam between two views of a spot right in their middles)
-# a screenshot's well-seen middle (user, 1920x1080 px): a trapezoid, (y, half width) of its top and bottom
-MIDDLE_TOP, MIDDLE_BOTTOM = (241, 630), (1005, 302)
-DATA_W = 12.0  # cost of taking a spot on the edge of a screenshot's middle (0 at its centre, grows outside)
-S_FULL = 200  # px from a screenshot's edge / HUD (x how lit) from where a spot costs nothing more
-EDGE_W = 8.0  # cost of taking a spot right at a screenshot's edge / HUD, or in its fog
-OFF_W = 3.0  # seam: + this times how far off each screenshot's middle the spot is (0 middle, 1 trapezoid edge)
-SHIFT_W = 2.0  # seam: + this per 1000 units between the two screenshots
-TEX_W = 3.0  # seam weight: x(1 + this) through busy ground
-PATH_W = 10.0  # ... + this on paths
-NODE_W = 300.0  # ... + this on map nodes and their icons
-NODE_R, ICON_R, PATH_HALF = 38, 28, 8  # atlas units: map node / icon cores, path band
-NEAR_SHARE, NEAR_FALL = 0.3, 70  # around a core: this share of NODE_W, falling to 0 this many units away
-CYCLES = 2  # alpha-expansion rounds over all screenshots
-FLOW_SCALE = 64  # costs to integer capacities
-
 
 def _score(img: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
-    """(score, busyness) of a screenshot at 1/SCORE_SCALE size: centrality x how lit; 0..1 edge density"""
-    small = cv2.resize(img, (img.shape[1] // SCORE_SCALE, img.shape[0] // SCORE_SCALE), interpolation=cv2.INTER_AREA)
+    """(score, busyness) of a screenshot at 1/SEAM_SCORE_SCALE size: centrality x how lit; 0..1 edge density"""
+    small = cv2.resize(
+        img, (img.shape[1] // SEAM_SCORE_SCALE, img.shape[0] // SEAM_SCORE_SCALE), interpolation=cv2.INTER_AREA
+    )
     v = cv2.resize(_valid_mask_calc(img, dark=False), (small.shape[1], small.shape[0]), interpolation=cv2.INTER_NEAREST)
-    centr = cv2.distanceTransform((v > 0).astype(np.uint8), cv2.DIST_L2, 3) * SCORE_SCALE
+    centr = cv2.distanceTransform((v > 0).astype(np.uint8), cv2.DIST_L2, 3) * SEAM_SCORE_SCALE
     grey = cv2.cvtColor(small, cv2.COLOR_BGR2GRAY).astype(np.float32)
-    lit = np.clip((cv2.blur(grey, (LIT_BLUR, LIT_BLUR)) - DARK) / (LIT - DARK), DARK_FLOOR, 1.0)
+    lit = np.clip(
+        (cv2.blur(grey, (SEAM_LIT_BLUR, SEAM_LIT_BLUR)) - SEAM_DARK) / (SEAM_LIT - SEAM_DARK), SEAM_DARK_FLOOR, 1.0
+    )
     gx, gy = cv2.Sobel(grey, cv2.CV_32F, 1, 0), cv2.Sobel(grey, cv2.CV_32F, 0, 1)
     busy = np.clip(cv2.blur(cv2.magnitude(gx, gy), (5, 5)) / 120.0, 0, 1)
     return (centr * lit).astype(np.float32), busy.astype(np.float32)
@@ -78,7 +85,7 @@ class _Grid:
     def __init__(self, atlas, frames, x0, y0, GW, GH):
         self.atlas, self.frames = atlas, frames
         self.x0, self.y0, self.GW, self.GH = x0, y0, GW, GH
-        self.Tg = np.array([[1 / GRID, 0, -x0 / GRID], [0, 1 / GRID, -y0 / GRID], [0, 0, 1]], float)
+        self.Tg = np.array([[1 / SEAM_GRID, 0, -x0 / SEAM_GRID], [0, 1 / SEAM_GRID, -y0 / SEAM_GRID], [0, 0, 1]], float)
         self.shot: dict[int, tuple] = {}  # i -> (gx0, gy0, score, busy) on the grid (float16)
         self.centre = np.array([persp(_H(atlas, f), [[f["w"] / 2, f["h"] / 2]])[0] for f in frames], float).reshape(
             -1, 2
@@ -102,7 +109,7 @@ class _Grid:
             return None
         gx0, gy0, w, h, Hg = win
         sc, busy = _score(self.atlas.image(self.frames[i]["path"]))
-        S = np.diag([float(SCORE_SCALE), float(SCORE_SCALE), 1.0])
+        S = np.diag([float(SEAM_SCORE_SCALE), float(SEAM_SCORE_SCALE), 1.0])
         Hroi = np.array([[1, 0, -gx0], [0, 1, -gy0], [0, 0, 1]], float) @ Hg @ S
         # the score is a distance: sample it (no averaging), the busyness averaged over the cell
         s = cv2.warpPerspective(sc, Hroi, (w, h), flags=cv2.INTER_LINEAR, borderValue=0)
@@ -125,7 +132,7 @@ def _off_middle(x, y):
     """how far a screen spot (1920x1080 px) is from the screenshot's well-seen middle: 0 at its middle, 1 on the
     edge of MIDDLE (a trapezoid: the tilted camera sees the ground near the screen's bottom steeper), more
     outside it"""
-    (ty, thw), (by, bhw) = MIDDLE_TOP, MIDDLE_BOTTOM
+    (ty, thw), (by, bhw) = SEAM_MIDDLE_TOP, SEAM_MIDDLE_BOTTOM
     hw = np.maximum(thw + (bhw - thw) * (y - ty) / (by - ty), 150.0)
     my, hh = (ty + by) / 2, (by - ty) / 2
     return np.maximum(np.abs(x - 960.0) / hw, np.abs(y - my) / hh).astype(np.float32)
@@ -134,26 +141,26 @@ def _off_middle(x, y):
 def _data(s, e):
     """cost of taking each spot from a screenshot: off its middle (e), near its edge / HUD or in fog (s)"""
     s = s.astype(np.float32)
-    return DATA_W * np.minimum(e, 1.6) ** 2 + EDGE_W * (1.0 - np.minimum(1.0, s / S_FULL)), s > 0.5
+    return SEAM_DATA_W * np.minimum(e, 1.6) ** 2 + SEAM_EDGE_W * (1.0 - np.minimum(1.0, s / SEAM_S_FULL)), s > 0.5
 
 
 def _protect(atlas, grid) -> np.ndarray:
     """extra seam weight per cell: map nodes and icons (whole from one screenshot), paths"""
     fin = atlas.final or {}
     out = np.zeros((grid.GH, grid.GW), np.float32)
-    g = lambda x, y: (int(round((x - grid.x0) / GRID)), int(round((y - grid.y0) / GRID)))  # noqa: E731
+    g = lambda x, y: (int(round((x - grid.x0) / SEAM_GRID)), int(round((y - grid.y0) / SEAM_GRID)))  # noqa: E731
     by_id = {n["id"]: n for n in fin.get("nodes", [])}
     paths = np.zeros_like(out, np.uint8)
     for p in fin.get("paths", []):
         a, b = by_id.get(p["a"]), by_id.get(p["b"])
         if a is not None and b is not None:
-            cv2.line(paths, g(a["x"], a["y"]), g(b["x"], b["y"]), 1, max(1, round(2 * PATH_HALF / GRID)))
+            cv2.line(paths, g(a["x"], a["y"]), g(b["x"], b["y"]), 1, max(1, round(2 * SEAM_PATH_HALF / SEAM_GRID)))
     # cores: each map node with its icon row (the hull of the icons and their map node: one piece), plus
     # icons whose map node wasn't found (the icons still mark a map node under them)
     core = np.zeros_like(out, np.uint8)
     for n in fin.get("nodes", []):
         if n["status"] != "removed":
-            cv2.circle(core, g(n["x"], n["y"]), round(NODE_R / GRID), 1, -1)
+            cv2.circle(core, g(n["x"], n["y"]), round(SEAM_NODE_R / SEAM_GRID), 1, -1)
     rows: dict[tuple, list] = {}
     for ic in fin.get("icons", []):
         bx, by = ic.get("bx", ic["x"]), ic.get("by", ic["y"])
@@ -161,15 +168,15 @@ def _protect(atlas, grid) -> np.ndarray:
     for row in rows.values():
         pts = []
         for x, y, bx, by in row:
-            r = ICON_R
+            r = SEAM_ICON_R
             pts += [(x - r, y - r), (x + r, y - r), (x - r, y + r), (x + r, y + r), (bx - r, by + r), (bx + r, by + r)]
         hull = cv2.convexHull(np.array([g(x, y) for x, y in pts], np.int32))
         cv2.fillConvexPoly(core, hull, 1)
     # seams must not cut a core; near one they cost more, falling off with distance, so where they have to
     # pass between crowded map nodes they keep to the middle of the gap
-    d = cv2.distanceTransform((core == 0).astype(np.uint8), cv2.DIST_L2, 3) * GRID
-    near = NODE_W * NEAR_SHARE * np.clip(1.0 - d / NEAR_FALL, 0, 1)
-    out += PATH_W * paths + np.where(core > 0, NODE_W, near)
+    d = cv2.distanceTransform((core == 0).astype(np.uint8), cv2.DIST_L2, 3) * SEAM_GRID
+    near = SEAM_NODE_W * SEAM_NEAR_SHARE * np.clip(1.0 - d / SEAM_NEAR_FALL, 0, 1)
+    out += SEAM_PATH_W * paths + np.where(core > 0, SEAM_NODE_W, near)
     return out
 
 
@@ -183,7 +190,7 @@ def _pq(a, axis):
 def _seam(la, ea, cxa, cya, lb, eb, cxb, cyb, w):
     """seam cost between neighbouring cells owned by la / lb (0 where the same, or one side is empty)"""
     d = np.hypot(cxa - cxb, cya - cyb) / 1000.0
-    c = w * (1.0 + OFF_W * (ea + eb) + SHIFT_W * d)
+    c = w * (1.0 + SEAM_OFF_W * (ea + eb) + SEAM_SHIFT_W * d)
     return np.where((la != lb) & (la >= 0) & (lb >= 0), c, 0.0)
 
 
@@ -233,7 +240,7 @@ def _expand(grid, i, L, U, E, Wt):
     cols += [v[pos], np.full(int((~pos).sum()), snk)]
     caps += [delta[pos], -delta[~pos]]
     r, c = np.concatenate(rows), np.concatenate(cols)
-    k = np.round(np.concatenate(caps) * FLOW_SCALE).astype(np.int64)
+    k = np.round(np.concatenate(caps) * SEAM_FLOW_SCALE).astype(np.int64)
     keep = k > 0
     r, c, k = r[keep], c[keep], np.minimum(k[keep], 2**30).astype(np.int32)
     G = csr_matrix((k, (r, c)), shape=(n + 2, n + 2))
@@ -282,7 +289,7 @@ def clean_composite(atlas, max_pixels: int = 36_000_000, region=None, log=None):
     T = np.array([[scale, 0, -x0 * scale], [0, scale, -y0 * scale], [0, 0, 1]], float)
 
     # 1. every screenshot on the grid; start from the cheapest one per cell (no seams counted yet)
-    GW, GH = math.ceil(W / GRID), math.ceil(H / GRID)
+    GW, GH = math.ceil(W / SEAM_GRID), math.ceil(H / SEAM_GRID)
     grid = _Grid(atlas, frames, x0, y0, GW, GH)
     L = np.full((GH, GW), -1, np.int32)
     U = np.full((GH, GW), np.inf, np.float32)
@@ -300,21 +307,21 @@ def clean_composite(atlas, max_pixels: int = 36_000_000, region=None, log=None):
         if log and i % 100 == 99:
             log(f"clean map: read {i + 1} of {len(frames)} screenshots")
     U[L < 0] = 0
-    Wt = 1.0 + TEX_W * busy + _protect(atlas, grid)
+    Wt = 1.0 + SEAM_TEX_W * busy + _protect(atlas, grid)
 
     # 2. graph cuts: each screenshot in turn takes over the cells where that makes the whole map cheaper
     order = sorted(range(len(frames)), key=lambda i: -float(np.mean(grid.shot[i][2])) if grid.shot[i] else 0)
-    for cycle in range(CYCLES):
+    for cycle in range(SEAM_CYCLES):
         moved = 0
         for k, i in enumerate(order):
             moved += _expand(grid, i, L, U, E, Wt)
             if log and k % 100 == 99:
-                log(f"clean map: seams, round {cycle + 1} of {CYCLES}: {k + 1} of {len(frames)} screenshots")
+                log(f"clean map: seams, round {cycle + 1} of {SEAM_CYCLES}: {k + 1} of {len(frames)} screenshots")
         if moved == 0:
             break
 
     # 3. the ownership grid onto the canvas, and the map drawn from it
-    Mi = np.array([[1 / (scale * GRID), 0, 0], [0, 1 / (scale * GRID), 0]], np.float64)
+    Mi = np.array([[1 / (scale * SEAM_GRID), 0, 0], [0, 1 / (scale * SEAM_GRID), 0]], np.float64)
     labels = cv2.warpAffine(
         L.astype(np.float32), Mi, (CW, CH), flags=cv2.INTER_NEAREST | cv2.WARP_INVERSE_MAP, borderValue=-1
     ).astype(np.int16)

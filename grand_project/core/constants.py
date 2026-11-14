@@ -95,3 +95,35 @@ ATLAS_OUTPUTS = ("_terrain.png", "_terrain.npz", "_composite.png", "_network.png
 
 
 ROW_STEP_PX = 36.0  # screen px between neighbouring badges of one row (measured)
+
+
+# clean map (Fix seams, core/seams.py)
+SEAM_SCORE_SCALE = 4  # screenshot scores are worked out at 1/4 size (smooth anyway)
+SEAM_DARK = 25  # grey level: at or below this a spot counts as unseen fog
+SEAM_LIT = 60  # ... and from this on as fully lit
+SEAM_DARK_FLOOR = 0.35  # a dark spot keeps this share of its score: a lit copy wins clearly
+SEAM_LIT_BLUR = 25  # (at 1/4 size: ~100 px) how lit an area is, not single dark rocks / water: no specks
+SEAM_GRID = 8  # atlas units per ownership cell
+# costs (one unit = one cell of plain seam between two views of a spot right in their middles)
+# a screenshot's well-seen middle (user, 1920x1080 px): a trapezoid, (y, half width) of its top and bottom
+SEAM_MIDDLE_TOP, SEAM_MIDDLE_BOTTOM = (241, 630), (1005, 302)
+SEAM_DATA_W = 12.0  # cost of taking a spot on the edge of a screenshot's middle (0 at its centre, grows outside)
+SEAM_S_FULL = 200  # px from a screenshot's edge / HUD (x how lit) from where a spot costs nothing more
+SEAM_EDGE_W = 8.0  # cost of taking a spot right at a screenshot's edge / HUD, or in its fog
+SEAM_OFF_W = 3.0  # seam: + this times how far off each screenshot's middle the spot is (0 middle, 1 trapezoid edge)
+SEAM_SHIFT_W = 2.0  # seam: + this per 1000 units between the two screenshots
+SEAM_TEX_W = 3.0  # seam weight: x(1 + this) through busy ground
+SEAM_PATH_W = 10.0  # ... + this on paths
+SEAM_NODE_W = 300.0  # ... + this on map nodes and their icons
+SEAM_NODE_R, SEAM_ICON_R, SEAM_PATH_HALF = 38, 28, 8  # atlas units: map node / icon cores, path band
+SEAM_NEAR_SHARE, SEAM_NEAR_FALL = 0.3, 70  # around a core: this share of SEAM_NODE_W, falling to 0 this many units away
+SEAM_CYCLES = 2  # alpha-expansion rounds over all screenshots
+SEAM_FLOW_SCALE = 64  # costs to integer capacities
+
+
+# groups of waiting screenshots (core/islands.py)
+ISLAND_MIN = 2  # screenshots in an island before it is matched as one piece
+ISLAND_CANDIDATES = 12  # shifts passing the quick count that get the exact check
+ISLAND_TERRAIN_TRIES = 3  # of those passing it, the best this many get the terrain check
+ISLAND_COVER_CELL = 20.0  # atlas units: grid cell for "which area does an atlas / a group cover"
+ISLAND_QUICK_TOL = 8.0  # px: a map counts as landing on one in the quick count (shifts are rounded to 4 units)
