@@ -9,8 +9,10 @@ one, never half of one.
 process_pool: worker processes are always started fresh ("spawn"), as Windows and macOS do anyway. Linux
 would otherwise copy ("fork") the viewer process, threads and Tk included, which can hang.
 """
+
 from __future__ import annotations
 
+import contextlib
 import json
 import multiprocessing
 import os
@@ -27,7 +29,7 @@ def write_text_atomic(path, text: str, encoding: str = "utf-8") -> None:
             f.write(text)
             f.flush()
             os.fsync(f.fileno())
-        for attempt in range(5):        # Windows: a virus scanner / cloud sync may hold the target briefly
+        for attempt in range(5):  # Windows: a virus scanner / cloud sync may hold the target briefly
             try:
                 os.replace(tmp, path)
                 return
@@ -36,10 +38,8 @@ def write_text_atomic(path, text: str, encoding: str = "utf-8") -> None:
                     raise
                 time.sleep(0.1 * (attempt + 1))
     except BaseException:
-        try:
+        with contextlib.suppress(OSError):
             os.unlink(tmp)
-        except OSError:
-            pass
         raise
 
 
@@ -58,4 +58,5 @@ def workers(wanted: int) -> int:
 
 def process_pool(max_workers: int):
     from concurrent.futures import ProcessPoolExecutor
+
     return ProcessPoolExecutor(max_workers=max_workers, mp_context=multiprocessing.get_context("spawn"))

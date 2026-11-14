@@ -13,31 +13,32 @@ Registration is done on the node graph (not on terrain features):
 Nodes, edges and landmarks seen in several frames are merged and carry support counts, so
 every extra screenshot makes an existing part of the atlas more certain.
 """
+
 from __future__ import annotations
 
+import contextlib
 import json
 import math
 import threading
 from dataclasses import dataclass, field
 from pathlib import Path
 
+import atlas_io
 import cv2
 import numpy as np
 
-import atlas_io
-
 # ------------------------------------------------------------------ tunables
-VOTE_BIN = 8            # px, translation histogram bin
-SIG_DIST1, SIG_DIST2 = 8.0, 10.0   # neighbour-spacing agreement for a "good" pair
+VOTE_BIN = 8  # px, translation histogram bin
+SIG_DIST1, SIG_DIST2 = 8.0, 10.0  # neighbour-spacing agreement for a "good" pair
 REFINE_TOLS = (16, 12, 8, 6, 5)
-MERGE_TOL = 9.0         # px: a frame node closer than this to an atlas node IS that node
+MERGE_TOL = 9.0  # px: a frame node closer than this to an atlas node IS that node
 MIN_INLIERS = 8
 MIN_OVERLAP_RATIO = 0.40
 MIN_NCC = 0.35
 SCALE_RANGE = (0.90, 1.12)
 LANDMARK_MERGE = 45.0
-ICON_BASE_DY = 24.0     # screen px: a map base sits this far below its icon badge (measured, 22-28)
-ICON_MERGE = 14.0       # atlas units: the same badge seen in two screenshots
+ICON_BASE_DY = 24.0  # screen px: a map base sits this far below its icon badge (measured, 22-28)
+ICON_MERGE = 14.0  # atlas units: the same badge seen in two screenshots
 # The atlas camera is tilted: panning sideways moves the bottom of the screen further than the
 # top, and panning up/down squashes the view.  Undoing that tilt ("rectifying") turns every pan
 # into a pure shift.  HORIZON is where the map's vanishing line sits, in PIXELS above the top
@@ -46,17 +47,17 @@ ICON_MERGE = 14.0       # atlas units: the same badge seen in two screenshots
 # Assumes a 1080p game window with the top of the screen kept when cropping.
 # Set to None to disable (treat screenshots as flat, the pre-0.2 behaviour).
 HORIZON: float | None = -2155.0
-PLACEMENT = "shift"        # "shift" (pans on the flattened map) or "affine" (old behaviour)
-TERRAIN_MIN_AGREE = 15     # terrain fallback: features agreeing on one shift
-TERRAIN_SCALE = 1.0075     # parallax: ground texture moves ~0.75% more than the map nodes on a pan (measured
-                           # on 157 crawl pairs, same on x and y); terrain shifts are divided by it so they are
-                           # in map-node units. Uncorrected, a 1100-unit jump was ~10 units off and the map
-                           # refine (allowed < 10) was thrown away.
+PLACEMENT = "shift"  # "shift" (pans on the flattened map) or "affine" (old behaviour)
+TERRAIN_MIN_AGREE = 15  # terrain fallback: features agreeing on one shift
+TERRAIN_SCALE = 1.0075  # parallax: ground texture moves ~0.75% more than the map nodes on a pan (measured
+# on 157 crawl pairs, same on x and y); terrain shifts are divided by it so they are
+# in map-node units. Uncorrected, a 1100-unit jump was ~10 units off and the map
+# refine (allowed < 10) was thrown away.
 PARALLAX_MIN_INLIERS = 15  # second chance for screenshots of raised ground: exact matches needed ...
-PARALLAX_TOL = 20.0        # ... and this share of maps within this distance
+PARALLAX_TOL = 20.0  # ... and this share of maps within this distance
 PARALLAX_RATIO = 0.45
-DROP_MIN_INLIERS = 5       # placing by hand: maps that must agree near the drop point
-TERRAIN_MIN_NCC = 0.40     # ...and a stricter whole-overlap pixel check than the map route (0.35)
+DROP_MIN_INLIERS = 5  # placing by hand: maps that must agree near the drop point
+TERRAIN_MIN_NCC = 0.40  # ...and a stricter whole-overlap pixel check than the map route (0.35)
 
 
 # ------------------------------------------------------------------ frame data
@@ -67,35 +68,48 @@ class Frame:
     sha: str
     w: int
     h: int
-    pts: np.ndarray                 # (N,2) screenshot pixels
-    usable: np.ndarray              # (N,) bool: real, visible bases (no hidden / icon-only guesses)
+    pts: np.ndarray  # (N,2) screenshot pixels
+    usable: np.ndarray  # (N,) bool: real, visible bases (no hidden / icon-only guesses)
     nodes: list[dict]
     edges: list[tuple[int, int, float, str]]
     landmarks: list[dict]
-    R: np.ndarray = field(default_factory=lambda: np.eye(3))   # screen px -> flat map coords
+    R: np.ndarray = field(default_factory=lambda: np.eye(3))  # screen px -> flat map coords
 
     @staticmethod
-    def from_json(d: dict, horizon: float | None | str = "default") -> "Frame":
-        if horizon == "default":           # module setting is in px; rectifier takes image heights
+    def from_json(d: dict, horizon: float | None | str = "default") -> Frame:
+        if horizon == "default":  # module setting is in px; rectifier takes image heights
             horizon = None if HORIZON is None else HORIZON / d["height"]
         nodes = d["nodes"]
         R = rectifier(d["width"], d["height"], horizon)
         screen = np.array([[n["x"], n["y"]] for n in nodes], float).reshape(-1, 2)
         on_hud = on_hud_mask(screen, d["width"], d["height"])
         usable = np.array([not (n["hidden"] or n["unverified"]) for n in nodes], bool) & ~on_hud
-        edges = [(e["a"], e["b"], e["conf"], e["status"]) for e in d["edges"]
-                 if not (on_hud[e["a"]] or on_hud[e["b"]])]
-        landmarks = [lm for lm in d["landmarks"]
-                     if not on_hud_mask(np.array([[lm["x"], lm["y"]]], float), d["width"], d["height"])[0]]
-        fr = Frame(d["name"], d["path"], d["sha256"], d["width"], d["height"], persp(R, screen), usable,
-                   nodes, edges, landmarks, R)
+        edges = [(e["a"], e["b"], e["conf"], e["status"]) for e in d["edges"] if not (on_hud[e["a"]] or on_hud[e["b"]])]
+        landmarks = [
+            lm
+            for lm in d["landmarks"]
+            if not on_hud_mask(np.array([[lm["x"], lm["y"]]], float), d["width"], d["height"])[0]
+        ]
+        fr = Frame(
+            d["name"],
+            d["path"],
+            d["sha256"],
+            d["width"],
+            d["height"],
+            persp(R, screen),
+            usable,
+            nodes,
+            edges,
+            landmarks,
+            R,
+        )
         fr.on_hud = on_hud
         icons = d.get("icons", [])
         if icons:
             ip = np.array([[m["x"], m["y"]] for m in icons], float)
             keep = ~on_hud_mask(ip, d["width"], d["height"])
-            icons = [m for m, k in zip(icons, keep) if k]
-        fr.icons = icons                     # screen px; badges from the icon matcher
+            icons = [m for m, k in zip(icons, keep, strict=False) if k]
+        fr.icons = icons  # screen px; badges from the icon matcher
         return fr
 
 
@@ -129,10 +143,8 @@ def atlas_files(atlas_path) -> Path:
         old = atlas_path.with_name(atlas_path.stem + suffix)
         new = d / (atlas_path.stem + suffix)
         if old.exists() and not new.exists():
-            try:
+            with contextlib.suppress(OSError):
                 old.rename(new)
-            except OSError:
-                pass
     return d
 
 
@@ -163,7 +175,7 @@ def hud_mask(w: int, h: int, pad: int = 0) -> np.ndarray:
         if is_full_window(w, h):
             src = cv2.imread(str(HUD_MASK_FILE), cv2.IMREAD_GRAYSCALE)
             m = (cv2.resize(src, (w, h), interpolation=cv2.INTER_NEAREST) > 127).astype(np.uint8) * 255
-            if pad:                                      # pad < 0: only spots that deep inside the HUD
+            if pad:  # pad < 0: only spots that deep inside the HUD
                 se = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (2 * abs(pad) + 1, 2 * abs(pad) + 1))
                 m = cv2.dilate(m, se) if pad > 0 else cv2.erode(m, se)
         _hud_cache[k] = m
@@ -180,7 +192,7 @@ def on_hud_mask(pts: np.ndarray, w: int, h: int, pad: float = -HUD_DEPTH) -> np.
     return m[y, x] > 0
 
 
-ROW_STEP_PX = 36.0      # screen px between neighbouring badges of one row (measured)
+ROW_STEP_PX = 36.0  # screen px between neighbouring badges of one row (measured)
 
 
 def row_bases(icons: list[dict]) -> list[tuple[float, float]]:
@@ -193,7 +205,11 @@ def row_bases(icons: list[dict]) -> list[tuple[float, float]]:
         for r in rows:
             last = icons[r[-1]]
             gap = m["x"] - last["x"]
-            if abs(m["y"] - last["y"]) <= 6 and (abs(gap - ROW_STEP_PX) <= 8 or abs(gap - 2 * ROW_STEP_PX) <= 8)                     and "LostTower" not in (m["name"], last["name"]):
+            if (
+                abs(m["y"] - last["y"]) <= 6
+                and (abs(gap - ROW_STEP_PX) <= 8 or abs(gap - 2 * ROW_STEP_PX) <= 8)
+                and "LostTower" not in (m["name"], last["name"])
+            ):
                 r.append(k)
                 break
         else:
@@ -212,8 +228,8 @@ def rectifier(w: int, h: int, horizon: float | None) -> np.ndarray:
     if horizon is None:
         return np.eye(3)
     cx, cy = w / 2.0, h / 2.0
-    vh = horizon * h                     # horizon row in px
-    d0 = cy - vh                         # centre row's distance below the horizon
+    vh = horizon * h  # horizon row in px
+    d0 = cy - vh  # centre row's distance below the horizon
     return np.array([[d0, 0, -d0 * cx], [0, d0, -d0 * cy], [0, 1, -vh]], float) / d0
 
 
@@ -247,21 +263,22 @@ def neighbour_signature(pts: np.ndarray) -> np.ndarray:
     if len(pts) < 3:
         return np.full((len(pts), 2), 1e6)
     from scipy.spatial import cKDTree
-    d, _ = cKDTree(pts).query(pts, k=3)              # itself + the two nearest (no N x N matrix)
+
+    d, _ = cKDTree(pts).query(pts, k=3)  # itself + the two nearest (no N x N matrix)
     return d[:, 1:3]
 
 
 def vote_translations(src: np.ndarray, dst: np.ndarray, top_k: int = 8):
     s_sig, d_sig = neighbour_signature(src), neighbour_signature(dst)
-    good = ((np.abs(s_sig[:, None, 0] - d_sig[None, :, 0]) < SIG_DIST1) &
-            (np.abs(s_sig[:, None, 1] - d_sig[None, :, 1]) < SIG_DIST2))
+    good = (np.abs(s_sig[:, None, 0] - d_sig[None, :, 0]) < SIG_DIST1) & (
+        np.abs(s_sig[:, None, 1] - d_sig[None, :, 1]) < SIG_DIST2
+    )
     weights = np.where(good, 1.0, 0.15).ravel()
     dx = (dst[None, :, 0] - src[:, None, 0]).ravel()
     dy = (dst[None, :, 1] - src[:, None, 1]).ravel()
     x0, x1, y0, y1 = dx.min(), dx.max(), dy.min(), dy.max()
     nx, ny = max(3, int((x1 - x0) / VOTE_BIN) + 1), max(3, int((y1 - y0) / VOTE_BIN) + 1)
-    hist, xe, ye = np.histogram2d(dx, dy, bins=[nx, ny], range=[[x0, x1 + 1e-6], [y0, y1 + 1e-6]],
-                                  weights=weights)
+    hist, xe, ye = np.histogram2d(dx, dy, bins=[nx, ny], range=[[x0, x1 + 1e-6], [y0, y1 + 1e-6]], weights=weights)
     smooth = cv2.boxFilter(hist.astype(np.float32), -1, (3, 3), normalize=False)
     peaks = []
     work = smooth.copy()
@@ -270,7 +287,7 @@ def vote_translations(src: np.ndarray, dst: np.ndarray, top_k: int = 8):
         if work[i, j] <= 2:
             break
         peaks.append((float(work[i, j]), float(xe[i] + VOTE_BIN / 2), float(ye[j] + VOTE_BIN / 2)))
-        work[max(0, i - 3):i + 4, max(0, j - 3):j + 4] = 0
+        work[max(0, i - 3) : i + 4, max(0, j - 3) : j + 4] = 0
     return peaks
 
 
@@ -296,6 +313,7 @@ def mutual_pairs(a: np.ndarray, b: np.ndarray, tol: float):
     if not len(a) or not len(b):
         return []
     from scipy.spatial import cKDTree
+
     da, ia = cKDTree(b).query(a)
     _db, ib = cKDTree(a).query(b)
     return [(i, int(ia[i]), float(da[i])) for i in range(len(a)) if ib[ia[i]] == i and da[i] <= tol]
@@ -334,22 +352,23 @@ def _find_screenshot(p: str, atlas_dir: Path) -> str:
     return p
 
 
-_MASKS: dict = {}            # id(image) -> (weak ref to the image, its mask): one screenshot is compared
-_MASK_CACHE = 64            # with ~30 neighbours per placement (v1.01: the mask was rebuilt every time)
+_MASKS: dict = {}  # id(image) -> (weak ref to the image, its mask): one screenshot is compared
+_MASK_CACHE = 64  # with ~30 neighbours per placement (v1.01: the mask was rebuilt every time)
 
 
 def _valid_mask(frame_img: np.ndarray) -> np.ndarray:
     import weakref
+
     hit = _MASKS.get(id(frame_img))
     if hit is not None and hit[0]() is frame_img:
         return hit[1]
     m = _valid_mask_calc(frame_img)
-    m.flags.writeable = False                            # shared: callers must not change it
+    m.flags.writeable = False  # shared: callers must not change it
     try:
         _MASKS[id(frame_img)] = (weakref.ref(frame_img), m)
         while len(_MASKS) > _MASK_CACHE:
             _MASKS.pop(next(iter(_MASKS)))
-    except TypeError:                                    # (a view that cannot be weakly referenced)
+    except TypeError:  # (a view that cannot be weakly referenced)
         pass
     return m
 
@@ -357,16 +376,16 @@ def _valid_mask(frame_img: np.ndarray) -> np.ndarray:
 def _valid_mask_calc(frame_img: np.ndarray) -> np.ndarray:
     h, w = frame_img.shape[:2]
     m = np.full((h, w), 255, np.uint8)
-    m[:max(112, 0), int(w * .20):int(w * .74)] = 0     # world header / act tabs / search
+    m[: max(112, 0), int(w * 0.20) : int(w * 0.74)] = 0  # world header / act tabs / search
     m[:94, :92] = 0
-    m[:77, max(0, w - 200):] = 0
-    m[max(0, h - 100):, :110] = 0                        # globe
-    m[max(0, h - 100):, max(0, w - 110):] = 0
-    m[max(0, h - 27):, :] = 0
-    m[:, :210][int(h * .62):int(h * .96), :] = 0         # stats / chat text, left edge
-    m[hud_mask(w, h) > 0] = 0                            # skill bars, globes, side icon columns
+    m[:77, max(0, w - 200) :] = 0
+    m[max(0, h - 100) :, :110] = 0  # globe
+    m[max(0, h - 100) :, max(0, w - 110) :] = 0
+    m[max(0, h - 27) :, :] = 0
+    m[:, :210][int(h * 0.62) : int(h * 0.96), :] = 0  # stats / chat text, left edge
+    m[hud_mask(w, h) > 0] = 0  # skill bars, globes, side icon columns
     dark = (cv2.cvtColor(frame_img, cv2.COLOR_BGR2GRAY) < 14).astype(np.uint8) * 255
-    dark = cv2.erode(dark, np.ones((9, 9), np.uint8))    # unexplored black fog has no texture
+    dark = cv2.erode(dark, np.ones((9, 9), np.uint8))  # unexplored black fog has no texture
     m[dark > 0] = 0
     return cv2.erode(m, np.ones((7, 7), np.uint8))
 
@@ -411,24 +430,25 @@ class Registration:
     candidates: list = field(default_factory=list)
 
 
-def _inside_rect(pts: np.ndarray, M: np.ndarray, w: int, h: int, R: np.ndarray | None = None,
-                 margin: float = 30) -> np.ndarray:
+def _inside_rect(
+    pts: np.ndarray, M: np.ndarray, w: int, h: int, R: np.ndarray | None = None, margin: float = 30
+) -> np.ndarray:
     """atlas points that lie inside the screenshot (0..w,0..h) placed by M (after rectifier R)."""
     back = apply(invert(M), pts)
     if R is not None:
         back = persp(np.linalg.inv(R), back)
-    return ((back[:, 0] > margin) & (back[:, 0] < w - margin) &
-            (back[:, 1] > margin) & (back[:, 1] < h - margin))
+    return (back[:, 0] > margin) & (back[:, 0] < w - margin) & (back[:, 1] > margin) & (back[:, 1] < h - margin)
 
 
-def register(frame: Frame, atlas_pts: np.ndarray,
-             footprints: list[tuple[np.ndarray, int, int, np.ndarray]]) -> tuple[Registration, list]:
+def register(
+    frame: Frame, atlas_pts: np.ndarray, footprints: list[tuple[np.ndarray, int, int, np.ndarray]]
+) -> tuple[Registration, list]:
     """Find M (frame px -> atlas coords) from nodes only. Terrain check is done by the caller."""
     src = frame.pts[frame.usable]
     if len(src) < MIN_INLIERS or len(atlas_pts) < MIN_INLIERS:
         return Registration(False, "too few nodes to match"), []
     best, tried = None, []
-    for votes, tx, ty in vote_translations(src, atlas_pts):
+    for _votes, tx, ty in vote_translations(src, atlas_pts):
         M, pairs, rmse = refine(src, atlas_pts, (tx, ty))
         inl = len(pairs)
         moved = apply(M, src)
@@ -459,32 +479,34 @@ def _horizon_of(frame: Frame) -> float | None:
 # ------------------------------------------------------------------ the atlas
 class Atlas:
     def __init__(self):
-        self.nodes: list[dict] = []          # {x,y,n,frames,tower}
+        self.nodes: list[dict] = []  # {x,y,n,frames,tower}
         self.edges: dict[tuple[int, int], dict] = {}
         self.landmarks: list[dict] = []
-        self.bookmarks: list[dict] = []          # {name,category,note,x,y} set in the viewer
-        self.icons: list[dict] = []              # every badge, merged across screenshots
-        self.final: dict | None = None           # atlas-wide clean-up result (atlas_finalize)
-        self.city_types: list[dict] = []         # {x,y,type} cities whose type was set by hand
-        self.city_auto: list[dict] = []          # {x,y,d:[..]} cached look-alike distances per city type
-        self.landmark_edits: list[dict] = []     # {x,y,kind[,on]} set by hand in the viewer; kind "" = deleted
-        self.biome_edits: list[dict] = []        # {"biome": "Vaal city"... or "" (none), "maps": [[x, y], ...]} lassoed by hand
-        self.locks: list[dict] = []              # {x,y,n} hand badges = locked Breach strongholds
-        self.lock_scanned: list[str] = []        # screenshots already searched for the hand badge
-        self.frames: list[dict] = []         # {name,path,sha,w,h,M,stats}
+        self.bookmarks: list[dict] = []  # {name,category,note,x,y} set in the viewer
+        self.icons: list[dict] = []  # every badge, merged across screenshots
+        self.final: dict | None = None  # atlas-wide clean-up result (atlas_finalize)
+        self.city_types: list[dict] = []  # {x,y,type} cities whose type was set by hand
+        self.city_auto: list[dict] = []  # {x,y,d:[..]} cached look-alike distances per city type
+        self.landmark_edits: list[dict] = []  # {x,y,kind[,on]} set by hand in the viewer; kind "" = deleted
+        self.biome_edits: list[
+            dict
+        ] = []  # {"biome": "Vaal city"... or "" (none), "maps": [[x, y], ...]} lassoed by hand
+        self.locks: list[dict] = []  # {x,y,n} hand badges = locked Breach strongholds
+        self.lock_scanned: list[str] = []  # screenshots already searched for the hand badge
+        self.frames: list[dict] = []  # {name,path,sha,w,h,M,stats}
         self._images: dict[str, np.ndarray] = {}
 
     # -------- image access
-    IMAGE_CACHE = 90                          # decoded screenshots kept in memory (~6 MB each; a terrain
-                                              # check of one screenshot reads ~60 neighbours)
+    IMAGE_CACHE = 90  # decoded screenshots kept in memory (~6 MB each; a terrain
+    # check of one screenshot reads ~60 neighbours)
 
-    _image_lock = threading.Lock()             # the viewer reads images while a worker places
+    _image_lock = threading.Lock()  # the viewer reads images while a worker places
 
     def image(self, path: str) -> np.ndarray:
         with Atlas._image_lock:
             if path in self._images:
                 img = self._images.pop(path)
-                self._images[path] = img                      # most recently used last
+                self._images[path] = img  # most recently used last
                 return img
         img = cv2.imdecode(np.fromfile(path, np.uint8), cv2.IMREAD_COLOR)
         with Atlas._image_lock:
@@ -507,7 +529,7 @@ class Atlas:
         for f in self.frames:
             Hi = np.linalg.inv(screen_to_atlas(np.array(f["M"], float), self.frame_R(f)))
             p = persp(Hi, [[x, y]])[0]
-            c = max(abs(p[0] / f["w"] - .5), abs(p[1] / f["h"] - .5))
+            c = max(abs(p[0] / f["w"] - 0.5), abs(p[1] / f["h"] - 0.5))
             if c < limit:
                 out.append((c, f, p))
         return sorted(out, key=lambda t: t[0])[:n]
@@ -516,8 +538,14 @@ class Atlas:
         return [(np.array(f["M"], float), f["w"], f["h"], self.frame_R(f)) for f in self.frames]
 
     # -------- adding frames
-    def add_frame(self, frame: Frame, verify: bool = True, hints: list[str] | None = None,
-                  seeds: list | None = None, commit: bool = True) -> Registration:
+    def add_frame(
+        self,
+        frame: Frame,
+        verify: bool = True,
+        hints: list[str] | None = None,
+        seeds: list | None = None,
+        commit: bool = True,
+    ) -> Registration:
         """Place by the map layout; when too few maps are in the overlap (fog at the atlas edge,
         big pans), fall back to terrain features against the screenshots named in `hints`.
         commit=False only works out the placement (reg.ok, reg.M); commit it with commit_frame."""
@@ -545,7 +573,7 @@ class Atlas:
                 why = f"terrain does not match (NCC {reg.ncc:.2f} < {MIN_NCC})"
         if why is not None:
             alt = None
-            for seed in (seeds or []):            # (shift, label[, where the terrain lines up])
+            for seed in seeds or []:  # (shift, label[, where the terrain lines up])
                 shift, label = seed[0], seed[1]
                 at = np.asarray(seed[2], float) if len(seed) > 2 else None
                 alt = self._check_shift(frame, np.asarray(shift, float), label, at) if verify else None
@@ -562,8 +590,7 @@ class Atlas:
             self._ingest(frame, reg.M, reg)
         return reg
 
-    def place_near(self, frame: Frame, x: float, y: float, near: float = 900.0,
-                   strict: bool = False) -> Registration:
+    def place_near(self, frame: Frame, x: float, y: float, near: float = 900.0, strict: bool = False) -> Registration:
         """Line up a screenshot dropped by hand with its centre near (x, y) in atlas coordinates:
         only placements within `near` of that spot count (maps first, then terrain).  Does not
         commit; reg.ok False when nothing near there fits.  strict=True keeps the normal evidence
@@ -585,8 +612,7 @@ class Atlas:
             for FM, fw, fh, FR in self.footprints():
                 inside |= _inside_rect(moved, FM, fw, fh, FR)
             n_in = int(inside.sum())
-            tried = list(tried) + [Registration(False, "", M, len(pairs), rmse, n_in, n_in,
-                                                len(pairs) / max(1, n_in))]
+            tried = list(tried) + [Registration(False, "", M, len(pairs), rmse, n_in, n_in, len(pairs) / max(1, n_in))]
         for r in sorted(tried, key=lambda r: (-r.inliers, r.rmse)):
             if r.M is None or np.hypot(*(r.M[:, 2] - seed)) > near:
                 continue
@@ -599,7 +625,7 @@ class Atlas:
             if r.ncc_pixels >= 15000 and r.ncc >= need:
                 best = r
                 break
-        if best is None:                      # terrain against the screenshots around the spot
+        if best is None:  # terrain against the screenshots around the spot
             centres = []
             for f in self.frames:
                 H = screen_to_atlas(np.array(f["M"], float), self.frame_R(f))
@@ -610,8 +636,11 @@ class Atlas:
             if alt is not None and np.hypot(*(alt.M[:, 2] - seed)) <= near:
                 best = alt
         if best is None:
-            return Registration(False, f"nothing within {near:.0f} units of where it was dropped lines up",
-                                np.array([[1, 0, x], [0, 1, y]], float))
+            return Registration(
+                False,
+                f"nothing within {near:.0f} units of where it was dropped lines up",
+                np.array([[1, 0, x], [0, 1, y]], float),
+            )
         best.ok = True
         best.reason = best.reason or "placed near the drop point"
         return best
@@ -659,7 +688,7 @@ class Atlas:
         for i, p in enumerate(moved):
             if on_hud[i] and i not in mapping:
                 hud_skipped += 1
-                continue                      # a "node" on the game UI: never enters the atlas
+                continue  # a "node" on the game UI: never enters the atlas
             n = frame.nodes[i]
             if i in mapping:
                 a = self.nodes[mapping[i]]
@@ -671,19 +700,27 @@ class Atlas:
                 a["icon"] = a.get("icon") or n.get("icon", "")
                 a["hidden"] = a["hidden"] and bool(n["hidden"] or n["unverified"])
                 if n["hidden"] or n["unverified"]:
-                    a.setdefault("guessed_in", []).append(frame.name)   # only a guess there (no map base seen)
+                    a.setdefault("guessed_in", []).append(frame.name)  # only a guess there (no map base seen)
                 a.setdefault("sources", []).append(str(n.get("source", "")).split("#")[0])
             else:
                 mapping[i] = len(self.nodes)
-                self.nodes.append({"x": float(p[0]), "y": float(p[1]), "n": 1, "frames": [frame.name],
-                                   "tower": bool(n["tower"]), "icon": n.get("icon", ""),
-                                   "hidden": bool(n["hidden"] or n["unverified"]),
-                                   "guessed_in": [frame.name] if (n["hidden"] or n["unverified"]) else [],
-                                   "sources": [str(n.get("source", "")).split("#")[0]]})
+                self.nodes.append(
+                    {
+                        "x": float(p[0]),
+                        "y": float(p[1]),
+                        "n": 1,
+                        "frames": [frame.name],
+                        "tower": bool(n["tower"]),
+                        "icon": n.get("icon", ""),
+                        "hidden": bool(n["hidden"] or n["unverified"]),
+                        "guessed_in": [frame.name] if (n["hidden"] or n["unverified"]) else [],
+                        "sources": [str(n.get("source", "")).split("#")[0]],
+                    }
+                )
                 new_nodes += 1
         mapped_ids = set(mapping.values())
         seen_now = set()
-        for a, b, conf, status in frame.edges:
+        for a, b, _conf, status in frame.edges:
             ia, ib = mapping.get(a), mapping.get(b)
             if ia is None or ib is None or ia == ib:
                 continue
@@ -707,17 +744,40 @@ class Atlas:
                     ex["conf"] = max(ex["conf"], lm["conf"])
                     break
             else:
-                self.landmarks.append({"kind": lm["kind"], "x": float(p[0]), "y": float(p[1]), "n": 1,
-                                       "conf": lm["conf"], "source": lm["source"]})
+                self.landmarks.append(
+                    {
+                        "kind": lm["kind"],
+                        "x": float(p[0]),
+                        "y": float(p[1]),
+                        "n": 1,
+                        "conf": lm["conf"],
+                        "source": lm["source"],
+                    }
+                )
         self._merge_icons(frame, M)
         reg.reason = reg.reason or "merged"
-        self.frames.append({"name": frame.name, "path": frame.path, "sha": frame.sha, "w": frame.w,
-                            "h": frame.h, "M": M.tolist(), "horizon": _horizon_of(frame),
-                            "stats": {"inliers": reg.inliers, "rmse": round(reg.rmse, 2),
-                                      "ncc": round(reg.ncc, 3), "ratio": round(reg.ratio, 2),
-                                      "reference": reg.ref_frame, "reason": reg.reason},
-                            "new_nodes": new_nodes, "matched_nodes": len(frame.pts) - new_nodes - hud_skipped,
-                            "hud_nodes_dropped": hud_skipped})
+        self.frames.append(
+            {
+                "name": frame.name,
+                "path": frame.path,
+                "sha": frame.sha,
+                "w": frame.w,
+                "h": frame.h,
+                "M": M.tolist(),
+                "horizon": _horizon_of(frame),
+                "stats": {
+                    "inliers": reg.inliers,
+                    "rmse": round(reg.rmse, 2),
+                    "ncc": round(reg.ncc, 3),
+                    "ratio": round(reg.ratio, 2),
+                    "reference": reg.ref_frame,
+                    "reason": reg.reason,
+                },
+                "new_nodes": new_nodes,
+                "matched_nodes": len(frame.pts) - new_nodes - hud_skipped,
+                "hud_nodes_dropped": hud_skipped,
+            }
+        )
 
     def _verify(self, frame: Frame, reg: Registration) -> None:
         """terrain NCC against the placed screenshots that overlap the new one most"""
@@ -729,7 +789,7 @@ class Atlas:
             H_ref = screen_to_atlas(np.array(f["M"], float), self.frame_R(f))
             c_ref = persp(H_ref, [[f["w"] / 2, f["h"] / 2]])[0]
             if np.hypot(*(c_ref - c_new)) > 1.6 * max(f["w"], frame.w):
-                continue                  # too far apart to overlap: skip the pixel check
+                continue  # too far apart to overlap: skip the pixel check
             ncc, n = terrain_ncc(self.image(f["path"]), img_new, np.linalg.inv(H_ref) @ H_new)
             if n >= 15000 and ncc > best_ncc:
                 best_ncc, best_n, best_ref = ncc, n, f["name"]
@@ -744,11 +804,11 @@ class Atlas:
             pts, d16 = Atlas._feat_cache[key]
             return pts, (None if d16 is None else d16.astype(np.float32))
         img = self.image(path)
-        sift = cv2.SIFT_create(6000)       # dark / foggy screenshots need many to find enough matches
+        sift = cv2.SIFT_create(6000)  # dark / foggy screenshots need many to find enough matches
         k, d = sift.detectAndCompute(cv2.cvtColor(img, cv2.COLOR_BGR2GRAY), _valid_mask(img))
         pts = persp(R, np.float32([p.pt for p in k])) if k else np.zeros((0, 2))
-        Atlas._feat_cache[key] = (pts, None if d is None else d.astype(np.float16))   # ~1.5 MB each
-        while len(Atlas._feat_cache) > 300:          # ~1 MB each
+        Atlas._feat_cache[key] = (pts, None if d is None else d.astype(np.float16))  # ~1.5 MB each
+        while len(Atlas._feat_cache) > 300:  # ~1 MB each
             Atlas._feat_cache.pop(next(iter(Atlas._feat_cache)))
         return pts, d
 
@@ -770,7 +830,7 @@ class Atlas:
             if dr is None or len(pr) < 50:
                 continue
             m = matcher.knnMatch(dn, dr, k=2)
-            g = [x[0] for x in m if len(x) == 2 and x[0].distance < .75 * x[1].distance]
+            g = [x[0] for x in m if len(x) == 2 and x[0].distance < 0.75 * x[1].distance]
             if len(g) < TERRAIN_MIN_AGREE:
                 continue
             d = pr[[x.trainIdx for x in g]] - pn[[x.queryIdx for x in g]]
@@ -788,16 +848,18 @@ class Atlas:
         n_agree, shift, ref, at = best
         return self._check_shift(frame, shift, f"terrain ({n_agree} features agree vs {ref})", at)
 
-    def _check_shift(self, frame: Frame, shift: np.ndarray, label: str,
-                     terrain_at: np.ndarray | None = None) -> Registration | None:
+    def _check_shift(
+        self, frame: Frame, shift: np.ndarray, label: str, terrain_at: np.ndarray | None = None
+    ) -> Registration | None:
         """Accept a terrain-proposed shift only if the whole overlap correlates (stricter than the
         map route) and the maps in the overlap don't clearly contradict it.  `shift` is in map units;
         `terrain_at` is where the terrain pixels line up (TERRAIN_SCALE parallax): the pixel check is
         done there, the map position is what gets stored."""
         M = np.array([[1, 0, shift[0]], [0, 1, shift[1]]], float)
         src = frame.pts[frame.usable]
-        M2, pairs, rmse = (refine(src, self.points(), (shift[0], shift[1])) if len(src) and len(self.nodes)
-                           else (M, [], 99.0))
+        M2, pairs, rmse = (
+            refine(src, self.points(), (shift[0], shift[1])) if len(src) and len(self.nodes) else (M, [], 99.0)
+        )
         moved = apply(M, src)
         inside = np.zeros(len(src), bool)
         for FM, fw, fh, FR in self.footprints():
@@ -810,9 +872,9 @@ class Atlas:
         if n_in >= 12 and loose == 0:
             return None
         if len(pairs) >= 3 and np.hypot(*(M2[:, 2] - shift)) < 10:
-            M = M2                                   # maps refine the terrain shift
+            M = M2  # maps refine the terrain shift
         reg = Registration(False, "", M, len(pairs), rmse, n_in, n_in, ratio)
-        if terrain_at is not None:            # pixel check where the terrain lines up
+        if terrain_at is not None:  # pixel check where the terrain lines up
             chk = Registration(False, "", M.copy(), len(pairs), rmse, n_in, n_in, ratio)
             chk.M[:, 2] += np.asarray(terrain_at, float) - shift
             self._verify(frame, chk)
@@ -832,7 +894,7 @@ class Atlas:
         if da is None or db is None or len(pa) < 50 or len(pb) < 50:
             return 0, np.zeros(2)
         m = cv2.BFMatcher().knnMatch(db, da, k=2)
-        g = [x[0] for x in m if len(x) == 2 and x[0].distance < .75 * x[1].distance]
+        g = [x[0] for x in m if len(x) == 2 and x[0].distance < 0.75 * x[1].distance]
         if len(g) < TERRAIN_MIN_AGREE:
             return 0, np.zeros(2)
         d = pa[[x.trainIdx for x in g]] - pb[[x.queryIdx for x in g]]
@@ -863,9 +925,19 @@ class Atlas:
                     ex["score"] = max(ex["score"], m["score"])
                     break
             else:
-                self.icons.append({"name": m["name"], "x": float(p[0]), "y": float(p[1]), "bx": float(b[0]),
-                                   "by": float(b[1]), "n": 1, "frames": [frame.name], "score": m["score"],
-                                   "source": m["source"]})
+                self.icons.append(
+                    {
+                        "name": m["name"],
+                        "x": float(p[0]),
+                        "y": float(p[1]),
+                        "bx": float(b[0]),
+                        "by": float(b[1]),
+                        "n": 1,
+                        "frames": [frame.name],
+                        "score": m["score"],
+                        "source": m["source"],
+                    }
+                )
 
     def rebuild_icons(self, frames_by_name: dict) -> None:
         """Re-merge every screenshot's badges from its (re-labelled) detection, e.g. after
@@ -880,14 +952,25 @@ class Atlas:
     def to_json(self) -> dict:
         def strength(e):
             return e["seen"] / max(1, e["could"])
+
         return {
             "version": "atlas-builder-0.2",
             "frames": [{**{k: v for k, v in f.items() if k != "stats"}, **f["stats"]} for f in self.frames],
-            "nodes": [{"id": i, **{k: (round(v, 2) if isinstance(v, float) else v) for k, v in n.items()}}
-                      for i, n in enumerate(self.nodes)],
-            "edges": [{"a": a, "b": b, "seen": e["seen"], "could": e["could"],
-                       "strength": round(strength(e), 2), "confirmed": e["confirmed"]}
-                      for (a, b), e in sorted(self.edges.items())],
+            "nodes": [
+                {"id": i, **{k: (round(v, 2) if isinstance(v, float) else v) for k, v in n.items()}}
+                for i, n in enumerate(self.nodes)
+            ],
+            "edges": [
+                {
+                    "a": a,
+                    "b": b,
+                    "seen": e["seen"],
+                    "could": e["could"],
+                    "strength": round(strength(e), 2),
+                    "confirmed": e["confirmed"],
+                }
+                for (a, b), e in sorted(self.edges.items())
+            ],
             "landmarks": self.landmarks,
             "bookmarks": self.bookmarks,
             "icons": self.icons,
@@ -909,16 +992,27 @@ class Atlas:
             self.frames_dir = new_dir
 
     @staticmethod
-    def load(path) -> "Atlas":
+    def load(path) -> Atlas:
         d = json.loads(Path(path).read_text(encoding="utf-8"))
         at = Atlas()
-        at.frames_dir = Path(path).with_name(Path(path).stem + "_frames")   # saved detections (paths, dashes)
-        at.nodes = [{"x": n["x"], "y": n["y"], "n": n["n"], "frames": n["frames"], "tower": n["tower"],
-                     "icon": n.get("icon", ""), "hidden": n["hidden"], "sources": n.get("sources", []),
-                     **({"guessed_in": n["guessed_in"]} if "guessed_in" in n else {})}
-                    for n in d["nodes"]]
-        at.edges = {(e["a"], e["b"]): {"seen": e["seen"], "could": e["could"], "confirmed": e["confirmed"]}
-                    for e in d["edges"]}
+        at.frames_dir = Path(path).with_name(Path(path).stem + "_frames")  # saved detections (paths, dashes)
+        at.nodes = [
+            {
+                "x": n["x"],
+                "y": n["y"],
+                "n": n["n"],
+                "frames": n["frames"],
+                "tower": n["tower"],
+                "icon": n.get("icon", ""),
+                "hidden": n["hidden"],
+                "sources": n.get("sources", []),
+                **({"guessed_in": n["guessed_in"]} if "guessed_in" in n else {}),
+            }
+            for n in d["nodes"]
+        ]
+        at.edges = {
+            (e["a"], e["b"]): {"seen": e["seen"], "could": e["could"], "confirmed": e["confirmed"]} for e in d["edges"]
+        }
         at.landmarks = d["landmarks"]
         at.bookmarks = d.get("bookmarks", [])
         at.icons = d.get("icons", [])
@@ -930,8 +1024,9 @@ class Atlas:
         at.locks = d.get("locks", [])
         at.lock_scanned = d.get("lock_scanned", [])
         keys = ("inliers", "rmse", "ncc", "ratio", "reference", "reason")
-        at.frames = [{**{k: v for k, v in f.items() if k not in keys},
-                      "stats": {k: f.get(k) for k in keys}} for f in d["frames"]]
+        at.frames = [
+            {**{k: v for k, v in f.items() if k not in keys}, "stats": {k: f.get(k) for k in keys}} for f in d["frames"]
+        ]
         base = Path(path).resolve().parent
         for f in at.frames:
             f["path"] = _find_screenshot(f["path"], base)
@@ -943,7 +1038,7 @@ class Atlas:
         with_weight also returns the per-pixel weight, so screenshots can be pasted in later
         (paste_into) without rebuilding everything."""
         corners = []
-        frames = [f for f in self.frames if Path(f["path"]).exists()]   # moved/deleted shots: skip
+        frames = [f for f in self.frames if Path(f["path"]).exists()]  # moved/deleted shots: skip
         if not frames:
             empty = (np.zeros((1, 1, 3), np.uint8), (0, 0, 1.0))
             return (*empty, np.zeros((1, 1), np.float32)) if with_weight else empty
@@ -984,7 +1079,7 @@ class Atlas:
             Hroi = np.array([[1, 0, -bx0], [0, 1, -by0], [0, 0, 1]], float) @ Hc
             size = (int(bx1 - bx0), int(by1 - by0))
             img = self.image(f["path"])
-            valid = (_valid_mask(img) > 0).astype(np.uint8) * 255     # (the cached mask is read-only)
+            valid = (_valid_mask(img) > 0).astype(np.uint8) * 255  # (the cached mask is read-only)
             dist = cv2.distanceTransform(valid, cv2.DIST_L2, 3)
             wmap = cv2.warpPerspective(dist, Hroi, size, flags=cv2.INTER_LINEAR, borderValue=0)
             pix = cv2.warpPerspective(img, Hroi, size, flags=cv2.INTER_LINEAR, borderValue=0)
@@ -995,7 +1090,7 @@ class Atlas:
         return inside
 
 
-def render_overlay(atlas: "Atlas", canvas: np.ndarray, origin) -> np.ndarray:
+def render_overlay(atlas: Atlas, canvas: np.ndarray, origin) -> np.ndarray:
     """Nodes coloured by how many screenshots saw them; edges by how many agreed.
 
     node ring: orange = 1 screenshot, green = 2, cyan = 3+.
@@ -1004,7 +1099,10 @@ def render_overlay(atlas: "Atlas", canvas: np.ndarray, origin) -> np.ndarray:
     """
     x0, y0, sc = origin
     out = canvas.copy()
-    P = lambda x, y: (int((x - x0) * sc), int((y - y0) * sc))
+
+    def P(x, y):
+        return (int((x - x0) * sc), int((y - y0) * sc))
+
     if atlas.final:
         return _render_final(atlas, out, P)
     j = atlas.to_json()
@@ -1024,11 +1122,11 @@ def render_overlay(atlas: "Atlas", canvas: np.ndarray, origin) -> np.ndarray:
     for lm in j["landmarks"]:
         p = P(lm["x"], lm["y"])
         cv2.rectangle(out, (p[0] - 30, p[1] - 60), (p[0] + 30, p[1] + 10), (70, 240, 100), 2)
-        cv2.putText(out, lm["kind"], (p[0] - 28, p[1] - 64), cv2.FONT_HERSHEY_SIMPLEX, .6, (70, 240, 100), 2)
+        cv2.putText(out, lm["kind"], (p[0] - 28, p[1] - 64), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (70, 240, 100), 2)
     return out
 
 
-def _render_final(atlas: "Atlas", out: np.ndarray, P) -> np.ndarray:
+def _render_final(atlas: Atlas, out: np.ndarray, P) -> np.ndarray:
     """The atlas-wide result: paths cyan = 2+ screenshots agree, amber = one screenshot,
     magenta = abyss chain; nodes cyan = confirmed / from icon, orange = one screenshot,
     grey = doubtful; red x = removed (ghost / river glow)."""
@@ -1047,16 +1145,21 @@ def _render_final(atlas: "Atlas", out: np.ndarray, P) -> np.ndarray:
             if not n["why"].startswith("joined"):
                 cv2.drawMarker(out, p, (60, 60, 255), cv2.MARKER_TILTED_CROSS, 12, 2)
             continue
-        col = {"confirmed": (255, 220, 40), "icon": (255, 220, 40), "single": (0, 150, 255),
-               "disputed": (0, 150, 255), "doubtful": (150, 150, 150)}.get(st, (255, 255, 255))
+        col = {
+            "confirmed": (255, 220, 40),
+            "icon": (255, 220, 40),
+            "single": (0, 150, 255),
+            "disputed": (0, 150, 255),
+            "doubtful": (150, 150, 150),
+        }.get(st, (255, 255, 255))
         cv2.circle(out, p, 8, col, 2, cv2.LINE_AA)
         if n["icons"]:
             txt = "+".join(sorted(set(n["icons"])))
-            cv2.putText(out, txt, (p[0] + 9, p[1] - 6), cv2.FONT_HERSHEY_SIMPLEX, .38, (0, 0, 0), 3, cv2.LINE_AA)
-            cv2.putText(out, txt, (p[0] + 9, p[1] - 6), cv2.FONT_HERSHEY_SIMPLEX, .38, (230, 140, 255), 1, cv2.LINE_AA)
+            cv2.putText(out, txt, (p[0] + 9, p[1] - 6), cv2.FONT_HERSHEY_SIMPLEX, 0.38, (0, 0, 0), 3, cv2.LINE_AA)
+            cv2.putText(out, txt, (p[0] + 9, p[1] - 6), cv2.FONT_HERSHEY_SIMPLEX, 0.38, (230, 140, 255), 1, cv2.LINE_AA)
     for lm in fin["landmarks"]:
         p = P(lm["x"], lm["y"])
         col = (60, 60, 255) if lm["status"].startswith("removed") else (70, 240, 100)
         cv2.rectangle(out, (p[0] - 30, p[1] - 60), (p[0] + 30, p[1] + 10), col, 2)
-        cv2.putText(out, lm["kind"], (p[0] - 28, p[1] - 64), cv2.FONT_HERSHEY_SIMPLEX, .6, col, 2)
+        cv2.putText(out, lm["kind"], (p[0] - 28, p[1] - 64), cv2.FONT_HERSHEY_SIMPLEX, 0.6, col, 2)
     return out

@@ -10,6 +10,7 @@ Marks (screen px of the original screenshot; overlays drew paths 5 px left, PATH
   cross / false_path on a path                           -> is that path gone?
 Plus crossings: drawn paths that cross each other away from any map (never allowed - user).
 """
+
 from __future__ import annotations
 
 import json
@@ -23,15 +24,15 @@ import numpy as np
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE.parent / "program"))
 import atlas_detect as ad  # noqa: E402
-
 import rc_paths  # noqa: E402
+
 rc_paths.need_test_data()
 TRUTH_DIR = rc_paths.TEST_DATA / "truth"
 ANN = rc_paths.TEST_DATA / "marks"
 HISTORY = HERE.parent / "user_data" / "atlas_marks_history.json"
-TRUE_PATHS = TRUTH_DIR / "path_marks" / "true_paths"     # user-traced complete path layers (white = a real path line)
-MAP_CLEAR = 15                                      # px around a map centre left out of the path-layer score
-TRUE_R = 8                                          # px: a drawn path this close to a traced line is on it
+TRUE_PATHS = TRUTH_DIR / "path_marks" / "true_paths"  # user-traced complete path layers (white = a real path line)
+MAP_CLEAR = 15  # px around a map centre left out of the path-layer score
+TRUE_R = 8  # px: a drawn path this close to a traced line is on it
 LINE_R, MAP_R, FALSE_MAP_R, FALSE_PATH_R, CROSS_CLEAR = 10, 35, 20, 14, 20
 
 
@@ -41,7 +42,9 @@ def marked_shots() -> dict:
     pm = json.loads((TRUTH_DIR / "path_marks" / "marks.json").read_text(encoding="utf-8"))
     for per in pm.values():
         for key, ms in per.items():
-            shot = json.loads(next((TRUTH_DIR / "path_marks").glob(key + "_*_1.json")).read_text(encoding="utf-8"))["shot"]
+            shot = json.loads(next((TRUTH_DIR / "path_marks").glob(key + "_*_1.json")).read_text(encoding="utf-8"))[
+                "shot"
+            ]
             out.setdefault(shot, []).extend(ms)
     for sub in ("round1", "v068", "missing_maps"):
         f = ANN / sub / "marks.json"
@@ -78,7 +81,7 @@ def crossings(r: dict) -> list:
                 t = (qp[..., 0] * s_[..., 1] - qp[..., 1] * s_[..., 0]) / den
                 u = (qp[..., 0] * r_[..., 1] - qp[..., 1] * r_[..., 0]) / den
             hit = (den != 0) & (t > 0) & (t < 1) & (u > 0) & (u < 1)
-            for a_, b_ in zip(*np.nonzero(hit)):
+            for a_, b_ in zip(*np.nonzero(hit), strict=False):
                 x = p1[a_, 0] + t[a_, b_] * r_[a_, 0]
                 if len(N) == 0 or np.min(np.hypot(*(N - x).T)) > CROSS_CLEAR:
                     pts.append(x.tolist())
@@ -87,8 +90,17 @@ def crossings(r: dict) -> list:
 
 
 def check(results: dict, marks: dict) -> dict:
-    s = {k: [0, 0] for k in ("missed lines drawn", "drift lines drawn right", "circled maps found",
-                             "false maps gone", "false hidden maps gone", "false paths gone")}
+    s = {
+        k: [0, 0]
+        for k in (
+            "missed lines drawn",
+            "drift lines drawn right",
+            "circled maps found",
+            "false maps gone",
+            "false hidden maps gone",
+            "false paths gone",
+        )
+    }
     s["crossings"] = 0
     for shot, ms in marks.items():
         r = results[shot]
@@ -102,7 +114,9 @@ def check(results: dict, marks: dict) -> dict:
                     s[key][0] += any(_seg_dist(np.array([x, y], float), e["line"]) <= LINE_R for e in E)
             elif k in ("circle", "box"):
                 s["circled maps found"][1] += 1
-                s["circled maps found"][0] += any(np.hypot(m["x"] - n["x"], m["y"] - n["y"]) <= m.get("r", MAP_R) for n in N)
+                s["circled maps found"][0] += any(
+                    np.hypot(m["x"] - n["x"], m["y"] - n["y"]) <= m.get("r", MAP_R) for n in N
+                )
             elif k in ("false_map", "false_hidden"):
                 key = "false maps gone" if k == "false_map" else "false hidden maps gone"
                 s[key][1] += 1
@@ -122,7 +136,7 @@ def check(results: dict, marks: dict) -> dict:
         drawn = np.zeros(true.shape, np.uint8)
         for e in results[shot]["edges"]:
             cv2.polylines(drawn, [np.asarray(e["line"], float).round().astype(np.int32)], False, 255, 1)
-        rings = np.zeros(true.shape, np.uint8)                 # map centres: neither side counts there
+        rings = np.zeros(true.shape, np.uint8)  # map centres: neither side counts there
         for n in results[shot]["nodes"]:
             cv2.circle(rings, (int(n["x"]), int(n["y"])), MAP_CLEAR, 255, -1)
         true &= rings == 0
@@ -130,8 +144,10 @@ def check(results: dict, marks: dict) -> dict:
         k = np.ones((2 * TRUE_R + 1, 2 * TRUE_R + 1), np.uint8)
         near_drawn = cv2.dilate(drawn, k) > 0
         near_true = cv2.dilate(true.astype(np.uint8) * 255, k) > 0
-        rec[0] += int((true & near_drawn).sum()); rec[1] += int(true.sum())
-        prec[0] += int(((drawn > 0) & near_true).sum()); prec[1] += int((drawn > 0).sum())
+        rec[0] += int((true & near_drawn).sum())
+        rec[1] += int(true.sum())
+        prec[0] += int(((drawn > 0) & near_true).sum())
+        prec[1] += int((drawn > 0).sum())
     if rec[1]:
         s["true paths covered"] = rec
         s["drawn paths that are real"] = prec

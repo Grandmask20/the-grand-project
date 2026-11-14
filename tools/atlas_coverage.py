@@ -6,6 +6,7 @@ Every placed screenshot is outlined and numbered in time order (file names sort 
 Screenshots that could not be placed are listed; the last placed screenshot before each run of
 unplaced ones is outlined in red, so you know where to take another pass.
 """
+
 from __future__ import annotations
 
 import argparse
@@ -17,7 +18,7 @@ import numpy as np
 
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE.parent / "program"))
-import atlas_builder_core as core   # noqa: E402
+import atlas_builder_core as core  # noqa: E402
 
 
 def main() -> int:
@@ -48,7 +49,7 @@ def main() -> int:
     order = [p.stem for p in shots]
     for k, name in enumerate(order):
         if name in placed:
-            hue = int(170 * k / max(1, len(order) - 1))          # colour runs through time
+            hue = int(170 * k / max(1, len(order) - 1))  # colour runs through time
             col = cv2.cvtColor(np.uint8([[[hue, 200, 255]]]), cv2.COLOR_HSV2BGR)[0, 0].tolist()
             outline(placed[name], col, 2)
     gaps, k = [], 0
@@ -70,8 +71,10 @@ def main() -> int:
     print(f"{len(placed)} of {len(order)} screenshots placed -> {target}")
     for a, b, before, after in gaps:
         rng = f"#{a}" if a == b else f"#{a}-#{b}"
-        print(f"  not placed: {rng} ({b - a + 1} shot(s)); last placed before: "
-              f"{'#' + str(num[before]) if before else '-'}, next placed after: {'#' + str(num[after]) if after else '-'}")
+        print(
+            f"  not placed: {rng} ({b - a + 1} shot(s)); last placed before: "
+            f"{'#' + str(num[before]) if before else '-'}, next placed after: {'#' + str(num[after]) if after else '-'}"
+        )
     return 0
 
 

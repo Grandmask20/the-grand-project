@@ -3,6 +3,7 @@ belongs must be lined up by Atlas.place_near.
 
     py test_drop_placement.py [--runs 8] [--seed N]
 """
+
 from __future__ import annotations
 
 import argparse
@@ -17,11 +18,12 @@ import numpy as np
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE.parent / "program"))
 import rc_paths  # noqa: E402
+
 rc_paths.need_test_data()
 TD = rc_paths.TEST_DATA
-import atlas_builder as B            # noqa: E402
-import atlas_builder_core as C       # noqa: E402
-import test_random_sequence as T     # noqa: E402
+import atlas_builder as B  # noqa: E402
+import atlas_builder_core as C  # noqa: E402
+import test_random_sequence as T  # noqa: E402
 
 TOL = 10.0
 
@@ -31,7 +33,7 @@ def main() -> int:
     ap.add_argument("--runs", type=int, default=8)
     ap.add_argument("--seed", type=int)
     a = ap.parse_args()
-    seed = a.seed if a.seed is not None else random.randrange(10 ** 6)
+    seed = a.seed if a.seed is not None else random.randrange(10**6)
     rng = random.Random(seed)
     big_path = TD / "crawl_atlas/atlas.json"
     big = C.Atlas.load(big_path)
@@ -41,7 +43,7 @@ def main() -> int:
     fails = unplaced = 0
     for _ in range(a.runs):
         k = rng.randrange(len(shots) - 4)
-        seq = shots[k:k + 4]
+        seq = shots[k : k + 4]
         w = Path(tempfile.mkdtemp())
         T.copy_cache(seq, big_path.with_name("atlas_frames"), w / "f")
         fr = [B.extract_frame(p, Path("x"), w / "f") for p in seq]
@@ -63,11 +65,15 @@ def main() -> int:
         fails += not ok
         unplaced += not r.ok
         tag = "ok  " if r.ok and ok else ("ask " if not r.ok else "FAIL")
-        print(f"  {tag} #{k + 3}: dropped {np.hypot(*off):.0f} units off -> "
-              + (f"error {err:.1f} ({r.reason[:40]})" if r.ok else f"not placed: {r.reason}"))
+        print(
+            f"  {tag} #{k + 3}: dropped {np.hypot(*off):.0f} units off -> "
+            + (f"error {err:.1f} ({r.reason[:40]})" if r.ok else f"not placed: {r.reason}")
+        )
         shutil.rmtree(w, ignore_errors=True)
     print(f"{unplaced} of {a.runs} could not be lined up (the viewer then asks to keep the drop position)")
-    print("PASS: drop placement (no wrong placements)" if not fails else f"FAILED: {fails} wrong placements (seed {seed})")
+    print(
+        "PASS: drop placement (no wrong placements)" if not fails else f"FAILED: {fails} wrong placements (seed {seed})"
+    )
     return 1 if fails else 0
 
 

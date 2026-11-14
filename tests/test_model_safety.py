@@ -1,4 +1,5 @@
 """The detector models use skops: only the classes a trained model is made of may be loaded."""
+
 import sys
 from pathlib import Path
 
@@ -27,15 +28,17 @@ import pickle  # noqa: E402
 import skops.io as sio  # noqa: E402
 
 
-class _PickleSystem:                       # an old-style pickle that would run a command when loaded
+class _PickleSystem:  # an old-style pickle that would run a command when loaded
     def __reduce__(self):
         return (os.system, ("echo this must never run",))
 
 
-attacks = [("invalid model archive", b"not a skops model"),
-           ("old pickle with os.system", pickle.dumps(_PickleSystem())),
-           ("skops archive with os.system", sio.dumps(os.system)),
-           ("skops archive with eval inside a model dict", sio.dumps({"clf": eval, "names": ["x"]}))]
+attacks = [
+    ("invalid model archive", b"not a skops model"),
+    ("old pickle with os.system", pickle.dumps(_PickleSystem())),
+    ("skops archive with os.system", sio.dumps(os.system)),
+    ("skops archive with eval inside a model dict", sio.dumps({"clf": eval, "names": ["x"]})),
+]
 for label, blob in attacks:
     try:
         ad.safe_model_loads(blob)
@@ -44,7 +47,7 @@ for label, blob in attacks:
         check(f"{label} refused", True, str(e).split(",")[0][:80])
 
 print("PASS: model loading is restricted" if not fails else f"FAILED: {fails}")
-if "pytest" in sys.modules:                # under pytest: a failure, not an exit
+if "pytest" in sys.modules:  # under pytest: a failure, not an exit
     assert not fails, "see the FAIL lines above"
 else:
     sys.exit(1 if fails else 0)

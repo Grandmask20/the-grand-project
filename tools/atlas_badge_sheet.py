@@ -7,6 +7,7 @@ grouped by look; each row is one group labelled G1, G2, ...  Below them, samples
 types added from poe2db, to confirm the matcher names them correctly.  Writes
 <atlas>_badges.png and <atlas>_badges.json (group -> badge positions).
 """
+
 from __future__ import annotations
 
 import argparse
@@ -21,8 +22,19 @@ HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE.parent / "program"))
 import atlas_builder_core as core  # noqa: E402
 
-CHECK_TYPES = ["Sanctification", "Trader", "RogueExile", "StoneCircle", "Shrine", "RareMonster", "Checkpoint",
-               "NamelessSeer", "AbyssalDepths", "ExpeditionRemnant", "SanctificationBoss"]
+CHECK_TYPES = [
+    "Sanctification",
+    "Trader",
+    "RogueExile",
+    "StoneCircle",
+    "Shrine",
+    "RareMonster",
+    "Checkpoint",
+    "NamelessSeer",
+    "AbyssalDepths",
+    "ExpeditionRemnant",
+    "SanctificationBoss",
+]
 CROP, TILE, PER_ROW = 44, 72, 14
 N_GROUPS = 24
 
@@ -36,7 +48,7 @@ def main() -> int:
     atlas_path = Path(args.atlas)
     atlas = core.Atlas.load(atlas_path)
     by_name = {f["name"]: f for f in atlas.frames}
-    sightings = []          # (name, atlas x, y, path, sx, sy, centrality)
+    sightings = []  # (name, atlas x, y, path, sx, sy, centrality)
     for cf in atlas_path.with_name(atlas_path.stem + "_frames").glob("*.json"):
         fr = core.Frame.from_json(json.loads(cf.read_text(encoding="utf-8")))
         f = by_name.get(fr.name)
@@ -45,7 +57,7 @@ def main() -> int:
         H = core.screen_to_atlas(np.array(f["M"], float), atlas.frame_R(f))
         for m in fr.icons:
             p = core.persp(H, [[m["x"], m["y"]]])[0]
-            c = max(abs(m["x"] / fr.w - .5), abs(m["y"] / fr.h - .5))
+            c = max(abs(m["x"] / fr.w - 0.5), abs(m["y"] / fr.h - 0.5))
             sightings.append((m["name"], p[0], p[1], fr.path, m["x"], m["y"], c, m.get("source", "")))
     # one entry per badge: merge same-name sightings within 30 atlas units, keep the most central
     badges: dict[str, list] = {}
@@ -62,7 +74,7 @@ def main() -> int:
             cache[b[3]] = cv2.imdecode(np.fromfile(b[3], np.uint8), cv2.IMREAD_COLOR)
         img = cache[b[3]]
         x, y, r = int(b[4]), int(b[5]), CROP // 2
-        c = img[max(0, y - r):y + r, max(0, x - r):x + r]
+        c = img[max(0, y - r) : y + r, max(0, x - r) : x + r]
         return c if c.shape[:2] == (CROP, CROP) else None
 
     unk = [(b, crop(b)) for b in badges.get("Unidentified", [])]
@@ -79,9 +91,14 @@ def main() -> int:
         feats.append(np.concatenate([hist * 4, g * 0.08]))
     k = min(N_GROUPS, len(feats))
     if k >= 2:
-        _, lab, _ = cv2.kmeans(np.array(feats, np.float32), k, None,
-                               (cv2.TERM_CRITERIA_EPS + cv2.TERM_CRITERIA_MAX_ITER, 100, 1e-3), 8,
-                               cv2.KMEANS_PP_CENTERS)
+        _, lab, _ = cv2.kmeans(
+            np.array(feats, np.float32),
+            k,
+            None,
+            (cv2.TERM_CRITERIA_EPS + cv2.TERM_CRITERIA_MAX_ITER, 100, 1e-3),
+            8,
+            cv2.KMEANS_PP_CENTERS,
+        )
         groups = lab.ravel() + 1
     else:
         groups = np.ones(len(feats), int)
@@ -93,7 +110,7 @@ def main() -> int:
         crops += [np.zeros((TILE, TILE, 3), np.uint8)] * (PER_ROW - len(crops))
         lab = np.full((TILE, 230, 3), 30, np.uint8)
         for k, line in enumerate(label.split("\n")):
-            cv2.putText(lab, line, (6, 24 + 22 * k), cv2.FONT_HERSHEY_SIMPLEX, .55, (255, 255, 255), 1, cv2.LINE_AA)
+            cv2.putText(lab, line, (6, 24 + 22 * k), cv2.FONT_HERSHEY_SIMPLEX, 0.55, (255, 255, 255), 1, cv2.LINE_AA)
         rows.append(np.hstack([lab] + crops))
 
     for k, gnum in enumerate(order, 1):
@@ -106,7 +123,7 @@ def main() -> int:
         cs = [c for c in (crop(b) for b in bs[:PER_ROW]) if c is not None]
         if cs:
             row(f"matched as\n{t} ({len(bs)})", cs)
-    if args.taught:                      # what the hand-taught references named, to check them
+    if args.taught:  # what the hand-taught references named, to check them
         rows.append(np.full((10, rows[0].shape[1], 3), 90, np.uint8))
         for t in sorted(n for n in badges if n not in CHECK_TYPES and n != "Unidentified"):
             bs = [b for b in badges[t] if b[7] == "taught"]

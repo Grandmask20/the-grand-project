@@ -7,6 +7,7 @@ labels.txt, one per line:  G4.10 PowerOfFaith    |  G2 Corruption  (whole group,
                            G3 NotABadge                    (terrain mistaken for a badge)
 Tiles are numbered 1-14 left to right as on the sheet atlas_badge_sheet.py made.
 """
+
 from __future__ import annotations
 
 import argparse
@@ -19,9 +20,9 @@ import numpy as np
 
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE.parent / "program"))
-import atlas_builder_core as core          # noqa: E402
-import atlas_icon_refs as R                # noqa: E402
-from atlas_badge_sheet import CHECK_TYPES, PER_ROW      # noqa: E402
+import atlas_builder_core as core  # noqa: E402
+import atlas_icon_refs as R  # noqa: E402
+from atlas_badge_sheet import CHECK_TYPES, PER_ROW  # noqa: E402
 
 
 def sheet_badges(atlas_path: Path):
@@ -37,7 +38,7 @@ def sheet_badges(atlas_path: Path):
         H = core.screen_to_atlas(np.array(f["M"], float), atlas.frame_R(f))
         for m in fr.icons:
             p = core.persp(H, [[m["x"], m["y"]]])[0]
-            c = max(abs(m["x"] / fr.w - .5), abs(m["y"] / fr.h - .5))
+            c = max(abs(m["x"] / fr.w - 0.5), abs(m["y"] / fr.h - 0.5))
             sightings.append((m["name"], p[0], p[1], fr.path, m["x"], m["y"], c, m.get("source", "")))
     badges: dict[str, list] = {}
     for s in sorted(sightings, key=lambda s: s[6]):
@@ -74,8 +75,8 @@ def main() -> int:
                 b = min(unk, key=lambda b: abs(b[1] - x) + abs(b[2] - y))
                 out.append(b)
             return out
-        bs = badges.get(row, [])                 # same rows as atlas_badge_sheet: "matched as" for
-        if row not in CHECK_TYPES:               # the poe2db types, "taught as" for the rest
+        bs = badges.get(row, [])  # same rows as atlas_badge_sheet: "matched as" for
+        if row not in CHECK_TYPES:  # the poe2db types, "taught as" for the rest
             bs = [b for b in bs if b[7] == "taught"]
         return [b for b in bs[:PER_ROW] if R.crop(image(b[3]), b[4], b[5], 44) is not None]
 
@@ -94,8 +95,10 @@ def main() -> int:
             if c is not None and R.add(name, c):
                 count[name] = count.get(name, 0) + 1
                 saved += 1
-    print(f"saved {saved} reference crops in {R.DB_PATH.name} (badge_refs): "
-          + ", ".join(f"{n} {c}" for n, c in sorted(count.items())))
+    print(
+        f"saved {saved} reference crops in {R.DB_PATH.name} (badge_refs): "
+        + ", ".join(f"{n} {c}" for n, c in sorted(count.items()))
+    )
     return 0
 
 

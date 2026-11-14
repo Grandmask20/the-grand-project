@@ -16,6 +16,7 @@ Three sheets, every tile numbered:
 Unlabelled tiles keep the detector's call.  `save` writes truth.json (per screenshot: maps,
 landmarks, badges in screen px), which the detector tests score against.
 """
+
 from __future__ import annotations
 
 import argparse
@@ -36,8 +37,15 @@ MAP_CROP, MAP_TILE, MAP_ROW = 56, 64, 20
 LM_W, LM_H, LM_ROW = 170, 210, 10
 BADGE_CROP, BADGE_TILE, BADGE_ROW = 40, 56, 20
 LOOSE_PER_SHOT = 30
-LM_KINDS = {"city": "City", "hall": "Hall", "tower": "Tower", "stronghold": "Breach stronghold",
-            "locked": "Locked stronghold", "deadly": "Deadly boss map", "none": ""}
+LM_KINDS = {
+    "city": "City",
+    "hall": "Hall",
+    "tower": "Tower",
+    "stronghold": "Breach stronghold",
+    "locked": "Locked stronghold",
+    "deadly": "Deadly boss map",
+    "none": "",
+}
 
 
 def loose_maps(img: np.ndarray, taken: np.ndarray) -> list[tuple[int, int, float]]:
@@ -48,7 +56,7 @@ def loose_maps(img: np.ndarray, taken: np.ndarray) -> list[tuple[int, int, float
     ok = (dog >= mx) & (dog > 22) & (core._valid_mask(img) > 0)
     ys, xs = np.nonzero(ok)
     out = []
-    for x, y in zip(xs, ys):
+    for x, y in zip(xs, ys, strict=False):
         if len(taken) and np.min(np.hypot(taken[:, 0] - x, taken[:, 1] - y)) < 16:
             continue
         out.append((int(x), int(y), float(dog[y, x])))
@@ -57,7 +65,7 @@ def loose_maps(img: np.ndarray, taken: np.ndarray) -> list[tuple[int, int, float
 
 def crop(img, x, y, w, h):
     big = cv2.copyMakeBorder(img, h, h, w, w, cv2.BORDER_CONSTANT)
-    return big[int(y) + h - h // 2:int(y) + h - h // 2 + h, int(x) + w - w // 2:int(x) + w - w // 2 + w].copy()
+    return big[int(y) + h - h // 2 : int(y) + h - h // 2 + h, int(x) + w - w // 2 : int(x) + w - w // 2 + w].copy()
 
 
 def label_tile(t, text, col):
@@ -74,7 +82,7 @@ def grid(rows: list[tuple[str, list[np.ndarray]]], per_row: int, tw: int, th: in
         cv2.putText(head, title, (4, 15), 0, 0.5, (0, 255, 255), 1, cv2.LINE_AA)
         lines.append(head)
         for k in range(0, len(tiles), per_row):
-            part = tiles[k:k + per_row]
+            part = tiles[k : k + per_row]
             part += [np.zeros((th, tw, 3), np.uint8)] * (per_row - len(part))
             lines.append(np.hstack(part))
     return np.vstack(lines) if lines else np.zeros((10, 10, 3), np.uint8)
@@ -111,7 +119,7 @@ def cmd_sheet(a) -> int:
             tiles.append(label_tile(t, mid, (60, 200, 60) if yes else (40, 40, 220)))
         map_rows.append((f"{S}: {p.name}  (green = detector says map, red = rejected candidate)", tiles))
         # landmarks: detector landmarks + every Deadly Map Boss badge not already covered
-        lms = [(l["x"], l["y"], l["kind"]) for l in d["landmarks"]]
+        lms = [(landmark["x"], landmark["y"], landmark["kind"]) for landmark in d["landmarks"]]
         for ic in d["icons"]:
             if ic["name"] == "MapBossSpecial":
                 bx, by = ic["x"], ic["y"] + 24
@@ -138,11 +146,15 @@ def cmd_sheet(a) -> int:
     for b in key["badges"].values():
         b.pop("_row", None)
     cv2.imwrite(str(out / "truth_maps.png"), grid(map_rows, MAP_ROW, MAP_TILE, MAP_TILE))
-    cv2.imwrite(str(out / "truth_landmarks.png"), grid([("landmarks (cross = map base)", lm_tiles)], LM_ROW, LM_W, LM_H))
+    cv2.imwrite(
+        str(out / "truth_landmarks.png"), grid([("landmarks (cross = map base)", lm_tiles)], LM_ROW, LM_W, LM_H)
+    )
     cv2.imwrite(str(out / "truth_badges.png"), grid(badge_rows, BADGE_ROW, BADGE_TILE, BADGE_TILE))
     (out / "truth_key.json").write_text(json.dumps(key, indent=1), encoding="utf-8")
-    print(f"{len(key['shots'])} screenshots: {len(key['maps'])} map tiles, {len(key['landmarks'])} landmarks, "
-          f"{len(key['badges'])} badges in {len(names)} rows -> {out}")
+    print(
+        f"{len(key['shots'])} screenshots: {len(key['maps'])} map tiles, {len(key['landmarks'])} landmarks, "
+        f"{len(key['badges'])} badges in {len(names)} rows -> {out}"
+    )
     return 0
 
 
@@ -160,13 +172,18 @@ def cmd_more(a) -> int:
         sp = Path(s["path"])
         img = cv2.imdecode(np.fromfile(str(sp), np.uint8), cv2.IMREAD_COLOR)
         tiles = []
-        for x, y, sc in sorted(props.get(s["name"], []), key=lambda t: -t[2]):
+        for x, y, _sc in sorted(props.get(s["name"], []), key=lambda t: -t[2]):
             if len(have) and np.min(np.hypot(have[:, 0] - x, have[:, 1] - y)) < 20:
                 continue
             n += 1
             mid = f"{S}{n}"
-            key["maps"][mid] = {"shot": S, "x": round(float(x), 1), "y": round(float(y), 1), "detector": True,
-                                "round": rnd}
+            key["maps"][mid] = {
+                "shot": S,
+                "x": round(float(x), 1),
+                "y": round(float(y), 1),
+                "detector": True,
+                "round": rnd,
+            }
             have = np.vstack([have, [x, y]])
             t = cv2.resize(crop(img, x, y, MAP_CROP, MAP_CROP), (MAP_TILE, MAP_TILE))
             cv2.circle(t, (MAP_TILE // 2, MAP_TILE // 2), 13, (255, 255, 0), 1, cv2.LINE_AA)
@@ -184,15 +201,37 @@ MAP_ID = re.compile(r"(?<![\w-])([a-j]?)(\d+)(?![\w])", re.I)
 RANGE = re.compile(r"([a-j])(\d+)\s*-\s*([a-j])(\d+)", re.I)
 BADGE_ID = re.compile(r"(?<![\d])b(\d+)", re.I)
 # your words for badges -> badge names (checked in this order)
-BADGE_WORDS = [("expedition", "ExpeditionShip"), ("ship", "ExpeditionShip"), ("powerful map boss", "MapBoss"), ("deadly map boss", "MapBossSpecial"),
-               ("breach hive", "BreachHive"), ("rogue exile", "RogueExile"),
-               ("wisdom", "WisdomsTeachings"), ("abyssal overrun", "AbyssOverrun"),
-               ("same element", "UnnamedR5"), ("terrain", "none"), ("map node", "none"),
-               ("map icon", "none"), ("top of", "none"), ("ui", "none"), ("none", "none")]
-NOT_WORDS = [("ui", "ui"), ("text", "text"), ("waypoint", "waypoint"), ("player", "player"),
-             ("tops of breach", "stronghold_top"), ("top", "tower_top"), ("beam", "hall_beam"),
-             ("structure", "hall_beam"), ("icon", "icon"), ("path", "path"), ("terrain", "terrain"),
-             ("glow", "glow")]
+BADGE_WORDS = [
+    ("expedition", "ExpeditionShip"),
+    ("ship", "ExpeditionShip"),
+    ("powerful map boss", "MapBoss"),
+    ("deadly map boss", "MapBossSpecial"),
+    ("breach hive", "BreachHive"),
+    ("rogue exile", "RogueExile"),
+    ("wisdom", "WisdomsTeachings"),
+    ("abyssal overrun", "AbyssOverrun"),
+    ("same element", "UnnamedR5"),
+    ("terrain", "none"),
+    ("map node", "none"),
+    ("map icon", "none"),
+    ("top of", "none"),
+    ("ui", "none"),
+    ("none", "none"),
+]
+NOT_WORDS = [
+    ("ui", "ui"),
+    ("text", "text"),
+    ("waypoint", "waypoint"),
+    ("player", "player"),
+    ("tops of breach", "stronghold_top"),
+    ("top", "tower_top"),
+    ("beam", "hall_beam"),
+    ("structure", "hall_beam"),
+    ("icon", "icon"),
+    ("path", "path"),
+    ("terrain", "terrain"),
+    ("glow", "glow"),
+]
 
 
 def _flags(t: str) -> list[str]:
@@ -223,20 +262,24 @@ def classify_map(text: str) -> dict:
     if "could be a node" in t:
         out["state"] = "maybe"
     elif "tower icon" in t:
-        out["state"], out["what"] = "not", "tower_icon"     # badges of a tower sit high above its base
+        out["state"], out["what"] = "not", "tower_icon"  # badges of a tower sit high above its base
     elif re.search(r"not a node|not nodes|dont think|next to", t):
         out["state"] = "not"
         out["what"] = "near_node" if re.search(r"next to|above|below", t) else "not"
-    elif re.search(r"is a node|are (all )?nodes|barely a node|there is a node|hidden node|map node|city node|be a node", t):
-        out["state"] = "map"
-    elif "tower" in t and "top" not in t:
+    elif (
+        re.search(
+            r"is a node|are (all )?nodes|barely a node|there is a node|hidden node|map node|city node|be a node", t
+        )
+        or "tower" in t
+        and "top" not in t
+    ):
         out["state"] = "map"
     elif "expedition" in t:
         out["state"], out["what"] = "not", "expedition_badge"  # the white-swirl badge right above an ocean map
     elif re.search(r"\bboat|\bship", t):
-        out["state"], out["what"] = "not", "expedition_ship"   # Expedition ship marker (user: boat)
+        out["state"], out["what"] = "not", "expedition_ship"  # Expedition ship marker (user: boat)
     elif re.search(r"off ?cent", t):
-        out["state"] = "map"                                    # "is offcenter": a map, circle off its centre
+        out["state"] = "map"  # "is offcenter": a map, circle off its centre
     elif re.search(r"^\s*none\b", t):
         out["state"], out["what"] = "not", "not"
     else:
@@ -245,7 +288,9 @@ def classify_map(text: str) -> dict:
                 out["state"], out["what"] = "not", what
                 break
     if out["state"] == "map":
-        t = re.sub(r"(behind|under|next to) (a|the) (hall|tower|city)", "", t)   # "hidden node behind a hall" is not a Hall
+        t = re.sub(
+            r"(behind|under|next to) (a|the) (hall|tower|city)", "", t
+        )  # "hidden node behind a hall" is not a Hall
         if "deadly" in t:
             out["landmark"] = "Deadly boss map"
         elif "city" in t:
@@ -308,7 +353,7 @@ def _segments(line: str, rx: re.Pattern, letter_ok: bool) -> list[tuple[str, str
     segs, last = [], None
     for i, m in enumerate(ms):
         end = ms[i + 1].start() if i + 1 < len(ms) else len(line)
-        text = line[m.end():end].strip(" ,:;.\t")
+        text = line[m.end() : end].strip(" ,:;.\t")
         if letter_ok:
             L = (m.group(1) or last or "").upper()
             if not L:
@@ -350,7 +395,7 @@ def parse_notes(path: Path, key: dict) -> dict:
             section = "badges"
             continue
         m = re.match(r"^r(\d+)\s+([a-z][a-z ]*)$", low)
-        if m:                                           # short syntax: a whole row
+        if m:  # short syntax: a whole row
             rows["R" + m.group(1)] = _badge_name(m.group(2), known)[0] or m.group(2)
             continue
         m = re.match(r"^l(\d+)\b\s*(.*)$", low)
@@ -365,7 +410,7 @@ def parse_notes(path: Path, key: dict) -> dict:
         if section == "badges":
             m = re.search(r"the rest of r(\d+)", low)
             if m:
-                rows["R" + m.group(1)] = _badge_name(low[m.end():], known)[0] or "none"
+                rows["R" + m.group(1)] = _badge_name(low[m.end() :], known)[0] or "none"
                 continue
             segs = _segments(line, BADGE_ID, False)
             if not segs:
@@ -384,11 +429,17 @@ def parse_notes(path: Path, key: dict) -> dict:
             if mid not in key["maps"]:
                 unclear.append(raw)
                 continue
-            if not txt:                                 # short syntax: bare id = flip
+            if not txt:  # short syntax: bare id = flip
                 det = key["maps"][mid]["detector"]
-                maps[mid] = {"state": "not" if det else "map", "what": "", "flags": [], "landmark": "", "city_type": None}
+                maps[mid] = {
+                    "state": "not" if det else "map",
+                    "what": "",
+                    "flags": [],
+                    "landmark": "",
+                    "city_type": None,
+                }
                 continue
-            if txt.split()[0].lower() in LM_KINDS and txt.split()[0].lower() != "none":   # short syntax: A12 City
+            if txt.split()[0].lower() in LM_KINDS and txt.split()[0].lower() != "none":  # short syntax: A12 City
                 txt = f"is a node, {txt}"
             c = classify_map(txt)
             if c["state"] is None:
@@ -402,8 +453,10 @@ def cmd_save(a) -> int:
     out = Path(a.out)
     key = json.loads((out / "truth_key.json").read_text(encoding="utf-8"))
     n = parse_notes(Path(a.labels), key)
-    truth = {S: {"name": s["name"], "maps": [], "maybe": [], "not_maps": [], "landmarks": [], "badges": []}
-             for S, s in key["shots"].items()}
+    truth = {
+        S: {"name": s["name"], "maps": [], "maybe": [], "not_maps": [], "landmarks": [], "badges": []}
+        for S, s in key["shots"].items()
+    }
     flips = 0
     for mid, m in key["maps"].items():
         c = n["maps"].get(mid)
@@ -415,25 +468,44 @@ def cmd_save(a) -> int:
             T["maps"].append({"id": mid, "x": m["x"], "y": m["y"], "flags": c["flags"] if c else []})
         elif state == "maybe":
             T["maybe"].append({"id": mid, "x": m["x"], "y": m["y"]})
-        elif c:                                         # labelled non-maps: negatives for training
+        elif c:  # labelled non-maps: negatives for training
             T["not_maps"].append({"id": mid, "x": m["x"], "y": m["y"], "what": c["what"]})
     for lid, lm in key["landmarks"].items():
         c = n["landmarks"].get(lid, {"kind": lm["detector"], "city_type": None, "flags": []})
         if c["kind"]:
-            truth[lm["shot"]]["landmarks"].append({"id": lid, "kind": c["kind"], "x": lm["x"], "y": lm["y"],
-                                                   "city_type": c["city_type"], "flags": c["flags"]})
+            truth[lm["shot"]]["landmarks"].append(
+                {
+                    "id": lid,
+                    "kind": c["kind"],
+                    "x": lm["x"],
+                    "y": lm["y"],
+                    "city_type": c["city_type"],
+                    "flags": c["flags"],
+                }
+            )
     added = 0
-    for mid, c in n["maps"].items():                   # landmarks named on map tiles
+    for mid, c in n["maps"].items():  # landmarks named on map tiles
         if c["state"] != "map" or not c["landmark"]:
             continue
         m = key["maps"][mid]
         L = truth[m["shot"]]["landmarks"]
-        if any(l["kind"] == c["landmark"] and np.hypot(l["x"] - m["x"], l["y"] - m["y"]) < 90 for l in L):
+        if any(
+            landmark["kind"] == c["landmark"] and np.hypot(landmark["x"] - m["x"], landmark["y"] - m["y"]) < 90
+            for landmark in L
+        ):
             continue
-        L.append({"id": mid, "kind": c["landmark"], "x": m["x"], "y": m["y"], "city_type": c["city_type"],
-                  "flags": c["flags"] + ["from_map_tile"]})
+        L.append(
+            {
+                "id": mid,
+                "kind": c["landmark"],
+                "x": m["x"],
+                "y": m["y"],
+                "city_type": c["city_type"],
+                "flags": c["flags"] + ["from_map_tile"],
+            }
+        )
         added += 1
-    for mid, c in n["maps"].items():                   # Expedition ship markers named on map tiles
+    for mid, c in n["maps"].items():  # Expedition ship markers named on map tiles
         if c["state"] == "not" and c["what"] in ("expedition_ship", "expedition_badge"):
             nm = "ExpeditionShip" if c["what"] == "expedition_ship" else "Expedition"
             m = key["maps"][mid]
@@ -448,10 +520,12 @@ def cmd_save(a) -> int:
     res = {v.pop("name"): v for v in truth.values()}
     (out / "truth.json").write_text(json.dumps(res, indent=1), encoding="utf-8")
     tot = lambda k: sum(len(v[k]) for v in res.values())  # noqa: E731
-    print(f"truth.json: {tot('maps')} maps ({flips} changed from the detector), {tot('maybe')} maybe, "
-          f"{tot('not_maps')} labelled non-maps, {tot('landmarks')} landmarks ({len(n['landmarks'])} corrected, "
-          f"{added} added from map notes), {tot('badges')} badges ({len(n['badges'])} single + "
-          f"{len(n['rows'])} whole-row corrections)")
+    print(
+        f"truth.json: {tot('maps')} maps ({flips} changed from the detector), {tot('maybe')} maybe, "
+        f"{tot('not_maps')} labelled non-maps, {tot('landmarks')} landmarks ({len(n['landmarks'])} corrected, "
+        f"{added} added from map notes), {tot('badges')} badges ({len(n['badges'])} single + "
+        f"{len(n['rows'])} whole-row corrections)"
+    )
     for u in dict.fromkeys(n["unclear"]):
         print("  could not read:", u)
     return 0
@@ -469,9 +543,11 @@ def _match(pred: list, truth: list, radius) -> tuple[list, list, list]:
             if d <= (radius(t) if callable(radius) else radius):
                 cand.append((d, i, j))
     used_p, used_t, pairs = set(), set(), []
-    for d, i, j in sorted(cand):
+    for _d, i, j in sorted(cand):
         if i not in used_p and j not in used_t:
-            used_p.add(i); used_t.add(j); pairs.append((i, j))
+            used_p.add(i)
+            used_t.add(j)
+            pairs.append((i, j))
     return pairs, [i for i in range(len(pred)) if i not in used_p], [j for j in range(len(truth)) if j not in used_t]
 
 
@@ -479,8 +555,11 @@ def score(truth: dict, outputs: dict) -> dict:
     """compare detector outputs {shot name: {nodes, landmarks, icons}} with truth.json.
     Maps hidden behind the HUD and 'maybe' spots never count against the detector; misses are split
     into plainly visible ones and hidden/occluded ones."""
-    s = {"maps": {"tp": 0, "fp": 0, "miss_visible": 0, "miss_hidden": 0, "fp_what": {}},
-         "landmarks": {}, "badges": {"right": 0, "wrong": 0, "extra": 0, "missed": 0, "confusion": {}}}
+    s = {
+        "maps": {"tp": 0, "fp": 0, "miss_visible": 0, "miss_hidden": 0, "fp_what": {}},
+        "landmarks": {},
+        "badges": {"right": 0, "wrong": 0, "extra": 0, "missed": 0, "confusion": {}},
+    }
     for name, T in truth.items():
         out = outputs.get(name)
         if out is None:
@@ -506,12 +585,14 @@ def score(truth: dict, outputs: dict) -> dict:
             s["maps"]["miss_hidden" if {"hidden", "occluded"} & set(f) else "miss_visible"] += 1
         # landmarks, per kind
         tl, pl = T["landmarks"], out["landmarks"]
-        for kind in {l["kind"] for l in tl} | {l["kind"] for l in pl}:
+        for kind in {landmark["kind"] for landmark in tl} | {landmark["kind"] for landmark in pl}:
             k = s["landmarks"].setdefault(kind, {"tp": 0, "fp": 0, "fn": 0})
-            a = [l for l in pl if l["kind"] == kind]
-            b = [l for l in tl if l["kind"] == kind]
+            a = [landmark for landmark in pl if landmark["kind"] == kind]
+            b = [landmark for landmark in tl if landmark["kind"] == kind]
             pairs, fp, fn = _match(a, b, LM_R)
-            k["tp"] += len(pairs); k["fp"] += len(fp); k["fn"] += len(fn)
+            k["tp"] += len(pairs)
+            k["fp"] += len(fp)
+            k["fn"] += len(fn)
         # badges
         tb, pb = T["badges"], out["icons"]
         pairs, fp, fn = _match(pb, tb, BADGE_R)
@@ -532,8 +613,11 @@ def score(truth: dict, outputs: dict) -> dict:
 
 def print_score(s: dict) -> None:
     m = s["maps"]
-    print(f"maps: {m['tp']} right, {m['fp']} wrong, {m['miss_visible']} visible missed, {m['miss_hidden']} hidden/blocked "
-          f"missed  (precision {m['precision']:.0%}, recall of visible {m['recall_visible']:.0%})")
+    print(
+        f"maps: {m['tp']} right, {m['fp']} wrong, {m['miss_visible']} visible missed, "
+        f"{m['miss_hidden']} hidden/blocked "
+        f"missed  (precision {m['precision']:.0%}, recall of visible {m['recall_visible']:.0%})"
+    )
     print("   wrong maps were:", ", ".join(f"{k} {v}" for k, v in sorted(m["fp_what"].items(), key=lambda kv: -kv[1])))
     print("landmarks:")
     for kind, k in sorted(s["landmarks"].items()):

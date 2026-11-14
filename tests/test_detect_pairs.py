@@ -1,7 +1,8 @@
 """Two adjacent screenshots through the new detector (atlas_detect): do maps and paths agree where they
 overlap, and does adding the second shot complete paths the first could only see one end of?
 
-    py test_detect_pairs.py [N] [seed]      N random consecutive pairs from atlas_test_data/screenshots/crawl (default 4)
+    py test_detect_pairs.py [N] [seed]      N random consecutive pairs from
+                                           atlas_test_data/screenshots/crawl (default 4)
 
 Placement: the builder's own placements of the crawl shots (atlas_test_data/crawl_atlas/atlas.json:
 screen -> atlas = M @ rectifier). Pairs are chosen among shots whose views overlap by 25-70%.
@@ -12,6 +13,7 @@ Positions below are in atlas units.
                        now has, i.e. what adding the second shot contributes
 A picture per pair: atlas_test_data/detect_pairs_out/<pair>.png (A paths cyan, B paths magenta, maps white/yellow).
 """
+
 from __future__ import annotations
 
 import json
@@ -26,6 +28,7 @@ import numpy as np
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE.parent / "program"))
 import rc_paths  # noqa: E402
+
 rc_paths.need_test_data()
 TD = rc_paths.TEST_DATA
 import atlas_builder_core as core  # noqa: E402
@@ -33,12 +36,16 @@ import atlas_detect as ad  # noqa: E402
 
 CRAWL = TD / "screenshots" / "crawl"
 OUT = TD / "detect_pairs_out"
-MATCH = 45.0          # atlas units: the same map seen in both shots (maps on raised ground shift
-                      # between views - the builder merges up to 52)
+MATCH = 45.0  # atlas units: the same map seen in both shots (maps on raised ground shift
+# between views - the builder merges up to 52)
 # fortress shots: walls cut every path through them (user), so they are no seam test
-SKIP = {"2694490_20261109055044_1.png", "2694490_20261109055047_1.png", "2694490_20261109055713_1.png",
-        "2694490_20261109055714_1.png"}
-EDGE = 45.0           # px from a screen edge / the HUD: a map this close may be cut off, not counted
+SKIP = {
+    "2694490_20261109055044_1.png",
+    "2694490_20261109055047_1.png",
+    "2694490_20261109055713_1.png",
+    "2694490_20261109055714_1.png",
+}
+EDGE = 45.0  # px from a screen edge / the HUD: a map this close may be cut off, not counted
 
 
 ATLAS = TD / "crawl_atlas" / "atlas.json"
@@ -48,7 +55,7 @@ def frames() -> dict:
     d = json.loads(ATLAS.read_text(encoding="utf-8"))
     out = {}
     for f in d["frames"]:
-        f["path"] = core._find_screenshot(f["path"], ATLAS.parent)      # relative in the GitHub test data
+        f["path"] = core._find_screenshot(f["path"], ATLAS.parent)  # relative in the GitHub test data
         if Path(f["path"]).exists():
             out[Path(f["path"]).name] = f
     return out
@@ -90,12 +97,15 @@ def run_pair(fa: Path, fb: Path, Fa: dict, Fb: dict) -> dict | None:
         j = int(np.argmin(d))
         if d[j] <= MATCH:
             match_ab[int(i)] = j
-    res = {"maps_a_in_b": int(a_in_b.sum()), "maps_a_found_by_b": len(match_ab),
-           "maps_b_in_a": int(b_in_a.sum()),
-           "maps_b_found_by_a": int(sum(1 for j in np.nonzero(b_in_a)[0] if np.min(np.hypot(*(Pa - Pb[j]).T)) <= MATCH))}
+    res = {
+        "maps_a_in_b": int(a_in_b.sum()),
+        "maps_a_found_by_b": len(match_ab),
+        "maps_b_in_a": int(b_in_a.sum()),
+        "maps_b_found_by_a": int(sum(1 for j in np.nonzero(b_in_a)[0] if np.min(np.hypot(*(Pa - Pb[j]).T)) <= MATCH)),
+    }
     ea = {(e["a"], e["b"]) for e in ra["edges"]}
     eb = {(min(e["a"], e["b"]), max(e["a"], e["b"])) for e in rb["edges"]}
-    both = [(i, j) for i, j in ((a, b) for a, b in match_ab.items()) for _ in [0]]
+    [(i, j) for i, j in ((a, b) for a, b in match_ab.items()) for _ in [0]]
     # paths whose two ends are matched maps (both shots see both ends)
     agree = only_a = only_b = 0
     matched = set(match_ab)
@@ -158,15 +168,20 @@ def main() -> int:
         done += 1
         for key, v in r.items():
             tot[key] = tot.get(key, 0) + v
-        print(f"  {a_[-12:-6]} + {b_[-12:-6]} (overlap {overlap(F[a_], F[b_]):.0%}): maps A found by B "
-              f"{r['maps_a_found_by_b']}/{r['maps_a_in_b']}, B by A {r['maps_b_found_by_a']}/{r['maps_b_in_a']} | "
-              f"paths both {r['paths_both']}, only A {r['paths_only_a']}, only B {r['paths_only_b']} | seam paths "
-              f"added by B {r['seam_paths_added_by_b']} ({time.time() - t0:.0f} s)", flush=True)
+        print(
+            f"  {a_[-12:-6]} + {b_[-12:-6]} (overlap {overlap(F[a_], F[b_]):.0%}): maps A found by B "
+            f"{r['maps_a_found_by_b']}/{r['maps_a_in_b']}, B by A {r['maps_b_found_by_a']}/{r['maps_b_in_a']} | "
+            f"paths both {r['paths_both']}, only A {r['paths_only_a']}, only B {r['paths_only_b']} | seam paths "
+            f"added by B {r['seam_paths_added_by_b']} ({time.time() - t0:.0f} s)",
+            flush=True,
+        )
     if tot:
         pb = tot["paths_both"] + tot["paths_only_a"] + tot["paths_only_b"]
-        print(f"TOTAL maps agree {tot['maps_a_found_by_b'] + tot['maps_b_found_by_a']}/"
-              f"{tot['maps_a_in_b'] + tot['maps_b_in_a']} | paths drawn by both {tot['paths_both']}/{pb} "
-              f"({tot['paths_both'] / max(1, pb):.0%}) | seam paths added {tot['seam_paths_added_by_b']}")
+        print(
+            f"TOTAL maps agree {tot['maps_a_found_by_b'] + tot['maps_b_found_by_a']}/"
+            f"{tot['maps_a_in_b'] + tot['maps_b_in_a']} | paths drawn by both {tot['paths_both']}/{pb} "
+            f"({tot['paths_both'] / max(1, pb):.0%}) | seam paths added {tot['seam_paths_added_by_b']}"
+        )
         (OUT / "last_run.json").write_text(json.dumps({"seed": seed, "total": tot}), encoding="utf-8")
     return 0
 

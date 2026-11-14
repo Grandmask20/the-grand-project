@@ -15,25 +15,25 @@ City types
 Potential maps
     Maps within a few path steps of a City or a Breach stronghold may take on its biome.
 """
+
 from __future__ import annotations
 
 from pathlib import Path
 
+import atlas_builder_core as core
 import cv2
 import numpy as np
-
-import atlas_builder_core as core
 import rc_paths
 
 TYPES = ("Ezomyte", "Vaal", "Faridun")
-TRIO_GAP = 680            # atlas px: closer cities always differ in type
-TRIO_SIDE = 1150          # atlas px: the longest side of a trio triangle seen on the crawl atlas ~1074
-MIN_ANGLE = 20            # degrees: trios are triangles, not lines
-SAME_CITY = 150           # atlas px: a stored type / cached look belongs to the city this close
+TRIO_GAP = 680  # atlas px: closer cities always differ in type
+TRIO_SIDE = 1150  # atlas px: the longest side of a trio triangle seen on the crawl atlas ~1074
+MIN_ANGLE = 20  # degrees: trios are triangles, not lines
+SAME_CITY = 150  # atlas px: a stored type / cached look belongs to the city this close
 REFS = rc_paths.ref("city_refs.npz")
-LOCK_ICON = rc_paths.ref("lock_icon.png")   # the hand badge of a locked Breach stronghold
-LOCK_SAME = 150.0         # atlas units: hand badges this close are the same one
-COLOR_W = 2.0             # weight of the colour histogram against the edge directions
+LOCK_ICON = rc_paths.ref("lock_icon.png")  # the hand badge of a locked Breach stronghold
+LOCK_SAME = 150.0  # atlas units: hand badges this close are the same one
+COLOR_W = 2.0  # weight of the colour histogram against the edge directions
 _refs = None
 
 
@@ -42,8 +42,13 @@ def _edge_dirs(g: np.ndarray) -> np.ndarray:
     gx, gy = cv2.Sobel(g, cv2.CV_32F, 1, 0), cv2.Sobel(g, cv2.CV_32F, 0, 1)
     mag = np.hypot(gx, gy)
     b = np.minimum(((np.arctan2(gy, gx) % np.pi) / np.pi * 9).astype(int), 8)
-    return np.concatenate([np.bincount(b[i:i + 16, j:j + 16].ravel(), mag[i:i + 16, j:j + 16].ravel(), 9)
-                           for i in range(0, 64, 16) for j in range(0, 96, 16)])
+    return np.concatenate(
+        [
+            np.bincount(b[i : i + 16, j : j + 16].ravel(), mag[i : i + 16, j : j + 16].ravel(), 9)
+            for i in range(0, 64, 16)
+            for j in range(0, 96, 16)
+        ]
+    )
 
 
 def window_feature(win: np.ndarray) -> np.ndarray:
@@ -67,7 +72,7 @@ def city_features(atlas, x: float, y: float, n: int = 3) -> list[np.ndarray]:
         if im is None:
             continue
         X, Y = int(p[0]), int(p[1])
-        win = im[max(0, Y - 220):Y + 140, max(0, X - 270):X + 270]
+        win = im[max(0, Y - 220) : Y + 140, max(0, X - 270) : X + 270]
         if win.shape[0] >= 200 and win.shape[1] >= 300:
             out.append(window_feature(win))
     return out
@@ -147,9 +152,11 @@ def city_types(atlas, cities: list[dict], compute_missing=True) -> list[tuple[st
         a_, b_, c_ = D[j, k], D[i, k], D[i, j]
         if max(a_, b_, c_) >= TRIO_SIDE:
             return None
-        cosmax = max((b_ * b_ + c_ * c_ - a_ * a_) / (2 * b_ * c_ + 1e-9),
-                     (a_ * a_ + c_ * c_ - b_ * b_) / (2 * a_ * c_ + 1e-9),
-                     (a_ * a_ + b_ * b_ - c_ * c_) / (2 * a_ * b_ + 1e-9))
+        cosmax = max(
+            (b_ * b_ + c_ * c_ - a_ * a_) / (2 * b_ * c_ + 1e-9),
+            (a_ * a_ + c_ * c_ - b_ * b_) / (2 * a_ * c_ + 1e-9),
+            (a_ * a_ + b_ * b_ - c_ * c_) / (2 * a_ * b_ + 1e-9),
+        )
         if cosmax > np.cos(np.radians(MIN_ANGLE)):
             return None
         return a_ + b_ + c_
@@ -159,7 +166,7 @@ def city_types(atlas, cities: list[dict], compute_missing=True) -> list[tuple[st
     for i in range(n):
         nb = [j for j in np.nonzero(D[i] < TRIO_SIDE)[0] if j > i]
         for x_, j in enumerate(nb):
-            for k in nb[x_ + 1:]:
+            for k in nb[x_ + 1 :]:
                 if triangle(i, j, k) is not None:
                     tris.append((i, j, k))
 
@@ -171,16 +178,16 @@ def city_types(atlas, cities: list[dict], compute_missing=True) -> list[tuple[st
 
     while True:
         changed = True
-        while changed:                       # trio rule until nothing more follows from it
+        while changed:  # trio rule until nothing more follows from it
             changed = False
             close_trios()
             for k in range(n):
                 if out[k] is not None:
                     continue
-                best_t = None                 # the tightest triangle with two known, free cities
+                best_t = None  # the tightest triangle with two known, free cities
                 near = [j for j in np.nonzero(D[k] < TRIO_SIDE)[0] if j != k and out[j] and j not in in_trio]
                 for x_, j1 in enumerate(near):
-                    for j2 in near[x_ + 1:]:
+                    for j2 in near[x_ + 1 :]:
                         if out[j1][0] == out[j2][0]:
                             continue
                         per = triangle(k, j1, j2)
@@ -219,7 +226,7 @@ def ground_sampler(canvas: np.ndarray, weight: np.ndarray, origin, radius: float
     x0, y0, s0 = origin
     lab = cv2.cvtColor(canvas, cv2.COLOR_BGR2LAB).astype(np.float32)
     r = max(2, int(round(radius * s0)))
-    yy, xx = np.mgrid[-r:r + 1, -r:r + 1]
+    yy, xx = np.mgrid[-r : r + 1, -r : r + 1]
     disc = np.hypot(xx, yy) <= r
     H, W = canvas.shape[:2]
 
@@ -227,18 +234,19 @@ def ground_sampler(canvas: np.ndarray, weight: np.ndarray, origin, radius: float
         cx, cy = int(round((x - x0) * s0)), int(round((y - y0) * s0))
         if cx - r < 0 or cy - r < 0 or cx + r + 1 > W or cy + r + 1 > H:
             return None
-        m = disc & (weight[cy - r:cy + r + 1, cx - r:cx + r + 1] > 0)
+        m = disc & (weight[cy - r : cy + r + 1, cx - r : cx + r + 1] > 0)
         if m.sum() < disc.sum() * 0.5:
             return None
-        px = lab[cy - r:cy + r + 1, cx - r:cx + r + 1][m]
-        return np.concatenate([px.mean(0), px.std(0)])      # spread: Faridun ground is flat, desert mottled
+        px = lab[cy - r : cy + r + 1, cx - r : cx + r + 1][m]
+        return np.concatenate([px.mean(0), px.std(0)])  # spread: Faridun ground is flat, desert mottled
+
     return at
 
 
-SHIP_BUTTON = rc_paths.ref("ship_button.png")   # the Expedition ship marker: same square button, ship symbol
-BUTTON_FRAME = 0.86       # frame match (symbol area masked): real buttons 0.87-1.0, anything else <= 0.854
-BUTTON_SYMBOL = 0.7       # symbol match: real hands / ships 0.87-1.0, anything else <= 0.5
-BUTTON_EDGE = 3           # px of the template kept as the symbol's margin
+SHIP_BUTTON = rc_paths.ref("ship_button.png")  # the Expedition ship marker: same square button, ship symbol
+BUTTON_FRAME = 0.86  # frame match (symbol area masked): real buttons 0.87-1.0, anything else <= 0.854
+BUTTON_SYMBOL = 0.7  # symbol match: real hands / ships 0.87-1.0, anything else <= 0.5
+BUTTON_EDGE = 3  # px of the template kept as the symbol's margin
 _buttons: dict = {}
 
 
@@ -247,11 +255,11 @@ def _button_refs():
         lock = cv2.imdecode(np.fromfile(str(LOCK_ICON), np.uint8), cv2.IMREAD_GRAYSCALE)
         h, w = lock.shape
         mask = np.full((h, w), 255, np.uint8)
-        mask[14:h - 14, 14:w - 14] = 0                   # the symbol: ignored when finding the frame
-        sym = {"lock": lock[14:h - 14, 14:w - 14]}
+        mask[14 : h - 14, 14 : w - 14] = 0  # the symbol: ignored when finding the frame
+        sym = {"lock": lock[14 : h - 14, 14 : w - 14]}
         if SHIP_BUTTON.exists():
             ship = cv2.imdecode(np.fromfile(str(SHIP_BUTTON), np.uint8), cv2.IMREAD_GRAYSCALE)
-            sym["ship"] = cv2.resize(ship, (w, h))[14:h - 14, 14:w - 14]
+            sym["ship"] = cv2.resize(ship, (w, h))[14 : h - 14, 14 : w - 14]
         _buttons.update(frame=lock, mask=mask, symbols=sym)
     return _buttons
 
@@ -267,14 +275,14 @@ def square_buttons(img) -> list[dict]:
     r = np.nan_to_num(cv2.matchTemplate(g, t, cv2.TM_CCORR_NORMED, mask=R["mask"]), nan=0, posinf=0, neginf=0)
     # HUD art: only matches whose centre is well inside the HUD outline (a button can sit right next to it)
     hud = cv2.erode((core.hud_mask(g.shape[1], g.shape[0]) > 0).astype(np.uint8), np.ones((41, 41), np.uint8)) > 0
-    r[hud[h // 2:h // 2 + r.shape[0], w // 2:w // 2 + r.shape[1]]] = 0
+    r[hud[h // 2 : h // 2 + r.shape[0], w // 2 : w // 2 + r.shape[1]]] = 0
     out = []
     while True:
         _mn, mx, _l, (x, y) = cv2.minMaxLoc(r)
         if mx < BUTTON_FRAME:
             return out
-        r[max(0, y - h):y + h, max(0, x - w):x + w] = 0
-        c = g[y + 14 - BUTTON_EDGE:y + h - 14 + BUTTON_EDGE, x + 14 - BUTTON_EDGE:x + w - 14 + BUTTON_EDGE]
+        r[max(0, y - h) : y + h, max(0, x - w) : x + w] = 0
+        c = g[y + 14 - BUTTON_EDGE : y + h - 14 + BUTTON_EDGE, x + 14 - BUTTON_EDGE : x + w - 14 + BUTTON_EDGE]
         best, kind = -1.0, "unknown"
         for k, sy in R["symbols"].items():
             if c.shape[0] < sy.shape[0] or c.shape[1] < sy.shape[1]:
@@ -283,7 +291,7 @@ def square_buttons(img) -> list[dict]:
             if v > best:
                 best, kind = v, k
         if best < BUTTON_SYMBOL:
-            if mx < 0.9:                                  # a weak frame with no known symbol: not a button
+            if mx < 0.9:  # a weak frame with no known symbol: not a button
                 continue
             kind = "unknown"
         out.append({"kind": kind, "x": x + w / 2, "y": y + h / 2, "frame": round(mx, 3), "symbol": round(best, 3)})
@@ -317,21 +325,41 @@ def merge_locks(locks: list[dict], found: list[tuple[float, float]]) -> list[dic
         for k in locks:
             if np.hypot(k["x"] - x, k["y"] - y) < LOCK_SAME:
                 n = k["n"]
-                k["x"], k["y"], k["n"] = round((k["x"] * n + x) / (n + 1), 1), round((k["y"] * n + y) / (n + 1), 1), n + 1
+                k["x"], k["y"], k["n"] = (
+                    round((k["x"] * n + x) / (n + 1), 1),
+                    round((k["y"] * n + y) / (n + 1), 1),
+                    n + 1,
+                )
                 break
         else:
             locks.append({"x": round(x, 1), "y": round(y, 1), "n": 1})
     return locks
 
 
-def potential_maps(nodes: list[dict], paths: list[dict], sources: list[tuple[float, float, str]],
-                   count: int = 10, hops: int = 3, snap: float = 90.0, ground=None,
-                   area_kinds: tuple = ("Breach stronghold",), area_reach: float = 520.0, area_blind: float = 230.0,
-                   area_merge: float = 350.0,
-                   area_hops: int = 6, area_snap: float = 260.0, pool_r: float = 260.0,
-                   far_r: float = 700.0, alike: float = 10.0, rich: float = 5.0, poor: float = 1.5,
-                   blocked: dict[int, str] | None = None, unique_ok: tuple = ("Vaal city",),
-                   hard_off: dict | None = None, behind: float = -0.2) -> dict[int, tuple[str, int]]:
+def potential_maps(
+    nodes: list[dict],
+    paths: list[dict],
+    sources: list[tuple[float, float, str]],
+    count: int = 10,
+    hops: int = 3,
+    snap: float = 90.0,
+    ground=None,
+    area_kinds: tuple = ("Breach stronghold",),
+    area_reach: float = 520.0,
+    area_blind: float = 230.0,
+    area_merge: float = 350.0,
+    area_hops: int = 6,
+    area_snap: float = 260.0,
+    pool_r: float = 260.0,
+    far_r: float = 700.0,
+    alike: float = 10.0,
+    rich: float = 5.0,
+    poor: float = 1.5,
+    blocked: dict[int, str] | None = None,
+    unique_ok: tuple = ("Vaal city",),
+    hard_off: dict | None = None,
+    behind: float = -0.2,
+) -> dict[int, tuple[str, int]]:
     """the maps a City / Breach stronghold biome may cover: node index -> (label, steps).
 
     Cities: about 10 maps (+-2), linked tightly to each other (often a square grid of paths) with
@@ -380,16 +408,20 @@ def potential_maps(nodes: list[dict], paths: list[dict], sources: list[tuple[flo
             gcache[v] = ground(*pts[v])
         return gcache[v]
 
-    merged, used = [], set()                  # stronghold boxes close together = one stronghold
+    merged, used = [], set()  # stronghold boxes close together = one stronghold
     for k, (x, y, label) in enumerate(sources):
         if k in used:
             continue
         if label in area_kinds:
-            grp = [j for j, (x2, y2, l2) in enumerate(sources)
-                   if j not in used and l2 == label and np.hypot(x2 - x, y2 - y) < area_merge]
+            grp = [
+                j
+                for j, (x2, y2, l2) in enumerate(sources)
+                if j not in used and l2 == label and np.hypot(x2 - x, y2 - y) < area_merge
+            ]
             used.update(grp)
-            merged.append((float(np.mean([sources[j][0] for j in grp])),
-                           float(np.mean([sources[j][1] for j in grp])), label))
+            merged.append(
+                (float(np.mean([sources[j][0] for j in grp])), float(np.mean([sources[j][1] for j in grp])), label)
+            )
         else:
             merged.append((x, y, label))
     sources = merged
@@ -409,8 +441,12 @@ def potential_maps(nodes: list[dict], paths: list[dict], sources: list[tuple[flo
         S = np.array([[x, y] for _s, x, y, _l in starts], float)
         dmin = np.full(len(pts), 1e9)
         for k in range(0, len(S), 64):
-            dmin = np.minimum(dmin, np.hypot(pts[:, None, 0] - S[None, k:k + 64, 0],
-                                             pts[:, None, 1] - S[None, k:k + 64, 1]).min(axis=1))
+            dmin = np.minimum(
+                dmin,
+                np.hypot(pts[:, None, 0] - S[None, k : k + 64, 0], pts[:, None, 1] - S[None, k : k + 64, 1]).min(
+                    axis=1
+                ),
+            )
         B = GV[ok & (dmin > far_r)]
         for label in {lab for *_r, lab in starts}:
             T = np.array([[x, y] for _s, x, y, lab in starts if lab == label], float)
@@ -418,8 +454,12 @@ def potential_maps(nodes: list[dict], paths: list[dict], sources: list[tuple[flo
                 continue
             dl = np.full(len(pts), 1e9)
             for k in range(0, len(T), 64):
-                dl = np.minimum(dl, np.hypot(pts[:, None, 0] - T[None, k:k + 64, 0],
-                                             pts[:, None, 1] - T[None, k:k + 64, 1]).min(axis=1))
+                dl = np.minimum(
+                    dl,
+                    np.hypot(pts[:, None, 0] - T[None, k : k + 64, 0], pts[:, None, 1] - T[None, k : k + 64, 1]).min(
+                        axis=1
+                    ),
+                )
             enrich[label] = (GV[ok & (dl < pool_r)], B)
     rcache: dict[tuple[str, int], float] = {}
 
@@ -434,13 +474,14 @@ def potential_maps(nodes: list[dict], paths: list[dict], sources: list[tuple[flo
         return rcache[key]
 
     for s, x, y, label in starts:
-        def off(v, label=label):            # 0 = this kind's ground ... 2 = clearly not
+
+        def off(v, label=label):  # 0 = this kind's ground ... 2 = clearly not
             if label not in enrich or g(v) is None:
                 return 0.0
             r = ratio(label, v)
             return float(np.clip(np.log(rich / r) / np.log(rich / poor), 0.0, 1.0)) * 2.0
 
-        seen = {s: 0}                           # path steps from the source map
+        seen = {s: 0}  # path steps from the source map
         front = [s]
         if label in area_kinds:
             # a round patch around the stronghold: distance from its centre, tighter when its
@@ -450,9 +491,12 @@ def potential_maps(nodes: list[dict], paths: list[dict], sources: list[tuple[flo
                 nxt = []
                 for u in front:
                     for v in adj.get(u, ()):
-                        if (v not in seen and off(v) < 1.0
-                                and (blocked or {}).get(v) not in ("Hall", "Tower", "another city")
-                                and np.hypot(pts[v, 0] - x, pts[v, 1] - y) <= reach):
+                        if (
+                            v not in seen
+                            and off(v) < 1.0
+                            and (blocked or {}).get(v) not in ("Hall", "Tower", "another city")
+                            and np.hypot(pts[v, 0] - x, pts[v, 1] - y) <= reach
+                        ):
                             seen[v] = step
                             nxt.append(v)
                 front = nxt
@@ -460,12 +504,13 @@ def potential_maps(nodes: list[dict], paths: list[dict], sources: list[tuple[flo
         else:
             blk = blocked or {}
 
-            def barred(v):                  # never a city map, and not reached through
-                r = blk.get(v)
-                return v != s and r is not None and not (r == "Unique map" and label in unique_ok)
+            def barred(v, blocked_maps=blk, city_start=s, city_label=label):  # never a city map
+                r = blocked_maps.get(v)
+                return v != city_start and r is not None and not (r == "Unique map" and city_label in unique_ok)
 
-            def dead_end(v):                # a Unique map in a Vaal city: taken, not grown through
-                return v != s and blk.get(v) == "Unique map"
+            def dead_end(v, blocked_maps=blk, city_start=s):  # a Unique map in a Vaal city: taken, not grown through
+                return v != city_start and blocked_maps.get(v) == "Unique map"
+
             # hard ground cut only where the user says the ground is always the same (Faridun =
             # desert); Ezomyte / Vaal ground is too varied, it only counts as a penalty there
             cut_at = (hard_off if hard_off is not None else {"Faridun city": 1.6}).get(label, 9.0)
@@ -496,17 +541,22 @@ def potential_maps(nodes: list[dict], paths: list[dict], sources: list[tuple[flo
             inside = {s}
             mismatch = 0.0
 
-            def squares(c):                 # 4-map loops c would close with the cluster
-                nb = [w for w in adj[c] if w in inside]
-                return sum(len((adj[a] & adj[b] & inside) - {c})
-                           for i, a in enumerate(nb) for b in nb[i + 1:])
+            def squares(c, cluster=inside):  # 4-map loops c would close with the cluster
+                nb = [w for w in adj[c] if w in cluster]
+                return sum(len((adj[a] & adj[b] & cluster) - {c}) for i, a in enumerate(nb) for b in nb[i + 1 :])
+
             while len(grown) < count + 3:
-                cand = {v for u in inside if not dead_end(u)
-                        for v in adj.get(u, ()) if v not in inside and v in seen}
+                cand = {v for u in inside if not dead_end(u) for v in adj.get(u, ()) if v not in inside and v in seen}
                 if not cand:
                     break
-                v = max(cand, key=lambda c: (len(adj[c] & inside) + 0.5 * min(2, squares(c)) - 1.5 * off(c),
-                                             -seen[c], -float(np.hypot(*(pts[c] - pts[s])))))
+                v = max(
+                    cand,
+                    key=lambda c: (
+                        len(adj[c] & inside) + 0.5 * min(2, squares(c)) - 1.5 * off(c),
+                        -seen[c],
+                        -float(np.hypot(*(pts[c] - pts[s]))),
+                    ),
+                )
                 grown.append(v)
                 inside.add(v)
                 mismatch += off(v)
@@ -515,7 +565,7 @@ def potential_maps(nodes: list[dict], paths: list[dict], sources: list[tuple[flo
                     cost = cut + 1.5 * mismatch
                     if best is None or cost < best[0]:
                         best = (cost, len(grown))
-            keep = grown[:best[1]] if best else grown
+            keep = grown[: best[1]] if best else grown
         for v in keep:
             st = seen[v]
             old = res.get(v)
@@ -527,10 +577,19 @@ def potential_maps(nodes: list[dict], paths: list[dict], sources: list[tuple[flo
 
 
 # map types a city never connects to (user's rule); a Unique map is allowed inside a Vaal city
-BLOCK_ICONS = {"UniqueMap": "Unique map", "Trader": "merchant", "Corruption": "corruption",
-               "CorruptionNexus": "corruption", "CorruptionNexusNoGrowth": "corruption",
-               "Sanctification": "cleansed", "SanctificationBoss": "cleansed", "Hideout": "hideout",
-               "Abyss": "Abyss", "AbyssOverrun": "Abyss", "AbyssalDepths": "Abyss"}
+BLOCK_ICONS = {
+    "UniqueMap": "Unique map",
+    "Trader": "merchant",
+    "Corruption": "corruption",
+    "CorruptionNexus": "corruption",
+    "CorruptionNexusNoGrowth": "corruption",
+    "Sanctification": "cleansed",
+    "SanctificationBoss": "cleansed",
+    "Hideout": "hideout",
+    "Abyss": "Abyss",
+    "AbyssOverrun": "Abyss",
+    "AbyssalDepths": "Abyss",
+}
 BLOCK_PLACES = {"Hall": "Hall", "Breach stronghold": "Breach stronghold", "Tower": "Tower", "City": "another city"}
 
 
@@ -541,7 +600,8 @@ def icon_maps(nodes: list[dict], icons: list[dict], reach: float = 45.0) -> dict
     out = {}
     if not len(pts) or not alive.any() or not icons:
         return out
-    from scipy.spatial import cKDTree                  # (v1.03: one map search per badge took ~1 s per redraw)
+    from scipy.spatial import cKDTree  # (v1.03: one map search per badge took ~1 s per redraw)
+
     live = np.nonzero(alive)[0]
     q = np.array([[ic.get("bx", ic["x"]), ic.get("by", ic["y"])] for ic in icons], float)
     d, k = cKDTree(pts[live]).query(q)
@@ -550,8 +610,13 @@ def icon_maps(nodes: list[dict], icons: list[dict], reach: float = 45.0) -> dict
     return out
 
 
-def blocked_maps(nodes: list[dict], icons: list[dict], landmarks: list[dict],
-                 icon_node: dict[int, int] | None = None, snap: float = 90.0) -> dict[int, str]:
+def blocked_maps(
+    nodes: list[dict],
+    icons: list[dict],
+    landmarks: list[dict],
+    icon_node: dict[int, int] | None = None,
+    snap: float = 90.0,
+) -> dict[int, str]:
     """maps that are never city maps: node -> reason (Unique map, merchant, corruption, cleansed,
     hideout, Abyss, Tower, Hall, Breach stronghold, another city's own map)"""
     out: dict[int, str] = {}
@@ -579,8 +644,9 @@ def blocked_maps(nodes: list[dict], icons: list[dict], landmarks: list[dict],
     return out
 
 
-def near_city(nodes: list[dict], paths: list[dict], potential: dict[int, tuple[str, int]],
-              blocked: dict[int, str]) -> dict[int, tuple[str, int]]:
+def near_city(
+    nodes: list[dict], paths: list[dict], potential: dict[int, tuple[str, int]], blocked: dict[int, str]
+) -> dict[int, tuple[str, int]]:
     """potential city maps: node -> (city label, 0 = on its biome / 1 = one path step from it)"""
     alive = [n.get("status") != "removed" for n in nodes]
     adj: dict[int, set[int]] = {}

@@ -1,14 +1,15 @@
 """Where everything lives (one place, so the folders can be found and changed easily).
 
-    <program folder>/
-      Start Atlas Viewer.bat      double-click to run
-      atlases/default/            the atlas opened on first start (screenshots + atlas.json)
-      references/                 the reference database + every picture / data file the program reads
-      program/                    the program (this folder)
-      tools/                      labelling / training helpers (for improving the detector)
-      tests/                      tests (their screenshots / truth are NOT shipped: see TEST_DATA)
-      user_data/                  viewer settings and the debug log (made on first run)
+<program folder>/
+  Start Atlas Viewer.bat      double-click to run
+  atlases/default/            the atlas opened on first start (screenshots + atlas.json)
+  references/                 the reference database + every picture / data file the program reads
+  program/                    the program (this folder)
+  tools/                      labelling / training helpers (for improving the detector)
+  tests/                      tests (their screenshots / truth are NOT shipped: see TEST_DATA)
+  user_data/                  viewer settings and the debug log (made on first run)
 """
+
 import os
 import sys
 from pathlib import Path
@@ -20,6 +21,8 @@ DATABASE = REFERENCES / "atlas_references.sqlite3"
 ATLASES = ROOT / "atlases"
 DEFAULT_ATLAS = ATLASES / "default" / "atlas.json"
 USER_DATA = ROOT / "user_data"
+
+
 # test / training data (screenshots of a real atlas, hand-made truth). Looked for in this order: the
 # ATLAS_TEST_DATA environment variable; "atlas_test_data" inside this folder (the GitHub repo keeps a trimmed
 # set there, in Git LFS); "atlas_test_data" next to this folder (the full private set).
@@ -39,6 +42,7 @@ SCREENSHOTS = TEST_DATA / "screenshots"
 _LOCAL = ROOT / "local_paths.json"
 if _LOCAL.exists():
     import json as _json
+
     for _k, _v in _json.loads(_LOCAL.read_text(encoding="utf-8")).items():
         if _k in ("DATABASE", "TEST_DATA", "ATLASES", "USER_DATA"):
             _p = Path(_v)
@@ -57,10 +61,13 @@ def need_test_data() -> None:
     shot = next((TEST_DATA / "screenshots").rglob("*.png"), None) if (TEST_DATA / "screenshots").is_dir() else None
     pointer = shot is not None and shot.stat().st_size < 1024 and shot.read_bytes()[:20].startswith(b"version https")
     if shot is None or pointer:
-        why = (f"test data {'not downloaded (Git LFS placeholders)' if pointer else 'not found'} at {TEST_DATA} "
-               "(in the GitHub repo: git lfs pull --include=\"atlas_test_data/**\"; or set ATLAS_TEST_DATA)")
-        if "pytest" in sys.modules:                     # under pytest: skip this file, don't end the whole run
+        why = (
+            f"test data {'not downloaded (Git LFS placeholders)' if pointer else 'not found'} at {TEST_DATA} "
+            '(in the GitHub repo: git lfs pull --include="atlas_test_data/**"; or set ATLAS_TEST_DATA)'
+        )
+        if "pytest" in sys.modules:  # under pytest: skip this file, don't end the whole run
             import pytest
+
             pytest.skip(why, allow_module_level=True)
         print("SKIP: " + why)
         sys.exit(0)

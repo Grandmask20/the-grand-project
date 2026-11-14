@@ -1,0 +1,86 @@
+[project]
+name = "the-grand-project"
+version = "1.07"
+description = "Builds one big map of your Path of Exile 2 atlas from screenshots: maps, paths, badges, towers and cities."
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+    "opencv-python",
+    "numpy",
+    "pillow",
+    "scipy",
+    "scikit-learn",
+    "skops",
+    "tkinterdnd2",
+]
+
+[project.urls]
+Repository = "https://github.com/Grandmask20/the-grand-project"
+Homepage = "https://github.com/Grandmask20/the-grand-project"
+Documentation = "https://github.com/Grandmask20/the-grand-project#readme"
+"Bug Tracker" = "https://github.com/Grandmask20/the-grand-project/issues"
+Changelog = "https://github.com/Grandmask20/the-grand-project/releases"
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8",
+    "ruff>=0.9",
+]
+
+[build-system]
+requires = ["setuptools>=64", "setuptools-scm>=8.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["program*"]
+
+[dependency-groups]
+dev = [
+    "pytest>=8",
+    "ruff>=0.9",
+]
+
+[tool.uv]
+default-groups = ["dev"]
+
+[tool.ruff]
+target-version = "py311"
+
+# Exclude a variety of commonly ignored directories.
+exclude = [
+    ".direnv",
+    ".eggs",
+    ".git",
+    ".git-rewrite",
+    ".hg",
+    ".ipynb_checkpoints",
+    ".mypy_cache",
+    ".pyenv",
+    ".pytest_cache",
+    ".pytype",
+    ".ruff_cache",
+    ".venv",
+    ".vscode",
+    "__pypackages__",
+    "build",
+    "dist",
+    "site-packages",
+    "venv",
+]
+
+# Same as Black.
+line-length = 120
+indent-width = 4
+
+[tool.ruff.lint]
+select = ["E", "F", "UP", "W", "B", "SIM", "I"]
+ignore = []
+fixable = ["ALL"]
+unfixable = []
+
+[tool.ruff.format]
+quote-style = "double"
+indent-style = "space"
+skip-magic-trailing-comma = false
+line-ending = "auto"
