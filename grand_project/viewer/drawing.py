@@ -47,12 +47,14 @@ class DrawingMixin:
     def request_redraw(self):
         if not self._redraw_pending:
             self._redraw_pending = True
+            self._fl_asked_redraw()
             self.root.after(8, self._redraw)
 
     def _redraw(self):
         self._redraw_pending = False
         w, h = self.canvas_size()
         t0 = time.perf_counter()
+        self._fl_frame_start()
         self._frame_size = (w, h)
         try:
             img = self.render(w, h)
@@ -64,6 +66,8 @@ class DrawingMixin:
         else:
             self.photo = ImageTk.PhotoImage(pic)
             self.canvas.itemconfigure(self.img_item, image=self.photo)
+        self._fl_mark("show")
+        self._fl_frame_end(w, h)
         self.last_render_ms = (time.perf_counter() - t0) * 1000
         if PROFILE and self.last_render_ms > 200:
             print(f"[viewer] slow on the window thread: redraw took {self.last_render_ms / 1000:.2f}s", flush=True)
@@ -94,8 +98,10 @@ class DrawingMixin:
             a = z / sl
             A = np.array([[a, 0, (x0 - self.cx) * z + w / 2], [0, a, (y0 - self.cy) * z + h / 2]])
             cv2.warpAffine(self.pyr[lvl], A, (w, h), dst=img, flags=cv2.INTER_LINEAR, borderMode=cv2.BORDER_TRANSPARENT)
+            self._fl_mark("terrain")
             if self.hires_wanted():
                 self._draw_tiles(img, w, h)  # screenshot pixels, tile by tile
+                self._fl_mark("tiles")
             if L["Paths"] or L["Nodes"]:
                 # dim the ground under the lines; a smooth slope (a step at the overview switch
                 # made the map jump ~20% darker between zoom 0.50 and 0.42)
@@ -104,6 +110,7 @@ class DrawingMixin:
         sp = self.to_screen(self.node_pts) if len(self.node_pts) else np.zeros((0, 2))
         vis = ((sp[:, 0] > -80) & (sp[:, 0] < w + 80) & (sp[:, 1] > -80) & (sp[:, 1] < h + 80)) if len(sp) else []
         th = 1 if z < 0.7 else 2
+        self._fl_mark("terrain")
         if L["City & stronghold biomes"] and self.potential and len(sp):
             tint = img.copy()
             rad = max(4, int(44 * z))
@@ -125,6 +132,7 @@ class DrawingMixin:
             img = cv2.addWeighted(tint, 0.38, img, 0.62, 0)
             for pt, col in rings:
                 cv2.circle(img, pt, rad, col, 1 if overview else 2, cv2.LINE_AA)
+        self._fl_mark("biomes")
         ST = self.style()
         c_multi = hex_bgr(ST["path_col"], PATH_MULTI)
         c_single = hex_bgr(ST["path_col1"], PATH_SINGLE)
@@ -159,6 +167,7 @@ class DrawingMixin:
                 line = self.to_screen(self._path_atlas_line(p))
                 cv2.polylines(img, [line.astype(np.int32)], False, (0, 0, 0), pth + 6, cv2.LINE_AA)
                 cv2.polylines(img, [line.astype(np.int32)], False, SELECT_COL, pth + 3, cv2.LINE_AA)
+        self._fl_mark("paths")
         r = self.node_radius()
         hit_nodes = {i for k, i in self.hits if k == "node"}
         far = z < self.FAR_ZOOM
@@ -206,6 +215,7 @@ class DrawingMixin:
                     draw_map(img, pt, r, col, th, ST["map_style"], self._map_pic())
                 if i in hit_nodes:
                     cv2.circle(img, pt, int(r + 7), HIT_COL, 2, cv2.LINE_AA)
+        self._fl_mark("nodes")
         if L["Icons"] and len(self.icon_pts) and far:
             ip = self.to_screen(self.icon_pts)
             ck = (frozenset(self.icon_hidden), id(self.V["icons"]), self.near_only())
@@ -252,6 +262,7 @@ class DrawingMixin:
                     if not any(box[0] < b[2] and b[0] < box[2] and box[1] < b[3] and b[1] < box[3] for b in placed):
                         placed.append(box)
                         put_text(img, text, (x + rr + 4, y + 4), col, 0.42)
+        self._fl_mark("icons")
         if L["Landmarks"]:
             hit_lm = {i for k, i in self.hits if k == "landmark"}
             hw, top, bot = self.landmark_box()
@@ -280,6 +291,7 @@ class DrawingMixin:
                     )
                 if L["Labels"] and z >= 0.3:
                     put_text(img, self.lm_name(i), (x - int(hw), y - int(top) - 6), col, 0.45 if z < 1 else 0.55)
+        self._fl_mark("landmarks")
         if L["Bookmarks"]:
             hit_bm = {i for k, i in self.hits if k == "bookmark"}
             for i, b in enumerate(self.atlas.bookmarks):
@@ -324,6 +336,7 @@ class DrawingMixin:
             p = self.to_screen([self.item_pos(self.sel)])[0]
             cv2.circle(img, (int(p[0]), int(p[1])), int(max(r, 10) + 10), SELECT_COL, 2, cv2.LINE_AA)
         self._legend(img, L)
+        self._fl_mark("rest")
         return img
 
     def _legend(self, img, L=None):

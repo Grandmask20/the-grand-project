@@ -30,6 +30,7 @@ from .debug import DebugMixin
 from .drawing import DrawingMixin
 from .files import FilesMixin
 from .folders import FoldersMixin
+from .framelog import FrameLogMixin
 from .helpers import LOG
 from .navigation import NavigationMixin
 from .panels import PanelsMixin
@@ -65,6 +66,7 @@ class Viewer(
     BookmarksMixin,
     DrawingMixin,
     AtlasesTabMixin,
+    FrameLogMixin,
 ):
     def __init__(self, root: tk.Tk, atlas_path: str | None = None):
         self.root = root
@@ -131,6 +133,7 @@ class Viewer(
                 )
         self.root.after(100, self._poll_queue)
         threading.Thread(target=self._worker, daemon=True).start()
+        self.frame_log_autostart()
         if self.settings.get("watch_on") and self._watch_dir():
             self.watch_var.set(True)
             self.start_watch(initial=True)
@@ -447,6 +450,18 @@ class Viewer(
             ttk.Button(row, text="Delete", command=self._dbg_delete).pack(side="left", padx=4)
             self.dbg_file_lab = ttk.Label(dbf, text="", foreground="#555", wraplength=330)
             self.dbg_file_lab.pack(anchor="w", pady=(4, 0))
+            ttk.Separator(dbf).pack(fill="x", pady=6)
+            self.frame_log_var = tk.BooleanVar(value=False)
+            ttk.Checkbutton(
+                dbf, text="Record frame timings", variable=self.frame_log_var, command=self.toggle_frame_log
+            ).pack(anchor="w")
+            ttk.Label(
+                dbf,
+                text="Every redraw, stall, wheel / drag and terrain tile, to user_data/frame_log_*.csv; "
+                "untick to stop and see a summary in Log.",
+                foreground="#555",
+                wraplength=330,
+            ).pack(anchor="w")
 
         # --- Log
         lgf = ttk.Frame(self.tabs, padding=6)

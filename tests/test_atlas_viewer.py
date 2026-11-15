@@ -334,6 +334,31 @@ check(
 pump()
 grab("08_zoomed_native.png")
 
+# sharp-ground tiles meet without a line: at zooms that don't land on whole pixels, the column / row where two
+# tiles meet is not darker than the pixels beside it (a dark line along every tile edge: user)
+from grand_project.viewer.constants import HIRES_TILE  # noqa: E402
+
+for k in over:
+    app.layers[k].set(False)
+dips = []
+for zz in (0.73, 1.37):
+    app.z = zz
+    unit = HIRES_TILE / app._tile_level()
+    app.cx = math.floor(nd["x"] / unit) * unit + 37 / zz
+    app.cy = math.floor(nd["y"] / unit) * unit + 29 / zz
+    app.build_view_tiles()
+    g = cv2.cvtColor(app.render(W, H), cv2.COLOR_BGR2GRAY).astype(float)
+    for i in range(-20, 21):
+        x = round((math.floor(app.cx / unit + i) * unit - app.cx) * zz + W / 2)
+        if 3 < x < W - 3:
+            dips.append(float(np.median(np.minimum(g[:, x - 2], g[:, x + 2]) - g[:, x])))
+        y = round((math.floor(app.cy / unit + i) * unit - app.cy) * zz + H / 2)
+        if 3 < y < H - 3:
+            dips.append(float(np.median(np.minimum(g[y - 2, :], g[y + 2, :]) - g[y, :])))
+for k in over:
+    app.layers[k].set(True)
+check("no line where terrain tiles meet", dips and max(dips) < 6, f"darkest edge {max(dips, default=0):.0f}")
+
 # icon filter
 app.set_all_icons(False)
 check("icon filter hides all", len(app.icon_hidden) == len(app.icon_vars) > 0, f"{len(app.icon_vars)} types")
