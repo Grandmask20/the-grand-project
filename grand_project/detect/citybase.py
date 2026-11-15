@@ -3,8 +3,8 @@ base; Halls, towers and plain deadly-boss maps stand on a flat disc). Green (com
 when their icon and beam are gone, so this finds them too.
 
 A small logistic model on the window under a map node: gradient directions (the barrel's upright sides) plus
-brass colour and brightness per band. Trained by tools/train_city_barrel.py on the user's city screenshots;
-stored as plain numbers in references/city_barrel.npz (no pickled code).
+brass colour and brightness per band. Trained by citytrain.py (part of `python -m grand_project.detect train`)
+on the user's city screenshots; stored as plain numbers in references/city_barrel.npz (no pickled code).
 """
 
 from __future__ import annotations

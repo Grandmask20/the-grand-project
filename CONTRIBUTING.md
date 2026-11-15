@@ -31,8 +31,10 @@ git lfs pull --include="atlas_test_data/**"
    lint or formatting errors.
 2. `make test`, or at least the tests that touch what you changed (`python -m tests.test_x`). CI runs the offline
    tests on Windows, macOS and Linux.
-3. If you changed the detector, compare `python -m grand_project.detect score` before and after and put both in the
-   pull request.
+3. If you changed the detector, compare `make evaluate_detector` (`python -m grand_project.detect score`) before
+   and after and put both in the pull request.
+
+`make pr_precheck` runs all three in order.
 
 ## Code conventions
 

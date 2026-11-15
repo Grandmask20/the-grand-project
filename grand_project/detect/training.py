@@ -282,4 +282,7 @@ def cmd_train() -> int:
         f"trained on {len(truth)} screenshots: map model ({nm} maps), badge model ({nb} badges, "
         f"{len(m['badges']['names'])} labelled pictures) -> {DB_PATH.name}"
     )
+    from .citytrain import train as train_cities
+
+    train_cities()  # the City barrel model (references/city_barrel.npz)
     return 0

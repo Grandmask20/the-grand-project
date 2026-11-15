@@ -135,10 +135,10 @@ The tests look for the data in `ATLAS_TEST_DATA` (environment variable) if set, 
 
 Run these from this folder:
 
-- `python -m grand_project.detect score` scores the detector on the hand-labelled screenshots; `python -m grand_project.detect train` retrains it into the database. Both need the test data.
+- `python -m grand_project.detect score` scores the detector on the hand-labelled screenshots; `python -m grand_project.detect train` retrains it into the database. Both need the test data. `make evaluate_detector` runs the score; `make pr_precheck` runs everything to check before a pull request.
 - `python -m grand_project.builder add --atlas X.json --image FOLDER` builds an atlas without the window.
 - `python -m tools.atlas_marks` checks the detector against all hand-drawn mark layers and true paths.
-- `python -m tools.train_city_barrel FOLDER` retrains the City check (a city's map node always stands on a brass barrel) from screenshots plus a `cities_truth.json` listing each city's map node; it prints a fair score first and saves `references/city_barrel.npz`.
+- `python -m grand_project.detect train` also retrains the City check (a city's map node always stands on a brass barrel) from screenshots plus a `cities_truth.json` listing each city's map node (`CITY_TRUTH_SETS`); it prints a fair score first and saves `references/city_barrel.npz`. `python -m grand_project.detect train_cities [FOLDER ...]` retrains only that.
 - `python -m tools.import_poe2db_art` adds poe2db's Map Content art (`references/poe2db_icons/`) as icon pictures for types with no on-screen example yet, so rare icons can still be named.
 - `python -m tools.make_hud_mask SCREENSHOT` rebuilds `references/hud_mask_full.png` from a 1920×1080 atlas screenshot taken over black unexplored fog (everything not black is interface).
 - Tests: `make test`, `tests/Run all tests.bat`, `tests/run_all_tests.sh`, or one at a time with `python -m tests.test_atlas_builder`. `test_atlas_viewer` opens a window for about 20 s.

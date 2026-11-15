@@ -276,6 +276,12 @@ CITY_BARREL_FILE = rc_paths.ref("city_barrel.npz")
 CITY_BARREL_WIN = (-20, 44, -24, 24)  # px around a map node's middle: y0, y1, x0, x1 (the orb and the barrel below it)
 CITY_BARREL_SNAP = 30  # px: a rough point (under an icon row, from the atlas) is moved to the map node this close
 CITY_P = 0.5  # barrel probability from which a map node is a City
+# training (citytrain.py, part of `python -m grand_project.detect train`): folders with screenshots + cities_truth.json
+CITY_TRUTH_SETS = [SHOTS, rc_paths.SCREENSHOTS / "cities"]  # 10 hand-labelled + 31 city screenshots (78 cities)
+CITY_TRAIN_SNAP = 40  # px: a truth point belongs to the nearest detected map node this close
+CITY_TRAIN_C = 0.05  # logistic regularisation: few cities, many features
+# robustness report only (training on them made the model worse): ordinary map nodes looked at a few px off
+CITY_OFF_SHIFTS = [(0, -8), (0, -5), (0, 5), (0, 8), (-6, 0), (6, 0)]
 
 
 # the icon finder's rim template (the average icon as seen on screen, from the hand labels), so teaching new icon
