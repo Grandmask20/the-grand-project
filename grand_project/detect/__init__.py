@@ -28,14 +28,7 @@ from .annotate import (  # noqa: F401
     cmd_show,
 )
 from .badges import (  # noqa: F401
-    _K_IN,
-    _K_OUT,
-    _K_RIM,
-    _badge_tpl,
-    _best_ref_corr,
-    _ring_kernel,
     _row_slot,
-    _template,
     badge_book,
     badge_candidates,
     badge_features,
@@ -44,6 +37,7 @@ from .badges import (  # noqa: F401
     badges_from,
     find_badges,
     name_badge,
+    rim_score,
 )
 from .cache import (  # noqa: F401
     _PER_IMAGE,
@@ -102,14 +96,12 @@ from .constants import (  # noqa: F401
     PATH_START,
     PATH_STEP,
     RIM_R,
-    RING_MIN,
     ROW_DY,
     ROW_RESCUE,
     ROW_STEP,
     SEEN_CELL,
     SHOTS,
     STRONGHOLD_EMPTY,
-    TEMPLATE_MIN,
     TESTS,
     TOWER_BADGES,
     TOWER_MIN,

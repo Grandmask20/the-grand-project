@@ -197,10 +197,11 @@ FORTRESS_PAINT = TESTS / "fortress_paint"  # user-painted walls: <k>.png alpha m
 
 
 # ---------------------------------------------------------------- stage 3
-RING_MIN = 25  # gold-ring filter at the rim radius (10.5 px)
-
-
-TEMPLATE_MIN = 0.90  # or: correlation with the average stored badge (catches white badges on bright ground)
+# icons are found by their rim alone (user: the rim is the same on every icon), then named by what's inside
+ICON_RIM_R = (7.0, 12.5)  # px: the rim (dark line at 8-9, gold at 10-11) compared with the template; the most constant
+# radii of 480 hand-labelled icons
+RIM_CANDIDATE = 0.35  # rim score from which a circle is a candidate (493 of 523 labelled icons, ~1500 per shot)
+ICON_CLEAR = 12.0  # px: an icon's centre this far from the HUD and the screen edge (its whole rim visible)
 
 
 BADGE_MIN = 0.5  # badge probability
@@ -264,6 +265,6 @@ CITY_BARREL_SNAP = 30  # px: a rough point (under an icon row, from the atlas) i
 CITY_P = 0.5  # barrel probability from which a map node is a City
 
 
-# what the icon finder uses (rim template + "looks like a stored icon" score), frozen so teaching new icons
-# (naming) never changes which icons are found: tools/freeze_badge_finder.py
+# the icon finder's rim template (the average icon as seen on screen, from the hand labels), so teaching new icon
+# pictures (naming) never changes which icons are found: tools/freeze_badge_finder.py
 BADGE_FINDER_FILE = rc_paths.ref("badge_finder.npz")

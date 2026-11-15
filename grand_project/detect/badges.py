@@ -13,101 +13,97 @@ from .constants import (
     BADGE_NMS,
     BADGE_ROW_MIN,
     HIDDEN_SNAP,
+    ICON_CLEAR,
+    ICON_RIM_R,
     MAP_NMS,
-    RING_MIN,
+    RIM_CANDIDATE,
     ROW_DY,
     ROW_RESCUE,
     ROW_STEP,
-    TEMPLATE_MIN,
 )
-from .maps import _keep_best, map_features
-
-
-def _ring_kernel(r0: float, r1: float, R: int = 15) -> np.ndarray:
-    yy, xx = np.mgrid[-R : R + 1, -R : R + 1]
-    k = ((np.hypot(xx, yy) >= r0) & (np.hypot(xx, yy) < r1)).astype(np.float32)
-    return k / k.sum()
-
-
-_K_RIM, _K_IN, _K_OUT = _ring_kernel(9.5, 11.5), _ring_kernel(7, 9), _ring_kernel(12.5, 14.5)
-
-
-_badge_tpl: dict = {}
+from .maps import _keep_best
 
 
 def _finder() -> dict:
-    """the finder's frozen data (BADGE_FINDER_FILE): average icon (grey) with its rim mask, and the picture set of
-    the "looks like a stored icon" score. Not the live stored pictures: those only decide an icon's NAME."""
-    if not _badge_tpl:
+    """the icon finder's rim template (BADGE_FINDER_FILE, tools/freeze_badge_finder.py): the average icon as seen
+    on screen, used only on the rim (radii ICON_RIM_R). Never the stored icon pictures: those only NAME an icon."""
+    if not _rim:
         with np.load(BADGE_FINDER_FILE) as z:
-            _badge_tpl["t"], _badge_tpl["F"] = z["template"].astype(np.float32), z["F"].astype(np.float32)
-        yy, xx = np.mgrid[: icon_refs.SIZE, : icon_refs.SIZE]
-        r = np.hypot(xx - icon_refs.SIZE / 2 + 0.5, yy - icon_refs.SIZE / 2 + 0.5)
-        _badge_tpl["m"] = ((r >= 8.5) & (r <= 13.5)).astype(np.float32)
-    return _badge_tpl
+            mean = z["rim"].astype(np.float32)
+        S = mean.shape[0]
+        yy, xx = np.mgrid[:S, :S]
+        r = np.hypot(xx - S / 2 + 0.5, yy - S / 2 + 0.5)
+        m = ((r >= ICON_RIM_R[0]) & (r < ICON_RIM_R[1])).astype(np.float32)
+        t = (mean - (mean * m).sum() / m.sum()) * m
+        _rim.update(T=t / np.linalg.norm(t), M=m, n=float(m.sum()))
+    return _rim
 
 
-def _template() -> tuple[np.ndarray, np.ndarray]:
-    """average icon (grey) and its rim mask (frozen: _finder)"""
+_rim: dict = {}
+
+
+def rim_score(img: np.ndarray) -> np.ndarray:
+    """per pixel: correlation of the ring around it (radii ICON_RIM_R) with an icon's rim - the inside (which icon)
+    and the outside (the map) are not looked at"""
     f = _finder()
-    return f["t"], f["m"]
+    g = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY).astype(np.float32)
+    a = cv2.filter2D(g, -1, f["T"], borderType=cv2.BORDER_REFLECT)
+    s1 = cv2.filter2D(g, -1, f["M"], borderType=cv2.BORDER_REFLECT)
+    s2 = cv2.filter2D(g * g, -1, f["M"], borderType=cv2.BORDER_REFLECT)
+    return a / np.sqrt(np.maximum(s2 - s1 * s1 / f["n"], 1e-3))
+
+
+def _clear(img: np.ndarray) -> np.ndarray:
+    """per pixel: an icon centred here is whole on the screen and clear of the HUD (user: the HUD is masked
+    before detection; an icon half under it or off the screen is read from another screenshot)"""
+    h, w = img.shape[:2]
+    free = (core.hud_mask(w, h) == 0).astype(np.uint8)
+    free[[0, -1], :] = 0
+    free[:, [0, -1]] = 0
+    return cv2.distanceTransform(free, cv2.DIST_L2, 3) >= ICON_CLEAR
 
 
 def badge_candidates(img: np.ndarray) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
-    """-> points, ring score, extra features (ring score, template score, best stored-badge correlation)"""
-    hsv = cv2.cvtColor(img, cv2.COLOR_BGR2HSV).astype(np.float32)
-    v = hsv[..., 2]
-    gold = (((hsv[..., 0] >= 10) & (hsv[..., 0] <= 32) & (hsv[..., 1] > 60)) * 1.0).astype(np.float32)
-    ring = (
-        cv2.filter2D(v, -1, _K_RIM)
-        - 0.5 * (cv2.filter2D(v, -1, _K_IN) + cv2.filter2D(v, -1, _K_OUT))
-        + 40 * cv2.filter2D(gold, -1, _K_RIM)
-    )
-    tpl, msk = _template()
-    tm = np.nan_to_num(
-        cv2.matchTemplate(cv2.cvtColor(img, cv2.COLOR_BGR2GRAY).astype(np.float32), tpl, cv2.TM_CCORR_NORMED, mask=msk)
-    )
-    o = icon_refs.SIZE // 2
-    ncc = np.zeros_like(v)
-    ncc[o : o + tm.shape[0], o : o + tm.shape[1]] = tm
-    k = np.ones((9, 9), np.uint8)
-    pk = ((ring >= cv2.dilate(ring, k)) & (ring > RING_MIN)) | ((ncc >= cv2.dilate(ncc, k)) & (ncc > TEMPLATE_MIN))
-    ys, xs = np.nonzero(pk & (core.hud_mask(img.shape[1], img.shape[0], -core.HUD_DEPTH) == 0))
-    pts = np.stack([xs, ys], 1)
-    best = _best_ref_corr(img, pts)
-    extra = np.stack([ring[ys, xs], ncc[ys, xs], best], 1).reshape(-1, 3)
-    return pts, ring[ys, xs], extra
+    """-> points (circles whose rim looks like an icon's), their rim score, and the same score as 'extra'"""
+    sc = rim_score(img)
+    pk = (sc >= cv2.dilate(sc, np.ones((9, 9), np.uint8))) & (sc > RIM_CANDIDATE) & _clear(img)
+    ys, xs = np.nonzero(pk)
+    pts = np.stack([xs, ys], 1).reshape(-1, 2)
+    v = sc[ys, xs]
+    return pts, v, v[:, None]
 
 
-def _best_ref_corr(img: np.ndarray, pts: np.ndarray) -> np.ndarray:
-    """per point: best correlation with the finder's frozen picture set (icon_refs.feature on every crop, but with
-    the image blurred once - the blur never reaches the compared circle from a crop edge)"""
-    RF = _finder()["F"]
-    out = np.zeros(len(pts), np.float32)
-    if not len(RF) or not len(pts):
-        return out
-    blur = cv2.GaussianBlur(img, (0, 0), 1.5)
-    r = icon_refs.SIZE // 2
-    my, mx = np.nonzero(icon_refs._MASK)
-    X = np.round(pts[:, 0]).astype(int)
-    Y = np.round(pts[:, 1]).astype(int)
-    h, w = img.shape[:2]
-    ok = (Y - r >= 0) & (Y - r + icon_refs.SIZE <= h) & (X - r >= 0) & (X - r + icon_refs.SIZE <= w)
-    for s0 in range(0, len(pts), 2048):
-        idx = np.nonzero(ok[s0 : s0 + 2048])[0] + s0
-        if not len(idx):
-            continue
-        v = blur[(Y[idx] - r)[:, None] + my, (X[idx] - r)[:, None] + mx].astype(np.float32)  # (k, npix, 3)
-        v -= v.mean(axis=1, keepdims=True)
-        v = v.reshape(len(idx), -1)
-        nrm = np.linalg.norm(v, axis=1, keepdims=True)
-        v = np.where(nrm > 1e-6, v / np.maximum(nrm, 1e-12), v)
-        out[idx] = (v @ RF.T).max(1)
-    return out
+_ANG = np.linspace(0, 2 * np.pi, 24, endpoint=False)
+_RADII = np.arange(6, 14.5, 1.0)
 
 
 def badge_features(img: np.ndarray, pts: np.ndarray, ring: np.ndarray, extra: np.ndarray) -> np.ndarray:
-    return np.hstack([map_features(img, pts, ring), extra])
+    """rim only: per radius 6..14 px, how even the ring is all round, its gold share and saturation; the shape of
+    the brightness profile across the radii; and the rim score. Nothing from inside the rim."""
+    if not len(pts):
+        return np.zeros((0, 4 * len(_RADII) + 2), np.float32)
+    hsv = cv2.cvtColor(img, cv2.COLOR_BGR2HSV)
+    g = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY).astype(np.float32)
+    gold = ((hsv[..., 0] >= 10) & (hsv[..., 0] <= 32) & (hsv[..., 1] > 60)).astype(np.float32)
+    sat = hsv[..., 1].astype(np.float32) / 255
+    h, w = g.shape
+    X, Y = pts[:, 0].astype(np.float32)[:, None], pts[:, 1].astype(np.float32)[:, None]
+    even, gol, sa, prof = [], [], [], []
+    for r in _RADII:
+        xs = np.clip(np.round(X + r * np.cos(_ANG)).astype(int), 0, w - 1)
+        ys = np.clip(np.round(Y + r * np.sin(_ANG)).astype(int), 0, h - 1)
+        v = g[ys, xs]
+        m = v.mean(1)
+        prof.append(m)
+        even.append(v.std(1) / (m + 1))
+        gol.append(gold[ys, xs].mean(1))
+        sa.append(sat[ys, xs].mean(1))
+    prof = np.stack(prof, 1)
+    shape = (prof - prof.mean(1, keepdims=True)) / (prof.std(1, keepdims=True) + 1)
+    spread = prof.std(1) / (prof.mean(1) + 1)
+    return np.hstack(
+        [np.stack(even, 1), np.stack(gol, 1), np.stack(sa, 1), shape, spread[:, None], np.asarray(ring)[:, None]]
+    ).astype(np.float32)
 
 
 def badge_labels(pts: np.ndarray, t: dict) -> np.ndarray:

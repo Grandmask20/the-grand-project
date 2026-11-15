@@ -1,43 +1,52 @@
-"""Freeze what the icon FINDER uses into references/badge_finder.npz.
+"""Build the icon finder's rim template: references/badge_finder.npz.
 
-    python -m tools.freeze_badge_finder [DATABASE]
+    python -m tools.freeze_badge_finder
 
-Finding an icon (is there one here?) and naming it (which one?) are separate. Naming compares the picture
-inside the rim with every stored picture, and grows whenever icons are taught. Finding uses the rim template
-(the average stored icon, compared on the rim only) and one "looks like a stored icon" score; if those followed
-the stored pictures, teaching a new icon would change which icons are found. So they are frozen here, from
-DATABASE (default: the current icon database), and only re-frozen on purpose (then retrain and re-score the
-detector).
+Icons are found by their rim alone (it is the same on every icon), then named by what's inside. The template is
+the average of the hand-labelled icons as they look on screen (each aligned to the average, two rounds); the
+finder only compares the rim radii of it (detect.constants.ICON_RIM_R). Rebuild only on purpose, then retrain and
+re-score the detector (python -m grand_project.detect train / score).
 """
 
 from __future__ import annotations
 
-import sqlite3
-import sys
-from pathlib import Path
+import json
 
 import cv2
 import numpy as np
 
-from grand_project import icon_refs
-from grand_project.detect.constants import BADGE_FINDER_FILE
+from grand_project.detect.constants import BADGE_FINDER_FILE, TRUTH_SETS
 
-
-def pictures(db: Path) -> list[np.ndarray]:
-    c = sqlite3.connect(str(db))
-    rows = c.execute("SELECT png FROM badge_refs ORDER BY id").fetchall()
-    c.close()
-    ims = [cv2.imdecode(np.frombuffer(p, np.uint8), cv2.IMREAD_COLOR) for (p,) in rows]
-    return [im for im in ims if im is not None and im.shape[:2] == (icon_refs.SIZE, icon_refs.SIZE)]
+S = 40  # px: template size
+SPECIAL = {"MapBossSpecial", "AbyssalDepths", "CorruptionNexus", "CorruptionNexusNoGrowth"}  # their own rims
 
 
 def main():
-    db = Path(sys.argv[1]) if len(sys.argv) > 1 else icon_refs.DB_PATH
-    ims = pictures(db)
-    template = np.mean([cv2.cvtColor(im, cv2.COLOR_BGR2GRAY).astype(np.float32) for im in ims], 0)
-    F = np.array([icon_refs.feature(im) for im in ims], np.float32)
-    np.savez_compressed(BADGE_FINDER_FILE, template=template.astype(np.float32), F=F)
-    print(f"{BADGE_FINDER_FILE}: {len(ims)} pictures from {db}")
+    h = S // 2
+    grey = []
+    for tf, shots in TRUTH_SETS:
+        if not tf.exists():
+            continue
+        for name, v in json.loads(tf.read_text(encoding="utf-8")).items():
+            im = cv2.imdecode(np.fromfile(str(shots / name), np.uint8), cv2.IMREAD_GRAYSCALE)
+            for b in v["badges"]:
+                if b["name"] in SPECIAL or b["name"].startswith("ExpeditionShip"):
+                    continue
+                x, y = int(round(b["x"])), int(round(b["y"]))
+                c = im[y - h : y + h, x - h : x + h]
+                if c.shape == (S, S):
+                    grey.append(c.astype(np.float32))
+    mean = np.mean(grey, 0)
+    for _ in range(2):  # align every icon to the average (labels are a pixel or two off), average again
+        al = []
+        for g in grey:
+            r = cv2.matchTemplate(cv2.copyMakeBorder(g, 3, 3, 3, 3, cv2.BORDER_REPLICATE), mean, cv2.TM_CCOEFF_NORMED)
+            _, _, _, (dx, dy) = cv2.minMaxLoc(r)
+            M = np.float32([[1, 0, dx - 3], [0, 1, dy - 3]])
+            al.append(cv2.warpAffine(g, M, (S, S), borderMode=cv2.BORDER_REPLICATE))
+        mean = np.mean(al, 0)
+    np.savez_compressed(BADGE_FINDER_FILE, rim=mean.astype(np.float32))
+    print(f"{BADGE_FINDER_FILE}: rim template from {len(grey)} hand-labelled icons")
 
 
 if __name__ == "__main__":
