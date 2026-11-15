@@ -2,7 +2,8 @@
 
 One card per known atlas: a thumbnail of its map, its name, and its maps / icons / screenshots. Click a card to
 open that atlas. Refresh re-checks the open atlas; Delete asks whether to stop tracking the atlas (files stay)
-or delete the atlas and its data (the screenshots themselves are never deleted).
+or delete the atlas and its data (the screenshots themselves are never deleted). The open atlas can be deleted
+too: the window is cleared first.
 
 Thumbnails are written next to the map image cache when the map is built (<atlas>_files/<stem>_thumb.png);
 the numbers are kept in the viewer settings with each atlas. An atlas not opened since this version gets both
@@ -228,10 +229,8 @@ class AtlasesTabMixin:
         if not sel:
             self.status.set("select an atlas first")
             return
-        if self.path is not None and same_file(sel, self.path):
-            messagebox.showinfo(
-                "Delete atlas", "This atlas is open. Open another atlas first, then delete this one.", parent=self.root
-            )
+        if self.path is not None and same_file(sel, self.path) and self.working():
+            self.status.set("wait until the screenshots being added are done")
             return
         name = next((a["name"] for a in self.known_atlases() if a["json"] == sel), Path(sel).parent.name)
         win = tk.Toplevel(self.root)
@@ -253,6 +252,7 @@ class AtlasesTabMixin:
 
         def stop():
             win.destroy()
+            self._close_if_open(sel)
             self._forget_atlas_path(sel)
 
         def delete():
@@ -264,6 +264,19 @@ class AtlasesTabMixin:
         ttk.Button(row, text="Cancel", command=win.destroy).pack(side="right")
         win.bind("<Escape>", lambda _e: win.destroy())
         win.grab_set()
+
+    def _close_if_open(self, json_path: str) -> None:
+        """the open atlas is about to be deleted or no longer tracked: the window is cleared first (an empty,
+        unsaved atlas; pick another one from the list), so nothing can save it back afterwards (review: having to
+        open another atlas first was clunky)"""
+        if self.path is None or not same_file(json_path, self.path):
+            return
+        self._forget_session()
+        if same_file(self.settings.get("last_atlas") or json_path, json_path):
+            self.settings.pop("last_atlas", None)
+        self.atlas, self.path = core.Atlas(), None
+        self._after_load(fit=True)
+        self.status.set("no atlas open: pick one in Saved atlases, or File > New atlas")
 
     def _forget_atlas_path(self, json_path: str):
         L = self.known_atlases()
@@ -294,6 +307,7 @@ class AtlasesTabMixin:
             parent=self.root,
         ):
             return
+        self._close_if_open(json_path)
         failed = []
         for q in paths:
             try:

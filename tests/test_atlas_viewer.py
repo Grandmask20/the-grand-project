@@ -768,6 +768,23 @@ check(
     kept.exists() and not any(a["name"] == "keep files" for a in app.known_atlases()),
 )
 
+# the open atlas can be deleted too: the window is cleared first (review)
+open_one = work / "open_one" / "atlas.json"
+open_one.parent.mkdir()
+core.Atlas().save(open_one)
+app.open_atlas(open_one)
+pump(0.3)
+app._delete_atlas_data(str(open_one.resolve()), "open one")
+pump(0.3)
+check(
+    "delete the open atlas: window cleared, files gone",
+    app.path is None
+    and not app.atlas.frames
+    and not open_one.exists()
+    and not (open_one.parent / "atlas_files").exists(),
+    str(app.path),
+)
+
 # background jobs of any kind (auto-add too, not only Add screenshots) keep their atlas: no switching
 # while one runs, a job queued for another atlas is skipped, and closing finishes the step in progress and
 # saves it (closing used to lose it: the save waited for the worker and the window was gone first)
