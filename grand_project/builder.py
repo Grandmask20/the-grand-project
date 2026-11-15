@@ -42,9 +42,15 @@ _STAMP: list[str] = []
 
 
 def detector_stamp() -> str:
-    """which detector a cached detection came from: the trained models and icon pictures in the detector
-    database, plus the rim / barrel reference files. A cache with another stamp is detected again (Re-check
-    re-detects with the current detector: user)."""
+    """Say which detector a cached detection came from.
+
+    The stamp covers the trained models and icon pictures in the detector database, plus the rim / barrel
+    reference files. A cache with another stamp is detected again (Re-check re-detects with the current
+    detector: user). Worked out once per process.
+
+    Returns:
+        12-character hex stamp.
+    """
     if not _STAMP:
         import sqlite3
 
@@ -65,7 +71,14 @@ def detector_stamp() -> str:
 
 
 def _fresh(cache: Path) -> dict | None:
-    """a cached detection made by the current detector, else None"""
+    """Read a cached detection if it was made by the current detector.
+
+    Args:
+        cache: Path of the cached detection .json.
+
+    Returns:
+        The cached detection dict, or None (missing, cut off, or from another detector).
+    """
     if not cache.exists():
         return None
     data = atlas_io.read_json(cache)
@@ -73,8 +86,22 @@ def _fresh(cache: Path) -> dict | None:
 
 
 def extract_frame(image_path: Path, cache_dir: Path) -> core.Frame:
-    """the detector in live mode (reads its trained models from the reference DB, never writes it);
-    cached by file hash + detector id"""
+    """Detect a screenshot with the detector in live mode, cached by file hash + detector id.
+
+    The detector reads its trained models from the reference DB and never writes it. A cut-off cache (crash
+    mid-write) or one from an older detector is detected again; a cached one gets the screenshot's current
+    path (moved / another computer).
+
+    Args:
+        image_path: Screenshot file.
+        cache_dir: Folder of the cached detections (the atlas's "_frames" folder).
+
+    Returns:
+        The screenshot's Frame.
+
+    Raises:
+        ValueError: The file is not a readable image (damaged or not fully written).
+    """
 
     from grand_project import detect as atlas_detect
 
@@ -148,6 +175,15 @@ DETECT_WORKERS = atlas_io.workers(4)  # new screenshots detected at once (each ~
 
 
 def is_cached(image_path: Path, cache_dir: Path) -> bool:
+    """Tell whether a screenshot already has a detection from the current detector.
+
+    Args:
+        image_path: Screenshot file.
+        cache_dir: Folder of the cached detections.
+
+    Returns:
+        True when a fresh cached detection exists.
+    """
     from grand_project import detect as atlas_detect
 
     digest = hashlib.sha256(image_path.read_bytes()).hexdigest()
@@ -155,8 +191,19 @@ def is_cached(image_path: Path, cache_dir: Path) -> bool:
 
 
 def detect_uncached(paths: list, cache_dir: Path, log=None) -> dict:
-    """the viewer's batches: detect the screenshots not cached yet, several at a time; {path: error} for
-    failures (afterwards extract_frame reads each from the cache)"""
+    """Detect the screenshots not cached yet, several at a time (the viewer's batches).
+
+    Afterwards extract_frame reads each from the cache. Does nothing for fewer than 2 screenshots or when
+    DETECT_WORKERS < 2; when worker processes fail, the screenshots are left to be detected one at a time later.
+
+    Args:
+        paths: Screenshot paths.
+        cache_dir: Folder of the cached detections.
+        log: Optional function taking one line of text.
+
+    Returns:
+        {path: error} for failures.
+    """
     todo = [p for p in paths if not is_cached(Path(p), cache_dir)]
     if len(todo) < 2 or DETECT_WORKERS < 2:
         return {}
@@ -174,7 +221,12 @@ def detect_uncached(paths: list, cache_dir: Path, log=None) -> dict:
 
 
 def export(atlas: core.Atlas, base: Path) -> None:
+    """Write the stitched map and the network overlay as PNGs in the atlas's _files folder.
 
+    Args:
+        atlas: The atlas.
+        base: Path of the atlas .json (names the "<stem>_composite.png" and "<stem>_network.png" files).
+    """
     canvas, origin = atlas.composite()
     d = core.atlas_files(base)
     core.write_png(d / (base.stem + "_composite.png"), canvas, "composite")
@@ -193,7 +245,17 @@ def place_frames(atlas: core.Atlas, frames: list, log=_log) -> tuple[int, list]:
        unplaced one is tried first (maps first, then the link's shift; both terrain-checked).
     3. When no link leads anywhere new, every remaining screenshot is matched against the whole
        atlas by its maps (revisits, second passes), and growth continues from there.
-    Returns (added, names not added)."""
+
+    The atlas-wide check (recheck) runs afterwards when anything was added.
+
+    Args:
+        atlas: The atlas, changed in place.
+        frames: The screenshots' Frames, in the order they were taken.
+        log: Function taking one line of text.
+
+    Returns:
+        (added, names not added).
+    """
     n = len(frames)
     if not n:
         return 0, []
@@ -212,10 +274,24 @@ def place_frames(atlas: core.Atlas, frames: list, log=_log) -> tuple[int, list]:
     added = 0
 
     def t_of(i):
+        """Return the shift of a placed screenshot.
+
+        Args:
+            i: Index into frames.
+
+        Returns:
+            (2,) shift in atlas units.
+        """
         f = next(f for f in atlas.frames if f["name"] == name_of[i])
         return np.array(f["M"], float)[:, 2]
 
     def report(i, reg):
+        """Count a placed screenshot and log how it was placed.
+
+        Args:
+            i: Index into frames.
+            reg: Its Registration.
+        """
         nonlocal added
         added += 1
         placed.add(i)
@@ -277,6 +353,16 @@ def place_frames(atlas: core.Atlas, frames: list, log=_log) -> tuple[int, list]:
 
 
 def _detect_one(job):
+    """Detect one screenshot into the cache (run in a worker process).
+
+    One bad screenshot must not stop the batch, so errors are returned, not raised.
+
+    Args:
+        job: (screenshot path, cache folder) as strings.
+
+    Returns:
+        (screenshot path, None) or (screenshot path, repr of the error).
+    """
     image, cache_dir = job
     try:
         extract_frame(Path(image), Path(cache_dir))
@@ -286,7 +372,19 @@ def _detect_one(job):
 
 
 def detect_many(images: list, cache_dir: Path, workers: int = 1, log=_log) -> list:
-    """Detect every screenshot (cached ones are instant), several at once when workers > 1."""
+    """Detect every screenshot (cached ones are instant), several at once when workers > 1.
+
+    Screenshots whose detection fails are logged and skipped.
+
+    Args:
+        images: Screenshot paths.
+        cache_dir: Folder of the cached detections.
+        workers: Number of worker processes.
+        log: Function taking one line of text.
+
+    Returns:
+        The Frames of the screenshots detected, in input order.
+    """
     todo = [i for i in images]
     if workers > 1 and len(todo) > 1:
         from concurrent.futures import as_completed
@@ -312,6 +410,19 @@ def detect_many(images: list, cache_dir: Path, workers: int = 1, log=_log) -> li
 
 
 def cmd_add(args) -> int:
+    """Run "add": add screenshots (files or folders) to an atlas, created if missing.
+
+    Saves the atlas and the PNGs when anything was added.
+
+    Args:
+        args: Parsed arguments (atlas, image, workers).
+
+    Returns:
+        Exit code 0.
+
+    Raises:
+        SystemExit: The detector database is missing.
+    """
     atlas_path = Path(args.atlas)
     atlas = core.Atlas.load(atlas_path) if atlas_path.exists() else core.Atlas()
     cache_dir = atlas_path.with_name(atlas_path.stem + "_frames")
@@ -341,8 +452,16 @@ LOCAL_SHARE = 0.25  # adding more than this share of the atlas at once: re-check
 
 
 def recheck(atlas: core.Atlas, new_names: list, log=_log) -> None:
-    """atlas-wide clean-up after adding screenshots: only around them when the atlas already has
-    a result and only a few were added (same result as a full check there, much faster)"""
+    """Run the atlas-wide clean-up after adding screenshots.
+
+    Only around them when the atlas already has a result and only a few were added (at most LOCAL_SHARE of the
+    atlas; same result as a full check there, much faster).
+
+    Args:
+        atlas: The atlas, changed in place.
+        new_names: Names of the screenshots just added.
+        log: Function taking one line of text.
+    """
     if atlas.final is not None and len(new_names) <= LOCAL_SHARE * len(atlas.frames):
         atlas_finalize.finalize_local(atlas, new_names, log=log)
     else:
@@ -350,7 +469,16 @@ def recheck(atlas: core.Atlas, new_names: list, log=_log) -> None:
 
 
 def cached_frames(atlas_path: Path) -> dict:
-    """the cached detection of every screenshot of an atlas, by name"""
+    """Read the cached detection of every screenshot of an atlas, by name.
+
+    A cut-off cache is skipped (re-detected when that screenshot is next added).
+
+    Args:
+        atlas_path: Path of the atlas .json.
+
+    Returns:
+        {screenshot name: Frame}.
+    """
     out = {}
     for cf in atlas_path.with_name(atlas_path.stem + "_frames").glob("*.json"):
         data = atlas_io.read_json(cf)
@@ -363,6 +491,16 @@ def cached_frames(atlas_path: Path) -> dict:
 
 
 def cmd_finalize(args) -> int:
+    """Run "finalize": re-merge icons from the cached detections and redo the atlas-wide clean-up.
+
+    Picks up re-detected / taught icons; saves the atlas and the PNGs.
+
+    Args:
+        args: Parsed arguments (atlas).
+
+    Returns:
+        Exit code 0.
+    """
     atlas_path = Path(args.atlas)
     atlas = core.Atlas.load(atlas_path)
     atlas.rebuild_icons(cached_frames(atlas_path))  # picks up re-detected / taught badges
@@ -374,6 +512,14 @@ def cmd_finalize(args) -> int:
 
 
 def cmd_info(args) -> int:
+    """Run "info": print a summary of an atlas and of each screenshot in it.
+
+    Args:
+        args: Parsed arguments (atlas).
+
+    Returns:
+        Exit code 0.
+    """
     atlas = core.Atlas.load(Path(args.atlas))
     j = atlas.to_json()
     multi = sum(len(set(n["frames"])) > 1 for n in j["nodes"])
@@ -390,6 +536,11 @@ def cmd_info(args) -> int:
 
 
 def main() -> int:
+    """Parse the command line and run the chosen command (add, finalize, info).
+
+    Returns:
+        The command's exit code.
+    """
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     sub = ap.add_subparsers(dest="cmd", required=True)
     a = sub.add_parser("add", help="add screenshots to an atlas (created if missing)")

@@ -13,14 +13,36 @@ from .settings import save_settings
 
 
 def same_file(a, b) -> bool:
-    """two paths to one atlas file (a relative and an absolute path to the same file are one atlas)"""
+    """Tells whether two paths lead to one atlas file (a relative and an absolute path to the same file are one
+    atlas).
+
+    Args:
+        a: A path (str or Path).
+        b: Another path (str or Path).
+
+    Returns:
+        True when both resolve to the same file.
+    """
     return Path(a).resolve() == Path(b).resolve()
 
 
 class FoldersMixin:
+    """Atlas folders of the Viewer window: the Atlas menu, the list of known atlases, switching atlases and
+    opening a folder of screenshots as an atlas.
+
+    A mixin of the Viewer class (viewer/app.py); runs on the window (Tk) thread.
+    """
+
     # ------------------------------------------------------------------ atlas folders
     def known_atlases(self) -> list[dict]:
-        """[{"name", "json"}] known atlases (settings), the open one always included"""
+        """Lists the known atlases (from the settings), the open one always included.
+
+        Atlases whose file no longer exists are dropped; the open atlas and the last atlas are added when
+        missing. The cleaned list is stored back in the settings (not saved to disk).
+
+        Returns:
+            [{"name", "json"}]: the name shown in the list and the path of the atlas file.
+        """
         L = [a for a in self.settings.get("atlases", []) if Path(a["json"]).exists()]
         for extra in (self.path, self.settings.get("last_atlas")):
             if extra and Path(extra).exists() and not any(same_file(a["json"], extra) for a in L):
@@ -29,6 +51,9 @@ class FoldersMixin:
         return L
 
     def refresh_atlas_menu(self):
+        """Rebuilds the Atlas menu (one submenu per known atlas, the open one marked "●"), the Atlas button text
+        and the Saved atlases cards.
+        """
         m = self.atlas_menu
         m.delete(0, "end")
         for k, a in enumerate(self.known_atlases()):
@@ -49,6 +74,13 @@ class FoldersMixin:
         self.refresh_atlas_cards()
 
     def remember_atlas(self, json_path: Path, name: str | None = None):
+        """Adds an atlas to the known atlases (unless it is there already), saves the settings and refreshes the
+        Atlas menu.
+
+        Args:
+            json_path: The atlas file.
+            name: Name shown in the list; default: the name of the atlas file's folder.
+        """
         L = self.known_atlases()
         if not any(same_file(a["json"], json_path) for a in L):
             L.append({"name": name or Path(json_path).parent.name, "json": str(Path(json_path).resolve())})
@@ -56,6 +88,11 @@ class FoldersMixin:
         self.refresh_atlas_menu()
 
     def rename_atlas(self, k: int):
+        """Asks for a new name for a known atlas (its name in the list only; no file is renamed) and saves it.
+
+        Args:
+            k: Index in the known atlases list.
+        """
         from tkinter import simpledialog
 
         L = self.known_atlases()
@@ -66,6 +103,11 @@ class FoldersMixin:
             self.refresh_atlas_menu()
 
     def forget_atlas(self, k: int):
+        """Removes an atlas from the known atlases list (files are kept); the open atlas stays in the list.
+
+        Args:
+            k: Index in the known atlases list.
+        """
         L = self.known_atlases()
         if self.path and Path(L[k]["json"]) == self.path:
             self.status.set("the open atlas stays in the list")
@@ -75,6 +117,14 @@ class FoldersMixin:
         self.refresh_atlas_menu()
 
     def switch_atlas(self, json_path: Path):
+        """Opens another atlas (Atlas menu > Open), saving unsaved changes first.
+
+        Refused while screenshots are being added; nothing happens for the atlas already open. The busy cursor
+        and status are shown before the work starts (opening a large atlas takes a few seconds).
+
+        Args:
+            json_path: The atlas file to open.
+        """
         if self.working():
             self.status.set("wait until the screenshots being added are done")
             return
@@ -92,8 +142,17 @@ class FoldersMixin:
 
     @staticmethod
     def _atlas_shot_dir(json_path: Path) -> Path | None:
-        """folder of an atlas's first screenshot (None: no screenshots, or not an atlas file). Read as JSON:
-        it used to search the text for '"path": "', which broke on other field orders and relative paths."""
+        """Returns the folder of an atlas's first screenshot.
+
+        Read as JSON: it used to search the text for '"path": "', which broke on other field orders and
+        relative paths.
+
+        Args:
+            json_path: An atlas file.
+
+        Returns:
+            The folder, or None (no screenshots, or not an atlas file).
+        """
         try:
             frames = json.loads(json_path.read_text(encoding="utf-8")).get("frames") or []
             first = frames[0]["path"] if frames and isinstance(frames[0], dict) else None
@@ -104,7 +163,16 @@ class FoldersMixin:
         return Path(core.find_screenshot(first, json_path.resolve().parent)).parent
 
     def atlases_for_folder(self, folder: Path) -> list[Path]:
-        """atlas files belonging to a screenshot folder: inside it, or known / next to it and built from it"""
+        """Finds the atlas files belonging to a screenshot folder: inside it, or known / next to it and built from
+        it.
+
+        Args:
+            folder: A screenshot folder.
+
+        Returns:
+            The atlas files, best first: built with the current detector first, then the most screenshots
+            (cached detections), then the newest.
+        """
         found = [p for p in sorted(folder.glob("*.json")) if p.name == "atlas.json" or p.stem.endswith("atlas")]
         cands = [Path(a["json"]) for a in self.known_atlases()] + sorted(folder.parent.glob("*/atlas.json"))
         for j in cands:
@@ -114,7 +182,14 @@ class FoldersMixin:
                     found.append(j)
 
         def rank(q: Path):
-            """built with the current detector first, then the most screenshots (cached detections)"""
+            """Sort key: built with the current detector first, then the most screenshots (cached detections).
+
+            Args:
+                q: An atlas file.
+
+            Returns:
+                (-screenshots with the current detector, -other cached screenshots, -file modification time).
+            """
             fr = q.with_name(q.stem + "_frames")
             new = len(list(fr.glob(f"*_{builder.NEW_DETECTOR_ID}.json"))) if fr.exists() else 0
             old = len(list(fr.glob("*.json"))) - new if fr.exists() else 0
@@ -123,9 +198,15 @@ class FoldersMixin:
         return sorted(set(found), key=rank)
 
     def select_atlas_folder(self, folder: Path | None = None):
-        """pick a folder of atlas screenshots: its atlas opens (the newest, if several were built from it) and
-        screenshots in the folder that are not in it yet are offered for adding; no atlas yet = a new one in
-        that folder, built from all its screenshots"""
+        """Picks a folder of atlas screenshots and opens its atlas.
+
+        Its atlas opens (the newest, if several were built from it) and screenshots in the folder that are not
+        in it yet are offered for adding; no atlas yet = a new one in that folder (atlas.json), built from all
+        its screenshots. Refused while screenshots are being added.
+
+        Args:
+            folder: The folder; None asks for it.
+        """
         if self.working():
             self.status.set("wait until the screenshots being added are done")
             return

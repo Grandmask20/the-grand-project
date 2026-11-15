@@ -9,13 +9,29 @@ from .helpers import icon_aliases, icon_label, icon_name
 
 
 class SelectionMixin:
+    """Viewer mixin for the selection, its details ("Selected" in the Find tab) and the Find search."""
+
     # ------------------------------------------------------------------ selection / info
     def select(self, item):
+        """Select an item, show its details and redraw.
+
+        Args:
+            item: (kind, index) as from pick(), with kind "node", "path", "landmark", "icon" or "bookmark"; or None to
+                clear the selection.
+        """
         self.sel = item
         self.show_info()
         self.request_redraw()
 
     def item_pos(self, item) -> tuple[float, float]:
+        """Where an item is on the atlas (a path: the middle between its two map nodes).
+
+        Args:
+            item: (kind, index) with kind "node", "path", "landmark", "icon" or "bookmark".
+
+        Returns:
+            (x, y) in atlas units.
+        """
         kind, i = item
         if kind == "path":
             p = self.V["paths"][i]
@@ -26,7 +42,11 @@ class SelectionMixin:
         return float(n["x"]), float(n["y"])
 
     def sel_valid(self) -> bool:
-        """drop a selection whose item no longer exists (deleted bookmark, rebuilt atlas)"""
+        """Check the selection and drop it if its item no longer exists (deleted bookmark, rebuilt atlas).
+
+        Returns:
+            True when something valid is selected.
+        """
         if not self.sel:
             return False
         kind, i = self.sel
@@ -43,6 +63,13 @@ class SelectionMixin:
         return True
 
     def show_info(self):
+        """Write the selected item's details into the "Selected" box of the Find tab.
+
+        Map nodes: icons, screenshots that show it, paths, status, abyss chain, tower foot, potential city and nearby
+        city. Paths: end map nodes, how it was found, how many screenshots draw it. Landmarks: kind, screenshots,
+        confidence, city type, locked stronghold, status. Icons: name, screenshots, match score, city map or not.
+        Bookmarks: name, group, note. Always the position. With nothing selected, a hint.
+        """
         lines = []
         self.sel_valid()
         if self.sel and self.atlas:
@@ -146,6 +173,14 @@ class SelectionMixin:
 
     # ------------------------------------------------------------------ search
     def _item_node(self, item):
+        """The map node an item belongs to.
+
+        Args:
+            item: (kind, index) as in select().
+
+        Returns:
+            The map node index for a map node or an icon on one, else None.
+        """
         kind, i = item
         if kind == "node":
             return i
@@ -154,6 +189,14 @@ class SelectionMixin:
         return None
 
     def _fill_results(self, labels):
+        """Show the Find hits in the results list, then redraw (the hits get rings on the map).
+
+        With "only near a city" ticked, hits not near a city are dropped (from self.hits too). Icons near a city get
+        "⌂ <city type>" and items with a bookmark on them a ★.
+
+        Args:
+            labels: One display text per entry of self.hits, in the same order (changed in place).
+        """
         if getattr(self, "only_near_city", None) is not None and self.only_near_city.get():
             keep = [k for k, it in enumerate(self.hits) if self.near_city_text(self._item_node(it))]
             self.hits = [self.hits[k] for k in keep]
@@ -172,6 +215,12 @@ class SelectionMixin:
         self.request_redraw()
 
     def run_search(self):
+        """Search the atlas for the text in the Find box and list the matches.
+
+        Two numbers ("x, y") centre the map there and mark it with a cross (user: no more hot-or-cold panning).
+        Otherwise matches bookmarks (name, group, note), landmarks, icons (name or alias), potential city /
+        stronghold maps, and "#<n>" for map node n.
+        """
         self._last_list = None
         q = self.query.get().strip().lower()
         self.hits = []
@@ -217,6 +266,12 @@ class SelectionMixin:
         self.status.set(f'{len(labels)} match(es) for "{q}"')
 
     def goto_result(self, box: tk.Listbox, index: list):
+        """Centre on and select the item picked in a results list. Bound to <<ListboxSelect>> on the list.
+
+        Args:
+            box: The listbox whose selection is read.
+            index: The items listed in it, in the same order (e.g. self.hits).
+        """
         sel = box.curselection()
         if not sel or sel[0] >= len(index):
             return

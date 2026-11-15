@@ -18,6 +18,12 @@ from .settings import save_settings
 
 
 class ViewTabMixin:
+    """Viewer mixin for the View tab (path and map styles, pictures on the map) and the layer toggles under the tabs.
+
+    Attributes:
+        LAYER_GRID: (layer name, button label) for each picture toggle under the tabs, in display order.
+    """
+
     # ------------------------------------------------------------------ layer toggles (under the tabs)
     LAYER_GRID = (
         ("Terrain", "Terrain"),
@@ -35,22 +41,46 @@ class ViewTabMixin:
 
     # ------------------------------------------------------------------ View tab: styles and overlays
     def style(self) -> dict:
+        """The current drawing style: STYLE_DEFAULT overlaid with the user's saved style settings.
+
+        Returns:
+            Dict with keys such as "path_col", "path_col1", "path_width", "path_style", "path_freq", "map_col",
+            "map_size", "map_style", "ov_badges", "ov_towers".
+        """
         st = self.settings.setdefault("style", {})
         return {**STYLE_DEFAULT, **st}
 
     def set_style(self, **kw):
+        """Change style settings, save them and redraw the map.
+
+        Args:
+            **kw: Style keys to set (see style()) and their new values.
+        """
         self.settings.setdefault("style", {}).update(kw)
         save_settings(self.settings)
         self.request_redraw()
 
     def _build_style_ui(self, vw):
-        """View tab (user's mockup): Paths and Maps sections with a live preview each; colour squares are buttons"""
+        """Build the View tab (user's mockup): Paths and Maps sections with a live preview each.
+
+        Colour squares are buttons that open a colour chooser. Also adds the path width / style, the "only what 2+
+        screenshots show" filter, the "drawn by at least N%" slider, map size / style, the pictures-on-the-map
+        checkboxes and a "Reset styles" button.
+
+        Args:
+            vw: The View tab's frame to build into.
+        """
         from tkinter import colorchooser
 
         st = self.style()
         PW, PH = 300, 46
 
         def preview_paths():
+            """Draw the Paths preview: one curved path in the current path colour, width and style.
+
+            Returns:
+                BGR uint8 image of shape (PH, PW, 3).
+            """
             S_ = self.style()
             im = np.full((PH, PW, 3), (34, 38, 42), np.uint8)
             th = int(S_["path_width"]) or 2
@@ -64,6 +94,11 @@ class ViewTabMixin:
             return im
 
         def preview_maps():
+            """Draw the Maps preview: one map node, centred, in the current map colour, size and style.
+
+            Returns:
+                BGR uint8 image of shape (PH, PW, 3).
+            """
             S_ = self.style()
             im = np.full((PH, PW, 3), (34, 38, 42), np.uint8)
             r = 8 * float(S_["map_size"])
@@ -74,16 +109,33 @@ class ViewTabMixin:
         previews = []
 
         def refresh():
+            """Redraw both preview pictures from the current style."""
             for lab, fn in previews:
                 ph = ImageTk.PhotoImage(Image.fromarray(cv2.cvtColor(fn(), cv2.COLOR_BGR2RGB)))
                 lab.configure(image=ph)
                 lab.image = ph
 
         def changed(**kw):
+            """Save a style change, redraw the map and refresh the previews.
+
+            Args:
+                **kw: Style keys and their new values (passed to set_style).
+            """
             self.set_style(**kw)
             refresh()
 
         def swatch(parent, key, default, text):
+            """Add a colour square with a text label; clicking the square opens a colour chooser.
+
+            Args:
+                parent: Frame to pack the square into.
+                key: Style key the colour is stored under, e.g. "path_col".
+                default: BGR colour shown while the style has no colour set.
+                text: Label next to the square (also the chooser's title).
+
+            Returns:
+                (square label widget, key, default), so "Reset styles" can repaint it.
+            """
             box = ttk.Frame(parent)
             box.pack(side="left", padx=(0, 12))
             sw = tk.Label(
@@ -99,6 +151,11 @@ class ViewTabMixin:
             ttk.Label(box, text=text).pack(side="left")
 
             def pick(_e=None):
+                """Ask for a new colour and store it. Bound to <Button-1> on the colour square.
+
+                Args:
+                    _e: The Tk event (unused).
+                """
                 got = colorchooser.askcolor(color=self.style()[key] or bgr_hex(default), title=text)[1]
                 if got:
                     sw.configure(background=got)
@@ -108,6 +165,14 @@ class ViewTabMixin:
             return sw, key, default
 
         def section(title):
+            """Add a section heading with a separator and an empty preview label under it.
+
+            Args:
+                title: Heading text, e.g. "Paths".
+
+            Returns:
+                The preview tk.Label.
+            """
             ttk.Separator(vw).pack(fill="x", pady=(10, 4))
             ttk.Label(vw, text=title, font=("TkDefaultFont", 10, "bold")).pack(anchor="w")
             lab = tk.Label(vw, borderwidth=1, relief="sunken")
@@ -148,6 +213,11 @@ class ViewTabMixin:
         freq_lab = ttk.Label(row, text=f"{self._st_freq.get():.0f}%", width=5)
 
         def on_freq(v):
+            """Show and save the "drawn by at least" share while its slider moves.
+
+            Args:
+                v: Slider value in percent (a string from ttk.Scale).
+            """
             freq_lab.configure(text=f"{float(v):.0f}%")
             changed(path_freq=round(float(v) / 100, 2))
 
@@ -195,6 +265,7 @@ class ViewTabMixin:
             ).pack(anchor="w")
 
         def reset():
+            """Clear the saved style, set every control back to the defaults and redraw (the "Reset styles" button)."""
             self.settings["style"] = {}
             save_settings(self.settings)
             d = self.style()
@@ -214,7 +285,18 @@ class ViewTabMixin:
         self.root.after(200, refresh)
 
     def _layer_icon(self, layer: str, size: int = 20):
-        """small picture for a layer toggle (PIL RGBA)"""
+        """Small picture for a layer toggle.
+
+        Terrain uses a crop from the middle of the atlas's terrain (random green noise before one exists), Maps the
+        map node picture, Landmarks / Icons / City biomes an icon thumbnail; the others are drawn with PIL.
+
+        Args:
+            layer: Layer name, one of the first items of LAYER_GRID (e.g. "Terrain", "Nodes").
+            size: Width and height of the picture in px.
+
+        Returns:
+            PIL RGBA image of size (size, size).
+        """
         from PIL import ImageDraw
 
         im = Image.new("RGBA", (size, size), (0, 0, 0, 0))
@@ -288,7 +370,10 @@ class ViewTabMixin:
         return im
 
     def _build_layer_grid(self):
-        """the map layers as picture toggles, 4 per row, under the tabs (visible in every tab)"""
+        """Build the map layers as picture toggles, 4 per row, under the tabs (visible in every tab).
+
+        Clears the layer grid frame first, so it can be called again (e.g. when the terrain picture changes).
+        """
         from PIL import ImageTk
 
         g = self.layer_grid

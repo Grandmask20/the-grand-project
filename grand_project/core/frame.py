@@ -18,6 +18,24 @@ from .geometry import persp, rectifier
 # ------------------------------------------------------------------ frame data
 @dataclass
 class Frame:
+    """One screenshot's detection, ready to be placed in the atlas.
+
+    Attributes:
+        name: Screenshot file name.
+        path: Screenshot file path.
+        sha: SHA-256 of the screenshot file (a screenshot already in the atlas is not added again).
+        w: Screenshot width in px.
+        h: Screenshot height in px.
+        pts: (N, 2) map node positions in flat map coordinates (screenshot px with the camera tilt undone by R).
+        usable: (N,) bool: real, visible bases (no hidden / icon-only guesses, nothing on the game HUD).
+        nodes: The detector's map nodes (dicts with x, y in screen px, hidden, unverified, tower, icon, source).
+        edges: Paths as (node a, node b, confidence, status) with indices into `nodes`.
+        landmarks: The detector's landmarks (dicts with kind, x, y in screen px, conf, source).
+        R: 3x3 rectifier: screen px -> flat map coords.
+        on_hud: (N,) bool, set by from_json: map nodes that lie on the game HUD.
+        icons: Icons ("badges") from the detector, screen px, those on the HUD left out; set by from_json.
+    """
+
     name: str
     path: str
     sha: str
@@ -32,6 +50,20 @@ class Frame:
 
     @staticmethod
     def from_json(d: dict, horizon: float | None | str = "default") -> Frame:
+        """Build a Frame from a detector result.
+
+        Map nodes, paths, landmarks and icons that lie on the game HUD are dropped (nodes stay in `nodes` but are
+        not usable).
+
+        Args:
+            d: Detector result for one screenshot (name, path, sha256, width, height, nodes, edges, landmarks,
+                optional icons).
+            horizon: Horizon row as a fraction of the screenshot height, None for no tilt correction, or
+                "default" to use the module setting K.HORIZON (in px; read live because tests flatten it).
+
+        Returns:
+            The Frame, with `on_hud` and `icons` set.
+        """
         if horizon == "default":  # module setting is in px; rectifier takes image heights
             horizon = None if K.HORIZON is None else K.HORIZON / d["height"]  # (read live: tests flatten it)
         nodes = d["nodes"]
@@ -72,12 +104,19 @@ _hud_cache: dict = {}
 
 
 def read_screenshot(path) -> np.ndarray | None:
-    """a screenshot as the detector sees it: scaled to SCREEN_HEIGHT (1080) px tall, keeping its shape
+    """Read a screenshot as the detector sees it: scaled to SCREEN_HEIGHT (1080) px tall, keeping its shape.
 
     Everything the detector knows (map bases, badges, towers, dash sizes) was learned in 1080p pixels, and
     the game draws the atlas and its interface in proportion to the screen, so a 1440p or 4K screenshot
     scaled down looks like a 1080p one. 1080p files, and crops (not shaped like a whole game window: widescreen,
-    720+ px tall), come back unchanged. None when it can't be read."""
+    720+ px tall), come back unchanged.
+
+    Args:
+        path: Image file path (non-ASCII paths work).
+
+    Returns:
+        BGR image, or None when it can't be read.
+    """
     img = cv2.imdecode(np.fromfile(str(path), np.uint8), cv2.IMREAD_COLOR)
     if img is None or img.shape[0] == K.SCREEN_HEIGHT:
         return img
@@ -89,13 +128,31 @@ def read_screenshot(path) -> np.ndarray | None:
 
 
 def is_full_window(w: int, h: int) -> bool:
+    """Tell whether a screenshot size is a whole 16:9 game window (as opposed to a crop).
+
+    Args:
+        w: Width in px (after read_screenshot scaling).
+        h: Height in px.
+
+    Returns:
+        True for at least 1850 x 1040 px with an aspect ratio within 0.03 of 16:9.
+    """
     return w >= 1850 and h >= 1040 and abs(w / h - 16 / 9) < 0.03
 
 
 def atlas_files(atlas_path) -> Path:
-    """the folder for everything an atlas writes besides atlas.json and its detection cache: map image cache,
-    exports, undo snapshots. A subfolder, so the atlas folder can also be the screenshot folder (user).
-    Files from atlases made before v0.88 (next to atlas.json) are moved in."""
+    """Return the folder for everything an atlas writes besides atlas.json and its detection cache.
+
+    That is the map image cache, exports and undo snapshots. A subfolder, so the atlas folder can also be the
+    screenshot folder (user). Files from atlases made before v0.88 (next to atlas.json) are moved in.
+    The folder is created if missing.
+
+    Args:
+        atlas_path: Path of the atlas .json file.
+
+    Returns:
+        Path of the "<atlas stem>_files" folder next to the atlas.
+    """
     atlas_path = Path(atlas_path)
     d = atlas_path.with_name(atlas_path.stem + "_files")
     d.mkdir(parents=True, exist_ok=True)
@@ -109,7 +166,15 @@ def atlas_files(atlas_path) -> Path:
 
 
 def png_bytes(img: np.ndarray, what: str = "output") -> bytes:
-    """img (BGR / grey) as PNG with the program's text tag (GENERATED_TAG: what) right after the header"""
+    """Encode an image as PNG with the program's text tag (GENERATED_TAG: what) right after the header.
+
+    Args:
+        img: BGR or greyscale image.
+        what: Text stored in the tag, saying what the image is.
+
+    Returns:
+        The PNG file contents.
+    """
     data = cv2.imencode(".png", img)[1].tobytes()
     body = b"tEXt" + GENERATED_TAG + b"\0" + what.encode("latin-1", "replace")
     chunk = (len(body) - 4).to_bytes(4, "big") + body + zlib.crc32(body).to_bytes(4, "big")
@@ -117,13 +182,27 @@ def png_bytes(img: np.ndarray, what: str = "output") -> bytes:
 
 
 def write_png(path, img: np.ndarray, what: str = "output") -> None:
-    """write an image the program made (map image, export, thumbnail, sheet): tagged, never taken for a
-    screenshot (works with non-ASCII paths, unlike cv2.imwrite)"""
+    """Write an image the program made (map image, export, thumbnail, sheet).
+
+    It is tagged, so it is never taken for a screenshot (works with non-ASCII paths, unlike cv2.imwrite).
+
+    Args:
+        path: Output file path.
+        img: BGR or greyscale image.
+        what: Text stored in the tag, saying what the image is.
+    """
     Path(path).write_bytes(png_bytes(img, what))
 
 
 def is_generated(p) -> bool:
-    """a PNG the program wrote itself (its text tag sits in the first bytes)"""
+    """Tell whether a file is a PNG the program wrote itself (its text tag sits in the first bytes).
+
+    Args:
+        p: File path.
+
+    Returns:
+        True for a tagged PNG; False otherwise or when the file can't be read.
+    """
     try:
         with open(p, "rb") as fh:
             head = fh.read(512)
@@ -133,9 +212,17 @@ def is_generated(p) -> bool:
 
 
 def is_screenshot(p) -> bool:
-    """an image file that can be a screenshot: not one of the atlas's own outputs (an old atlas may still have
-    them next to atlas.json), not inside an atlas's _files / _frames folder, and not any image the program
-    made (tagged: is_generated)"""
+    """Tell whether an image file can be a screenshot.
+
+    Not one of the atlas's own outputs (an old atlas may still have them next to atlas.json), not inside an
+    atlas's _files / _frames / _undo folder, and not any image the program made (tagged: is_generated).
+
+    Args:
+        p: File path.
+
+    Returns:
+        True when the file is an existing image (IMAGE_EXT) that can be a screenshot.
+    """
     p = Path(p)
     if p.suffix.lower() not in IMAGE_EXT or not p.is_file():
         return False
@@ -147,7 +234,14 @@ def is_screenshot(p) -> bool:
 
 
 def screenshots_in(folder) -> list[Path]:
-    """the screenshots directly in a folder, in name (= time) order"""
+    """List the screenshots directly in a folder, in name (= time) order.
+
+    Args:
+        folder: Folder path.
+
+    Returns:
+        Sorted screenshot paths (see is_screenshot); empty when the folder can't be read.
+    """
     try:
         return sorted(q for q in Path(folder).iterdir() if is_screenshot(q))
     except OSError:
@@ -155,7 +249,16 @@ def screenshots_in(folder) -> list[Path]:
 
 
 def hud_mask(w: int, h: int, pad: int = 0) -> np.ndarray:
-    """uint8 mask, 255 = game HUD (all zero for cropped screenshots), grown by pad px (shrunk if < 0)"""
+    """Return the game HUD mask for a screenshot size (cached).
+
+    Args:
+        w: Screenshot width in px.
+        h: Screenshot height in px.
+        pad: Grow the HUD by this many px; < 0 shrinks it (only spots that deep inside the HUD).
+
+    Returns:
+        (h, w) uint8 mask, 255 = game HUD (all zero for cropped screenshots).
+    """
     k = (w, h, pad)
     if k not in _hud_cache:
         m = np.zeros((h, w), np.uint8)
@@ -170,6 +273,17 @@ def hud_mask(w: int, h: int, pad: int = 0) -> np.ndarray:
 
 
 def on_hud_mask(pts: np.ndarray, w: int, h: int, pad: float = -HUD_DEPTH) -> np.ndarray:
+    """Tell which screen points lie on the game HUD.
+
+    Args:
+        pts: Points in screen px, anything numpy can reshape to (n, 2).
+        w: Screenshot width in px.
+        h: Screenshot height in px.
+        pad: HUD growth in px (see hud_mask); the default -HUD_DEPTH counts only points that deep inside it.
+
+    Returns:
+        (n,) bool array, True on the HUD (all False for cropped screenshots).
+    """
     pts = np.asarray(pts, float).reshape(-1, 2)
     if not is_full_window(w, h) or not len(pts):
         return np.zeros(len(pts), bool)
@@ -180,8 +294,17 @@ def on_hud_mask(pts: np.ndarray, w: int, h: int, pad: float = -HUD_DEPTH) -> np.
 
 
 def row_bases(icons: list[dict]) -> list[tuple[float, float]]:
-    """per badge (screen px): its map base = under the middle of the row of badges it is in. A row: badges
-    at the same height, 36 px apart (72 when the middle one was missed)."""
+    """Find each icon's map base: under the middle of the row of icons it is in.
+
+    A row: icons (badges) at the same height (within 6 px), ROW_STEP_PX (36) px apart (72 when the middle one was
+    missed). Lost Tower icons always stand alone. The base is ICON_BASE_DY below the row.
+
+    Args:
+        icons: Icons of one screenshot (dicts with x, y in screen px and name).
+
+    Returns:
+        One (x, y) map base position in screen px per icon, in the same order.
+    """
     order = sorted(range(len(icons)), key=lambda k: icons[k]["x"])
     rows: list[list[int]] = []
     for k in order:

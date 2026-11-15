@@ -15,6 +15,16 @@ from .constants import BLOB_MIN, BLOB_SIGMA, BLOB_WIN, MAP, MAP_MERGE, MAP_MIN, 
 
 # ---------------------------------------------------------------- stage 2
 def map_candidates(img: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+    """Bright-blob candidates for map nodes: local peaks of a difference of Gaussians on brightness.
+
+    Peaks must top BLOB_MIN, be the maximum in a BLOB_WIN px window and lie outside the HUD.
+
+    Args:
+        img: BGR screenshot (1080p).
+
+    Returns:
+        (pts, dog): (n, 2) int array of candidate x, y in screen px and their (n,) difference-of-Gaussians value.
+    """
     v = cv2.cvtColor(img, cv2.COLOR_BGR2HSV)[..., 2].astype(np.float32)
     dog = cv2.GaussianBlur(v, (0, 0), BLOB_SIGMA[0]) - cv2.GaussianBlur(v, (0, 0), BLOB_SIGMA[1])
     peak = dog >= cv2.dilate(dog, np.ones((BLOB_WIN, BLOB_WIN), np.uint8))
@@ -48,10 +58,21 @@ _WIDE = [(_rad2 >= a) & (_rad2 < a + 8) for a in range(8, RIM_R, 8)]
 
 
 def map_features(img: np.ndarray, pts: np.ndarray, dogv: np.ndarray) -> np.ndarray:
-    """per candidate: brightness / colour per 2 px ring, how even the glow is around the centre,
-    gradient directions, a 9x9 shape thumbnail, contrast with the surroundings, and the share of
-    gold-rim colour in 8 px rings out to 48 px (a tower's rim reaches ~3x as far as a map's).
-    All candidates at once: patches are stacked and every masked mean is a matrix product."""
+    """Map classifier features per candidate.
+
+    Brightness / colour per 2 px ring, how even the glow is around the centre, gradient directions, a 9x9 shape
+    thumbnail, contrast with the surroundings, and the share of gold-rim colour in 8 px rings out to 48 px (a
+    tower's rim reaches ~3x as far as a map's), plus the position on screen. All candidates at once: patches are
+    stacked and every masked mean is a matrix product.
+
+    Args:
+        img: BGR screenshot (1080p).
+        pts: (n, 2) array of candidate x, y in screen px (map_candidates).
+        dogv: (n,) difference-of-Gaussians value of each candidate (map_candidates).
+
+    Returns:
+        (n, k) float32 feature array.
+    """
     h, w = img.shape[:2]
     n = len(pts)
     P = RIM_R + 2
@@ -86,6 +107,14 @@ def map_features(img: np.ndarray, pts: np.ndarray, dogv: np.ndarray) -> np.ndarr
     oy2, ox2 = np.mgrid[-RIM_R : RIM_R + 1, -RIM_R : RIM_R + 1]
 
     def masks(ms):
+        """Averaging weights for a list of boolean patch masks.
+
+        Args:
+            ms: Boolean masks of the same patch shape.
+
+        Returns:
+            (pixels, len(ms)) float32 array; each column sums to 1.
+        """
         M = np.stack([m.ravel().astype(np.float32) for m in ms], 1)
         return M / M.sum(0)  # columns: averaging weights
 
@@ -152,8 +181,19 @@ def map_features(img: np.ndarray, pts: np.ndarray, dogv: np.ndarray) -> np.ndarr
 
 
 def candidate_labels(pts: np.ndarray, t: dict) -> np.ndarray:
-    """truth -> NOT / MAP per candidate, -1 = leave out of training (near a map but not its centre,
-    near a tower base, off-centre or behind-HUD maps, 'maybe' spots)"""
+    """Training labels for map candidates from a screenshot's truth.
+
+    The candidate nearest each map node (within 14 px) is MAP; everything else is NOT, except candidates left out
+    of training (-1): near a map but not its centre (25 px, 45 px at a tower base), and near off-centre or
+    behind-HUD maps or 'maybe' spots (45 px).
+
+    Args:
+        pts: (n, 2) array of candidate x, y in screen px.
+        t: The screenshot's truth entry with "maps" (each with "x", "y", "flags"), "landmarks" and "maybe".
+
+    Returns:
+        (n,) int array of NOT / MAP / -1.
+    """
     lab = np.zeros(len(pts), int)
     towers = [landmark for landmark in t["landmarks"] if landmark["kind"] == "Tower"]
     good = [m for m in t["maps"] if not ({"offcenter", "ui"} & set(m["flags"]))]
@@ -172,7 +212,16 @@ def candidate_labels(pts: np.ndarray, t: dict) -> np.ndarray:
 
 
 def _nms(pts: np.ndarray, prob: np.ndarray) -> list[dict]:
-    """keep the best candidate per map"""
+    """Keep the best candidate per map node (non-maximum suppression).
+
+    Args:
+        pts: (n, 2) array of candidate x, y in screen px.
+        prob: (n, classes) classifier probabilities; column MAP is used.
+
+    Returns:
+        Map nodes as dicts {"x", "y", "score"}, best first: candidates with p >= MAP_MIN and no better one within
+        MAP_MERGE px.
+    """
     p = prob[:, MAP]
     return [
         {"x": float(pts[i][0]), "y": float(pts[i][1]), "score": round(float(p[i]), 3)}
@@ -181,7 +230,17 @@ def _nms(pts: np.ndarray, prob: np.ndarray) -> list[dict]:
 
 
 def _keep_best(pts: np.ndarray, p: np.ndarray, thr: float, r: float) -> list[int]:
-    """indices of the most likely points (p >= thr), best first, dropping any within r of a kept one"""
+    """Indices of the most likely points, best first, dropping any within r of a kept one.
+
+    Args:
+        pts: (n, 2) array of x, y in screen px.
+        p: (n,) score of each point.
+        thr: Minimum score kept.
+        r: Merge radius in px.
+
+    Returns:
+        Indices into pts of the kept points, best first.
+    """
     keep: list[int] = []
     for i in np.argsort(-p):
         if p[i] < thr:

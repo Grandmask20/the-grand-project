@@ -15,6 +15,17 @@ _MASK_CACHE = 64  # with ~30 neighbours per placement (v1.01: the mask was rebui
 
 
 def _valid_mask(frame_img: np.ndarray) -> np.ndarray:
+    """Return the cached ground mask of a screenshot (see _valid_mask_calc, with dark=True).
+
+    One screenshot is compared with ~30 neighbours per placement, so masks are cached by image identity
+    (v1.01: the mask was rebuilt every time). The returned array is shared and read-only.
+
+    Args:
+        frame_img: BGR screenshot image.
+
+    Returns:
+        (h, w) uint8 read-only mask: 255 = atlas ground, 0 = interface or black unexplored fog.
+    """
     import weakref
 
     hit = _MASKS.get(id(frame_img))
@@ -32,7 +43,19 @@ def _valid_mask(frame_img: np.ndarray) -> np.ndarray:
 
 
 def _valid_mask_calc(frame_img: np.ndarray, dark: bool = True) -> np.ndarray:
-    """255 = atlas ground of the screenshot; 0 = interface (and, with dark=True, black unexplored fog)"""
+    """Compute which pixels of a screenshot show atlas ground.
+
+    A full game window uses the drawn HUD mask (skill bars, globes, header, side columns, stats); a cropped
+    screenshot uses rough boxes where the interface usually is. The mask is eroded by 7 px at the end.
+
+    Args:
+        frame_img: BGR screenshot image.
+        dark: Also mask black unexplored fog (grey < 14, no texture).
+
+    Returns:
+        (h, w) uint8 mask: 255 = atlas ground of the screenshot; 0 = interface (and, with dark=True, black
+        unexplored fog).
+    """
     h, w = frame_img.shape[:2]
     m = np.full((h, w), 255, np.uint8)
     hud = hud_mask(w, h)
@@ -54,7 +77,20 @@ def _valid_mask_calc(frame_img: np.ndarray, dark: bool = True) -> np.ndarray:
 
 
 def terrain_ncc(img_a: np.ndarray, img_b: np.ndarray, M_b_to_a: np.ndarray) -> tuple[float, int]:
-    """Zero-mean NCC of blurred greyscale over the overlap of A and warped B (2x3 or 3x3 map)."""
+    """Measure how well two screenshots' terrain agrees where they overlap.
+
+    Zero-mean NCC of blurred greyscale over the overlap of A and warped B. Slow lighting differences are
+    removed first so the local texture is compared. Interface and fog pixels are left out.
+
+    Args:
+        img_a: BGR screenshot A (the reference).
+        img_b: BGR screenshot B, warped into A.
+        M_b_to_a: 2x3 or 3x3 map from B's screen px to A's screen px.
+
+    Returns:
+        (ncc, n): the correlation (-1..1; 0.0 when the overlap is under 15000 px or flat) and the number
+        of overlapping ground pixels compared.
+    """
     h, w = img_a.shape[:2]
     H = to3(M_b_to_a) if M_b_to_a.shape == (2, 3) else M_b_to_a
     warped = cv2.warpPerspective(img_b, H, (w, h), flags=cv2.INTER_LINEAR, borderValue=0)

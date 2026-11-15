@@ -18,7 +18,14 @@ _THUMBS: dict = {}  # badge thumbnails (icon_thumb)
 
 
 def wheel_steps(e) -> float:
-    """mouse-wheel notches from a <MouseWheel> event: Windows reports multiples of 120, macOS small integers"""
+    """Mouse-wheel notches from a <MouseWheel> event: Windows reports multiples of 120, macOS small integers.
+
+    Args:
+        e: The Tk <MouseWheel> event.
+
+    Returns:
+        Notches turned (positive = away from the user), possibly fractional.
+    """
     return e.delta / (1 if IS_MAC else 120)
 
 
@@ -26,6 +33,15 @@ LOG = atlas_log.get("viewer")
 
 
 def hex_bgr(h: str, default):
+    """Convert a "#rrggbb" colour to BGR.
+
+    Args:
+        h: Colour text such as "#ffcc00" (the leading # is optional); empty or malformed text gives the default.
+        default: Value returned when h is not a valid colour (e.g. a BGR tuple, or None).
+
+    Returns:
+        (b, g, r) ints 0-255, or default.
+    """
     try:
         h = h.lstrip("#")
         return (int(h[4:6], 16), int(h[2:4], 16), int(h[0:2], 16)) if len(h) == 6 else default
@@ -34,11 +50,29 @@ def hex_bgr(h: str, default):
 
 
 def bgr_hex(c) -> str:
+    """Convert a BGR colour to "#rrggbb".
+
+    Args:
+        c: (b, g, r) values 0-255.
+
+    Returns:
+        The colour as "#rrggbb" text.
+    """
     return f"#{int(c[2]):02x}{int(c[1]):02x}{int(c[0]):02x}"
 
 
 def draw_paths(img, lines, col, th, style):
-    """many path polylines in one draw call: solid, or cut into dashes / dots first (fast at any zoom)"""
+    """Draw many path polylines in one draw call: solid, or cut into dashes / dots first (fast at any zoom).
+
+    Lines shorter than 2 px are skipped when cut into dashes / dots.
+
+    Args:
+        img: BGR uint8 image to draw into.
+        lines: Polylines, each an (n, 2) array of points in screen px.
+        col: BGR colour.
+        th: Line width in px (dots are drawn at least 2 px or twice this).
+        style: "solid", "dashed" or "dotted".
+    """
     if not lines:
         return
     if style == "solid":
@@ -64,7 +98,17 @@ def draw_paths(img, lines, col, th, style):
 
 
 def draw_map(img, pt, r, col, th, style, pic):
-    """one map in the chosen style: circles / squares / map icons / hidden"""
+    """Draw one map node in the chosen style: circles / squares / map icons / hidden.
+
+    Args:
+        img: BGR uint8 image to draw into.
+        pt: Centre (x, y) in screen px.
+        r: Radius in screen px.
+        col: BGR colour of the circle / square outline.
+        th: Outline width in px.
+        style: "circles", "squares", "map icons" or "hidden".
+        pic: PIL RGBA map node picture, used by "map icons" (drawn 2.8 * r wide).
+    """
     x, y = int(pt[0]), int(pt[1])
     if style == "hidden":
         return
@@ -77,7 +121,17 @@ def draw_map(img, pt, r, col, th, style, pic):
 
 
 def blit_rgba(img, pil_rgba, x, y, size):
-    """paste a PIL RGBA picture centred at (x, y), `size` px wide"""
+    """Paste a PIL RGBA picture centred at (x, y), `size` px wide, blended by its alpha.
+
+    Resized pictures are cached by (picture, size); the cache keeps at most 400.
+
+    Args:
+        img: BGR uint8 image to draw into (clipped at its edges).
+        pil_rgba: The PIL RGBA picture.
+        x: Centre x in screen px.
+        y: Centre y in screen px.
+        size: Width and height in px, clamped to 6-96.
+    """
     size = int(max(6, min(96, size)))
     key = (id(pil_rgba), size)
     if key not in _BLIT:
@@ -98,23 +152,57 @@ def blit_rgba(img, pil_rgba, x, y, size):
 
 
 def icon_aliases(raw: str) -> str:
+    """Every name an icon type can be searched by.
+
+    Args:
+        raw: The icon's raw (game) name, e.g. "MapBoss".
+
+    Returns:
+        Lower-case text with the nice name, the aliases from ICON_INFO and the raw name.
+    """
     info = ICON_INFO.get(raw)
     return f"{info[0]} {info[2]} {raw}".lower() if info else raw.lower()
 
 
 def icon_name(raw: str) -> str:
+    """The nice name of an icon type.
+
+    Args:
+        raw: The icon's raw (game) name.
+
+    Returns:
+        The name from ICON_INFO, else the raw name split into words ("MapBoss" -> "Map boss").
+    """
     if raw in ICON_INFO:
         return ICON_INFO[raw][0]
     return re.sub(r"(?<!^)(?=[A-Z])", " ", raw).capitalize()
 
 
 def icon_label(ic: dict) -> str:
+    """The text shown for an icon.
+
+    Args:
+        ic: Icon dict from V["icons"] ("name" and an optional "label").
+
+    Returns:
+        Its label if it has one, else the nice name of its type.
+    """
     return ic.get("label") or icon_name(ic["name"])
 
 
 def icon_thumb(raw: str, size: int = 22):
-    """small RGBA picture of a badge type (PIL image): the game's own icon from atlas_icons.zip
-    when there is one, otherwise a taught reference crop (icon database) cut to a circle"""
+    """Small RGBA picture of an icon type, cached per type and size.
+
+    The game's own icon from atlas_icons.zip when there is one, otherwise a taught reference crop (icon database)
+    cut to a circle, otherwise a dot in the type's colour.
+
+    Args:
+        raw: The icon's raw (game) name, e.g. "LostTower".
+        size: Width and height in px.
+
+    Returns:
+        PIL RGBA image of size (size, size).
+    """
     key = (raw, size)
     if key in _THUMBS:
         return _THUMBS[key]
@@ -156,10 +244,28 @@ def icon_thumb(raw: str, size: int = 22):
 
 
 def icon_col(raw: str):
+    """The colour of an icon type.
+
+    Args:
+        raw: The icon's raw (game) name.
+
+    Returns:
+        BGR tuple from ICON_INFO, violet (230, 140, 255) for unknown types.
+    """
     return ICON_INFO.get(raw, ("", (230, 140, 255), ""))[1]
 
 
 def put_text(img, text, org, col, scale=0.5, thick=1):
+    """Draw text with a black outline so it reads on any ground.
+
+    Args:
+        img: BGR uint8 image to draw into.
+        text: The text.
+        org: Bottom-left (x, y) of the text in px.
+        col: BGR text colour.
+        scale: OpenCV font scale.
+        thick: Stroke width in px (the outline is 3 px wider).
+    """
     x, y = int(org[0]), int(org[1])
     cv2.putText(img, text, (x, y), cv2.FONT_HERSHEY_SIMPLEX, scale, (0, 0, 0), thick + 3, cv2.LINE_AA)
     cv2.putText(img, text, (x, y), cv2.FONT_HERSHEY_SIMPLEX, scale, col, thick, cv2.LINE_AA)

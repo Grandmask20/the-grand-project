@@ -39,6 +39,15 @@ _refs = None
 
 
 def _edge_dirs(g: np.ndarray) -> np.ndarray:
+    """Histogram the edge directions of a grey image in 16x16 px blocks.
+
+    Args:
+        g: the grey image, 64x96 px (h x w).
+
+    Returns:
+        A float array of 216 values: 9 direction bins (0-180 degrees, weighted by edge strength) for each of the
+        4x6 blocks.
+    """
     g = g.astype(np.float32)
     gx, gy = cv2.Sobel(g, cv2.CV_32F, 1, 0), cv2.Sobel(g, cv2.CV_32F, 0, 1)
     mag = np.hypot(gx, gy)
@@ -53,7 +62,15 @@ def _edge_dirs(g: np.ndarray) -> np.ndarray:
 
 
 def window_feature(win: np.ndarray) -> np.ndarray:
-    """look of the ground around a city base (BGR window ~540x360 px, base at the bottom middle)"""
+    """Describe the look of the ground around a city base.
+
+    Args:
+        win: BGR screenshot window ~540x360 px with the city's map base at the bottom middle.
+
+    Returns:
+        A float32 feature vector: the square-rooted hue / saturation histogram (12x6, weighted by COLOR_W)
+        followed by the normalised edge directions from _edge_dirs.
+    """
     win = cv2.resize(win, (192, 128), interpolation=cv2.INTER_AREA)
     hsv = cv2.cvtColor(win, cv2.COLOR_BGR2HSV)
     h = cv2.calcHist([hsv], [0, 1], None, [12, 6], [0, 180, 0, 256]).ravel()
@@ -64,7 +81,18 @@ def window_feature(win: np.ndarray) -> np.ndarray:
 
 
 def city_features(atlas, x: float, y: float, n: int = 3) -> list[np.ndarray]:
-    """features of the city at atlas (x, y) from the n screenshots that show it most centrally"""
+    """Return the ground features of the city at atlas (x, y) from the n screenshots that show it most centrally.
+
+    Args:
+        atlas: the core.Atlas with placed screenshots.
+        x: x of the city in atlas units.
+        y: y of the city in atlas units.
+        n: how many screenshots to use at most.
+
+    Returns:
+        A list of window_feature vectors, one per usable screenshot (missing files and windows cut off by the
+        screenshot edge are skipped).
+    """
     out = []
     for _c, f, p in atlas.central_views(x, y, n, limit=0.4):
         if not Path(f["path"]).exists():
@@ -80,6 +108,11 @@ def city_features(atlas, x: float, y: float, n: int = 3) -> list[np.ndarray]:
 
 
 def _load_refs():
+    """Load the labelled city looks from city_refs.npz once (empty when the file is missing).
+
+    Returns:
+        (features as an (N, D) array, list of N city type names).
+    """
     global _refs
     if _refs is None:
         if REFS.exists():
@@ -91,7 +124,15 @@ def _load_refs():
 
 
 def look_distances(feats: list[np.ndarray]) -> list[float] | None:
-    """distance to the most alike labelled city of each type (TYPES order); None without a view"""
+    """Return the distance to the most alike labelled city of each type.
+
+    Args:
+        feats: the city's features from city_features.
+
+    Returns:
+        Three distances in TYPES order (9.0 for a type with no labelled city); None without a view or without
+        labelled cities.
+    """
     R, T = _load_refs()
     if not feats or not len(R):
         return None
@@ -105,7 +146,17 @@ def look_distances(feats: list[np.ndarray]) -> list[float] | None:
 
 
 def nearest_map(pts: np.ndarray, alive: np.ndarray, x: float, y: float) -> tuple[int, float]:
-    """index of the nearest live map to (x, y) and its distance (-1, inf with no maps)"""
+    """Find the nearest live map node to (x, y).
+
+    Args:
+        pts: (N, 2) array of map node positions (atlas units).
+        alive: bool array (N,), False for removed map nodes.
+        x: x in atlas units.
+        y: y in atlas units.
+
+    Returns:
+        (index of the nearest live map node, its distance in atlas units); (-1, inf) with no maps.
+    """
     if not len(pts):
         return -1, float("inf")
     d = np.hypot(pts[:, 0] - x, pts[:, 1] - y)
@@ -115,6 +166,17 @@ def nearest_map(pts: np.ndarray, alive: np.ndarray, x: float, y: float) -> tuple
 
 
 def _near(items: list[dict], x, y, gap=SAME_CITY):
+    """Find the stored item (hand-set type or cached look) closest to (x, y).
+
+    Args:
+        items: dicts with "x", "y" in atlas units.
+        x: x in atlas units.
+        y: y in atlas units.
+        gap: the item must be closer than this (atlas units).
+
+    Returns:
+        The closest item dict, or None when none is closer than gap.
+    """
     best, bd = None, gap
     for it in items:
         d = float(np.hypot(it["x"] - x, it["y"] - y))
@@ -124,8 +186,20 @@ def _near(items: list[dict], x, y, gap=SAME_CITY):
 
 
 def city_types(atlas, cities: list[dict], compute_missing=True) -> list[tuple[str, str]]:
-    """(type, how) for each city dict {x,y}; how is "set" (by hand), "trio" or "look-alike".
-    Look-alike distances are cached in atlas.city_auto (computed for new cities when allowed)."""
+    """Decide the type (Ezomyte / Vaal / Faridun) of each city.
+
+    Hand-set types win; then the trio rule runs until nothing more follows; then the clearest look-alike
+    (biggest margin between its two best allowed types) is decided next, and the trio rule runs again.
+    Look-alike distances are cached in atlas.city_auto (computed for new cities when allowed).
+
+    Args:
+        atlas: the core.Atlas (uses atlas.city_types and atlas.city_auto; city_auto may grow).
+        cities: city dicts with "x", "y" in atlas units.
+        compute_missing: True to compute look-alike distances for cities without a cached one.
+
+    Returns:
+        One (type, how) per city; how is "set" (by hand), "trio" or "look-alike"; ("", "") when undecided.
+    """
     n = len(cities)
     out: list[tuple[str, str] | None] = [None] * n
     dist: list[list[float] | None] = [None] * n
@@ -145,11 +219,28 @@ def city_types(atlas, cities: list[dict], compute_missing=True) -> list[tuple[st
     D = np.hypot(P[:, None, 0] - P[None, :, 0], P[:, None, 1] - P[None, :, 1]) if n else np.zeros((0, 0))
 
     def allowed(k):
+        """List the types city k may still have (closer cities, under TRIO_GAP, always differ in type).
+
+        Args:
+            k: index of the city in cities.
+
+        Returns:
+            The TYPES not taken by a decided city closer than TRIO_GAP.
+        """
         taken = {out[j][0] for j in np.nonzero(D[k] < TRIO_GAP)[0] if j != k and out[j]}
         return [t for t in TYPES if t not in taken]
 
     def triangle(i, j, k):
-        """a trio is a close TRIANGLE (all sides < TRIO_SIDE, no angle under MIN_ANGLE), not a line"""
+        """Check that three cities form a trio: a close TRIANGLE (all sides < TRIO_SIDE, no angle under MIN_ANGLE).
+
+        Args:
+            i: index of the first city in cities.
+            j: index of the second city.
+            k: index of the third city.
+
+        Returns:
+            The triangle's perimeter in atlas units, or None when it is not a trio (too big or nearly a line).
+        """
         a_, b_, c_ = D[j, k], D[i, k], D[i, j]
         if max(a_, b_, c_) >= TRIO_SIDE:
             return None
@@ -172,7 +263,7 @@ def city_types(atlas, cities: list[dict], compute_missing=True) -> list[tuple[st
                     tris.append((i, j, k))
 
     def close_trios():
-        """complete trios (three types, one triangle) are used up: their cities decide nothing else"""
+        """Mark complete trios (three types, one triangle) as used up: their cities decide nothing else."""
         for i, j, k in tris:
             if out[i] and out[j] and out[k] and len({out[i][0], out[j][0], out[k][0]}) == 3:
                 in_trio.update((i, j, k))
@@ -215,15 +306,34 @@ def city_types(atlas, cities: list[dict], compute_missing=True) -> list[tuple[st
 
 
 def set_type(atlas, x: float, y: float, typ: str | None) -> None:
-    """store (or with typ None/"" forget) a hand-set type for the city at x, y"""
+    """Store (or with typ None / "" forget) a hand-set type for the city at x, y.
+
+    Any stored type within SAME_CITY of (x, y) is replaced.
+
+    Args:
+        atlas: the core.Atlas (atlas.city_types is changed).
+        x: x of the city in atlas units.
+        y: y of the city in atlas units.
+        typ: "Ezomyte", "Vaal" or "Faridun"; None or "" to forget.
+    """
     atlas.city_types = [c for c in atlas.city_types if np.hypot(c["x"] - x, c["y"] - y) >= SAME_CITY]
     if typ:
         atlas.city_types.append({"x": round(x, 1), "y": round(y, 1), "type": typ})
 
 
 def ground_sampler(canvas: np.ndarray, weight: np.ndarray, origin, radius: float = 70.0):
-    """function (x, y) -> look of the ground around an atlas point (Lab mean + spread) from the
-    stitched map image (BGR canvas, origin (x0, y0, px per unit)); None where nothing was seen"""
+    """Make a function that tells the look of the ground around an atlas point, from the stitched map image.
+
+    Args:
+        canvas: the stitched map image (BGR).
+        weight: per-pixel coverage of the canvas, same height / width; 0 where nothing was seen.
+        origin: (x0, y0, px per unit): the atlas point at the canvas's top-left and the canvas scale.
+        radius: radius of the sampled disc in atlas units.
+
+    Returns:
+        A function (x, y) -> 6 floats (Lab mean + spread) for an atlas point; it returns None where the disc
+        leaves the canvas or less than half of it was seen.
+    """
     x0, y0, s0 = origin
     lab = cv2.cvtColor(canvas, cv2.COLOR_BGR2LAB).astype(np.float32)
     r = max(2, int(round(radius * s0)))
@@ -232,6 +342,15 @@ def ground_sampler(canvas: np.ndarray, weight: np.ndarray, origin, radius: float
     H, W = canvas.shape[:2]
 
     def at(x, y):
+        """Return the ground look (Lab mean + spread) around atlas point (x, y).
+
+        Args:
+            x: x in atlas units.
+            y: y in atlas units.
+
+        Returns:
+            A 6-float array, or None where the disc leaves the canvas or less than half of it was seen.
+        """
         cx, cy = int(round((x - x0) * s0)), int(round((y - y0) * s0))
         if cx - r < 0 or cy - r < 0 or cx + r + 1 > W or cy + r + 1 > H:
             return None
@@ -252,6 +371,12 @@ _buttons: dict = {}
 
 
 def _button_refs():
+    """Load the square button templates once: the frame (lock icon with its symbol masked) and the symbols.
+
+    Returns:
+        A dict with "frame" (grey template), "mask" (255 on the frame, 0 on the symbol) and "symbols"
+        (name -> grey symbol template: "lock", and "ship" when ship_button.png exists).
+    """
     if not _buttons:
         lock = cv2.imdecode(np.fromfile(str(LOCK_ICON), np.uint8), cv2.IMREAD_GRAYSCALE)
         h, w = lock.shape
@@ -266,9 +391,18 @@ def _button_refs():
 
 
 def square_buttons(img) -> list[dict]:
-    """the square framed buttons on the atlas (user: the locked stronghold's hand badge and the Expedition
-    ship marker share it): found by their frame, then named by the symbol inside - 'lock', 'ship', or
-    'unknown' for a symbol not taught yet. Full size, ~70 ms."""
+    """Find the square framed buttons on the atlas in one screenshot.
+
+    The locked stronghold's hand icon and the Expedition ship marker share the frame (user). Buttons are found
+    by their frame (>= BUTTON_FRAME, not inside the HUD), then named by the symbol inside. Full size, ~70 ms.
+
+    Args:
+        img: the screenshot (BGR or grey).
+
+    Returns:
+        A list of dicts with "kind" ('lock', 'ship', or 'unknown' for a symbol not taught yet), "x", "y" (the
+        button's centre in screen px), "frame" and "symbol" (match scores).
+    """
     R = _button_refs()
     t = R["frame"]
     h, w = t.shape
@@ -299,12 +433,27 @@ def square_buttons(img) -> list[dict]:
 
 
 def locks_in(img) -> list[tuple[float, float]]:
-    """screen positions of hand badges (locked Breach strongholds) in one screenshot"""
+    """Return the screen positions of hand icons (locked Breach strongholds) in one screenshot.
+
+    Args:
+        img: the screenshot (BGR or grey).
+
+    Returns:
+        A list of (x, y) in screen px.
+    """
     return [(b["x"], b["y"]) for b in square_buttons(img) if b["kind"] == "lock"]
 
 
 def find_locks(atlas, frames) -> list[tuple[float, float]]:
-    """atlas positions of the hand badges in the given screenshots"""
+    """Return the atlas positions of the hand icons (locked Breach strongholds) in the given screenshots.
+
+    Args:
+        atlas: the core.Atlas the screenshots are placed in.
+        frames: the screenshot (frame) dicts to search; missing files are skipped.
+
+    Returns:
+        A list of (x, y) in atlas units, one per sighting (not merged).
+    """
     out = []
     for f in frames:
         if not Path(f["path"]).exists():
@@ -320,7 +469,15 @@ def find_locks(atlas, frames) -> list[tuple[float, float]]:
 
 
 def merge_locks(locks: list[dict], found: list[tuple[float, float]]) -> list[dict]:
-    """add found hand badges to the stored list (same badge seen in several screenshots: averaged)"""
+    """Add found hand icons to the stored list (same icon seen in several screenshots: averaged).
+
+    Args:
+        locks: the stored hand icons, dicts with "x", "y" (atlas units) and "n" (sightings); not changed.
+        found: new sightings as (x, y) in atlas units; one within LOCK_SAME of a stored icon joins it.
+
+    Returns:
+        The new list of hand icon dicts.
+    """
     locks = [dict(k) for k in locks]
     for x, y in found:
         for k in locks:
@@ -361,7 +518,7 @@ def potential_maps(
     hard_off: dict | None = None,
     behind: float = -0.2,
 ) -> dict[int, tuple[str, int]]:
-    """the maps a City / Breach stronghold biome may cover: node index -> (label, steps).
+    """Find the maps a City / Breach stronghold biome may cover.
 
     Cities: about 10 maps (+-2), linked tightly to each other (often a square grid of paths) with
     few paths leading out. Each city grows such a cluster from its own map (step 0: the nearest map
@@ -388,7 +545,35 @@ def potential_maps(
     map) is always at an EDGE of its biome, so maps behind it (direction against the side where
     its own kind of ground and maps lie, cosine below `behind`) are left out. Maps on clearly
     foreign ground are left out for Faridun (always desert; `hard_off`), elsewhere only penalised.
-    A map claimed by two sources keeps the nearer; ties list both ("A / B")."""
+    A map claimed by two sources keeps the nearer; ties list both ("A / B").
+
+    Args:
+        nodes: map node dicts with "x", "y" (atlas units) and "status" ("removed" ones are skipped).
+        paths: path dicts with "a", "b" (indices into nodes).
+        sources: (x, y, label) of each City / Breach stronghold in atlas units, label e.g. "Faridun city".
+        count: a city's usual number of maps (the kept size is within count +-2).
+        hops: how many path steps a city reaches out at most.
+        snap: a city's own map must be this close to it (atlas units).
+        ground: a ground_sampler function, or None for no ground term.
+        area_kinds: labels grown as a round patch with no size limit (Breach strongholds).
+        area_reach: patch radius around a stronghold's centre (atlas units).
+        area_blind: patch radius when the Breach ground cannot be learned (atlas units).
+        area_merge: stronghold boxes closer than this are one stronghold (atlas units).
+        area_hops: how many path steps a stronghold patch reaches out at most.
+        area_snap: a stronghold's own map must be this close to it (atlas units).
+        pool_r: maps within this of a source make up its label's ground sample (atlas units).
+        far_r: maps farther than this from every source make up the background sample (atlas units).
+        alike: two ground looks closer than this are alike (Lab units).
+        rich: at least this many times more common = this kind's ground.
+        poor: this many times or less = clearly not this kind's ground.
+        blocked: map node index -> reason it is never a city map (see blocked_maps), or None.
+        unique_ok: city labels whose biome may hold a Unique map (taken but not grown through).
+        hard_off: label -> ground mismatch (0-2) from which maps are cut; None uses {"Faridun city": 1.6}.
+        behind: cosine below which a map lies behind the citadel and is left out.
+
+    Returns:
+        Map node index -> (label, path steps from the source's own map).
+    """
     pts = np.array([[nd["x"], nd["y"]] for nd in nodes], float).reshape(-1, 2)
     alive = np.array([nd.get("status") != "removed" for nd in nodes], bool)
     adj: dict[int, set[int]] = {}
@@ -403,6 +588,14 @@ def potential_maps(
     gcache: dict[int, np.ndarray | None] = {}
 
     def g(v):
+        """Return the ground look of map node v (cached), or None without a sampler or where nothing was seen.
+
+        Args:
+            v: index of the map node in nodes.
+
+        Returns:
+            A 6-float array from the ground sampler, or None.
+        """
         if ground is None:
             return None
         if v not in gcache:
@@ -465,6 +658,15 @@ def potential_maps(
     rcache: dict[tuple[str, int], float] = {}
 
     def ratio(label, v):
+        """How many times more common map node v's ground look is near this label's sources than far from all.
+
+        Args:
+            label: the source label (must have a learned ground sample in enrich).
+            v: index of the map node in nodes.
+
+        Returns:
+            The ratio as a float (cached).
+        """
         key = (label, v)
         if key not in rcache:
             Pt, B = enrich[label]
@@ -477,6 +679,15 @@ def potential_maps(
     for s, x, y, label in starts:
 
         def off(v, label=label):  # 0 = this kind's ground ... 2 = clearly not
+            """Score how foreign map node v's ground is for this label.
+
+            Args:
+                v: index of the map node in nodes.
+                label: the source label.
+
+            Returns:
+                0.0 = this kind's ground (or no ground term) ... 2.0 = clearly not.
+            """
             if label not in enrich or g(v) is None:
                 return 0.0
             r = ratio(label, v)
@@ -506,10 +717,31 @@ def potential_maps(
             blk = blocked or {}
 
             def barred(v, blocked_maps=blk, city_start=s, city_label=label):  # never a city map
+                """Tell whether map node v can never be a map of this city.
+
+                Args:
+                    v: index of the map node in nodes.
+                    blocked_maps: map node index -> reason it is never a city map.
+                    city_start: index of the city's own map (never barred).
+                    city_label: the city's label (a Unique map is allowed in unique_ok labels).
+
+                Returns:
+                    True when v is barred.
+                """
                 r = blocked_maps.get(v)
                 return v != city_start and r is not None and not (r == "Unique map" and city_label in unique_ok)
 
             def dead_end(v, blocked_maps=blk, city_start=s):  # a Unique map in a Vaal city: taken, not grown through
+                """Tell whether the city's growth stops at map node v (a Unique map).
+
+                Args:
+                    v: index of the map node in nodes.
+                    blocked_maps: map node index -> reason it is never a city map.
+                    city_start: index of the city's own map (never a dead end).
+
+                Returns:
+                    True for a Unique map other than the city's own.
+                """
                 return v != city_start and blocked_maps.get(v) == "Unique map"
 
             # hard ground cut only where the user says the ground is always the same (Faridun =
@@ -543,6 +775,15 @@ def potential_maps(
             mismatch = 0.0
 
             def squares(c, cluster=inside):  # 4-map loops c would close with the cluster
+                """Count the 4-map loops (squares) map node c would close with the cluster.
+
+                Args:
+                    c: index of the candidate map node in nodes.
+                    cluster: the set of map node indices already in the city.
+
+                Returns:
+                    The number of squares.
+                """
                 nb = [w for w in adj[c] if w in cluster]
                 return sum(len((adj[a] & adj[b] & cluster) - {c}) for i, a in enumerate(nb) for b in nb[i + 1 :])
 
@@ -596,7 +837,16 @@ BLOCK_PLACES = {"Hall": "Hall", "Breach stronghold": "Breach stronghold", "Tower
 
 
 def icon_maps(nodes: list[dict], icons: list[dict], reach: float = 45.0) -> dict[int, int]:
-    """icon index -> the map it belongs to (nearest map to the icon's base, within `reach`)"""
+    """Find the map node each icon belongs to (nearest live map node to the icon's base, within `reach`).
+
+    Args:
+        nodes: map node dicts with "x", "y" (atlas units) and "status".
+        icons: icon dicts with "x", "y" and optionally "bx", "by" (the base under the icon), atlas units.
+        reach: the farthest a map node may be from the icon's base (atlas units).
+
+    Returns:
+        Icon index -> map node index, for icons with a map node in reach.
+    """
     pts = np.array([[n["x"], n["y"]] for n in nodes], float).reshape(-1, 2)
     alive = np.array([n.get("status") != "removed" for n in nodes], bool)
     out = {}
@@ -619,8 +869,20 @@ def blocked_maps(
     icon_node: dict[int, int] | None = None,
     snap: float = 90.0,
 ) -> dict[int, str]:
-    """maps that are never city maps: node -> reason (Unique map, merchant, corruption, cleansed,
-    hideout, Abyss, Tower, Hall, Breach stronghold, another city's own map)"""
+    """Find the maps that are never city maps (user's rule), from their icons, flags and nearby landmarks.
+
+    Args:
+        nodes: map node dicts with "x", "y" (atlas units), "status", and optionally "icons" (raw icon names),
+            "tower" and "abyss".
+        icons: icon dicts with "name" and positions (atlas units).
+        landmarks: landmark dicts with "kind", "x", "y" and "status".
+        icon_node: icon index -> map node index (from icon_maps), or None to compute it.
+        snap: a landmark's map node must be this close to it (atlas units).
+
+    Returns:
+        Map node index -> reason (Unique map, merchant, corruption, cleansed, hideout, Abyss, Tower, Hall,
+        Breach stronghold, another city).
+    """
     out: dict[int, str] = {}
     for v, n in enumerate(nodes):
         if n.get("status") == "removed":
@@ -649,7 +911,17 @@ def blocked_maps(
 def near_city(
     nodes: list[dict], paths: list[dict], potential: dict[int, tuple[str, int]], blocked: dict[int, str]
 ) -> dict[int, tuple[str, int]]:
-    """potential city maps: node -> (city label, 0 = on its biome / 1 = one path step from it)"""
+    """Return the potential city maps: those on a city's biome and those one path step from it.
+
+    Args:
+        nodes: map node dicts with "status" ("removed" ones are skipped).
+        paths: path dicts with "a", "b" (indices into nodes).
+        potential: the result of potential_maps (only labels containing "city" are used).
+        blocked: map node index -> reason it is never a city map; those are not added as neighbours.
+
+    Returns:
+        Map node index -> (city label, 0 = on its biome / 1 = one path step from it).
+    """
     alive = [n.get("status") != "removed" for n in nodes]
     adj: dict[int, set[int]] = {}
     for p in paths:

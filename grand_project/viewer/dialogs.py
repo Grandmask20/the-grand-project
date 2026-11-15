@@ -9,7 +9,25 @@ from .constants import CATEGORIES
 
 
 class BookmarkDialog(tk.Toplevel):
+    """Modal window to add or edit a bookmark: name, group and note.
+
+    After it closes, `result` is None (cancelled) or a dict with "name", "category" (the group) and
+    "note".
+    """
+
     def __init__(self, parent, title, name="", category="Other", note="", groups=None):
+        """Builds the window, focuses the name field and grabs input.
+
+        Return saves, Escape cancels.
+
+        Args:
+            parent: The parent window.
+            title: Window title (e.g. "Add bookmark").
+            name: Name filled in at the start.
+            category: Group filled in at the start.
+            note: Note filled in at the start.
+            groups: Existing group names offered in the combobox (with the standard CATEGORIES).
+        """
         super().__init__(parent)
         self.title(title)
         self.transient(parent)
@@ -41,6 +59,10 @@ class BookmarkDialog(tk.Toplevel):
         self.grab_set()
 
     def _ok(self):
+        """Stores the fields in `result` and closes the window; does nothing while the name is empty.
+
+        An empty group becomes "Other".
+        """
         name = self.name.get().strip()
         if not name:
             return

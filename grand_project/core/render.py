@@ -9,16 +9,36 @@ from .atlas import Atlas
 
 
 def render_overlay(atlas: Atlas, canvas: np.ndarray, origin) -> np.ndarray:
-    """Nodes coloured by how many screenshots saw them; edges by how many agreed.
+    """Draw the atlas's map nodes, paths and landmarks on a stitched image.
+
+    Nodes are coloured by how many screenshots saw them; edges (paths) by how many agreed. When the
+    atlas-wide result (atlas.final) exists, that is drawn instead (see _render_final).
 
     node ring: orange = 1 screenshot, green = 2, cyan = 3+.
     edge: cyan = every screenshot that could see it did; amber = only one screenshot could
     see it; red = some screenshots saw it and others (that could) did not -> review.
+
+    Args:
+        atlas: The atlas to draw.
+        canvas: BGR stitched image (from Atlas.composite); not changed.
+        origin: (x0, y0, scale) of the canvas: atlas point (x, y) is at canvas px ((x - x0) * scale, (y - y0) * scale).
+
+    Returns:
+        A BGR copy of the canvas with the overlay drawn on it.
     """
     x0, y0, sc = origin
     out = canvas.copy()
 
     def P(x, y):
+        """Convert an atlas point to canvas px.
+
+        Args:
+            x: Atlas x (atlas units).
+            y: Atlas y (atlas units).
+
+        Returns:
+            (x, y) integer canvas px.
+        """
         return (int((x - x0) * sc), int((y - y0) * sc))
 
     if atlas.final:
@@ -45,9 +65,20 @@ def render_overlay(atlas: Atlas, canvas: np.ndarray, origin) -> np.ndarray:
 
 
 def _render_final(atlas: Atlas, out: np.ndarray, P) -> np.ndarray:
-    """The atlas-wide result: paths cyan = 2+ screenshots agree, amber = one screenshot,
-    magenta = abyss chain; nodes cyan = confirmed / from icon, orange = one screenshot,
-    grey = doubtful; red x = removed (ghost / river glow)."""
+    """Draw the atlas-wide result (atlas.final) on an image.
+
+    paths cyan = 2+ screenshots agree, amber = one screenshot, magenta = abyss chain; nodes cyan =
+    confirmed / from icon, orange = one screenshot, grey = doubtful; red x = removed (ghost / river glow).
+    Icon names are written next to their map node; landmarks get a box (red when removed).
+
+    Args:
+        atlas: The atlas; its `final` dict holds nodes, paths and landmarks.
+        out: BGR image to draw on (changed in place).
+        P: Function (x, y) -> canvas px for atlas points.
+
+    Returns:
+        The same image `out`, drawn on.
+    """
     fin = atlas.final
     N = fin["nodes"]
     for e in fin["paths"]:

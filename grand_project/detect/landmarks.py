@@ -24,9 +24,19 @@ _TP = 220
 
 
 def tower_features(img: np.ndarray, pts, old_towers: list) -> np.ndarray:
-    """per map: brightness / colour / vertical edges / green glow / flame in a grid of boxes up to 200 px
-    above it, the width of the green glow at its foot, a dark-column profile, and whether the old tower
-    rules found a tower there"""
+    """Tower classifier features per map node (the spire above it).
+
+    Brightness / colour / vertical edges / green glow / flame in a grid of boxes up to 200 px above it, the width
+    of the green glow at its foot, a dark-column profile, and whether the old tower rules found a tower there.
+
+    Args:
+        img: BGR screenshot (1080p).
+        pts: Map node middles, [(x, y), ...] in screen px.
+        old_towers: Towers found by the old rules (old_landmarks), [(x, y), ...]; within 45 px counts.
+
+    Returns:
+        (len(pts), k) float32 feature array.
+    """
     big = cv2.copyMakeBorder(img, _TP, _TP, _TP, _TP, cv2.BORDER_REFLECT)
     hsv = cv2.cvtColor(big, cv2.COLOR_BGR2HSV).astype(np.float32)
     g = cv2.cvtColor(big, cv2.COLOR_BGR2GRAY).astype(np.float32)
@@ -62,7 +72,14 @@ def tower_features(img: np.ndarray, pts, old_towers: list) -> np.ndarray:
 
 
 def old_landmarks(img: np.ndarray) -> dict:
-    """the hand-made landmark rules (atlas_towers): towers and purple Breach strongholds"""
+    """The hand-made landmark rules (atlas_towers): towers and purple Breach strongholds.
+
+    Args:
+        img: BGR screenshot (1080p).
+
+    Returns:
+        {"towers": [(x, y), ...], "strongholds": [(x, y), ...]} in screen px.
+    """
     from grand_project import towers as poi
 
     lms = poi.detect_landmarks(img)
@@ -73,14 +90,35 @@ def old_landmarks(img: np.ndarray) -> dict:
 
 
 def tower_labels(pts, t: dict) -> np.ndarray:
+    """Training labels for the tower classifier from a screenshot's truth.
+
+    Args:
+        pts: Map node middles, [(x, y), ...] in screen px.
+        t: The screenshot's truth entry with "landmarks" (each with "kind", "x", "y").
+
+    Returns:
+        (len(pts),) int array: 1 when a labelled Tower is within 25 px, else 0.
+    """
     towers = [landmark for landmark in t["landmarks"] if landmark["kind"] == "Tower"]
     return np.array([int(any(np.hypot(tower["x"] - x, tower["y"] - y) < 25 for tower in towers)) for x, y in pts], int)
 
 
 def deadly_kind(img: np.ndarray, x: float, y: float, nodes=None) -> tuple[str, str]:
-    """the map at (x, y) carries a Deadly Map Boss badge: City / Hall / plain deadly boss, and why.
-    A City's map always stands on the brass barrel (user); beams don't decide it: every city type can show
-    a blue one, and the brown lantern structures (Halls) have orange beams."""
+    """Decide what a map node with a Deadly Map Boss badge is: City / Hall / plain deadly boss, and why.
+
+    A City's map always stands on the brass barrel (user); beams don't decide it: every city type can show a blue
+    one, and the brown lantern structures (Halls) have orange beams. The ocean (Expedition) biome never has a City
+    (user's rule).
+
+    Args:
+        img: BGR screenshot (1080p).
+        x: Map node x in screen px.
+        y: Map node y in screen px.
+        nodes: Optional detected map nodes to snap the point to (see citybase.barrel_p).
+
+    Returns:
+        (kind, why): kind is "City", "Hall" or "Deadly boss map"; why is a short reason.
+    """
     from grand_project import finalize as fin
 
     _sblue, sorange = fin._beam(img, x, y, spread=80)
@@ -98,7 +136,24 @@ def deadly_kind(img: np.ndarray, x: float, y: float, nodes=None) -> tuple[str, s
 def landmarks_from(
     img: np.ndarray, nodes: list[dict], icons: list[dict], tower_p: np.ndarray, old: dict
 ) -> tuple[list[dict], list[dict]]:
-    """-> landmarks, nodes (towers marked; hidden maps that were really a tower's badge row removed)"""
+    """Build the landmarks of a screenshot from tower probabilities, icon rows and the old rules.
+
+    Towers: visible map nodes with p >= TOWER_MIN, best first, dropping other map nodes within TOWER_NMS px.
+    Deadly Map Boss rows (not a tower's badges) become City / Hall / deadly boss map (deadly_kind). Completed
+    (green) cities have no badge and no beam left, but still stand on the barrel. Breach strongholds are locked
+    when a hand badge is within 200 px or no map node is inside (STRONGHOLD_EMPTY).
+
+    Args:
+        img: BGR screenshot (1080p).
+        nodes: Map nodes, dicts with "x", "y" (and "hidden" for hidden map nodes).
+        icons: Named icons, dicts with "x", "y", "name".
+        tower_p: Tower probability of each visible (not hidden) map node, in order.
+        old: Result of old_landmarks.
+
+    Returns:
+        (landmarks, nodes): landmarks as dicts {"kind", "x", "y", ...}, and copies of the map nodes with towers
+        marked ("tower": True) and hidden maps that were really a tower's badge row removed.
+    """
     out = []
     nodes = [dict(n) for n in nodes]
     vis = [n for n in nodes if not n.get("hidden")]
@@ -161,6 +216,17 @@ def landmarks_from(
 
 
 def find_landmarks(img: np.ndarray, model, nodes: list[dict], icons: list[dict]) -> tuple[list, list]:
+    """Find the landmarks of a screenshot: run the tower model on the visible map nodes, then landmarks_from.
+
+    Args:
+        img: BGR screenshot (1080p).
+        model: The trained "towers" classifier.
+        nodes: Map nodes, dicts with "x", "y" (and "hidden").
+        icons: Named icons, dicts with "x", "y", "name".
+
+    Returns:
+        (landmarks, nodes) as in landmarks_from.
+    """
     old = old_landmarks(img)
     vis = [n for n in nodes if not n.get("hidden")]
     p = (
@@ -172,17 +238,38 @@ def find_landmarks(img: np.ndarray, model, nodes: list[dict], icons: list[dict])
 
 
 def expedition_rules(nodes: list[dict], icons: list[dict], lms: list[dict]) -> tuple[list, list, list]:
-    """Ocean (Expedition biome) rules, user's:
-    - an Expedition badge sits right above a VISIBLE ocean map: a hidden map under its row is shown
-      (its star base is often too unlike the gold-rimmed bases the map model knows)
-    - a map with an Expedition badge is never a Hall, Tower or Hideout: those calls are dropped
-      (a Hall keeps its Deadly Map Boss badge: a plain deadly boss map; a Hideout badge in the row goes)"""
+    """Apply the ocean (Expedition biome) rules (user's).
+
+    - An Expedition badge sits right above a VISIBLE ocean map: a hidden map under its row is shown (its star base
+      is often too unlike the gold-rimmed bases the map model knows).
+    - A map with an Expedition badge is never a Hall, Tower or Hideout: those calls are dropped (a Hall keeps its
+      Deadly Map Boss badge: a plain deadly boss map; a Hideout badge in the row goes).
+
+    "Under" an Expedition badge means within EXP_REACH (dx, y0..y1 px) of it.
+
+    Args:
+        nodes: Map nodes, dicts with "x", "y" (and "hidden", "tower").
+        icons: Named icons, dicts with "x", "y", "name".
+        lms: Landmarks, dicts with "kind", "x", "y".
+
+    Returns:
+        (nodes, icons, landmarks) after the rules; unchanged when there is no Expedition badge.
+    """
     dx, y0, y1 = EXP_REACH
     exp = [b for b in icons if b.get("name") == EXPEDITION]
     if not exp:
         return nodes, icons, lms
 
     def under(x, y):
+        """Whether a point lies under an Expedition badge (within EXP_REACH).
+
+        Args:
+            x: Point x in screen px.
+            y: Point y in screen px.
+
+        Returns:
+            True when an Expedition badge is just above the point.
+        """
         return any(abs(x - b["x"]) <= dx and y0 <= y - b["y"] <= y1 for b in exp)
 
     nodes = [dict(n) for n in nodes]
@@ -206,8 +293,16 @@ def expedition_rules(nodes: list[dict], icons: list[dict], lms: list[dict]) -> t
 
 
 def ship_markers(img: np.ndarray) -> list[dict]:
-    """Expedition ship markers (ocean biome): the square button with a ship symbol (user: boat), from the
-    same finder as the locked strongholds' hand badges"""
+    """Expedition ship markers (ocean biome): the square button with a ship symbol (user: boat).
+
+    Found by the same finder as the locked strongholds' hand badges.
+
+    Args:
+        img: BGR screenshot (1080p).
+
+    Returns:
+        Icons as dicts {"name": "ExpeditionShip", "x", "y", "score", "source": "square button"}.
+    """
     from grand_project import cities as atlas_cities
 
     return [

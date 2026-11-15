@@ -29,7 +29,20 @@ PATH_DRAW_SHIFT = -5  # px: paths drawn beside the game's own dotted lines, not 
 
 
 def annotate(img: np.ndarray, r: dict) -> np.ndarray:
-    """everything the detector found, drawn on the screenshot (old-style notation, no subway)"""
+    """Draw everything the detector found on a copy of the screenshot.
+
+    Old-style notation, no subway: paths as cyan dots shifted PATH_DRAW_SHIFT px sideways, map nodes as cyan
+    circles ("Map"), hidden map nodes as pink squares ("Hidden"), landmarks as coloured boxes from LM_STYLE and
+    icons as white circles with their name.
+
+    Args:
+        img: BGR screenshot (1080p) the detection was run on.
+        r: Result of `detect(img)`: dict with "edges" (each with a "line" of (x, y) points), "nodes", "landmarks"
+            and "icons" lists.
+
+    Returns:
+        A BGR copy of `img` with the annotations drawn on it.
+    """
     v = img.copy()
     cyan, pink = (255, 220, 60), (230, 130, 230)
     for e in r["edges"]:
@@ -68,8 +81,15 @@ def annotate(img: np.ndarray, r: dict) -> np.ndarray:
 
 
 def cmd_show() -> int:
-    """python -m grand_project.detect show OUT_DIR IMG...
-    (or: show OUT_DIR random N  -> N random unlabelled samples)"""
+    """Command `python -m grand_project.detect show OUT_DIR IMG...`: detect and save annotated screenshots.
+
+    `show OUT_DIR random N` picks N (default 3) random unlabelled screenshots from SHOTS instead. For each
+    screenshot writes `<stem>_annotated.png` and `<stem>_detect.json` to OUT_DIR and prints the counts found.
+    Arguments are read from sys.argv.
+
+    Returns:
+        0 (process exit code).
+    """
     out = Path(sys.argv[2])
     out.mkdir(parents=True, exist_ok=True)
     files = sys.argv[3:]

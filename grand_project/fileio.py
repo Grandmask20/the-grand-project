@@ -22,6 +22,20 @@ from pathlib import Path
 
 
 def write_text_atomic(path, text: str, encoding: str = "utf-8") -> None:
+    """Write a text file so readers see the old file or the new one, never half of one.
+
+    The text goes to a temporary file next to the target, which then replaces the target in one step (see the
+    module docstring). On Windows a virus scanner / cloud sync may hold the target briefly, so the replace is
+    tried 5 times; the temporary file is removed on any failure.
+
+    Args:
+        path: Target file path.
+        text: The file contents.
+        encoding: Text encoding.
+
+    Raises:
+        PermissionError: The target stayed locked through every try.
+    """
     path = Path(path)
     fd, tmp = tempfile.mkstemp(prefix=f".{path.name}.", suffix=".tmp", dir=path.parent)
     try:
@@ -44,7 +58,14 @@ def write_text_atomic(path, text: str, encoding: str = "utf-8") -> None:
 
 
 def read_json(path) -> dict | None:
-    """the JSON in a file, or None when it is missing, cut off or not JSON (e.g. a cache from a crash)"""
+    """Read the JSON in a file.
+
+    Args:
+        path: File path.
+
+    Returns:
+        The parsed JSON, or None when it is missing, cut off or not JSON (e.g. a cache from a crash).
+    """
     try:
         return json.loads(Path(path).read_text(encoding="utf-8"))
     except (OSError, ValueError):
@@ -52,11 +73,26 @@ def read_json(path) -> dict | None:
 
 
 def workers(wanted: int) -> int:
-    """at most `wanted` worker processes, and one core left for the window"""
+    """Choose how many worker processes to use: at most `wanted`, and one core left for the window.
+
+    Args:
+        wanted: Number of workers wanted.
+
+    Returns:
+        Number of workers, at least 1.
+    """
     return max(1, min(wanted, (os.cpu_count() or 2) - 1))
 
 
 def process_pool(max_workers: int):
+    """Create a process pool whose workers are started fresh ("spawn"; see the module docstring).
+
+    Args:
+        max_workers: Number of worker processes.
+
+    Returns:
+        A concurrent.futures.ProcessPoolExecutor.
+    """
     from concurrent.futures import ProcessPoolExecutor
 
     return ProcessPoolExecutor(max_workers=max_workers, mp_context=multiprocessing.get_context("spawn"))

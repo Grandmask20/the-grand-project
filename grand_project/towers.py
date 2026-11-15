@@ -16,7 +16,14 @@ from grand_project import paths as rc_paths
 
 @functools.cache
 def _template(name: str):
-    """a tower reference picture from references/, read once"""
+    """Read a tower reference picture from references/ once.
+
+    Args:
+        name: the file name inside references/.
+
+    Returns:
+        The picture as a BGR image, or None when it cannot be read.
+    """
     return cv2.imread(str(rc_paths.ref(name)), cv2.IMREAD_COLOR)
 
 
@@ -24,7 +31,14 @@ _UI: dict = {}
 
 
 def game_ui_mask(image: np.ndarray) -> np.ndarray:
-    """255 = atlas, 0 = game interface (computed once per screenshot; read-only)"""
+    """Return the mask of the game interface in a screenshot (computed once per screenshot; read-only).
+
+    Args:
+        image: the screenshot (BGR image); the last one is cached by object identity.
+
+    Returns:
+        An (h, w) uint8 mask: 255 = atlas, 0 = game interface.
+    """
     hit = _UI.get(id(image))
     if hit is not None and hit[0]() is image:
         return hit[1]
@@ -36,10 +50,16 @@ def game_ui_mask(image: np.ndarray) -> np.ndarray:
 
 
 def _game_ui_mask_calc(image: np.ndarray) -> np.ndarray:
-    """255 means inspectable map; 0 means known interface, not atlas terrain.
+    """Compute the game interface mask: 255 means inspectable map; 0 means known interface, not atlas terrain.
 
     Bounds are intentionally restricted to the HUD, Act selector and world
     header. A user can still manually click inside an excluded region.
+
+    Args:
+        image: the screenshot (BGR image).
+
+    Returns:
+        An (h, w) uint8 mask: 255 = atlas, 0 = game interface.
     """
     h, w = image.shape[:2]
     mask = np.full((h, w), 255, dtype=np.uint8)
@@ -107,6 +127,17 @@ def _game_ui_mask_calc(image: np.ndarray) -> np.ndarray:
 
 @dataclass
 class Landmark:
+    """A tower or Breach stronghold found in one screenshot.
+
+    Attributes:
+        x: x of the landmark's base in screen px.
+        y: y of the landmark's base in screen px.
+        kind: "Tower" or "Breach stronghold".
+        ident: an optional id.
+        source: which rule found it (e.g. "orange_beam_green_base"); "manual" for one set by hand.
+        confidence: how sure the rule is, 0 to 1.
+    """
+
     x: int
     y: int
     kind: str
@@ -118,7 +149,18 @@ class Landmark:
 def _vertical_beams(
     image: np.ndarray, low: tuple, high: tuple, min_height: int = 11
 ) -> list[tuple[int, int, int, float]]:
-    """Return thin elongated colored streaks (x, y_bottom, height, evidence)."""
+    """Return thin elongated colored streaks (beams) of a colour range.
+
+    Args:
+        image: the screenshot (BGR image).
+        low: lowest (H, S, V) of the colour range (OpenCV HSV).
+        high: highest (H, S, V) of the colour range.
+        min_height: shortest streak kept (screen px); the tallest is 135.
+
+    Returns:
+        A list of (x, y_bottom, height, evidence) per streak: centre x, bottom y and height in screen px, and
+        its area in px as evidence.
+    """
     hsv = cv2.cvtColor(image, cv2.COLOR_BGR2HSV)
     mask = cv2.inRange(hsv, np.array(low), np.array(high))
     mask = cv2.morphologyEx(mask, cv2.MORPH_OPEN, cv2.getStructuringElement(cv2.MORPH_RECT, (2, 11)))
@@ -135,7 +177,18 @@ def _vertical_beams(
 
 
 def _green_base_below(green: np.ndarray, x: int, beam_bottom: int) -> tuple[int, int, float]:
-    """Find a large green outline underneath a tower beam, not a tiny atlas node."""
+    """Find a large green outline underneath a tower beam, not a tiny atlas node.
+
+    Searches 25-175 px below the beam, within +-46 px sideways.
+
+    Args:
+        green: the screenshot's green mask (uint8, 255 = green).
+        x: the beam's x in screen px.
+        beam_bottom: the beam's bottom y in screen px.
+
+    Returns:
+        (base x, base y, quality) of the best green foot in screen px; quality 0.0 when none was found.
+    """
     height, width = green.shape
     best = (x, beam_bottom + 75, 0.0)
     # A tower can lean sideways because the 3D atlas is oblique.
@@ -173,6 +226,12 @@ def _fragmented_flame_towers(image: np.ndarray) -> list[Landmark]:
     11px streak inside the old narrow hue range. Neither its icon nor its
     green color alone is sufficient evidence: require both a *large* green
     foot and a separate, vertically elongated bright flame above the shaft.
+
+    Args:
+        image: the screenshot (BGR image).
+
+    Returns:
+        Tower landmarks (confidence 0.86), positions in screen px.
     """
     hsv = cv2.cvtColor(image, cv2.COLOR_BGR2HSV)
     green = cv2.inRange(hsv, np.array([37, 100, 90]), np.array([90, 255, 255]))
@@ -209,6 +268,12 @@ def _upper_cropped_towers(image: np.ndarray) -> list[Landmark]:
     intentionally restricted to the exposed TOP edge, where the shaft is
     clipped by the screenshot rather than by the WORLD toolbar. The much
     smaller ~10px green map nodes must not qualify as tower feet.
+
+    Args:
+        image: the screenshot (BGR image).
+
+    Returns:
+        Tower landmarks (confidence 0.82), positions in screen px.
     """
     h, w = image.shape[:2]
     hsv = cv2.cvtColor(image, cv2.COLOR_BGR2HSV)
@@ -247,6 +312,13 @@ def _full_height_stone_towers(image: np.ndarray) -> list[Landmark]:
     Vertical-gradient matching tolerates variable background colour and zoom;
     gold gear evidence at the base distinguishes the building from mountains.
     All matches remain unconfirmed POI suggestions until clicked.
+
+    Args:
+        image: the screenshot (BGR image).
+
+    Returns:
+        Tower landmarks (one per tower across template scales), positions in screen px; empty without the
+        template picture.
     """
     sample = _template("tower_template_inactive_tower.png")
     if sample is None or min(sample.shape[:2]) < 80:
@@ -300,7 +372,14 @@ def _lit_stone_tower_templates(image: np.ndarray) -> list[Landmark]:
 
     The shaft/crown pattern is from the supplied blue-base tower close-up.
     Require a sizable green OR blue base beneath that tall shaft. A small
-    green dot or a badge without a vertical building never qualifies.
+    green dot or an icon without a vertical building never qualifies.
+
+    Args:
+        image: the screenshot (BGR image).
+
+    Returns:
+        Tower landmarks (one per tower across template scales), positions in screen px; empty without the
+        template picture.
     """
     sample = _template("tower_template_blue_tower.png")
     if sample is None or min(sample.shape[:2]) < 90:
@@ -377,6 +456,13 @@ def _active_tower_templates(image: np.ndarray) -> list[Landmark]:
     Uses the actual multi-height active-tower reference, not a bare green
     circle. A tall orange flame *and* broad green illuminated base must be
     present together with a shaft match; ordinary green maps fail this test.
+
+    Args:
+        image: the screenshot (BGR image).
+
+    Returns:
+        Tower landmarks (one per tower across template scales), positions in screen px; empty without the
+        template picture.
     """
     sample = _template("tower_template_active_tower.png")
     if sample is None or min(sample.shape[:2]) < 100:
@@ -419,6 +505,12 @@ def _purple_strongholds(image: np.ndarray) -> list[Landmark]:
 
     A color heuristic can miss unlit Breach locations; every hit still needs
     manual confirmation before it becomes a network anchor.
+
+    Args:
+        image: the screenshot (BGR image).
+
+    Returns:
+        Breach stronghold landmarks, positions in screen px.
     """
     h, w = image.shape[:2]
     hsv = cv2.cvtColor(image, cv2.COLOR_BGR2HSV)
@@ -467,6 +559,14 @@ def detect_landmarks(image: np.ndarray) -> list[Landmark]:
 
     Tall orange beams with broad green feet suggest towers; large clusters of breach-purple structure
     suggest Breach strongholds. (Halls / Cities are told apart elsewhere: atlas_detect.deadly_kind.)
+    Detections on the game interface are dropped and nearby ones of the same kind are combined (92 px;
+    155 px for Breach strongholds), keeping the most confident.
+
+    Args:
+        image: the screenshot (BGR image).
+
+    Returns:
+        The landmarks found, positions in screen px, most confident first.
     """
     h, w = image.shape[:2]
     hsv = cv2.cvtColor(image, cv2.COLOR_BGR2HSV)

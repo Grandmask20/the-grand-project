@@ -30,8 +30,15 @@ from .maps import _keep_best
 
 
 def _finder() -> dict:
-    """the icon finder's rim template (BADGE_FINDER_FILE, tools/freeze_badge_finder.py): the average icon as seen
-    on screen, used only on the rim (radii ICON_RIM_R). Never the stored icon pictures: those only NAME an icon."""
+    """The icon finder's frozen data, loaded once from BADGE_FINDER_FILE (tools/freeze_badge_finder.py).
+
+    The rim template is the average icon as seen on screen, used only on the rim (radii ICON_RIM_R). Never the
+    stored icon pictures: those only NAME an icon.
+
+    Returns:
+        Dict with "T" (zero-mean, unit-length rim template), "M" (rim mask), "n" (rim pixel count) and "special"
+        (name -> whole-icon template of the icons with their own rim).
+    """
     if not _rim:
         with np.load(BADGE_FINDER_FILE) as z:
             mean = z["rim"].astype(np.float32)
@@ -47,7 +54,19 @@ def _finder() -> dict:
 
 
 def _in_water(img: np.ndarray, x: float, y: float) -> bool:
-    """is the icon's map (under it) in the water zone: enough open water around it (EXPEDITION_WATER)?"""
+    """Whether the icon's map node (ROW_DY px under it) is in the water zone.
+
+    Enough open water around it: of the classified ground within EXPEDITION_WATER's radius, at least its share is
+    water (and more than 200 px are classified).
+
+    Args:
+        img: BGR screenshot (1080p).
+        x: Icon centre x in screen px.
+        y: Icon centre y in screen px.
+
+    Returns:
+        True when the map node stands in open water.
+    """
     from grand_project.finalize import landmarks as fl
 
     cls, bad = fl.ground_of(img)  # the per-screenshot ground classes (kept for recent screenshots)
@@ -62,7 +81,15 @@ def _in_water(img: np.ndarray, x: float, y: float) -> bool:
 
 
 def special_icons(img: np.ndarray) -> list[dict]:
-    """icons with their own rim (SPECIAL_ICONS), found and named by a whole-icon template"""
+    """Icons with their own rim (SPECIAL_ICONS), found and named by a whole-icon template.
+
+    Args:
+        img: BGR screenshot (1080p).
+
+    Returns:
+        Icons as dicts {"x", "y", "score", "name", "dist"}: template peaks above the icon's SPECIAL_ICONS threshold,
+        whole on screen and clear of the HUD.
+    """
     out: list[dict] = []
     clear = _clear(img)
     f32 = img.astype(np.float32)
@@ -85,8 +112,16 @@ _rim: dict = {}
 
 
 def rim_score(img: np.ndarray) -> np.ndarray:
-    """per pixel: correlation of the ring around it (radii ICON_RIM_R) with an icon's rim - the inside (which icon)
-    and the outside (the map) are not looked at"""
+    """Per pixel: correlation of the ring around it (radii ICON_RIM_R) with an icon's rim.
+
+    The inside (which icon) and the outside (the map) are not looked at.
+
+    Args:
+        img: BGR screenshot (1080p).
+
+    Returns:
+        (h, w) float32 array of normalised correlation scores.
+    """
     f = _finder()
     g = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY).astype(np.float32)
     a = cv2.filter2D(g, -1, f["T"], borderType=cv2.BORDER_REFLECT)
@@ -96,8 +131,17 @@ def rim_score(img: np.ndarray) -> np.ndarray:
 
 
 def _clear(img: np.ndarray) -> np.ndarray:
-    """per pixel: an icon centred here is whole on the screen and clear of the HUD (user: the HUD is masked
-    before detection; an icon half under it or off the screen is read from another screenshot)"""
+    """Per pixel: an icon centred here is whole on the screen and clear of the HUD.
+
+    User: the HUD is masked before detection; an icon half under it or off the screen is read from another
+    screenshot. A pixel is clear when it is at least ICON_CLEAR px from the HUD and the screen edge.
+
+    Args:
+        img: BGR screenshot (1080p).
+
+    Returns:
+        (h, w) bool array.
+    """
     h, w = img.shape[:2]
     free = (core.hud_mask(w, h) == 0).astype(np.uint8)
     free[[0, -1], :] = 0
@@ -106,7 +150,17 @@ def _clear(img: np.ndarray) -> np.ndarray:
 
 
 def badge_candidates(img: np.ndarray) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
-    """-> points (circles whose rim looks like an icon's), their rim score, and the same score as 'extra'"""
+    """Icon candidates: circles whose rim looks like an icon's.
+
+    Local maxima (9x9 px) of rim_score above RIM_CANDIDATE, clear of the HUD and screen edge.
+
+    Args:
+        img: BGR screenshot (1080p).
+
+    Returns:
+        (pts, ring, extra): (n, 2) int array of candidate x, y in screen px, their (n,) rim score, and the same
+        score as an (n, 1) 'extra' array.
+    """
     sc = rim_score(img)
     pk = (sc >= cv2.dilate(sc, np.ones((9, 9), np.uint8))) & (sc > RIM_CANDIDATE) & _clear(img)
     ys, xs = np.nonzero(pk)
@@ -120,8 +174,20 @@ _RADII = np.arange(6, 14.5, 1.0)
 
 
 def badge_features(img: np.ndarray, pts: np.ndarray, ring: np.ndarray, extra: np.ndarray) -> np.ndarray:
-    """rim only: per radius 6..14 px, how even the ring is all round, its gold share and saturation; the shape of
-    the brightness profile across the radii; and the rim score. Nothing from inside the rim."""
+    """Icon classifier features per candidate, from the rim only.
+
+    Per radius 6..14 px: how even the ring is all round, its gold share and saturation; the shape of the
+    brightness profile across the radii; and the rim score. Nothing from inside the rim.
+
+    Args:
+        img: BGR screenshot (1080p).
+        pts: (n, 2) array of candidate x, y in screen px (badge_candidates).
+        ring: (n,) rim score of each candidate.
+        extra: (n, 1) extra scores from badge_candidates (not used).
+
+    Returns:
+        (n, 4 * len(_RADII) + 2) float32 feature array.
+    """
     if not len(pts):
         return np.zeros((0, 4 * len(_RADII) + 2), np.float32)
     hsv = cv2.cvtColor(img, cv2.COLOR_BGR2HSV)
@@ -149,7 +215,16 @@ def badge_features(img: np.ndarray, pts: np.ndarray, ring: np.ndarray, extra: np
 
 
 def badge_labels(pts: np.ndarray, t: dict) -> np.ndarray:
-    """1 = the candidate closest to a labelled badge (within 6 px), -1 = other candidates on it"""
+    """Training labels for icon candidates from a screenshot's truth.
+
+    Args:
+        pts: (n, 2) array of candidate x, y in screen px.
+        t: The screenshot's truth entry with "badges" (each with "x", "y").
+
+    Returns:
+        (n,) int array: 1 = the candidate closest to a labelled badge (within 6 px), -1 = other candidates on it
+        (within 12 px, left out of training), 0 = not an icon.
+    """
     lab = np.zeros(len(pts), int)
     for b in t["badges"]:
         d = np.hypot(pts[:, 0] - b["x"], pts[:, 1] - b["y"])
@@ -161,7 +236,19 @@ def badge_labels(pts: np.ndarray, t: dict) -> np.ndarray:
 
 
 def _row_slot(x: float, y: float, maps: list[dict]) -> bool:
-    """x, y is where a badge of a row of 1-5 above one of the maps would sit"""
+    """Whether x, y is where a badge of a row of 1-5 above one of the map nodes would sit.
+
+    Rows sit ROW_DY px above their map node, centred on it, with badges ROW_STEP px apart (so slots are half steps
+    for even rows); 5 px tolerance.
+
+    Args:
+        x: Point x in screen px.
+        y: Point y in screen px.
+        maps: Map nodes as dicts with "x", "y".
+
+    Returns:
+        True when the point is on a row slot of any map node.
+    """
     for m in maps:
         dx, dy = x - m["x"], y - (m["y"] - ROW_DY)
         if abs(dy) <= 5 and abs(dx) <= 2 * ROW_STEP + 5 and min(abs(dx - k * ROW_STEP / 2) for k in range(-4, 5)) <= 5:
@@ -170,8 +257,21 @@ def _row_slot(x: float, y: float, maps: list[dict]) -> bool:
 
 
 def name_badge(img: np.ndarray, x: float, y: float, names: list[str], F: np.ndarray) -> tuple[str, float]:
-    """closest badge picture (stored + labelled), trying +-3 px shifts -> (name, 1 - correlation); only names
-    whose stored pictures have a bright part of the same colour (icon_refs.colour_ok)"""
+    """Name an icon by its closest badge picture (stored + labelled), trying +-icon_refs.SHIFT px shifts.
+
+    Only names whose stored pictures have a bright part of the same colour count (icon_refs.colour_ok).
+
+    Args:
+        img: BGR screenshot (1080p).
+        x: Icon centre x in screen px.
+        y: Icon centre y in screen px.
+        names: Name of each picture row in F.
+        F: (len(names), k) picture features (icon_refs.feature).
+
+    Returns:
+        (name, 1 - correlation): "Unidentified" when the closest picture is further than icon_refs.MAX_DIST, and
+        ("Unidentified", 9.0) when the icon runs off the screenshot or there are no pictures.
+    """
     big = icon_refs.crop(img, x, y, icon_refs.SIZE + 2 * icon_refs.SHIFT)
     if big is None or not len(names):
         return "Unidentified", 9.0
@@ -186,8 +286,16 @@ def name_badge(img: np.ndarray, x: float, y: float, names: list[str], F: np.ndar
 
 
 def badge_rows(icons: list[dict]) -> list[list[dict]]:
-    """badges side by side (same height, 36 px apart; one badge of a row may be missed, so 72 px also
-    joins) -> rows, left to right"""
+    """Group icons side by side into rows.
+
+    Same height (5 px), ROW_STEP (36 px) apart; one badge of a row may be missed, so 72 px also joins.
+
+    Args:
+        icons: Icons as dicts with "x", "y".
+
+    Returns:
+        Rows of icons, each sorted left to right.
+    """
     rows: list[list[dict]] = []
     for b in sorted(icons, key=lambda b: b["x"]):
         for r in rows:
@@ -209,8 +317,27 @@ def badges_from(
     map_pts: np.ndarray,
     map_p: np.ndarray,
 ) -> tuple[list, list]:
-    """badge probabilities -> named badges + more maps: under a badge row with no map found, the best weak
-    map candidate (source 'badge row'), or else a hidden map"""
+    """Turn badge probabilities into named icons and more map nodes.
+
+    Icons are candidates with p >= BADGE_MIN, plus weaker ones (>= BADGE_ROW_MIN) that sit next to a found badge
+    or on a row slot above a map node. Special icons win over the rim finder. A weak circle named a biome influence
+    is usually terrain and is dropped (user); Expedition only appears in the water zone (user). Under a badge row
+    with no map found comes the best weak map candidate (source 'badge row'), or else a hidden map (unless a
+    visible map is within HIDDEN_SNAP px: that is the row's map - user).
+
+    Args:
+        img: BGR screenshot (1080p).
+        pts: (n, 2) array of icon candidate x, y in screen px.
+        p: (n,) icon probability of each candidate.
+        book: Labelled badge pictures kept in the badge model: {"names": [...], "F": (m, k) array}.
+        maps: Map nodes found so far, dicts with "x", "y".
+        map_pts: (k, 2) array of all map candidates in screen px.
+        map_p: (k,) map probability of each map candidate.
+
+    Returns:
+        (icons, more): icons as dicts {"x", "y", "score", "name", "dist"} (some with "row": True), and the extra map
+        nodes as dicts with "source": "badge row" ("hidden": True for hidden map nodes).
+    """
     icons = [
         {"x": float(pts[i][0]), "y": float(pts[i][1]), "score": round(float(p[i]), 3)}
         for i in _keep_best(pts, p, BADGE_MIN, BADGE_NMS)
@@ -262,7 +389,18 @@ def badges_from(
 
 
 def badge_book(truth: dict, imgs: dict, names) -> dict:
-    """labelled badge pictures of these screenshots (kept inside the badge model, not in badge_refs)"""
+    """Labelled badge pictures of these screenshots (kept inside the badge model, not in badge_refs).
+
+    Badges labelled "Unidentified" (found but not named yet) count for finding, not naming, and are skipped.
+
+    Args:
+        truth: Truth per screenshot name; each entry has "badges" with "x", "y", "name".
+        imgs: Screenshot name -> BGR image.
+        names: Screenshot names to use.
+
+    Returns:
+        {"names": [name, ...], "F": (m, k) float32 picture features (icon_refs.feature)}.
+    """
     nm, F = [], []
     for n in names:
         for b in truth[n]["badges"]:
@@ -278,6 +416,18 @@ def badge_book(truth: dict, imgs: dict, names) -> dict:
 def find_badges(
     img: np.ndarray, model: dict, maps: list[dict], map_pts: np.ndarray, map_p: np.ndarray
 ) -> tuple[list, list]:
+    """Find and name the icons of a screenshot, and the map nodes their rows reveal.
+
+    Args:
+        img: BGR screenshot (1080p).
+        model: The trained "badges" model: {"clf": classifier, "names": [...], "F": picture features}.
+        maps: Map nodes found so far, dicts with "x", "y".
+        map_pts: (k, 2) array of all map candidates in screen px.
+        map_p: (k,) map probability of each map candidate.
+
+    Returns:
+        (icons, more) as in badges_from; ([], []) when there are no candidates.
+    """
     pts, ring, extra = badge_candidates(img)
     if not len(pts):
         return [], []
