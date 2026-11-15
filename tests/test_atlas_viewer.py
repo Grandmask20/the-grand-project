@@ -721,6 +721,70 @@ if crawl.exists() and crawl_cache.exists():
             f"error {err:.1f} units",
         )
 
+# Saved atlases tab: a card per known atlas; rename; stop tracking keeps the files; deleting an atlas and its
+# data removes the atlas file, its saved detections and its _files folder but never the screenshots
+gone_dir = work / "gone"
+gone_dir.mkdir()
+gone = gone_dir / "atlas.json"
+core.Atlas().save(gone)
+(gone_dir / "atlas_frames").mkdir()
+(gone_dir / "atlas_frames" / "x_detect1.json").write_text("{}", encoding="utf-8")
+(gone_dir / "atlas_files").mkdir()
+(gone_dir / "atlas_files" / "atlas_thumb.png").write_bytes(b"png")
+shot = gone_dir / "2694490_20260101000000_1.png"
+shot.write_bytes(b"a screenshot")
+app.remember_atlas(gone, "to delete")
+pump(0.3)
+names = [w.winfo_children()[1].winfo_children()[0].cget("text") for w in app.atl_inner.winfo_children()]
+check("Saved atlases: a card per atlas", len(names) == len(app.known_atlases()) and "to delete" in names, str(names))
+from tkinter import simpledialog  # noqa: E402
+
+simpledialog.askstring = lambda *a, **k: "renamed one"
+app._rename_card(str(gone.resolve()))
+check("Saved atlases: rename", any(a["name"] == "renamed one" for a in app.known_atlases()))
+check(
+    "deleting an atlas: its files, never screenshots",
+    set(app.atlas_data_paths(gone)) == {gone, gone_dir / "atlas_frames", gone_dir / "atlas_files"},
+    str([q.name for q in app.atlas_data_paths(gone)]),
+)
+messagebox.askyesno = lambda *a, **k: True
+app._delete_atlas_data(str(gone.resolve()), "renamed one")
+check(
+    "delete whole atlas and its data",
+    not gone.exists()
+    and not (gone_dir / "atlas_frames").exists()
+    and not (gone_dir / "atlas_files").exists()
+    and shot.exists()
+    and not any(a["name"] == "renamed one" for a in app.known_atlases()),
+    str(sorted(q.name for q in gone_dir.iterdir())),
+)
+kept = work / "kept" / "atlas.json"
+kept.parent.mkdir()
+core.Atlas().save(kept)
+app.remember_atlas(kept, "keep files")
+app._forget_atlas_path(next(a["json"] for a in app.known_atlases() if a["name"] == "keep files"))
+check(
+    "stop tracking an atlas keeps its files",
+    kept.exists() and not any(a["name"] == "keep files" for a in app.known_atlases()),
+)
+
+# the open atlas can be deleted too: the window is cleared first (review)
+open_one = work / "open_one" / "atlas.json"
+open_one.parent.mkdir()
+core.Atlas().save(open_one)
+app.open_atlas(open_one)
+pump(0.3)
+app._delete_atlas_data(str(open_one.resolve()), "open one")
+pump(0.3)
+check(
+    "delete the open atlas: window cleared, files gone",
+    app.path is None
+    and not app.atlas.frames
+    and not open_one.exists()
+    and not (open_one.parent / "atlas_files").exists(),
+    str(app.path),
+)
+
 # background jobs of any kind (auto-add too, not only Add screenshots) keep their atlas: no switching
 # while one runs, a job queued for another atlas is skipped, and closing finishes the step in progress and
 # saves it (closing used to lose it: the save waited for the worker and the window was gone first)

@@ -865,6 +865,10 @@ class AutoAddMixin:
                 self.status.set(val)
             case "tile":  # a sharp ground tile is ready
                 self.request_redraw()
+            case "atlas_cards":  # a thumbnail was written
+                self.refresh_atlas_cards()
+            case "atlas_numbers":
+                self._got_atlas_numbers(val)
             case "progress":
                 self._set_progress(val)
             case "added_names":

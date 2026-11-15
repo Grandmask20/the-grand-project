@@ -199,6 +199,7 @@ class CitiesMixin:
             counts[icon_label(ic)] = counts.get(icon_label(ic), 0) + 1
         self.icon_types = sorted(counts, key=lambda k: (k == "Unidentified badge", k))
         self.add_locks()
+        self._note_atlas_numbers()
         for lm in self.V["landmarks"]:
             if not lm["status"].startswith("removed"):
                 counts[lm["kind"]] = counts.get(lm["kind"], 0) + 1
@@ -592,6 +593,7 @@ class CitiesMixin:
             def write():
                 try:
                     cv2.imencode(".png", canvas)[1].tofile(str(png))
+                    self._write_thumb(canvas)  # the atlas's card in Saved atlases
                     extra = {} if labels is None else {"labels": labels[0], "names": np.array(labels[1])}
                     np.savez_compressed(
                         npz, key=key, origin=np.array(origin, float), weight=weight.astype(np.float16), **extra

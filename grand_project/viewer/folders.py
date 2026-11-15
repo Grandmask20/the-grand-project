@@ -12,14 +12,19 @@ from grand_project import builder, core
 from .settings import save_settings
 
 
+def same_file(a, b) -> bool:
+    """two paths to one atlas file (a relative and an absolute path to the same file are one atlas)"""
+    return Path(a).resolve() == Path(b).resolve()
+
+
 class FoldersMixin:
     # ------------------------------------------------------------------ atlas folders
     def known_atlases(self) -> list[dict]:
         """[{"name", "json"}] known atlases (settings), the open one always included"""
         L = [a for a in self.settings.get("atlases", []) if Path(a["json"]).exists()]
         for extra in (self.path, self.settings.get("last_atlas")):
-            if extra and Path(extra).exists() and not any(Path(a["json"]) == Path(extra) for a in L):
-                L.append({"name": Path(extra).parent.name, "json": str(extra)})
+            if extra and Path(extra).exists() and not any(same_file(a["json"], extra) for a in L):
+                L.append({"name": Path(extra).parent.name, "json": str(Path(extra).resolve())})
         self.settings["atlases"] = L
         return L
 
@@ -35,17 +40,18 @@ class FoldersMixin:
             )
             sub.add_command(label="Rename…", command=lambda k=k: self.rename_atlas(k))
             sub.add_command(label="Remove from this list", command=lambda k=k: self.forget_atlas(k))
-            cur = self.path is not None and Path(a["json"]) == self.path
+            cur = self.path is not None and same_file(a["json"], self.path)
             m.add_cascade(label=("● " if cur else "   ") + a["name"], menu=sub)
         m.add_separator()
         m.add_command(label="Add new atlas… (choose its screenshot folder)", command=self.select_atlas_folder)
-        name = next((a["name"] for a in self.known_atlases() if self.path and Path(a["json"]) == self.path), "")
+        name = next((a["name"] for a in self.known_atlases() if self.path and same_file(a["json"], self.path)), "")
         self.atlas_btn.configure(text=f"Atlas: {name} ▾" if name else "Atlas ▾")
+        self.refresh_atlas_cards()
 
     def remember_atlas(self, json_path: Path, name: str | None = None):
         L = self.known_atlases()
-        if not any(Path(a["json"]) == Path(json_path) for a in L):
-            L.append({"name": name or Path(json_path).parent.name, "json": str(json_path)})
+        if not any(same_file(a["json"], json_path) for a in L):
+            L.append({"name": name or Path(json_path).parent.name, "json": str(Path(json_path).resolve())})
         save_settings(self.settings)
         self.refresh_atlas_menu()
 
