@@ -34,6 +34,8 @@ TRUTH_SETS = [
 
 
 EXTRA_MAPS = TESTS / "truth" / "extra_maps.json"  # maps only: the user's path-marked shots
+EXTRA_BADGES = TESTS / "truth" / "extra_badges.json"  # icon positions only (finder training): 50 crawl shots,
+# the old and new finder's icons as reviewed by the user (paths relative to the test data)
 
 
 DB_PATH = rc_paths.DATABASE
