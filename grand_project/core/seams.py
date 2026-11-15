@@ -60,7 +60,16 @@ from .terrain import _valid_mask_calc
 
 
 def _score(img: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
-    """(score, busyness) of a screenshot at 1/SEAM_SCORE_SCALE size: centrality x how lit; 0..1 edge density"""
+    """Score a screenshot for the clean map, at 1/SEAM_SCORE_SCALE size.
+
+    Args:
+        img: BGR screenshot.
+
+    Returns:
+        (score, busyness): float32 arrays at 1/SEAM_SCORE_SCALE size. score = centrality (distance from the
+        interface / screenshot edge, in full-size px) x how lit (SEAM_DARK..SEAM_LIT, floor SEAM_DARK_FLOOR);
+        busyness = 0..1 edge density.
+    """
     small = cv2.resize(
         img, (img.shape[1] // SEAM_SCORE_SCALE, img.shape[0] // SEAM_SCORE_SCALE), interpolation=cv2.INTER_AREA
     )
@@ -76,13 +85,47 @@ def _score(img: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
 
 
 def _H(atlas, f) -> np.ndarray:
+    """Return a placed screenshot's screen-to-atlas homography.
+
+    Args:
+        atlas: The Atlas.
+        f: A placed screenshot's record from atlas.frames.
+
+    Returns:
+        3x3 homography: screen px -> atlas units.
+    """
     return screen_to_atlas(np.array(f["M"], float), atlas.frame_R(f))
 
 
 class _Grid:
-    """the ownership grid over the atlas (or a region of it) and each screenshot's data on it"""
+    """The ownership grid over the atlas (or a region of it) and each screenshot's data on it.
+
+    Cells are SEAM_GRID atlas units wide.
+
+    Attributes:
+        atlas: The Atlas.
+        frames: The placed screenshot records on the grid (labels are indices into this list).
+        x0: Atlas x of the grid's left edge.
+        y0: Atlas y of the grid's top edge.
+        GW: Grid width in cells.
+        GH: Grid height in cells.
+        Tg: 3x3 map atlas units -> grid cells.
+        shot: Screenshot index -> (gx0, gy0, score, busy) on the grid (float16), or None when off the grid;
+            filled by load.
+        centre: (n, 2) atlas position of each screenshot's centre.
+    """
 
     def __init__(self, atlas, frames, x0, y0, GW, GH):
+        """Set up an empty grid.
+
+        Args:
+            atlas: The Atlas.
+            frames: Placed screenshot records to use.
+            x0: Atlas x of the grid's left edge.
+            y0: Atlas y of the grid's top edge.
+            GW: Grid width in cells.
+            GH: Grid height in cells.
+        """
         self.atlas, self.frames = atlas, frames
         self.x0, self.y0, self.GW, self.GH = x0, y0, GW, GH
         self.Tg = np.array([[1 / SEAM_GRID, 0, -x0 / SEAM_GRID], [0, 1 / SEAM_GRID, -y0 / SEAM_GRID], [0, 0, 1]], float)
@@ -92,6 +135,15 @@ class _Grid:
         )
 
     def window(self, i):
+        """Return the grid cells screenshot i covers.
+
+        Args:
+            i: Screenshot index into frames.
+
+        Returns:
+            (gx0, gy0, w, h, Hg): the window's corner and size in cells and the 3x3 map screen px -> grid cells,
+            or None when the screenshot lies off the grid.
+        """
         f = self.frames[i]
         Hg = self.Tg @ _H(self.atlas, f)
         c = persp(Hg, [[0, 0], [f["w"], 0], [f["w"], f["h"]], [0, f["h"]]])
@@ -102,7 +154,16 @@ class _Grid:
         return int(gx0), int(gy0), int(gx1 - gx0), int(gy1 - gy0), Hg
 
     def load(self, i):
-        """read screenshot i and keep its score / busyness on the grid"""
+        """Read screenshot i and keep its score / busyness on the grid.
+
+        The score is a distance, so it is sampled (no averaging); the busyness is averaged over the cell.
+
+        Args:
+            i: Screenshot index into frames.
+
+        Returns:
+            (gx0, gy0, score, busy) as stored in shot[i], or None when the screenshot lies off the grid.
+        """
         win = self.window(i)
         if win is None:
             self.shot[i] = None
@@ -118,7 +179,20 @@ class _Grid:
         return self.shot[i]
 
     def off_middle(self, i, gx0, gy0, w, h):
-        """0 (screen middle) .. 1 (corner) for each cell of screenshot i's window"""
+        """Return 0 (screen middle) .. 1 (corner) for each cell of screenshot i's window.
+
+        See _off_middle; positions are converted to a 1920x1080 screen.
+
+        Args:
+            i: Screenshot index into frames.
+            gx0: Window's left cell.
+            gy0: Window's top cell.
+            w: Window width in cells.
+            h: Window height in cells.
+
+        Returns:
+            (h, w) float32 array.
+        """
         f = self.frames[i]
         Hs = np.linalg.inv(self.Tg @ _H(self.atlas, f))
         gx, gy = np.meshgrid(np.arange(w, dtype=np.float64) + gx0 + 0.5, np.arange(h, dtype=np.float64) + gy0 + 0.5)
@@ -129,9 +203,18 @@ class _Grid:
 
 
 def _off_middle(x, y):
-    """how far a screen spot (1920x1080 px) is from the screenshot's well-seen middle: 0 at its middle, 1 on the
-    edge of MIDDLE (a trapezoid: the tilted camera sees the ground near the screen's bottom steeper), more
-    outside it"""
+    """Measure how far a screen spot is from the screenshot's well-seen middle.
+
+    0 at its middle, 1 on the edge of MIDDLE (a trapezoid, SEAM_MIDDLE_TOP / SEAM_MIDDLE_BOTTOM: the tilted
+    camera sees the ground near the screen's bottom steeper), more outside it.
+
+    Args:
+        x: Screen x on a 1920x1080 screen (px), array.
+        y: Screen y on a 1920x1080 screen (px), same shape.
+
+    Returns:
+        float32 array of the same shape.
+    """
     (ty, thw), (by, bhw) = SEAM_MIDDLE_TOP, SEAM_MIDDLE_BOTTOM
     hw = np.maximum(thw + (bhw - thw) * (y - ty) / (by - ty), 150.0)
     my, hh = (ty + by) / 2, (by - ty) / 2
@@ -139,13 +222,35 @@ def _off_middle(x, y):
 
 
 def _data(s, e):
-    """cost of taking each spot from a screenshot: off its middle (e), near its edge / HUD or in fog (s)"""
+    """Cost of taking each spot from a screenshot: off its middle (e), near its edge / HUD or in fog (s).
+
+    Args:
+        s: Score of the screenshot on the grid (see _score).
+        e: Off-middle measure on the grid (see _off_middle), same shape.
+
+    Returns:
+        (cost, feasible): float32 cost per cell, and a bool array of the cells the screenshot can give
+        (score > 0.5).
+    """
     s = s.astype(np.float32)
     return SEAM_DATA_W * np.minimum(e, 1.6) ** 2 + SEAM_EDGE_W * (1.0 - np.minimum(1.0, s / SEAM_S_FULL)), s > 0.5
 
 
 def _protect(atlas, grid) -> np.ndarray:
-    """extra seam weight per cell: map nodes and icons (whole from one screenshot), paths"""
+    """Extra seam weight per cell: map nodes and icons (whole from one screenshot), paths.
+
+    Cores are each map node with its icon row (the hull of the icons and their map node: one piece), plus icons
+    whose map node wasn't found (the icons still mark a map node under them). Seams must not cut a core; near
+    one they cost more, falling off with distance, so where they have to pass between crowded map nodes they
+    keep to the middle of the gap. Uses the atlas-wide result (atlas.final); nothing is protected without it.
+
+    Args:
+        atlas: The Atlas.
+        grid: The _Grid.
+
+    Returns:
+        (GH, GW) float32 extra weight.
+    """
     fin = atlas.final or {}
     out = np.zeros((grid.GH, grid.GW), np.float32)
     g = lambda x, y: (int(round((x - grid.x0) / SEAM_GRID)), int(round((y - grid.y0) / SEAM_GRID)))  # noqa: E731
@@ -181,21 +286,60 @@ def _protect(atlas, grid) -> np.ndarray:
 
 
 def _pq(a, axis):
-    """both sides (p, q) of every neighbour pair along an axis, flattened"""
+    """Return both sides (p, q) of every neighbour pair along an axis, flattened.
+
+    Args:
+        a: 2-D array.
+        axis: 0 for vertical neighbours, 1 for horizontal neighbours.
+
+    Returns:
+        (p, q) 1-D arrays.
+    """
     if axis == 1:
         return a[:, :-1].ravel(), a[:, 1:].ravel()
     return a[:-1, :].ravel(), a[1:, :].ravel()
 
 
 def _seam(la, ea, cxa, cya, lb, eb, cxb, cyb, w):
-    """seam cost between neighbouring cells owned by la / lb (0 where the same, or one side is empty)"""
+    """Seam cost between neighbouring cells owned by la / lb (0 where the same, or one side is empty).
+
+    The cost grows with how far off the middle both sides are and how far apart the two screenshots' centres are.
+
+    Args:
+        la: Owner (screenshot index, -1 = none) of the first cells.
+        ea: Off-middle measure of the first cells in their owner.
+        cxa: Atlas x of the first owner's centre.
+        cya: Atlas y of the first owner's centre.
+        lb: Owner of the second cells.
+        eb: Off-middle measure of the second cells in their owner.
+        cxb: Atlas x of the second owner's centre.
+        cyb: Atlas y of the second owner's centre.
+        w: Seam weight of the pair (see _protect and busyness).
+
+    Returns:
+        Array of seam costs, one per pair.
+    """
     d = np.hypot(cxa - cxb, cya - cyb) / 1000.0
     c = w * (1.0 + SEAM_OFF_W * (ea + eb) + SEAM_SHIFT_W * d)
     return np.where((la != lb) & (la >= 0) & (lb >= 0), c, 0.0)
 
 
 def _expand(grid, i, L, U, E, Wt):
-    """one alpha expansion: hand screenshot i every cell where that lowers the total cost. Returns cells moved."""
+    """One alpha expansion: hand screenshot i every cell where that lowers the total cost.
+
+    Solved as a minimum cut over the cells screenshot i could take. L, U and E are updated in place.
+
+    Args:
+        grid: The _Grid (screenshot i must be loaded).
+        i: Screenshot index.
+        L: (GH, GW) int32 owner of each cell (-1 = none).
+        U: (GH, GW) float32 data cost of each cell in its owner.
+        E: (GH, GW) float32 off-middle measure of each cell in its owner.
+        Wt: (GH, GW) float32 seam weight per cell.
+
+    Returns:
+        Number of cells moved to screenshot i.
+    """
     sh = grid.shot.get(i)
     if sh is None:
         return 0
@@ -263,8 +407,23 @@ def _expand(grid, i, L, U, E, Wt):
 
 
 def clean_composite(atlas, max_pixels: int = 36_000_000, region=None, log=None):
-    """(canvas, (x0, y0, scale), weight, labels, frame names): the stitched map with clean seams.
-    region = (x0, y0, x1, y1) in atlas units builds only that part (tests, previews)."""
+    """Build the stitched map with clean seams.
+
+    1. every screenshot on the grid, starting from the cheapest one per cell (no seams counted yet); 2. graph
+    cuts: each screenshot in turn takes over the cells where that makes the whole map cheaper (up to
+    SEAM_CYCLES rounds); 3. the ownership grid onto the canvas, and the map drawn from it. The weight is each
+    spot's score in the quick map's units, so later quick adds take over only where more central.
+
+    Args:
+        atlas: The Atlas.
+        max_pixels: Largest canvas size in pixels; bigger maps are scaled down.
+        region: (x0, y0, x1, y1) in atlas units builds only that part (tests, previews); None for everything.
+        log: Optional function taking one progress line.
+
+    Returns:
+        (canvas, (x0, y0, scale), weight, labels, frame names): BGR canvas, its origin, (h, w) float32 weight,
+        (h, w) int16 owner per canvas pixel (index into frame names, -1 = none), and the screenshot names.
+    """
     frames = [f for f in atlas.frames if Path(f["path"]).exists()]
     if not frames:
         z = np.zeros((1, 1), np.float32)
@@ -353,6 +512,18 @@ def clean_composite(atlas, max_pixels: int = 36_000_000, region=None, log=None):
 
 
 def _roi(Hc, f, CW, CH):
+    """Return the canvas box a screenshot lands in.
+
+    Args:
+        Hc: 3x3 map screen px -> canvas px.
+        f: Placed screenshot record (w, h).
+        CW: Canvas width in px.
+        CH: Canvas height in px.
+
+    Returns:
+        (bx0, by0, (w, h), Hroi): box corner, box size and the 3x3 map screen px -> box px; None when the
+        screenshot misses the canvas.
+    """
     c = persp(Hc, [[0, 0], [f["w"], 0], [f["w"], f["h"]], [0, f["h"]]])
     bx0, by0 = np.maximum(np.floor(c.min(axis=0)).astype(int), 0)
     bx1, by1 = np.minimum(np.ceil(c.max(axis=0)).astype(int), [CW, CH])
@@ -363,8 +534,15 @@ def _roi(Hc, f, CW, CH):
 
 
 def main(argv=None):
-    """python -m grand_project.core.seams ATLAS_PICKLE OUT_NPZ MAX_PIXELS: build the clean map in a process of
-    its own (the viewer stays responsive). Progress lines on stdout; the result saved to OUT_NPZ."""
+    """Build the clean map in a process of its own (the viewer stays responsive).
+
+    Usage: python -m grand_project.core.seams ATLAS_PICKLE OUT_NPZ MAX_PIXELS. Progress lines on stdout; the
+    result (canvas, origin, weight, labels, names) saved to OUT_NPZ. The pickle is written by this program's
+    viewer a moment ago, in a private folder.
+
+    Args:
+        argv: [ATLAS_PICKLE, OUT_NPZ, MAX_PIXELS]; None reads sys.argv.
+    """
     import pickle
     import sys
 

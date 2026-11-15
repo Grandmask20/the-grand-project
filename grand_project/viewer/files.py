@@ -9,8 +9,17 @@ from grand_project import core
 
 
 class FilesMixin:
+    """File menu actions of the Viewer window: open an atlas and start a new one.
+
+    A mixin of the Viewer class (viewer/app.py); runs on the window (Tk) thread.
+    """
+
     # ------------------------------------------------------------------ files
     def ask_open(self):
+        """Asks for an atlas JSON file and opens it (File > Open atlas, Ctrl/Cmd+O).
+
+        Refused while screenshots are being added; unsaved changes are saved first.
+        """
         if self.working():
             self.status.set("wait until the screenshots being added are done")
             return
@@ -22,6 +31,11 @@ class FilesMixin:
             self.open_atlas(Path(p))
 
     def new_atlas(self):
+        """Asks where to save a new, empty atlas, creates it there and opens it (File > New atlas).
+
+        Refused while screenshots are being added; unsaved changes are saved first. The new atlas becomes
+        the last atlas, opened at the next start.
+        """
         if self.working():
             self.status.set("wait until the screenshots being added are done")
             return

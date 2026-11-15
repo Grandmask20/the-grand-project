@@ -47,7 +47,15 @@ LM_KINDS = {
 
 
 def loose_maps(img: np.ndarray, taken: np.ndarray) -> list[tuple[int, int, float]]:
-    """bright small blobs (map-base glow) the detector did not keep: candidates for missed maps"""
+    """Find bright small blobs (map-base glow) the detector did not keep: candidates for missed maps.
+
+    Args:
+        img: BGR screenshot.
+        taken: (n, 2) map nodes the detector kept, screen px; blobs within 16 px of one are left out.
+
+    Returns:
+        Up to LOOSE_PER_SHOT (x, y, strength) candidates in screen px, strongest first.
+    """
     v = cv2.cvtColor(img, cv2.COLOR_BGR2HSV)[..., 2].astype(np.float32)
     dog = cv2.GaussianBlur(v, (0, 0), 2) - cv2.GaussianBlur(v, (0, 0), 7)
     mx = cv2.dilate(dog, np.ones((21, 21), np.uint8))
@@ -62,11 +70,33 @@ def loose_maps(img: np.ndarray, taken: np.ndarray) -> list[tuple[int, int, float
 
 
 def crop(img, x, y, w, h):
+    """Cut a w x h tile centred on a point; parts past the image edge are black.
+
+    Args:
+        img: BGR image.
+        x: Centre x, px.
+        y: Centre y, px.
+        w: Tile width, px.
+        h: Tile height, px.
+
+    Returns:
+        (h, w, 3) copy of the tile.
+    """
     big = cv2.copyMakeBorder(img, h, h, w, w, cv2.BORDER_CONSTANT)
     return big[int(y) + h - h // 2 : int(y) + h - h // 2 + h, int(x) + w - w // 2 : int(x) + w - w // 2 + w].copy()
 
 
 def label_tile(t, text, col):
+    """Draw a coloured border and a numbered label on a sheet tile.
+
+    Args:
+        t: BGR tile, drawn on in place.
+        text: Label text (the tile's id).
+        col: BGR border colour.
+
+    Returns:
+        The same tile.
+    """
     cv2.rectangle(t, (0, 0), (t.shape[1] - 1, t.shape[0] - 1), col, 2)
     cv2.putText(t, text, (3, 12), 0, 0.38, (0, 0, 0), 3, cv2.LINE_AA)
     cv2.putText(t, text, (3, 12), 0, 0.38, (255, 255, 255), 1, cv2.LINE_AA)
@@ -74,6 +104,17 @@ def label_tile(t, text, col):
 
 
 def grid(rows: list[tuple[str, list[np.ndarray]]], per_row: int, tw: int, th: int) -> np.ndarray:
+    """Lay tiles out as a contact sheet: a title bar per row group, then the tiles, per_row to a line.
+
+    Args:
+        rows: List of (title, tiles).
+        per_row: Tiles per line.
+        tw: Tile width, px.
+        th: Tile height, px.
+
+    Returns:
+        The sheet as a BGR image (a small black image when there are no rows).
+    """
     lines = []
     for title, tiles in rows:
         head = np.full((20, per_row * tw, 3), 30, np.uint8)
@@ -87,6 +128,18 @@ def grid(rows: list[tuple[str, list[np.ndarray]]], per_row: int, tw: int, th: in
 
 
 def cmd_sheet(a) -> int:
+    """Run "sheet": make the three numbered labelling sheets and truth_key.json.
+
+    Each screenshot with a cached detection gets a letter (A, B, ...). Map tiles are the detector's map nodes
+    (green) plus loose candidates it rejected (red); landmark tiles are the detector's landmarks plus every
+    Deadly Map Boss icon not already covered; icon tiles are grouped in rows by the detector's name.
+
+    Args:
+        a: Parsed arguments (shots, cache, out).
+
+    Returns:
+        Exit code 0.
+    """
     out = Path(a.out)
     out.mkdir(parents=True, exist_ok=True)
     shots = sorted(Path(a.shots).glob("*.png"))
@@ -155,8 +208,17 @@ def cmd_sheet(a) -> int:
 
 
 def cmd_more(a) -> int:
-    """another labelling round: a new detector's maps that are not on the sheets yet (yellow, counted as
-    maps unless you name them). --proposals is JSON {screenshot name: [[x, y, score], ...]}."""
+    """Run "more": another labelling round for a new detector's maps that are not on the sheets yet.
+
+    They are drawn yellow and counted as maps unless you name them. --proposals is JSON {screenshot name:
+    [[x, y, score], ...]}. Writes truth_maps_round<N>.png and updates truth_key.json.
+
+    Args:
+        a: Parsed arguments (out, proposals).
+
+    Returns:
+        Exit code 0.
+    """
     out = Path(a.out)
     key = json.loads((out / "truth_key.json").read_text(encoding="utf-8"))
     props = json.loads(Path(a.proposals).read_text(encoding="utf-8"))
@@ -231,6 +293,14 @@ NOT_WORDS = [
 
 
 def _flags(t: str) -> list[str]:
+    """Pick the flags out of a note: offcenter, hidden, ui, occluded, completed, special.
+
+    Args:
+        t: The note, lower case.
+
+    Returns:
+        List of flags.
+    """
     f = []
     if re.search(r"off ?cent", t):
         f.append("offcenter")
@@ -248,11 +318,27 @@ def _flags(t: str) -> list[str]:
 
 
 def _city_type(t: str) -> str | None:
+    """Pick the city type named in a note.
+
+    Args:
+        t: The note, lower case.
+
+    Returns:
+        "Vaal", "Faridun" or "Ezomyte", or None.
+    """
     return next((c.title() for c in ("vaal", "faridun", "ezomyte") if c in t), None)
 
 
 def classify_map(text: str) -> dict:
-    """one of your map-tile notes -> {state: map/maybe/not, what, flags, landmark, city_type}"""
+    """Read one of your map-tile notes.
+
+    Args:
+        text: The note written after a map tile's id.
+
+    Returns:
+        {state: map/maybe/not (None when unreadable), what (what a non-map is), flags, landmark (City / Hall /
+        Tower / Deadly boss map on a map), city_type}.
+    """
     t = text.lower().replace("'", "")
     out = {"state": None, "what": "", "flags": _flags(t), "landmark": "", "city_type": _city_type(t)}
     if "could be a node" in t:
@@ -301,6 +387,15 @@ def classify_map(text: str) -> dict:
 
 
 def classify_landmark(text: str, detector: str) -> dict:
+    """Read one of your landmark-tile notes.
+
+    Args:
+        text: The note written after a landmark tile's id.
+        detector: The detector's call for that tile (kept when the note names no kind).
+
+    Returns:
+        {kind ("" = not a landmark), city_type, flags}.
+    """
     t = text.lower()
     f = _flags(t)
     if "another map" in t:
@@ -325,6 +420,17 @@ def classify_landmark(text: str, detector: str) -> dict:
 
 
 def _badge_name(text: str, known: set[str]) -> tuple[str | None, list[str]]:
+    """Read an icon name from a note.
+
+    An exact known name (letters only) wins; otherwise your words in BADGE_WORDS are checked in order.
+
+    Args:
+        text: The note.
+        known: Known icon names.
+
+    Returns:
+        (name or None, flags): flags is ["ui"] when the note says the icon is behind the UI.
+    """
     t = text.lower()
     flags = ["ui"] if re.search(r"behind( the)? ui", t) else []
     t = re.sub(r"behind( the)? ui", "", t)
@@ -339,8 +445,19 @@ def _badge_name(text: str, known: set[str]) -> tuple[str | None, list[str]]:
 
 
 def _segments(line: str, rx: re.Pattern, letter_ok: bool) -> list[tuple[str, str]]:
-    """ids in a line, each with the note that follows it (ids with no note share the next note);
-    'f69-f98' is a range; a bare number after an id keeps that id's letter ('c122 139')"""
+    """Split a line into ids, each with the note that follows it.
+
+    Ids with no note share the next note; 'f69-f98' is a range; a bare number after an id keeps that id's
+    letter ('c122 139').
+
+    Args:
+        line: One line of labels.txt.
+        rx: Id pattern (MAP_ID or BADGE_ID).
+        letter_ok: True for map ids (letter + number), False for icon ids (B + number).
+
+    Returns:
+        List of (id, note).
+    """
     for m in RANGE.finditer(line):
         if m.group(1).lower() == m.group(3).lower():
             ids = " ".join(f"{m.group(1)}{n}" for n in range(int(m.group(2)), int(m.group(4)) + 1))
@@ -368,7 +485,18 @@ def _segments(line: str, rx: re.Pattern, letter_ok: bool) -> list[tuple[str, str
 
 
 def parse_notes(path: Path, key: dict) -> dict:
-    """labels.txt (free text or the short syntax) -> per-tile decisions + lines it could not read"""
+    """Read labels.txt (free text or the short syntax) into per-tile decisions.
+
+    Section headings (maps / landmarks / badges and similar words) switch which tiles bare ids refer to.
+
+    Args:
+        path: The labels file.
+        key: truth_key.json contents (tile ids -> screenshot, position, detector call).
+
+    Returns:
+        {maps: {id: classify_map result}, landmarks: {id: classify_landmark result}, badges: {id: (name,
+        flags)}, rows: {row id: name}, unclear: lines it could not read}.
+    """
     known = set(key["rows"].values()) | {w[1] for w in BADGE_WORDS}
     maps, lms, badges, rows, unclear = {}, {}, {}, {}, []
     section = "maps"
@@ -446,6 +574,17 @@ def parse_notes(path: Path, key: dict) -> dict:
 
 
 def cmd_save(a) -> int:
+    """Run "save": turn your labels into truth.json.
+
+    Unlabelled tiles keep the detector's call. Landmarks and Expedition ship markers named on map tiles are
+    added; whole-row icon corrections apply to every icon of that row without its own label.
+
+    Args:
+        a: Parsed arguments (out, labels).
+
+    Returns:
+        Exit code 0.
+    """
     out = Path(a.out)
     key = json.loads((out / "truth_key.json").read_text(encoding="utf-8"))
     n = parse_notes(Path(a.labels), key)
@@ -531,7 +670,16 @@ MAP_R, MAP_R_OFF, LM_R, BADGE_R = 20, 45, 90, 14
 
 
 def _match(pred: list, truth: list, radius) -> tuple[list, list, list]:
-    """greedy nearest pairs; radius may be a function of the truth item. -> (pairs, unmatched pred, unmatched truth)"""
+    """Pair predictions with truth items, greedy nearest pairs first.
+
+    Args:
+        pred: Predicted items (dicts with x, y).
+        truth: Truth items (dicts with x, y).
+        radius: Largest pair distance in px, or a function of the truth item giving it.
+
+    Returns:
+        (pairs, unmatched pred, unmatched truth): pairs as (pred index, truth index), then the unpaired indices.
+    """
     cand = []
     for i, p in enumerate(pred):
         for j, t in enumerate(truth):
@@ -551,8 +699,18 @@ _ICON_CLEAR: list = []
 
 
 def _icon_visible(x: float, y: float) -> bool:
-    """is a labelled icon's whole rim on screen and clear of the HUD (1920x1080)? The finder leaves the others
-    out on purpose (another screenshot shows them whole), so they don't count either way."""
+    """Tell whether a labelled icon's whole rim is on screen and clear of the HUD (1920x1080).
+
+    The finder leaves the others out on purpose (another screenshot shows them whole), so they don't count
+    either way.
+
+    Args:
+        x: Icon x, screen px.
+        y: Icon y, screen px.
+
+    Returns:
+        True when the icon is wholly visible.
+    """
     if not _ICON_CLEAR:
         from grand_project.detect.constants import ICON_CLEAR
 
@@ -566,10 +724,20 @@ def _icon_visible(x: float, y: float) -> bool:
 
 
 def score(truth: dict, outputs: dict) -> dict:
-    """compare detector outputs {shot name: {nodes, landmarks, icons}} with truth.json.
+    """Compare detector outputs with truth.json.
+
     Maps hidden behind the HUD and 'maybe' spots never count against the detector; misses are split
     into plainly visible ones and hidden/occluded ones. Icons not wholly visible (HUD / screen edge) count
-    neither way (the finder leaves them out on purpose)."""
+    neither way (the finder leaves them out on purpose).
+
+    Args:
+        truth: truth.json contents {shot name: {maps, maybe, not_maps, landmarks, badges}}.
+        outputs: Detector outputs {shot name: {nodes, landmarks, icons}}.
+
+    Returns:
+        {maps: {tp, fp, miss_visible, miss_hidden, fp_what, precision, recall_visible}, landmarks: {kind: {tp,
+        fp, fn}}, badges: {right, wrong, extra, missed, confusion}}.
+    """
     s = {
         "maps": {"tp": 0, "fp": 0, "miss_visible": 0, "miss_hidden": 0, "fp_what": {}},
         "landmarks": {},
@@ -636,6 +804,11 @@ def score(truth: dict, outputs: dict) -> dict:
 
 
 def print_score(s: dict) -> None:
+    """Print a score from score() as a short report.
+
+    Args:
+        s: The score dict.
+    """
     m = s["maps"]
     print(
         f"maps: {m['tp']} right, {m['fp']} wrong, {m['miss_visible']} visible missed, "
@@ -653,6 +826,14 @@ def print_score(s: dict) -> None:
 
 
 def cmd_score(a) -> int:
+    """Run "score": score the cached detector outputs of the screenshots against truth.json.
+
+    Args:
+        a: Parsed arguments (truth, shots, cache).
+
+    Returns:
+        Exit code 0.
+    """
     truth = json.loads(Path(a.truth).read_text(encoding="utf-8"))
     outputs = {}
     for p in Path(a.shots).glob("*.png"):
@@ -666,6 +847,11 @@ def cmd_score(a) -> int:
 
 
 def main() -> int:
+    """Parse the command line and run the chosen command (sheet, save, more, score).
+
+    Returns:
+        The command's exit code.
+    """
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     sub = ap.add_subparsers(dest="cmd", required=True)
     s = sub.add_parser("sheet")

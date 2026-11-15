@@ -36,9 +36,18 @@ from .terrain import _valid_mask, terrain_ncc
 
 # ------------------------------------------------------------------ terrain verification
 def find_screenshot(p: str, atlas_dir: Path) -> str:
-    """a screenshot path saved in an atlas, wherever the atlas now is: relative paths are relative to the
-    atlas file; an absolute path that no longer exists (atlas folder moved, or copied to another computer)
-    falls back to the same file name next to the atlas"""
+    """Find a screenshot path saved in an atlas, wherever the atlas now is.
+
+    Relative paths are relative to the atlas file; an absolute path that no longer exists (atlas folder moved,
+    or copied to another computer) falls back to the same file name next to the atlas.
+
+    Args:
+        p: The path as saved in the atlas.
+        atlas_dir: Folder of the atlas file.
+
+    Returns:
+        The path to use (unchanged when nothing better is found).
+    """
     q = Path(p)
     if not q.is_absolute():
         return str((atlas_dir / q).resolve())
@@ -49,7 +58,31 @@ def find_screenshot(p: str, atlas_dir: Path) -> str:
 
 # ------------------------------------------------------------------ the atlas
 class Atlas:
+    """The stitched atlas: placed screenshots and the map nodes, paths, landmarks and icons merged from them.
+
+    Positions are in atlas units (the first screenshot's flat map coordinates).
+
+    Attributes:
+        nodes: Merged map nodes {x, y, n, frames, tower, icon, hidden, guessed_in, sources}; n = times seen.
+        edges: Paths keyed by (node index, node index) -> {seen, could, confirmed}.
+        landmarks: Merged landmarks {kind, x, y, n, conf, source}.
+        bookmarks: {name, category, note, x, y} set in the viewer.
+        icons: Every icon (badge), merged across screenshots {name, x, y, bx, by, n, frames, score, source};
+            (bx, by) is the map base under the icon's row.
+        final: Atlas-wide clean-up result (atlas_finalize), or None.
+        city_types: {x, y, type} cities whose type was set by hand.
+        city_auto: {x, y, d: [..]} cached look-alike distances per city type.
+        landmark_edits: {x, y, kind[, on]} set by hand in the viewer; kind "" = deleted.
+        biome_edits: {"biome": "Vaal city"... or "" (none), "maps": [[x, y], ...]} lassoed by hand.
+        locks: {x, y, n} hand icons = locked Breach strongholds.
+        lock_scanned: Screenshots already searched for the hand icon.
+        frames: Placed screenshots {name, path, sha, w, h, M, horizon, stats, new_nodes, matched_nodes,
+            hud_nodes_dropped}.
+        frames_dir: Folder of the saved detections (set by load and save).
+    """
+
     def __init__(self):
+        """Create an empty atlas."""
         self.nodes: list[dict] = []  # {x,y,n,frames,tower}
         self.edges: dict[tuple[int, int], dict] = {}
         self.landmarks: list[dict] = []
@@ -74,6 +107,17 @@ class Atlas:
     _image_lock = threading.Lock()  # the viewer reads images while a worker places
 
     def image(self, path: str) -> np.ndarray:
+        """Return a screenshot image, read through a small most-recently-used cache.
+
+        IMAGE_CACHE decoded screenshots are kept (~6 MB each; a terrain check of one screenshot reads ~60
+        neighbours). Thread-safe: the viewer reads images while a worker places.
+
+        Args:
+            path: Screenshot file path.
+
+        Returns:
+            BGR image as read by read_screenshot.
+        """
         with Atlas._image_lock:
             if path in self._images:
                 img = self._images.pop(path)
@@ -87,15 +131,38 @@ class Atlas:
         return img
 
     def points(self) -> np.ndarray:
+        """Return the atlas's map node positions.
+
+        Returns:
+            (n, 2) float array of atlas points.
+        """
         return np.array([[n["x"], n["y"]] for n in self.nodes], float).reshape(-1, 2)
 
     @staticmethod
     def frame_R(f: dict) -> np.ndarray:
+        """Return the rectifier of a placed screenshot.
+
+        Args:
+            f: A placed screenshot's record from Atlas.frames.
+
+        Returns:
+            3x3 homography: screen px -> flat map coords.
+        """
         return rectifier(f["w"], f["h"], f.get("horizon"))
 
     def central_views(self, x: float, y: float, n: int = 3, limit: float = 0.42):
-        """the n screenshots showing atlas point (x, y) closest to their middle, as
-        (offset from the middle 0..0.5, frame, screen point); only those with offset < limit"""
+        """Find the screenshots that show an atlas point closest to their middle.
+
+        Args:
+            x: Atlas x (atlas units).
+            y: Atlas y (atlas units).
+            n: Most screenshots to return.
+            limit: Only screenshots where the point's offset from the middle is under this (0..0.5, as a fraction of
+                the width / height).
+
+        Returns:
+            Up to n (offset from the middle 0..0.5, frame record, screen point) tuples, most central first.
+        """
         out = []
         for f in self.frames:
             Hi = np.linalg.inv(screen_to_atlas(np.array(f["M"], float), self.frame_R(f)))
@@ -106,6 +173,11 @@ class Atlas:
         return sorted(out, key=lambda t: t[0])[:n]
 
     def footprints(self):
+        """Return every placed screenshot's footprint.
+
+        Returns:
+            List of (M, w, h, R) per placed screenshot: 2x3 placement, size in px and 3x3 rectifier.
+        """
         return [(np.array(f["M"], float), f["w"], f["h"], self.frame_R(f)) for f in self.frames]
 
     # -------- adding frames
@@ -117,9 +189,22 @@ class Atlas:
         seeds: list | None = None,
         commit: bool = True,
     ) -> Registration:
-        """Place by the map layout; when too few maps are in the overlap (fog at the atlas edge,
-        big pans), fall back to terrain features against the screenshots named in `hints`.
-        commit=False only works out the placement (reg.ok, reg.M); commit it with commit_frame."""
+        """Place a screenshot by the map layout, with terrain as the fallback.
+
+        When too few maps are in the overlap (fog at the atlas edge, big pans), fall back to terrain features
+        against the screenshots named in `hints`. The first screenshot is placed at the origin.
+        commit=False only works out the placement (reg.ok, reg.M); commit it with commit_frame.
+
+        Args:
+            frame: The new screenshot.
+            verify: Check the placement with terrain correlation (and allow the terrain fallbacks).
+            hints: Names of placed screenshots to try terrain features against when the maps don't decide it.
+            seeds: Shifts to try first when the maps fail, each (shift, label[, where the terrain lines up]).
+            commit: Add the screenshot to the atlas when placed.
+
+        Returns:
+            The Registration; reg.ok False with reg.reason when it could not be placed.
+        """
         if any(f["sha"] == frame.sha for f in self.frames):
             return Registration(False, "this screenshot is already in the atlas")
         if not self.frames:
@@ -162,11 +247,23 @@ class Atlas:
         return reg
 
     def place_near(self, frame: Frame, x: float, y: float, near: float = 900.0, strict: bool = False) -> Registration:
-        """Line up a screenshot dropped by hand with its centre near (x, y) in atlas coordinates:
-        only placements within `near` of that spot count (maps first, then terrain).  Does not
+        """Line up a screenshot dropped by hand with its centre near (x, y) in atlas coordinates.
+
+        Only placements within `near` of that spot count (maps first, then terrain).  Does not
         commit; reg.ok False when nothing near there fits.  strict=True keeps the normal evidence
         thresholds (the spot is only a search hint, e.g. what the window shows); otherwise the
-        spot counts as evidence (a hand drop) and fewer agreeing maps are accepted."""
+        spot counts as evidence (a hand drop) and fewer agreeing maps are accepted.
+
+        Args:
+            frame: The dropped screenshot.
+            x: Atlas x of the drop point (atlas units).
+            y: Atlas y of the drop point (atlas units).
+            near: Largest distance from the drop point to the placement's shift (atlas units).
+            strict: Keep the normal evidence thresholds.
+
+        Returns:
+            The Registration; when nothing fits, reg.ok is False and reg.M is a plain shift to (x, y).
+        """
         if any(f["sha"] == frame.sha for f in self.frames):
             return Registration(False, "this screenshot is already in the atlas")
         seed = np.array([x, y], float)
@@ -217,9 +314,19 @@ class Atlas:
         return best
 
     def _parallax_ok(self, frame: Frame, reg: Registration) -> bool:
-        """Mountainous ground: raised maps shift up to ~45 units between screenshots, so few land
-        within the 5 px the agreement count uses.  Second chance: enough exact matches AND most
-        maps within PARALLAX_TOL (wrong spots stay under 20% there; the terrain check follows)."""
+        """Give a placement a second chance on mountainous ground.
+
+        Raised maps shift up to ~45 units between screenshots, so few land within the 5 px the agreement count
+        uses.  Second chance: enough exact matches AND most maps within PARALLAX_TOL (wrong spots stay under 20%
+        there; the terrain check follows).
+
+        Args:
+            frame: The new screenshot.
+            reg: Its placement from register; reg.reason is set when accepted.
+
+        Returns:
+            True when the looser agreement is enough.
+        """
         if reg.M is None or reg.inliers < PARALLAX_MIN_INLIERS:
             return False
         src = frame.pts[frame.usable]
@@ -233,12 +340,29 @@ class Atlas:
         return False
 
     def commit_frame(self, frame: Frame, reg: Registration) -> None:
-        """add a frame placed with add_frame(..., commit=False)"""
+        """Add a frame placed with add_frame(..., commit=False) (nothing happens if it is already in).
+
+        Args:
+            frame: The screenshot.
+            reg: Its accepted placement.
+        """
         if any(f["sha"] == frame.sha for f in self.frames):
             return
         self._ingest(frame, reg.M, reg)
 
     def _ingest(self, frame: Frame, M: np.ndarray, reg: Registration) -> None:
+        """Merge a placed screenshot's map nodes, paths, landmarks and icons into the atlas.
+
+        Map nodes merge one-to-one with the closest atlas node within MERGE_TOL (closest pairs first; positions
+        averaged), otherwise they are added; a "node" on the game UI never enters the atlas. A path counts as seen
+        when this screenshot shows it and "could" be seen when both of its ends are visible here. Landmarks of the
+        same kind within LANDMARK_MERGE merge. The screenshot's record is appended to `frames`.
+
+        Args:
+            frame: The screenshot.
+            M: Its 2x3 placement (flat map coordinates -> atlas).
+            reg: Its Registration (stats and reason are stored; reason defaults to "merged").
+        """
         moved = apply(M, frame.pts)
         atlas_pts = self.points()
         mapping: dict[int, int] = {}
@@ -351,7 +475,15 @@ class Atlas:
         )
 
     def _verify(self, frame: Frame, reg: Registration) -> None:
-        """terrain NCC against the placed screenshots that overlap the new one most"""
+        """Terrain NCC against the placed screenshots that overlap the new one most.
+
+        Sets reg.ncc (best correlation, at least 0), reg.ncc_pixels and reg.ref_frame. Screenshots whose centres
+        are more than 1.6 screen widths apart are skipped.
+
+        Args:
+            frame: The new screenshot.
+            reg: Its proposed placement (reg.M); updated in place.
+        """
         img_new = self.image(frame.path)
         best_ncc, best_n, best_ref = -1.0, 0, ""
         H_new = screen_to_atlas(reg.M, frame.R)
@@ -370,6 +502,19 @@ class Atlas:
     _feat_cache: dict = {}
 
     def _features(self, path: str, R: np.ndarray):
+        """Return SIFT terrain features of a screenshot in flattened coordinates (cached).
+
+        6000 features: dark / foggy screenshots need many to find enough matches. Up to 300 screenshots are cached
+        with float16 descriptors (~1 MB each).
+
+        Args:
+            path: Screenshot file path (the cache key).
+            R: The screenshot's 3x3 rectifier.
+
+        Returns:
+            (pts, desc): (n, 2) feature positions in flat map coordinates and (n, 128) float32 descriptors
+            (None when there are none).
+        """
         key = path
         if key in Atlas._feat_cache:
             pts, d16 = Atlas._feat_cache[key]
@@ -384,9 +529,18 @@ class Atlas:
         return pts, d
 
     def _terrain_register(self, frame: Frame, hints: list[str]) -> Registration | None:
-        """Shift from terrain features (flattened coordinates) against hinted screenshots.  The
-        game reuses identical terrain pieces in different places, so the result must also pass a
-        stricter whole-overlap terrain check, and any maps in the overlap must agree."""
+        """Find a shift from terrain features (flattened coordinates) against hinted screenshots.
+
+        The game reuses identical terrain pieces in different places, so the result must also pass a
+        stricter whole-overlap terrain check, and any maps in the overlap must agree.
+
+        Args:
+            frame: The new screenshot.
+            hints: Names of placed screenshots to match against.
+
+        Returns:
+            An accepted Registration (see _check_shift), or None.
+        """
         by_name = {f["name"]: f for f in self.frames}
         pn, dn = self._features(frame.path, frame.R)
         if dn is None or len(pn) < 50:
@@ -422,10 +576,23 @@ class Atlas:
     def _check_shift(
         self, frame: Frame, shift: np.ndarray, label: str, terrain_at: np.ndarray | None = None
     ) -> Registration | None:
-        """Accept a terrain-proposed shift only if the whole overlap correlates (stricter than the
-        map route) and the maps in the overlap don't clearly contradict it.  `shift` is in map units;
-        `terrain_at` is where the terrain pixels line up (TERRAIN_SCALE parallax): the pixel check is
-        done there, the map position is what gets stored."""
+        """Accept a terrain-proposed shift only if it is backed by the whole overlap.
+
+        The whole overlap must correlate (stricter than the map route) and the maps in the overlap must not clearly
+        contradict it.  `shift` is in map units; `terrain_at` is where the terrain pixels line up (TERRAIN_SCALE
+        parallax): the pixel check is done there, the map position is what gets stored. Thin far-away overlaps (top
+        strip of a screenshot, under the header, in fog) show different maps to each screenshot, so map agreement
+        only vetoes a clear contradiction; maps that agree refine the shift.
+
+        Args:
+            frame: The new screenshot.
+            shift: Proposed (tx, ty) in atlas units.
+            label: Reason stored in the Registration when accepted.
+            terrain_at: Where the terrain pixels line up (atlas units), or None to check at `shift`.
+
+        Returns:
+            The accepted Registration (ok still False, reason = label), or None.
+        """
         M = np.array([[1, 0, shift[0]], [0, 1, shift[1]]], float)
         src = frame.pts[frame.usable]
         M2, pairs, rmse = (
@@ -458,8 +625,16 @@ class Atlas:
         return reg
 
     def terrain_link(self, a: Frame, b: Frame) -> tuple[int, np.ndarray]:
-        """Terrain features between two screenshots (placed or not): how many agree on one
-        shift, and that shift in flattened coordinates (t_b = t_a + shift)."""
+        """Match terrain features between two screenshots (placed or not).
+
+        Args:
+            a: First screenshot.
+            b: Second screenshot.
+
+        Returns:
+            (n_agree, shift): how many features agree on one shift, and that shift in flattened coordinates
+            (t_b = t_a + shift); (0, zeros) when too few match.
+        """
         pa, da = self._features(a.path, a.R)
         pb, db = self._features(b.path, b.R)
         if da is None or db is None or len(pa) < 50 or len(pb) < 50:
@@ -474,10 +649,17 @@ class Atlas:
         return n_agree, np.median(d[inl], axis=0) / TERRAIN_SCALE
 
     def _merge_icons(self, frame: Frame, M: np.ndarray) -> None:
-        """icon badges: the same badge (or an unidentified ring at the same spot) merges. Each badge's map
-        base is its ROW's base, found in this screenshot's own pixels (up to 5 badges side by side, ~36 px
+        """Merge a placed screenshot's icons (badges) into the atlas's.
+
+        The same icon (or an unidentified ring at the same spot) within ICON_MERGE merges. Each icon's map
+        base is its ROW's base, found in this screenshot's own pixels (up to 5 icons side by side, ~36 px
         apart, the map under the row's middle - user): grouping rows later from merged atlas positions split
-        rows whose copies from two passes landed a little apart, and doubled their map."""
+        rows whose copies from two passes landed a little apart, and doubled their map.
+
+        Args:
+            frame: The screenshot (its `icons` in screen px).
+            M: Its 2x3 placement (flat map coordinates -> atlas).
+        """
         icons = getattr(frame, "icons", [])
         base_of = row_bases(icons)
         for k, m in enumerate(icons):
@@ -511,8 +693,13 @@ class Atlas:
                 )
 
     def rebuild_icons(self, frames_by_name: dict) -> None:
-        """Re-merge every screenshot's badges from its (re-labelled) detection, e.g. after
-        icons were re-detected or taught.  Screenshots without a detection are skipped."""
+        """Re-merge every screenshot's icons from its (re-labelled) detection.
+
+        E.g. after icons were re-detected or taught.  Screenshots without a detection are skipped.
+
+        Args:
+            frames_by_name: Screenshot name -> Frame.
+        """
         self.icons = []
         for f in self.frames:
             fr = frames_by_name.get(f["name"])
@@ -521,7 +708,22 @@ class Atlas:
 
     # -------- export
     def to_json(self) -> dict:
+        """Return the atlas as the dict saved in atlas.json.
+
+        Returns:
+            Dict with version, frames (stats flattened in), nodes (with ids, floats rounded to 0.01), edges (with
+            strength = seen / could), landmarks, bookmarks, icons, city and biome edits, locks and final.
+        """
+
         def strength(e):
+            """Return how often a path was seen out of the times it could have been.
+
+            Args:
+                e: A path record {seen, could, ...}.
+
+            Returns:
+                seen / could (could counted as at least 1).
+            """
             return e["seen"] / max(1, e["could"])
 
         return {
@@ -555,6 +757,14 @@ class Atlas:
         }
 
     def save(self, path) -> None:
+        """Write the atlas to a .json file (atomically).
+
+        Saved detections live next to the atlas; a copy saved elsewhere (undo snapshot) has none, so keep
+        pointing at the real ones (v1.00: every auto-add re-traced ~100 screenshots from their images).
+
+        Args:
+            path: Output .json path.
+        """
         atlas_io.write_text_atomic(path, json.dumps(self.to_json(), indent=1))
         # saved detections live next to the atlas; a copy saved elsewhere (undo snapshot) has none, so keep
         # pointing at the real ones (v1.00: every auto-add re-traced ~100 screenshots from their images)
@@ -564,6 +774,16 @@ class Atlas:
 
     @staticmethod
     def load(path) -> Atlas:
+        """Read an atlas from a .json file.
+
+        Screenshot paths are resolved with find_screenshot, so a moved atlas folder still finds them.
+
+        Args:
+            path: The atlas .json path.
+
+        Returns:
+            The Atlas, with frames_dir set to "<stem>_frames" next to it (saved detections: paths, dashes).
+        """
         d = json.loads(Path(path).read_text(encoding="utf-8"))
         at = Atlas()
         at.frames_dir = Path(path).with_name(Path(path).stem + "_frames")  # saved detections (paths, dashes)
@@ -605,9 +825,20 @@ class Atlas:
 
     # -------- composite image
     def composite(self, max_pixels: int = 36_000_000, with_weight: bool = False):
-        """stitched terrain: each spot from the screenshot that shows it most centrally.
-        with_weight also returns the per-pixel weight, so screenshots can be pasted in later
-        (paste_into) without rebuilding everything."""
+        """Stitch the terrain: each spot from the screenshot that shows it most centrally.
+
+        Moved or deleted screenshots are skipped. with_weight also returns the per-pixel weight, so screenshots can
+        be pasted in later (paste_into) without rebuilding everything.
+
+        Args:
+            max_pixels: Largest canvas size in pixels; bigger atlases are scaled down.
+            with_weight: Also return the weight map.
+
+        Returns:
+            (canvas, (x0, y0, scale)) or, with with_weight, (canvas, (x0, y0, scale), weight): BGR uint8 canvas,
+            origin such that atlas (x, y) is canvas px ((x - x0) * scale, (y - y0) * scale), and (h, w) float32
+            weight (distance from the screenshot's masked edge).
+        """
         corners = []
         frames = [f for f in self.frames if Path(f["path"]).exists()]  # moved/deleted shots: skip
         if not frames:
@@ -630,8 +861,22 @@ class Atlas:
         return canvas, (x0, y0, scale)
 
     def paste_into(self, canvas, best_w, origin, frames, labels=None, names=None) -> bool:
-        """warp screenshots into an existing stitched canvas, each only into its own patch.
-        False when one falls outside the canvas (then rebuild with composite)."""
+        """Warp screenshots into an existing stitched canvas, each only into its own patch.
+
+        A pixel is taken where this screenshot's weight (distance from its masked edge) beats the current one.
+
+        Args:
+            canvas: BGR canvas, changed in place.
+            best_w: (h, w) float32 weight map of the canvas, changed in place.
+            origin: (x0, y0, scale) of the canvas.
+            frames: Placed screenshot records to paste (missing files are skipped).
+            labels: Optional (h, w) int map of which screenshot owns each pixel (a clean map's ownership map,
+                core.seams); updated with indices into `names`.
+            names: Screenshot names for `labels`; new names are appended.
+
+        Returns:
+            False when one falls outside the canvas (then rebuild with composite), else True.
+        """
         x0, y0, scale = origin
         CH, CW = best_w.shape
         T = np.array([[scale, 0, -x0 * scale], [0, scale, -y0 * scale], [0, 0, 1]], float)

@@ -110,6 +110,25 @@ from .traces import (
 
 
 def finalize(atlas, log=_log) -> dict:
+    """Run the atlas-wide check over every screenshot and store what to believe in atlas.final.
+
+    Nothing detected is changed; the steps decide which map nodes, paths, icons and landmarks are kept:
+    1a/1b. join half-merged duplicate map nodes and maps on a tower's wide base; 2. attach icons to the map
+    node under them (a named icon with no map node under it creates one); 1b. vote each map node by how many
+    screenshots could see its spot vs. found it (ghosts, the gap rule, maps on the fortress wall removed);
+    3. Abyss chains along the river; 4. paths from the saved traces of every screenshot, seams and straight
+    gold links, chosen under the selection rules (no crossings, at most MAX_EXITS exits, sector rule);
+    5. map nodes nobody can corroborate; 6. landmarks (Halls / Cities) and which icons to show.
+
+    Args:
+        atlas: the core.Atlas with placed screenshots (frames), merged nodes, icons and landmarks (atlas units).
+        log: callable taking one message string, or None for no log output.
+
+    Returns:
+        The new atlas.final dict: "nodes" (list of dicts with id, x, y, status, seen, could, frames, tower,
+        origin, icons, abyss, why), "paths" (list of dicts with a, b, kind, frames, seen_in, both_ends, abyss,
+        score and, for traced paths, ends_in, confirm, deny, dashes, line), "landmarks", "icons" and "stats".
+    """
     maps = _maps(atlas)
     maps_by = {f["name"]: (f, Hi) for f, Hi in maps}
     icons = _clean_icons(atlas, maps)
@@ -131,6 +150,7 @@ def finalize(atlas, log=_log) -> dict:
     removed_why: dict[int, str] = {}
 
     def P():
+        """Return the current positions of all map nodes as an (N, 2) float array (atlas units)."""
         return np.array([[n["x"], n["y"]] for n in nodes], float).reshape(-1, 2)
 
     # ---- 1a. join half-merged duplicates (each seen by different screenshots, a few px apart).
@@ -141,6 +161,14 @@ def finalize(atlas, log=_log) -> dict:
     base_grid = _Grid(bases, 40.0)
 
     def base_fit(nd):
+        """Distance from a map node to the nearest icon base position.
+
+        Args:
+            nd: the map node dict (needs "x", "y" in atlas units).
+
+        Returns:
+            The distance in atlas units to the closest icon base within 40, or inf when there is none.
+        """
         near = base_grid.near((nd["x"], nd["y"]), 40.0)
         if not near:
             return np.inf
@@ -152,6 +180,14 @@ def finalize(atlas, log=_log) -> dict:
         into = list(range(len(nodes)))  # a joined map -> the map it went into
 
         def survivor(k):
+            """Follow the join chain of map node k to the map node it finally went into.
+
+            Args:
+                k: index of a map node in nodes.
+
+            Returns:
+                The index of the surviving map node (k itself when it was not joined).
+            """
             while into[k] != k:
                 into[k] = into[into[k]]
                 k = into[k]
@@ -246,6 +282,14 @@ def finalize(atlas, log=_log) -> dict:
     row_of = list(range(len(icons)))
 
     def root(k):
+        """Find the row of icons that icon k belongs to (union-find root).
+
+        Args:
+            k: index of an icon in icons.
+
+        Returns:
+            The index of the icon that represents k's row.
+        """
         while row_of[k] != k:
             row_of[k] = row_of[row_of[k]]
             k = row_of[k]
@@ -454,6 +498,14 @@ def finalize(atlas, log=_log) -> dict:
     landmarks = [dict(lm, status="kept") for lm in atlas.landmarks]
 
     def abyss_count(i):
+        """Count the Abyss icons on a map node.
+
+        Args:
+            i: index of the map node in nodes.
+
+        Returns:
+            How many of its icons are Abyss icons (ABYSS_NAMES).
+        """
         return sum(icons[k]["name"] in ABYSS_NAMES for k in nodes[i]["icons"])
 
     ab = [i for i in range(len(nodes)) if status[i] != "removed" and abyss_count(i)]
@@ -484,6 +536,14 @@ def finalize(atlas, log=_log) -> dict:
             deg[b] += 1
 
         def overrun(i):
+            """Tell whether a map node carries an Abyss Overrun icon.
+
+            Args:
+                i: index of the map node in nodes.
+
+            Returns:
+                True when one of its icons is AbyssOverrun.
+            """
             return any(icons[k]["name"] == "AbyssOverrun" for k in nodes[i]["icons"])
 
         final = max(comp, key=lambda i: (abyss_count(i), overrun(i), -deg[i]))
@@ -500,6 +560,18 @@ def finalize(atlas, log=_log) -> dict:
     if chain_segments:
 
         def near_chain(p, clear):
+            """Tell whether a point lies close to an Abyss chain's path (the glowing river).
+
+            Points next to a chain's entry or exit map node (the first / last 20% of a segment that ends at
+            the start or final map) do not count: they may be real neighbours.
+
+            Args:
+                p: the point, a length-2 array (atlas units).
+                clear: the distance to a chain segment that counts as near (atlas units).
+
+            Returns:
+                True when p is within `clear` of a chain segment.
+            """
             for a, b, open_ends in chain_segments:
                 pa = np.array([nodes[a]["x"], nodes[a]["y"]])
                 pb = np.array([nodes[b]["x"], nodes[b]["y"]])
@@ -540,6 +612,14 @@ def finalize(atlas, log=_log) -> dict:
     fields: dict[str, np.ndarray] = {}
 
     def field(f):
+        """Return a screenshot's distance-to-gold field as float32, computed once per check.
+
+        Args:
+            f: the screenshot (frame) dict.
+
+        Returns:
+            A 2-D float32 array: distance in screen px from each pixel to the nearest gold path dash.
+        """
         if f["name"] not in fields:
             fields[f["name"]] = _gold(atlas, f)[1].astype(np.float32)
         return fields[f["name"]]
@@ -552,6 +632,17 @@ def finalize(atlas, log=_log) -> dict:
     pts_grid = _Grid(pts, 100.0)
 
     def score(i, j):
+        """Score a straight link between two kept map nodes on the gold dotted line, averaged over screenshots.
+
+        Uses the detector's route_score in every screenshot that shows both map nodes; cached per pair.
+
+        Args:
+            i: index of one map node in the kept points (pts).
+            j: index of the other map node in pts.
+
+        Returns:
+            (mean score, number of screenshots scored, number of screenshots scoring >= PATH_THRESHOLD).
+        """
         key = (min(i, j), max(i, j))
         if key not in cache:
             vals = [
@@ -612,6 +703,15 @@ def finalize(atlas, log=_log) -> dict:
     ]
 
     def need(i, j):
+        """Return the score a straight link needs: TOWER_THRESHOLD when an end is a tower, else PATH_THRESHOLD.
+
+        Args:
+            i: index of one map node in pts.
+            j: index of the other map node in pts.
+
+        Returns:
+            The threshold as a float.
+        """
         return TOWER_THRESHOLD if tower[i] or tower[j] else PATH_THRESHOLD
 
     # paths as each screenshot traced them when it was detected (saved): traced once, never again (user).
@@ -620,6 +720,20 @@ def finalize(atlas, log=_log) -> dict:
     Hs = {name: np.linalg.inv(Hi) for name, Hi in maps_by_name}
 
     def add_trace(f, i, j, line_screen, mutual, dashes):
+        """Record one screenshot's trace of the path between two map nodes in traces.
+
+        Keeps per pair the screenshots that traced it, those that reached both ends, the most dashes, the
+        smallest detour and bow, and the line of the clearest trace (end to end, enough dashes, smoothest),
+        moved into atlas units and simplified. Pairs touching an Abyss chain's inner map are ignored.
+
+        Args:
+            f: the screenshot (frame) dict that traced it.
+            i: index of one map node in pts.
+            j: index of the other map node in pts.
+            line_screen: the traced line as a sequence of (x, y) points in that screenshot's px, from i to j.
+            mutual: True when the trace reached both map nodes (end to end).
+            dashes: number of dashes along the trace.
+        """
         if i in blocked_ends or j in blocked_ends or i == j:
             return
         key = (min(i, j), max(i, j))
@@ -798,10 +912,28 @@ def finalize(atlas, log=_log) -> dict:
         log(f"paths across screenshot seams: {seam_n} candidates")
 
     def could_both(i, j):
+        """Count the screenshots that show both map nodes.
+
+        Args:
+            i: index of one map node in pts.
+            j: index of the other map node in pts.
+
+        Returns:
+            The number of screenshots (views) that show both.
+        """
         return len(node_views[i] & node_views[j])
 
     def passed_maps(key, line, clear=None):
-        """the third maps a path's line runs past (interior points within PASS_CLEAR, or `clear`)"""
+        """Find the third map nodes a path's line runs past (interior points within PASS_CLEAR, or `clear`).
+
+        Args:
+            key: (i, j) indices of the path's two map nodes in pts.
+            line: the path's line as an (N, 2) array in atlas units, or None.
+            clear: the distance that counts as running past (atlas units); None uses PASS_CLEAR.
+
+        Returns:
+            A set of indices in pts of the map nodes passed (empty for no line or fewer than 3 points).
+        """
         if line is None or len(line) < 3:
             return set()
         dense = np.vstack([np.linspace(a0, a1, 6) for a0, a1 in zip(line[:-1], line[1:], strict=False)])
@@ -810,6 +942,14 @@ def finalize(atlas, log=_log) -> dict:
         return {k for q in inner for k in pts_grid.near(q, clear or PASS_CLEAR) if k not in key}
 
     def weak_map(k):
+        """Tell whether a kept map node is weakly seen: made from an icon, or found by under PASS_WEAK of its views.
+
+        Args:
+            k: index of the map node in pts (keep[k] is its index in nodes).
+
+        Returns:
+            True for a weak map node.
+        """
         nd = nodes[keep[k]]
         return nd.get("origin") == "from icon" or len(nd["frames"]) < PASS_WEAK * max(1, nd.get("could", 1))
 
@@ -821,8 +961,20 @@ def finalize(atlas, log=_log) -> dict:
     run_over: set = set()  # weak maps a strongly traced path runs through: ghosts (user D54 etc.)
 
     def passes_a_map(key, line, t=None):
-        """a path never runs past a third map: interior points within PASS_CLEAR of one. A path traced end to end
-        in 2+ screenshots may pass a map: a weak one there is a ghost (dropped), a well-seen one a floating map"""
+        """Tell whether a path runs past a third map node (interior points within PASS_CLEAR of one).
+
+        A path never runs past a third map. A path traced end to end in 2+ screenshots may pass a map: a weak
+        one there is a ghost (added to run_over and dropped later), a well-seen one a floating map.
+
+        Args:
+            key: (i, j) indices of the path's two map nodes in pts.
+            line: the path's line as an (N, 2) array in atlas units, or None.
+            t: the path's trace record from traces, or None.
+
+        Returns:
+            False when it passes no map (or only weak ones it runs over); otherwise truthy: True, or for a
+            path traced end to end in 2+ screenshots the set of map nodes on its line.
+        """
         if t is not None and len(t["mutual"]) >= 2:
             on_line = passed_maps(key, line, RUN_OVER)  # ON the line only
             on_line = {k for k in on_line if ends_at.get(k, 0) < JUNCTION}
@@ -844,7 +996,15 @@ def finalize(atlas, log=_log) -> dict:
         return any(any(k not in key for k in pts_grid.near(q, PASS_CLEAR)) for q in inner)
 
     def start_dir(line, frm):
-        """unit direction a path leaves map `frm` (first START_LEN of its line)"""
+        """Return the unit direction in which a path leaves map node `frm` (first START_LEN of its line).
+
+        Args:
+            line: the path's line as a sequence of (x, y) points in atlas units (either direction).
+            frm: index in pts of the map node it leaves.
+
+        Returns:
+            A length-2 unit vector.
+        """
         L = np.asarray(line, float)
         if np.hypot(*(L[0] - pts[frm])) > np.hypot(*(L[-1] - pts[frm])):
             L = L[::-1]
@@ -855,7 +1015,18 @@ def finalize(atlas, log=_log) -> dict:
         return v / n if n > 1e-6 else (L[-1] - L[0]) / max(1e-6, float(np.hypot(*(L[-1] - L[0]))))
 
     def skips_nearer(key, line):
-        """user's sector rule: a path heading (within SECTOR) for a map that is nearer than its end goes there"""
+        """Apply the user's sector rule: a path heading (within SECTOR) for a map nearer than its end goes there.
+
+        A nearer map dead ahead (within SECTOR_STRICT) always counts; one in the sector only with evidence
+        (a trace or a straight score >= 0.53).
+
+        Args:
+            key: (i, j) indices of the path's two map nodes in pts.
+            line: the path's line in atlas units.
+
+        Returns:
+            True when the path skips a nearer map node.
+        """
         cos_s, cos_strict = math.cos(math.radians(SECTOR)), math.cos(math.radians(SECTOR_STRICT))
         for frm, to in (key, key[::-1]):
             d_end = float(np.hypot(*(pts[to] - pts[frm])))
@@ -873,6 +1044,14 @@ def finalize(atlas, log=_log) -> dict:
         return False
 
     def bow(line):
+        """Measure how far a path's line bows away from the straight line between its ends.
+
+        Args:
+            line: the path's line as a sequence of (x, y) points (atlas units).
+
+        Returns:
+            The largest distance from the chord divided by the chord length (0.0 for ends under 1 apart).
+        """
         L = np.asarray(line, float)
         ch = L[-1] - L[0]
         n = float(np.hypot(*ch))
@@ -882,8 +1061,18 @@ def finalize(atlas, log=_log) -> dict:
         return float(np.abs(ch[0] * v[:, 1] - ch[1] * v[:, 0]).max() / n / n)
 
     def s_shaped(line):
-        """user: a path changes direction once. S-shaped = it bows clearly to BOTH sides of the line between
-        its ends (a straight trace's pixel wobble no longer counts: user's straight S15 was called S-shaped)"""
+        """Tell whether a path's line is S-shaped (user: a path changes direction once).
+
+        S-shaped = it bows clearly to BOTH sides of the line between its ends, or turns clearly one way and
+        then the other with real bends to both sides (a straight trace's pixel wobble no longer counts: user's
+        straight S15 was called S-shaped).
+
+        Args:
+            line: the path's line as a sequence of (x, y) points (atlas units).
+
+        Returns:
+            True when S-shaped.
+        """
         L = np.asarray(line, float)
         if len(L) < 4:
             return False
@@ -903,8 +1092,17 @@ def finalize(atlas, log=_log) -> dict:
         return both and min(turn[turn > 0].sum(), -turn[turn < 0].sum()) >= S_TURN
 
     def clumped(t):
-        """share of the trace (in the screenshots that drew it) that runs through dash CLUMPS: a real path is
-        one row of spaced dashes; amber trees and lit structures give piles of them (user: 2499 -> 2533)"""
+        """Tell whether a trace runs through dash CLUMPS in the screenshots that drew it.
+
+        A real path is one row of spaced dashes; amber trees and lit structures give piles of them
+        (user: 2499 -> 2533). Looks at up to 4 of the screenshots that traced it.
+
+        Args:
+            t: the path's trace record from traces (needs "frames" and "line").
+
+        Returns:
+            True when the worst screenshot's share of the line in clumps is >= CLUMP_SHARE.
+        """
         worst = 0.0
         for name in list(t["frames"])[:4]:
             if name not in maps_by:
@@ -921,8 +1119,19 @@ def finalize(atlas, log=_log) -> dict:
         return worst >= CLUMP_SHARE
 
     def ends_point(key, line):
-        """user: a real path leaves BOTH its maps pointing at the other one. For each end, some screenshot
-        that found that map shows dashes 15-50 px out of it within END_CONE degrees of the path's direction"""
+        """Tell whether dashes leave both map nodes toward each other (user: a real path leaves BOTH its maps
+        pointing at the other one).
+
+        For each end, some screenshot that shows that map (up to END_VIEWS) must have END_DASHES dashes 15-50 px
+        out of it (END_REACH) within END_CONE degrees of the direction to the other map.
+
+        Args:
+            key: (i, j) indices of the path's two map nodes in pts.
+            line: the path's line (not used; the direction is taken straight at the other map).
+
+        Returns:
+            True when both ends show such dashes.
+        """
         cos_c = math.cos(math.radians(END_CONE))
         for e in key:
             o = key[1] if e == key[0] else key[0]
@@ -954,6 +1163,20 @@ def finalize(atlas, log=_log) -> dict:
         return True
 
     def trace_ok(key, t):
+        """Judge whether a traced pair is a real path; on refusal the reason is stored in t["why"].
+
+        Checks in order: runs past a third map, curves too much, seam with too few dashes / a wall, S-shaped,
+        skips a nearer map, one-end traces drawn by too few screenshots, runs through dash clumps, an end
+        shows no dashes leaving toward the other map, more clear views without it than drew it; then the
+        confirm / deny votes (dark / fog / off-screen views never count, user).
+
+        Args:
+            key: (i, j) indices of the path's two map nodes in pts.
+            t: the path's trace record from traces (updated with "why").
+
+        Returns:
+            True when the trace is accepted as a path.
+        """
         if passes_a_map(key, t["line"], t):
             t["why"] = "runs past a third map"
             return False
@@ -999,12 +1222,30 @@ def finalize(atlas, log=_log) -> dict:
     chosen: list[tuple[int, int, float, str, np.ndarray]] = []  # i, j, confidence, kind, shape
 
     def shape_of(i, j, line=None):
+        """Return a path's shape: its traced line, or the straight line between the two map nodes.
+
+        Args:
+            i: index of one map node in pts.
+            j: index of the other map node in pts.
+            line: the traced line in atlas units, or None.
+
+        Returns:
+            An (N, 2) array of points in atlas units.
+        """
         return line if line is not None and len(line) >= 2 else np.array([pts[i], pts[j]])
 
     seg_cells: dict[tuple[int, int], list[int]] = {}
     SEG_CELL = 150.0
 
     def cells_of(shp):
+        """List the SEG_CELL grid cells covered by a path shape's bounding box.
+
+        Args:
+            shp: the path shape as an (N, 2) array in atlas units.
+
+        Returns:
+            A list of (cell x, cell y) integer tuples.
+        """
         lo, hi = np.floor(shp.min(axis=0) / SEG_CELL).astype(int), np.floor(shp.max(axis=0) / SEG_CELL).astype(int)
         return [(gx, gy) for gx in range(lo[0], hi[0] + 1) for gy in range(lo[1], hi[1] + 1)]
 
@@ -1013,6 +1254,18 @@ def finalize(atlas, log=_log) -> dict:
     crossed = [None]
 
     def crosses(i, j, shp):
+        """Tell whether a path shape crosses an already chosen path that shares no map node with it.
+
+        On a crossing, crossed[0] is set to (lower id, higher id, kind) of the chosen path it crosses.
+
+        Args:
+            i: index of one map node in pts.
+            j: index of the other map node in pts.
+            shp: the path shape as an (N, 2) array in atlas units.
+
+        Returns:
+            True when it crosses a chosen path.
+        """
         near = {c for cell in cells_of(shp) for c in seg_cells.get(cell, ())}
         for idx in near:
             k, other_idx, _, kind_o, other = chosen[idx]
@@ -1028,7 +1281,16 @@ def finalize(atlas, log=_log) -> dict:
     exits: dict[int, list] = {}
 
     def same_sector(i, j, shp):
-        """another chosen path already leaves i (or j) in this direction (user's sector rule)"""
+        """Tell whether another chosen path already leaves i (or j) in this direction (user's sector rule).
+
+        Args:
+            i: index of one map node in pts.
+            j: index of the other map node in pts.
+            shp: the path shape as an (N, 2) array in atlas units.
+
+        Returns:
+            True when a chosen exit of either end lies within 0.8 * SECTOR degrees of this path's direction.
+        """
         cos_s = math.cos(math.radians(SECTOR * 0.8))
         for frm in (i, j):
             u = start_dir(shp, frm)
@@ -1039,6 +1301,22 @@ def finalize(atlas, log=_log) -> dict:
     blocked_by: dict = {}  # (inspection aid) pair -> why selection refused it
 
     def take(i, j, conf, kind, shp):
+        """Choose a path if the selection rules allow it, and record it in chosen.
+
+        Refused when the pair is already chosen, an end has MAX_EXITS paths already, it leaves an end in the
+        same sector as a chosen path (unless sure: traced end to end in 2+ or traced in 3+ screenshots), or it
+        crosses a chosen path. Abyss chain links skip the sector and crossing rules.
+
+        Args:
+            i: index of one map node in pts.
+            j: index of the other map node in pts.
+            conf: the path's confidence (1.0 for traced and Abyss paths, the straight score otherwise).
+            kind: "abyss", "traced" or "straight".
+            shp: the path shape as an (N, 2) array in atlas units.
+
+        Returns:
+            True when the path was chosen.
+        """
         kk = (min(i, j), max(i, j))
         if kk in pair_set:
             return False
@@ -1084,7 +1362,15 @@ def finalize(atlas, log=_log) -> dict:
         take(i, j, 1.0, "traced", shape_of(i, j, t["line"]))
 
     def walled(i, j):
-        """a straight link through the fortress wall in any screenshot that shows it"""
+        """Tell whether a straight link runs through the fortress wall in any screenshot that shows it.
+
+        Args:
+            i: index of one map node in pts.
+            j: index of the other map node in pts.
+
+        Returns:
+            True when some screenshot showing both has the link on the wall (>= WALL_CROSS).
+        """
         for vi in node_views[i] & node_views[j]:
             f, sp, _ok = views[vi]
             rec = _saved(atlas, f)

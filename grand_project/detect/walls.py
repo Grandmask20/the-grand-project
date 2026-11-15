@@ -14,7 +14,17 @@ from .models import _models, load_model, save_model
 
 
 def wall_features(img: np.ndarray) -> np.ndarray:
-    """per WALL_STEP px point: colour / rust-rib / dark-stone / gradient-direction densities at three scales"""
+    """Fortress wall features per WALL_STEP px grid point.
+
+    Colour / rust-rib / dark-stone / gradient-direction densities and brightness spread at each WALL_SCALES box
+    size, plus the distance from the screen centre.
+
+    Args:
+        img: BGR screenshot (1080p).
+
+    Returns:
+        (rows, cols, k) float32 array, one feature vector per grid point.
+    """
     hsv = cv2.cvtColor(img, cv2.COLOR_BGR2HSV).astype(np.float32)
     H, S, V = hsv[..., 0], hsv[..., 1], hsv[..., 2]
     g = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY).astype(np.float32)
@@ -47,7 +57,17 @@ def wall_features(img: np.ndarray) -> np.ndarray:
 
 
 def _wall_clean(prob: np.ndarray, img: np.ndarray) -> np.ndarray:
-    """wall pixels: big regions with simple (straight-ish) outlines; ragged blobs (Corruption ground) dropped"""
+    """Wall pixels: big regions with simple (straight-ish) outlines; ragged blobs (Corruption ground) dropped.
+
+    Regions need WALL_MIN_AREA px and a WALL_MIN_LEN px side, and at most WALL_CORNERS outline corners per 100 px.
+
+    Args:
+        prob: (h, w) wall probability (or 0/1 mask) at screenshot size; >= 0.5 is wall.
+        img: The screenshot (for its size and HUD mask).
+
+    Returns:
+        (h, w) uint8 mask, 1 = wall.
+    """
     b = ((prob >= 0.5) & (core.hud_mask(img.shape[1], img.shape[0]) == 0)).astype(np.uint8)
     n, lab, st, _ = cv2.connectedComponentsWithStats(b)
     keep = np.zeros_like(b)
@@ -64,7 +84,14 @@ def _wall_clean(prob: np.ndarray, img: np.ndarray) -> np.ndarray:
 
 @_per_image
 def fortress_walls(img: np.ndarray) -> np.ndarray:
-    """uint8 mask of the fortress walls (user: paths never cross them); zeros without a trained model"""
+    """Mask of the fortress walls (user: paths never cross them). Cached per image.
+
+    Args:
+        img: BGR screenshot (1080p).
+
+    Returns:
+        (h, w) uint8 mask, 1 = wall; all zeros without a trained "fortress" model.
+    """
     if "fortress" not in _models:
         _models["fortress"] = load_model("fortress")
     m = _models["fortress"]
@@ -77,7 +104,18 @@ def fortress_walls(img: np.ndarray) -> np.ndarray:
 
 
 def wall_share(line, wall: np.ndarray, skip: float = 30.0) -> float:
-    """share of a path's middle (ends left out: a wall-tower map sits on the wall) lying on wall"""
+    """Share of a path's middle lying on wall.
+
+    The ends are left out: a wall-tower map sits on the wall. Sampled every 6 px.
+
+    Args:
+        line: Path polyline, [(x, y), ...] in screen px.
+        wall: (h, w) wall mask (fortress_walls).
+        skip: Length in px left out at each end.
+
+    Returns:
+        Share 0..1; 0.0 for paths no longer than 2 * skip or when there is no wall.
+    """
     L = np.asarray(line, float).reshape(-1, 2)
     if len(L) < 2 or not wall.any():
         return 0.0
@@ -92,7 +130,14 @@ def wall_share(line, wall: np.ndarray, skip: float = 30.0) -> float:
 
 
 def _lit_walls(img: np.ndarray) -> np.ndarray:
-    """rough rule-based wall tops (rust ribs + dark stone), only to pick non-fortress shots for training"""
+    """Rough rule-based wall tops (rust ribs + dark stone), only to pick non-fortress shots for training.
+
+    Args:
+        img: BGR screenshot (1080p).
+
+    Returns:
+        (h, w) uint8 mask, 1 = wall-like.
+    """
     hsv = cv2.cvtColor(img, cv2.COLOR_BGR2HSV)
     H, S, V = [hsv[..., i].astype(np.int16) for i in range(3)]
     rust = ((H <= 16) | (H >= 175)) & (S >= 70) & (S <= 220) & (V >= 55) & (V <= 210)
@@ -103,7 +148,14 @@ def _lit_walls(img: np.ndarray) -> np.ndarray:
 
 
 def cmd_train_fortress() -> int:
-    """python -m grand_project.detect train_fortress   (user-painted walls + non-fortress shots as negatives)"""
+    """Command `python -m grand_project.detect train_fortress`: train the fortress wall model and store it in the DB.
+
+    Trained on the user-painted walls (FORTRESS_PAINT) plus non-fortress screenshots as negatives (samples with
+    no wall-like area by _lit_walls).
+
+    Returns:
+        0 (process exit code).
+    """
     import glob
 
     from sklearn.ensemble import HistGradientBoostingClassifier

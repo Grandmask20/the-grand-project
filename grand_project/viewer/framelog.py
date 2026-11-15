@@ -36,20 +36,35 @@ COLUMNS = ("t_ms", "kind", "total_ms", "wait_ms", *SECTIONS, "z", "cx", "cy", "w
 
 
 class FrameLogMixin:
+    """Viewer mixin that records frame timings, stalls, input, tile builds and garbage collections to a CSV file.
+
+    The recording calls (_fl_...) are cheap no-ops while not recording.
+
+    Attributes:
+        _fl_rows: Rows recorded since the last write to the file; None while not recording.
+    """
+
     _fl_rows: list | None = None  # None: not recording
 
     def frame_log_autostart(self):
+        """Start recording at startup when the ATLAS_FRAME_LOG environment variable is set."""
         if os.environ.get("ATLAS_FRAME_LOG"):
             self.start_frame_log()
 
     # ------------------------------------------------------------------ on / off
     def toggle_frame_log(self):
+        """Start or stop recording (the frame log checkbox in the Debug tab)."""
         if self._fl_rows is None:
             self.start_frame_log()
         else:
             self.stop_frame_log()
 
     def start_frame_log(self):
+        """Start recording to a new user_data/frame_log_<date>_<time>.csv (does nothing if already recording).
+
+        Writes the header, starts the stall tick and the garbage collection hook, ticks the Debug tab's checkbox and
+        says where it records in Log.
+        """
         if self._fl_rows is not None:
             return
         rc_paths.USER_DATA.mkdir(parents=True, exist_ok=True)
@@ -70,6 +85,7 @@ class FrameLogMixin:
         self.log(f"frame log: recording to {self._fl_file}")
 
     def stop_frame_log(self):
+        """Stop recording: write what is left, unhook, untick the checkbox and put a summary in Log."""
         if self._fl_rows is None:
             return
         self._fl_flush()
@@ -83,22 +99,39 @@ class FrameLogMixin:
 
     # ------------------------------------------------------------------ recording (cheap no-ops when off)
     def _fl_now(self) -> float:
+        """Time since recording started.
+
+        Returns:
+            Milliseconds.
+        """
         return (time.perf_counter() - self._fl_t0) * 1000
 
     def _fl_mark(self, section: str):
-        """end of one part of the frame being drawn"""
+        """Mark the end of one part of the frame being drawn.
+
+        Args:
+            section: Part name, one of SECTIONS (e.g. "terrain", "paths", "show").
+        """
         if self._fl_rows is not None:
             self._fl_marks.append((section, time.perf_counter()))
 
     def _fl_asked_redraw(self):
+        """Note when the pending redraw was first asked for (for the frame's wait_ms)."""
         if self._fl_rows is not None and self._fl_asked is None:
             self._fl_asked = time.perf_counter()
 
     def _fl_frame_start(self):
+        """Note the start of a redraw."""
         if self._fl_rows is not None:
             self._fl_marks = [("start", time.perf_counter())]
 
     def _fl_frame_end(self, w, h):
+        """Record a finished frame: the whole time, the wait, ms per part, the view and the tiles shown / missing.
+
+        Args:
+            w: Canvas width in screen px.
+            h: Canvas height in screen px.
+        """
         if self._fl_rows is None or not self._fl_marks:
             return
         t_start = self._fl_marks[0][1]
@@ -119,7 +152,14 @@ class FrameLogMixin:
         )  # fmt: skip
 
     def _fl_gc(self, phase, info):
-        """garbage collections of the oldest generation (the long ones), from whichever thread ran them"""
+        """Record garbage collections of the oldest generation (the long ones), from whichever thread ran them.
+
+        Hooked into gc.callbacks while recording.
+
+        Args:
+            phase: "start" or "stop".
+            info: The gc callback's info dict ("generation", "collected").
+        """
         if phase == "start":
             self._fl_gc_t = time.perf_counter()
         elif info.get("generation") == 2 and self._fl_rows is not None:
@@ -127,24 +167,54 @@ class FrameLogMixin:
             self._fl_rows.append(self._fl_row("gc", round(ms, 1), f"collected {info.get('collected', 0)}"))
 
     def _fl_tiles_drawn(self, shown: int, missing: int):
+        """Note how many sharp-ground tiles this frame drew and still misses.
+
+        Args:
+            shown: Tiles drawn.
+            missing: Tiles still being built.
+        """
         if self._fl_rows is not None:
             self._fl_tiles = (shown, missing)
 
     def _fl_input(self, what: str):
+        """Record a mouse input.
+
+        Args:
+            what: "wheel", "drag", "press" or "release".
+        """
         if self._fl_rows is not None:
             self._fl_rows.append(self._fl_row("input", "", what))
 
     def _fl_tile_built(self, key, ms: float):
-        """from the tile worker thread (a list append is safe there)"""
+        """Record a sharp-ground tile built, from the tile worker thread (a list append is safe there).
+
+        Args:
+            key: The tile's (level, column, row).
+            ms: Build time in ms.
+        """
         if self._fl_rows is not None:
             self._fl_rows.append(self._fl_row("tile", round(ms, 1), f"level {key[0]:g} tile {key[1]},{key[2]}"))
 
     def _fl_row(self, kind, total, info):
+        """A CSV row for a non-frame event, with the current view.
+
+        Args:
+            kind: Row kind: "stall", "input", "tile" or "gc".
+            total: The total_ms value (or "").
+            info: The info column text.
+
+        Returns:
+            List of values in COLUMNS order.
+        """
         return [round(self._fl_now(), 1), kind, total, "", *([""] * len(SECTIONS)), round(self.z, 4),
                 round(self.cx, 1), round(self.cy, 1), "", "", "", "", info]  # fmt: skip
 
     def _fl_tick(self):
-        """every FRAME_TICK_MS: a late tick means the window thread was busy (a stall)"""
+        """Check for stalls every FRAME_TICK_MS: a late tick means the window thread was busy (a stall).
+
+        Records lateness over FRAME_STALL_MS and writes rows to the file once more than 400 are waiting. Runs on the
+        window thread via root.after until recording stops.
+        """
         if self._fl_rows is None:
             return
         now = time.perf_counter()
@@ -157,6 +227,7 @@ class FrameLogMixin:
         self.root.after(FRAME_TICK_MS, self._fl_tick)
 
     def _fl_flush(self):
+        """Append the waiting rows to the CSV file (also kept for the summary); a failed write is only logged."""
         rows = self._fl_rows or []
         if not rows:
             return
@@ -170,6 +241,15 @@ class FrameLogMixin:
 
     @staticmethod
     def _fl_summary(rows) -> str:
+        """One-line summary of a recording for the Log tab.
+
+        Args:
+            rows: Every row recorded, in COLUMNS order.
+
+        Returns:
+            Frame count, median / 95% / worst frame ms, the four slowest parts on average, stalls, tiles built and full
+            garbage collections.
+        """
         frames = [r for r in rows if r[1] == "frame"]
         stalls = [r[2] for r in rows if r[1] == "stall"]
         tiles = [r[2] for r in rows if r[1] == "tile"]

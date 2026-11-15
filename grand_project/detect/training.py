@@ -34,8 +34,15 @@ from .walls import fortress_walls
 
 # ---------------------------------------------------------------- commands
 def _labelled() -> tuple[dict, dict]:
-    """truth (all TRUTH_SETS) + per screenshot: image, map (points, features, labels), badge (points, features,
-    labels). Ship markers are not ring badges: left out of the badge training."""
+    """Load the hand-labelled truth (all TRUTH_SETS) and compute every stage's training data per screenshot.
+
+    Ship markers are not ring badges: left out of the badge training.
+
+    Returns:
+        (truth, data): truth per screenshot name, and per screenshot name a dict with "img", "old"
+        (old_landmarks), "dashes", "path", and (points, features, labels) tuples for "towers", "maps" and
+        "badges".
+    """
     truth, where = {}, {}
     for tf, shots in TRUTH_SETS:
         if tf.exists():
@@ -67,8 +74,14 @@ def _labelled() -> tuple[dict, dict]:
 
 
 def _tower_refs() -> tuple[np.ndarray, np.ndarray]:
-    """extra tower training data: the user's 'pure tower references' shots (9 towers panned across the
-    screen, projected into every shot; the maps found there are the non-towers)"""
+    """Extra tower training data: the user's 'pure tower references' shots.
+
+    9 towers panned across the screen, projected into every shot; the maps found there are the non-towers.
+
+    Returns:
+        (X, y): tower feature rows and 1 / 0 labels; empty arrays when TOWER_REFS or its shots are missing
+        (the tower shots are not in the public test data).
+    """
     if not TOWER_REFS.exists():
         return np.zeros((0, 0)), np.zeros(0)
     X, y = [], []
@@ -84,8 +97,13 @@ def _tower_refs() -> tuple[np.ndarray, np.ndarray]:
 
 
 def _extra_maps() -> dict:
-    """extra map training data (maps only, no badge / landmark labels): the user's path-marked shots,
-    where they circled the missed maps - mostly plain unlit bases the 10 labelled shots barely have"""
+    """Extra map training data (maps only, no badge / landmark labels): the user's path-marked shots.
+
+    The user circled the missed maps there - mostly plain unlit bases the 10 labelled shots barely have.
+
+    Returns:
+        Screenshot path -> (points, features, labels) as for the "maps" stage; {} without EXTRA_MAPS.
+    """
     if not EXTRA_MAPS.exists():
         return {}
     out = {}
@@ -104,8 +122,14 @@ def _extra_maps() -> dict:
 
 
 def _extra_badges() -> dict:
-    """extra icon-finder training data (positions only, no names): crawl screenshots with every icon marked, so
-    the finder sees the glowing / rare icons the hand-labelled shots barely have"""
+    """Extra icon-finder training data (positions only, no names).
+
+    Crawl screenshots with every icon marked, so the finder sees the glowing / rare icons the hand-labelled shots
+    barely have.
+
+    Returns:
+        Screenshot name -> (points, features, labels) as for the "badges" stage; {} without EXTRA_BADGES.
+    """
     if not EXTRA_BADGES.exists():
         return {}
     out = {}
@@ -120,7 +144,11 @@ def _extra_badges() -> dict:
 
 
 def _tree_rounds():
-    """(key file, labels file, labels name the maps?) of every arborist round"""
+    """The files of every arborist round.
+
+    Returns:
+        List of (key file, labels file, labels name the maps?) tuples.
+    """
     return [
         (TESTS / "trees" / "trees_key.json", TESTS / "trees" / "trees_labels.txt", True),
         (TESTS / "trees2" / "trees2_key.json", TESTS / "trees2" / "trees2_labels.txt", False),
@@ -128,9 +156,15 @@ def _tree_rounds():
 
 
 def _tree_examples() -> tuple[np.ndarray, np.ndarray] | None:
-    """map training rows from the arborist sheets: every tile is a labelled map / not-a-map spot (orange foliage,
-    beams, Corruption ground and copper-rimmed bases look alike to the map model). Round 1 lists the maps,
-    round 2 the non-maps."""
+    """Map training rows from the arborist sheets.
+
+    Every tile is a labelled map / not-a-map spot (orange foliage, beams, Corruption ground and copper-rimmed bases
+    look alike to the map model). Round 1 lists the maps, round 2 the non-maps. Tiles on fortress walls (fortress
+    special maps) are never training examples (user); a tile needs a map candidate within 3 px.
+
+    Returns:
+        (X, y): map feature rows and 1 / 0 labels, or None when no round is labelled yet.
+    """
     import re
 
     X, y = [], []
@@ -173,6 +207,21 @@ def _tree_examples() -> tuple[np.ndarray, np.ndarray] | None:
 
 
 def _fit(data: dict, names, stage: str, weight: float = 5, leaf: int = 20):
+    """Fit one stage's gradient-boosted classifier on the given screenshots.
+
+    Candidates labelled -1 are left out. Adds the stage's extra data when present in `data`: "_extra_badges"
+    (badges), "_extra_maps" and "_trees" (maps; tree look-alikes weigh TREE_NEG_WEIGHT), "_tower_refs" (towers).
+
+    Args:
+        data: Per-screenshot training data (_labelled) plus the optional "_..." extra entries.
+        names: Screenshot names to train on.
+        stage: "maps", "badges" or "towers".
+        weight: Class weight of class 1 (class 0 weighs 1).
+        leaf: min_samples_leaf of the classifier.
+
+    Returns:
+        The fitted HistGradientBoostingClassifier.
+    """
     from sklearn.ensemble import HistGradientBoostingClassifier
 
     X = np.vstack([data[n][stage][1][data[n][stage][2] >= 0] for n in names])
@@ -199,6 +248,17 @@ def _fit(data: dict, names, stage: str, weight: float = 5, leaf: int = 20):
 
 
 def _fit_all(truth: dict, data: dict, names) -> dict:
+    """Fit every stage's model on the given screenshots.
+
+    Args:
+        truth: Truth per screenshot name.
+        data: Per-screenshot training data (_labelled) plus the optional extra entries.
+        names: Screenshot names to train on.
+
+    Returns:
+        {"maps": classifier, "badges": {"clf": classifier, "names", "F"} (with the badge book), "towers":
+        classifier}.
+    """
     book = badge_book(truth, {n: data[n]["img"] for n in names}, names)
     return {
         "maps": _fit(data, names, "maps"),
@@ -208,6 +268,18 @@ def _fit_all(truth: dict, data: dict, names) -> dict:
 
 
 def _run_stages(d: dict, models: dict) -> dict:
+    """Run the detector stages on one screenshot's precomputed training data (like pipeline.detect).
+
+    A landmark inside the HUD outline is HUD art and is dropped. Unlike detect, no ship markers and no fortress
+    wall filter.
+
+    Args:
+        d: One screenshot's entry from _labelled.
+        models: Models as returned by _fit_all.
+
+    Returns:
+        Dict with "nodes", "landmarks", "icons" and "edges" (paths) lists.
+    """
     img = d["img"]
     pts, X, _l = d["maps"]
     prob = models["maps"].predict_proba(X)
@@ -235,6 +307,14 @@ def _run_stages(d: dict, models: dict) -> dict:
 
 
 def cmd_score() -> int:
+    """Command `python -m grand_project.detect score`: test every stage leave-one-screenshot-out.
+
+    Each labelled screenshot is judged by models trained without it; prints the score and writes the outputs to
+    last_score_outputs.json next to TRUTH.
+
+    Returns:
+        0 (process exit code).
+    """
     t0 = time.time()
     truth, data = _labelled()
     data["_tower_refs"] = _tower_refs()
@@ -251,6 +331,14 @@ def cmd_score() -> int:
 
 
 def cmd_train() -> int:
+    """Command `python -m grand_project.detect train`: fit every model on all labelled screenshots.
+
+    Training mode: stores the maps, badges and towers models in the DB, then trains the City barrel model
+    (references/city_barrel.npz).
+
+    Returns:
+        0 (process exit code).
+    """
     truth, data = _labelled()
     data["_tower_refs"] = _tower_refs()
     data["_extra_maps"] = _extra_maps()

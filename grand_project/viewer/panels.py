@@ -11,10 +11,19 @@ from .helpers import icon_aliases, icon_label, icon_thumb
 
 
 class PanelsMixin:
+    """Viewer mixin for the type list in Find (places and map icons, with show-on-map ticks) and the icon filter."""
+
     # ------------------------------------------------------------------ icon filter
     def rebuild_icon_filter(self, counts: dict[str, int] | None = None):
-        """the type list in Find: places (City, Hall, Tower, Breach stronghold) then map icons, each
-        with its picture, a show-on-map tick and its count; filtered by the search text"""
+        """Rebuild the type list in Find: places (City, Hall, Tower, Breach stronghold) then map icons.
+
+        Each row has its picture, a show-on-map tick and its count; rows are filtered by the search text (name or
+        alias). With "only near a city" on, only icons on / next to a city biome are counted. Ticks of rows filtered
+        out of view are kept. Nothing is rebuilt when nothing changed.
+
+        Args:
+            counts: Type label -> count to store as the new counts; None keeps the stored ones.
+        """
         if counts is not None:
             self.type_counts = counts
         counts = self.type_counts
@@ -87,7 +96,16 @@ class PanelsMixin:
         self.icon_canvas.yview_moveto(0)
 
     def _scroll_icons(self, e):
-        """scroll the type list, never past its ends (that left smeared copies of the rows on Windows)"""
+        """Scroll the type list, never past its ends (that left smeared copies of the rows on Windows).
+
+        Bound to <MouseWheel>, <Button-4> and <Button-5> on every row of the list.
+
+        Args:
+            e: The Tk event (e.delta, or e.num 4 / 5 on Linux).
+
+        Returns:
+            "break", so Tk does not scroll anything else.
+        """
         c = self.icon_canvas
         first, last = c.yview()
         step = -1 if (e.num == 4 or getattr(e, "delta", 0) > 0) else 1
@@ -98,7 +116,14 @@ class PanelsMixin:
         return "break"
 
     def list_type(self, label):
-        """list every map / place of one type in the results (keeps the type list as it is)"""
+        """List every map / place of one type in the results (keeps the type list as it is).
+
+        Bound to <Button-1> on a type's name in the list.
+
+        Args:
+            label: Type label: a potential city / stronghold type, "<type> city", a place type (landmark kind) or an
+                icon label.
+        """
         self._last_list = label
         self.hits, labels = [], []
         if label in POTENTIAL_TYPES:
@@ -125,23 +150,50 @@ class PanelsMixin:
         self.status.set(f"{len(labels)} {label}")
 
     def on_icon_filter(self):
+        """Store which types are unticked (hidden on the map) and redraw. Called by each tick in the type list."""
         self.icon_hidden = {lab for lab, v in self.icon_vars.items() if not v.get()}
         self.request_redraw()
 
     def set_all_icons(self, on: bool):
+        """Tick or untick every type in the list.
+
+        Args:
+            on: True shows every type, False hides them all.
+        """
         for v in self.icon_vars.values():
             v.set(on)
         self.on_icon_filter()
 
     def near_only(self) -> bool:
+        """Whether "only near a city" is ticked.
+
+        Returns:
+            True when only things on / next to a city biome are shown.
+        """
         v = getattr(self, "only_near_city", None)
         return bool(v is not None and v.get())
 
     def icon_near_city(self, i: int) -> bool:
+        """Whether an icon's map node is on / next to a city biome.
+
+        Args:
+            i: Icon index into V["icons"].
+
+        Returns:
+            True when the icon belongs to a map node near a city.
+        """
         v = getattr(self, "icon_node", {}).get(i)
         return v is not None and v in getattr(self, "near_city", {})
 
     def icon_visible(self, ic) -> bool:
+        """Whether an icon passes the filters (its type ticked, and near a city when only those are shown).
+
+        Args:
+            ic: Icon dict from V["icons"].
+
+        Returns:
+            True when the icon is drawn.
+        """
         if icon_label(ic) in self.icon_hidden:
             return False
         if self.near_only():

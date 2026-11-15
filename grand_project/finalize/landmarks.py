@@ -26,9 +26,20 @@ from .traces import _Grid, _visible
 
 
 def _barrel(img, x, y, nodes=None) -> bool:
-    """is the map base at screen (x, y) the brass barrel of a City (Halls stand on a normal base)?
-    (detect.citybase: a model trained on the user's city screenshots; nodes: that screenshot's detected map
-    nodes, so a rough point is moved onto the map node's middle)"""
+    """Tell whether the map base at screen (x, y) is the brass barrel of a City (Halls stand on a normal base).
+
+    Uses detect.citybase, a model trained on the user's city screenshots.
+
+    Args:
+        img: the screenshot (BGR image).
+        x: x of the map node in screen px.
+        y: y of the map node in screen px.
+        nodes: that screenshot's detected map nodes as an (N, 2) array in screen px, so a rough point is moved
+            onto the map node's middle; None to use (x, y) as given.
+
+    Returns:
+        True when the barrel probability is >= CITY_P.
+    """
     from grand_project.detect import citybase
     from grand_project.detect.constants import CITY_P
 
@@ -36,9 +47,22 @@ def _barrel(img, x, y, nodes=None) -> bool:
 
 
 def _screen_nodes(atlas, f, x, y, reach: float = 80.0) -> np.ndarray:
-    """the atlas's map nodes near atlas point (x, y), in screenshot f's pixels. A map node seen in few
-    screenshots right next to a better-seen one is the same map (not yet merged): only the better-seen one counts,
-    or a rough point could snap onto the stray copy a few px off the map's middle."""
+    """Return the atlas's map nodes near atlas point (x, y), in screenshot f's pixels.
+
+    A map node seen in few screenshots right next to a better-seen one (within SAME_MAP) is the same map (not
+    yet merged): only the better-seen one counts, or a rough point could snap onto the stray copy a few px off
+    the map's middle.
+
+    Args:
+        atlas: the core.Atlas.
+        f: the screenshot (frame) dict.
+        x: x of the point in atlas units.
+        y: y of the point in atlas units.
+        reach: how far from (x, y) map nodes are taken, per axis (atlas units).
+
+    Returns:
+        An (N, 2) array of map node positions in f's screen px (empty (0, 2) when none).
+    """
     cand = sorted(
         (n for n in atlas.nodes if abs(n["x"] - x) < reach and abs(n["y"] - y) < reach),
         key=lambda n: -len(n.get("frames", [])),
@@ -58,7 +82,14 @@ _OCEAN_KEEP = 24  # the re-check goes back and forth between screenshots (one ke
 
 
 def _ground_classes(hsv: np.ndarray) -> np.ndarray:
-    """per-pixel ground class: 0 water, 1 sand, 2 rock / snow, 3 grass, 4 forest, -1 unknown"""
+    """Classify each pixel's ground by colour.
+
+    Args:
+        hsv: the screenshot in OpenCV HSV (H 0-179, S and V 0-255), shape (h, w, 3).
+
+    Returns:
+        An (h, w) int array: 0 water, 1 sand, 2 rock / snow, 3 grass, 4 forest, -1 unknown.
+    """
     H, S, V = hsv[..., 0].astype(int), hsv[..., 1].astype(int), hsv[..., 2].astype(int)
     out = np.full(H.shape, -1, int)
     out[(H >= 78) & (H <= 112) & (S >= 85) & (V >= 50)] = 0  # water (blue-grey rock shadow is less saturated)
@@ -70,8 +101,17 @@ def _ground_classes(hsv: np.ndarray) -> np.ndarray:
 
 
 def ground_of(img) -> tuple[np.ndarray, np.ndarray]:
-    """(per-pixel ground class, pixels to ignore: path dashes, black, outside the view) of a screenshot; recent
-    screenshots are kept (_OCEAN_KEEP)"""
+    """Return a screenshot's per-pixel ground class and the pixels to ignore.
+
+    Recent screenshots are kept (_OCEAN_KEEP).
+
+    Args:
+        img: the screenshot (BGR image); cached by object identity.
+
+    Returns:
+        (ground classes as in _ground_classes, bool mask of pixels to ignore: path dashes, black, outside the view),
+        both of shape (h, w).
+    """
     got = _OCEAN.get(id(img))
     if got is None or got[0] is not img:
         cls = _ground_classes(cv2.cvtColor(img, cv2.COLOR_BGR2HSV))
@@ -87,8 +127,19 @@ def ground_of(img) -> tuple[np.ndarray, np.ndarray]:
 
 
 def _ocean(img, x, y) -> bool:
-    """is (x, y) in the ocean / Expedition biome? There are NO cities there (nor corruption / cleansed),
-    user's rule. Judged by open water around the map (an ocean map may sit on an island, so a wide circle)."""
+    """Tell whether (x, y) is in the ocean / Expedition biome.
+
+    There are NO cities there (nor corruption / cleansed), user's rule. Judged by open water around the map
+    (an ocean map may sit on an island, so a wide circle of OCEAN_R px).
+
+    Args:
+        img: the screenshot (BGR image).
+        x: x of the map node in screen px.
+        y: y of the map node in screen px.
+
+    Returns:
+        True when over 200 usable pixels lie in the circle and at least OCEAN_WATER of them are water.
+    """
     cls, bad = ground_of(img)
     h, w = cls.shape
     X, Y, R = int(round(x)), int(round(y)), OCEAN_R
@@ -101,9 +152,17 @@ def _ocean(img, x, y) -> bool:
 
 
 def _guessed(n: dict) -> set:
-    """screenshots that only guessed this map (a hidden map from a badge row, no base seen). Atlases built
-    before v0.80 have no "guessed_in": then the badge-row sightings are taken from the sources list, which
-    runs parallel to the frames list."""
+    """Return the screenshots that only guessed this map (a hidden map from an icon row, no base seen).
+
+    Atlases built before v0.80 have no "guessed_in": then the badge-row sightings are taken from the sources
+    list, which runs parallel to the frames list.
+
+    Args:
+        n: the atlas map node dict (uses "guessed_in", or "frames" and "sources").
+
+    Returns:
+        A set of screenshot names (empty when the lists do not line up).
+    """
     if "guessed_in" in n:
         return set(n["guessed_in"])
     fr, src = list(n.get("frames", [])), list(n.get("sources", []))
@@ -111,10 +170,22 @@ def _guessed(n: dict) -> set:
 
 
 def _one_map(maps_by, a, b, ignore=()) -> bool:
-    """Two sightings (never in the same screenshot) are one object seen with parallax / a revisit offset
-    when the screenshots that found one of them also show the other's spot, yet found only one there.
-    A screenshot where the other spot is out of view (edge, HUD) has no say; each side needs at least one
-    screenshot that does show the other spot (a map at a screen edge used to block the join)."""
+    """Tell whether two sightings are one object seen with parallax / a revisit offset.
+
+    Two sightings (never in the same screenshot) are one object when the screenshots that found one of them
+    also show the other's spot, yet found only one there. A screenshot where the other spot is out of view
+    (edge, HUD) has no say; each side needs at least one screenshot that does show the other spot (a map at
+    a screen edge used to block the join).
+
+    Args:
+        maps_by: screenshot name -> (frame dict, atlas-to-screen homography).
+        a: the first sighting (map node or icon dict with "x", "y" in atlas units and "frames").
+        b: the second sighting, same shape.
+        ignore: screenshot names to skip (ones that found both prove nothing either way).
+
+    Returns:
+        True when they are one object; False also when a finding screenshot is not in maps_by.
+    """
     for this, other in ((a, b), (b, a)):
         shown = 0
         for name in this["frames"]:
@@ -130,8 +201,20 @@ def _one_map(maps_by, a, b, ignore=()) -> bool:
 
 
 def _clean_icons(atlas, maps) -> list[dict]:
-    """Merge copies of one badge from different screenshots; drop Lost-tower matches (towers are
-    landmarks, and the Lost-tower icon also matches Hall / City artwork)."""
+    """Merge copies of one icon from different screenshots; drop Lost-tower matches.
+
+    Towers are landmarks, and the Lost-tower icon also matches Hall / City artwork. Copies closer than
+    PARALLAX_TOL with the same name (or one Unidentified) that no screenshot saw together are merged when
+    closer than ICON_DUP or judged one object by _one_map; positions are weighted by sightings, "spread"
+    records how far the copies lay apart.
+
+    Args:
+        atlas: the core.Atlas (uses atlas.icons).
+        maps: list of (frame dict, atlas-to-screen homography) for every screenshot.
+
+    Returns:
+        A list of merged icon dicts (copies of atlas.icons) with "could" set: how many screenshots show the spot.
+    """
     maps_by = {f["name"]: (f, Hi) for f, Hi in maps}
     icons = [dict(ic, frames=list(ic["frames"])) for ic in atlas.icons if ic["name"] != "LostTower"]
     alive = [True] * len(icons)
@@ -169,8 +252,20 @@ def _clean_icons(atlas, maps) -> list[dict]:
 
 
 def _beam(img, x, y, spread=0):
-    """blue / orange beam pixels in a narrow column above (x, y); with spread, the best column
-    within +-spread px (a special-boss badge sits next to its building, not under the beam)"""
+    """Count blue / orange beam pixels in a narrow column (44 px wide) above (x, y).
+
+    With spread, the best column within +-spread px is used (a special-boss icon sits next to its building,
+    not under the beam), and only the 150 px above are searched instead of 330.
+
+    Args:
+        img: the screenshot (BGR image).
+        x: x of the building in screen px.
+        y: y of the building in screen px.
+        spread: how far left / right to look for the beam column (screen px); 0 for just x.
+
+    Returns:
+        (blue pixel count, orange pixel count) of the best column; (0, 0) when too near the top.
+    """
     h, w = img.shape[:2]
     # a building's own beam rises right above it; for a badge-only spot look only low down, so a
     # different Hall / City higher up the screen (whose beam is in the same column) doesn't count
@@ -192,10 +287,24 @@ def _beam(img, x, y, spread=0):
 
 
 def _settlements(atlas, maps, landmarks, icons) -> list[dict]:
-    """Hall and City are the same kind of place with a special boss (user's rules): both have a
-    Deadly Map Boss badge (without one it is neither: removed); a City's map stands on a brass
-    barrel (always, user; beams vary: every type can show blue); a Hall has a normal map base with
-    the beam on a structure next to it.  Nearby detections are one building."""
+    """Decide which City / Hall detections are kept and which kind each one is.
+
+    Hall and City are the same kind of place with a special boss (user's rules): both have a Deadly Map Boss
+    icon (without one it is neither: removed, except a completed City, which keeps only its citadel); a City's
+    map stands on a brass barrel (always, user; beams vary: every type can show blue); a Hall has a normal map
+    base with the beam on a structure next to it. Nearby detections (within SETTLE_MERGE) are one building.
+    A map carrying another exclusive type's icon is neither, and the ocean / Expedition biome never has a City.
+
+    Args:
+        atlas: the core.Atlas (screenshots, map nodes, images).
+        maps: list of (frame dict, atlas-to-screen homography) for every screenshot.
+        landmarks: the landmark dicts so far (kind, x, y, n, conf, status ...).
+        icons: the merged icons from _clean_icons.
+
+    Returns:
+        The landmarks: all non-City / Hall ones unchanged, plus one dict per building with kind, x, y, n,
+        conf, source, status, beam (the reason for its kind), beam_px ([blue, orange]) and could.
+    """
     keep = [lm for lm in landmarks if lm["kind"] not in ("City", "Hall")]
     cand = [lm for lm in landmarks if lm["kind"] in ("City", "Hall") and not lm["status"].startswith("removed: abyss")]
     groups: list[list[dict]] = []

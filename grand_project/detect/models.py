@@ -13,6 +13,11 @@ from .constants import DB_PATH
 
 # ---------------------------------------------------------------- models in the DB
 def _db() -> sqlite3.Connection:
+    """Open the reference DB for writing, creating the detector_models table if needed.
+
+    Returns:
+        An open sqlite3 connection to DB_PATH.
+    """
     c = sqlite3.connect(str(DB_PATH))
     c.execute("""CREATE TABLE IF NOT EXISTS detector_models (
                      name TEXT PRIMARY KEY, blob BLOB NOT NULL, info TEXT, created TEXT NOT NULL)""")
@@ -20,7 +25,13 @@ def _db() -> sqlite3.Connection:
 
 
 def save_model(name: str, model, info: dict) -> None:
-    """training mode only"""
+    """Store a trained model in the DB as a skops archive (training mode only).
+
+    Args:
+        name: Model name, e.g. "maps", "badges", "towers"; replaces a stored model of that name.
+        model: The fitted scikit-learn model.
+        info: Extra facts about the training (stored as JSON).
+    """
     buf = sio.dumps(model)
     with _db() as c:
         c.execute(
@@ -58,11 +69,23 @@ _TRUSTED_MODEL_TYPES = {f"{module}.{name}" for module, name in _MODEL_CLASSES}
 
 
 class UnsafeModel(Exception):
-    """a stored model refers to something that is not part of a trained detector model"""
+    """A stored model refers to something that is not part of a trained detector model."""
 
 
 def safe_model_loads(blob: bytes):
-    """Load a detector model without executing arbitrary pickle globals."""
+    """Load a detector model without executing arbitrary pickle globals.
+
+    Only the classes in _MODEL_CLASSES are trusted; anything else is refused before it is reconstructed.
+
+    Args:
+        blob: skops archive bytes as stored in the detector_models table.
+
+    Returns:
+        The loaded model.
+
+    Raises:
+        UnsafeModel: The archive is invalid, unsupported, or refers to an untrusted type.
+    """
     try:
         untrusted = set(sio.get_untrusted_types(data=blob))
     except Exception as exc:
@@ -81,7 +104,17 @@ def safe_model_loads(blob: bytes):
 
 
 def load_model(name: str):
-    """live mode: read-only"""
+    """Read a model from the DB (live mode: the DB is opened read-only).
+
+    Args:
+        name: Model name, e.g. "maps", "badges", "towers".
+
+    Returns:
+        The loaded model, or None when it (or the table) is not in the DB.
+
+    Raises:
+        UnsafeModel: The stored archive is not a trusted detector model (see safe_model_loads).
+    """
     c = sqlite3.connect(f"file:{DB_PATH.as_posix()}?mode=ro", uri=True)
     try:
         row = c.execute("SELECT blob FROM detector_models WHERE name = ?", (name,)).fetchone()

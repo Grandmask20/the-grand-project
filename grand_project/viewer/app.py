@@ -68,7 +68,25 @@ class Viewer(
     AtlasesTabMixin,
     FrameLogMixin,
 ):
+    """The atlas viewer window: the map canvas, the side panel tabs and the background worker.
+
+    The work is split over one mixin per file (panels, terrain, files, view tab, folders, cities, auto-add,
+    navigation, debug, selection, bookmarks, drawing, saved atlases, frame log); this class holds the shared
+    state and builds the window. Everything runs on the window (Tk) thread except the worker and the helper
+    threads, which reach the window only through the queue `self._q`.
+    """
+
     def __init__(self, root: tk.Tk, atlas_path: str | None = None):
+        """Sets up the state, builds the window and opens an atlas.
+
+        Opens the atlas given, else the last atlas, else (first start) the empty default atlas
+        (atlases/default) with a welcome note in the log. Then starts the queue polling, the background worker,
+        the frame log (when it was on) and auto-add (when it was on and there is a folder to watch).
+
+        Args:
+            root: The Tk root window (a TkinterDnD.Tk when drag and drop is available).
+            atlas_path: Atlas file to open, or None.
+        """
         self.root = root
         LOG.info(f"viewer v{VERSION}{rc_paths.title_tag()} started" + (f" with {atlas_path}" if atlas_path else ""))
         root.report_callback_exception = self._tk_error
@@ -140,6 +158,14 @@ class Viewer(
 
     # ------------------------------------------------------------------ UI
     def _build_ui(self):
+        """Builds the window: the top bar (File menu, Atlas menu, Undo, Add bookmark, Draw city biome), the map
+        canvas, the side panel tabs (Find, View, Auto-add, Bookmarks, Saved atlases, Debug in the internal copy
+        only, Log), the layer toggles and the status bar, and binds the mouse and keyboard.
+
+        The "clam" theme is used: it is drawn by Tk itself; the native "vista" theme left stale map fragments in
+        the side panel when the map image was redrawn many times a second. The File menu is a raised button
+        (user: a menu bar did not read as a button). Layer toggles start from the saved settings.
+        """
         r = self.root
         r.title(f"The Grand Project v{VERSION}{rc_paths.title_tag()}")
         r.geometry(self.settings.get("geometry", "1500x900"))
@@ -531,6 +557,18 @@ class Viewer(
 
 
 def main(argv=None) -> int:
+    """Starts the viewer: makes the window (with drag and drop when tkinterdnd2 is installed), opens the atlas
+    and runs the Tk main loop until the window closes.
+
+    On Windows the process is made DPI-aware first (crisp on high-DPI displays).
+
+    Args:
+        argv: Command-line arguments without the program name; the first, if any, is the atlas file to
+            open. Default: sys.argv[1:].
+
+    Returns:
+        The exit code (0).
+    """
     argv = sys.argv[1:] if argv is None else argv
     if IS_WIN:  # crisp on high-DPI Windows displays
         with contextlib.suppress(Exception):
