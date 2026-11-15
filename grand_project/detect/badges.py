@@ -244,6 +244,8 @@ def badge_book(truth: dict, imgs: dict, names) -> dict:
     nm, F = [], []
     for n in names:
         for b in truth[n]["badges"]:
+            if b["name"] == "Unidentified":  # a found icon nobody has named yet: counts for finding, not naming
+                continue
             c = icon_refs.crop(imgs[n], b["x"], b["y"])
             if c is not None:
                 nm.append(b["name"])
