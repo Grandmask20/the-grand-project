@@ -10,7 +10,18 @@ from .constants import EDIT_SAME, EDIT_SPOT
 
 
 def view_model(atlas: core.Atlas) -> dict:
-    """Nodes / paths / landmarks to show: the atlas-wide result when there is one."""
+    """Builds what the viewer shows: nodes / paths / landmarks / icons, the atlas-wide result when there is one.
+
+    An atlas made before atlas_finalize existed has no atlas-wide result; its raw map nodes and paths are
+    converted to the same shape (a map node seen in 2+ screenshots is "confirmed", else "single"). The
+    user's landmark edits are applied on top.
+
+    Args:
+        atlas: The open atlas.
+
+    Returns:
+        A dict with "nodes", "paths", "landmarks", "icons", "frames" (lists of dicts) and "stats" (dict).
+    """
     j = atlas.to_json()
     fin = j.get("final")
     if fin:
@@ -59,10 +70,21 @@ def view_model(atlas: core.Atlas) -> dict:
 
 
 def apply_landmark_edits(landmarks: list[dict], edits: list[dict]) -> list[dict]:
-    """landmarks with the user's changes: kind changed, deleted (kind ""), or added on a map.
-    An edit made on a map ("on": "map") adds its own landmark there (unless one sits on that very spot);
-    an edit made on a landmark changes the nearest landmark within EDIT_SAME. Each landmark takes one edit,
-    closest first, so a City set on a map next to a Tower never turns the Tower into a City."""
+    """Returns the landmarks with the user's changes: kind changed, deleted (kind ""), or added on a map.
+
+    An edit made on a map ("on": "map") adds its own landmark there (unless one sits on that very spot,
+    within EDIT_SPOT); an edit made on a landmark changes the nearest landmark within EDIT_SAME. Each
+    landmark takes one edit, closest first, so a City set on a map next to a Tower never turns the Tower
+    into a City.
+
+    Args:
+        landmarks: Landmark dicts ("kind", "x", "y", ... in atlas units); not changed.
+        edits: The user's edits, dicts with "kind" ("" = delete), "x", "y" (atlas units) and optional "on".
+
+    Returns:
+        New landmark dicts: edited ones get status "kept" (or "removed: deleted by you") and source "you";
+        added ones are appended.
+    """
     out = [dict(lm) for lm in landmarks]
     taken: set = set()
     order = sorted(

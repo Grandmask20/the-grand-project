@@ -19,12 +19,33 @@ from .helpers import LOG
 
 
 class TerrainMixin:
+    """Viewer mixin for the terrain: sharp-ground tiles built from the screenshots at native resolution, plus a few
+    window helpers (canvas size, the Log box, the Tk error handler).
+
+    Sharp-ground tiles are built by one background worker thread (the terrain tile worker); everything else runs
+    on the window thread.
+    """
+
     # ------------------------------------------------------------------ fill-in areas
     # ------------------------------------------------------------------ native-resolution terrain
     def hires_wanted(self) -> bool:
+        """Whether to draw sharp-ground tiles: the Terrain layer is on and the zoom is over 1.15x the map image's scale.
+
+        Returns:
+            True when sharp-ground tiles should be drawn.
+        """
         return bool(self.pyr) and self.z > self.t_origin[2] * 1.15 and self.layers["Terrain"].get()
 
     def view_key(self, w, h):
+        """A key that changes whenever the view (size, centre, zoom) changes.
+
+        Args:
+            w: Canvas width in screen px.
+            h: Canvas height in screen px.
+
+        Returns:
+            (w, h, rounded cx, rounded cy, rounded zoom).
+        """
         return (w, h, round(self.cx, 2), round(self.cy, 2), round(self.z, 6))
 
     # Sharp ground, tile by tile. A tile (level s, column i, row j) covers atlas units [i, i+1) * HIRES_TILE / s
@@ -32,9 +53,15 @@ class TerrainMixin:
     # first), kept in self._tiles (least recently drawn dropped first) until the atlas or the map image changes
     # (self._tile_gen).
     def _tile_level(self) -> float:
+        """The tile level for the current zoom: the next power of two up, at most HIRES_MAX_LEVEL.
+
+        Returns:
+            Level s in tile px per atlas unit.
+        """
         return float(min(HIRES_MAX_LEVEL, 2.0 ** math.ceil(math.log2(max(self.z, 1e-6)))))
 
     def _clear_tiles(self):
+        """Drop every sharp-ground tile and pending request, and the screenshot weights (a new tile generation)."""
         with self._tile_lock:
             self._tile_gen += 1
             self._tiles.clear()
@@ -42,7 +69,16 @@ class TerrainMixin:
         self._weights = {}
 
     def _view_tiles(self, w, h, s) -> list[tuple]:
-        """keys of the level-s tiles the view needs, nearest its middle first"""
+        """Keys of the level-s tiles the view needs, nearest its middle first.
+
+        Args:
+            w: Canvas width in screen px.
+            h: Canvas height in screen px.
+            s: Tile level in tile px per atlas unit.
+
+        Returns:
+            List of (s, i, j) tile keys (column i, row j).
+        """
         unit = HIRES_TILE / s
         hw, hh = w / 2 / self.z, h / 2 / self.z
         i0, i1 = math.floor((self.cx - hw) / unit), math.floor((self.cx + hw) / unit)
@@ -51,8 +87,16 @@ class TerrainMixin:
         return sorted(keys, key=lambda k: (k[1] + 0.5 - self.cx / unit) ** 2 + (k[2] + 0.5 - self.cy / unit) ** 2)
 
     def _draw_tiles(self, img, w, h):
-        """the sharp ground over the map image: cached tiles of this level (meanwhile coarser / finer ones built
-        before), missing ones requested from the worker"""
+        """Draw the sharp ground over the map image: cached tiles of this level, missing ones requested from the worker.
+
+        While some are missing, tiles of the coarser / finer level built before are drawn under them (only then:
+        drawn under every frame before, ~35 tiles a frame). Starts the terrain tile worker when tiles are missing.
+
+        Args:
+            img: BGR uint8 frame to draw into, shape (h, w, 3).
+            w: Canvas width in screen px.
+            h: Canvas height in screen px.
+        """
         s = self._tile_level()
         z = self.z
         want = self._view_tiles(w, h, s)
@@ -74,7 +118,15 @@ class TerrainMixin:
             self._start_tile_worker()
 
     def tiles_cover_view(self, w, h) -> bool:
-        """every tile the view needs is built and has no holes: the blurry map image under them can be skipped"""
+        """Whether every tile the view needs is built and has no holes (the blurry map image under them can be skipped).
+
+        Args:
+            w: Canvas width in screen px.
+            h: Canvas height in screen px.
+
+        Returns:
+            True when the tiles cover the whole view.
+        """
         with self._tile_lock:
             gen = self._tile_gen
             for k in self._view_tiles(w, h, self._tile_level()):
@@ -84,6 +136,21 @@ class TerrainMixin:
         return True
 
     def _blit_tile(self, img, w, h, z, t):
+        """Copy one sharp-ground tile into the frame, scaled to the zoom.
+
+        The screen block is the tile's edges rounded the same way its neighbours round them, so tiles meet exactly
+        (floor / ceil overlapped them by a pixel, and that pixel was blended with black: a dark line along every tile
+        edge, user). At 1:1 it is a plain copy; otherwise a warp that repeats the tile's own edge pixels outside it,
+        never black. A tile with holes is copied through its mask, in place.
+
+        Args:
+            img: BGR uint8 frame to draw into.
+            w: Canvas width in screen px.
+            h: Canvas height in screen px.
+            z: Current zoom in screen px per atlas unit.
+            t: The cached tile, ((s, i, j), pixels BGR uint8 (HIRES_TILE, HIRES_TILE, 3), mask uint8 or None when no
+                holes).
+        """
         (s, i, j), pix, mask = t
         unit = HIRES_TILE / s
         a = z / s
@@ -116,13 +183,19 @@ class TerrainMixin:
             np.copyto(img[y0:y1, x0:x1], part, where=m[..., None])
 
     def _start_tile_worker(self):
+        """Wake the terrain tile worker, starting its background thread if it is not running."""
         self._tile_event.set()
         if self._tile_thread is None or not self._tile_thread.is_alive():
             self._tile_thread = threading.Thread(target=self._tile_worker, daemon=True)
             self._tile_thread.start()
 
     def _tile_worker(self):
-        """builds the wanted tiles one at a time, nearest the view's middle first (the list follows the view)"""
+        """Build the wanted tiles one at a time, nearest the view's middle first (the list follows the view).
+
+        Runs forever on the terrain tile worker's background thread. A tile built for an older generation (the atlas
+        or the map image changed meanwhile) is dropped; the cache keeps at most HIRES_TILE_CACHE tiles, least recently
+        drawn dropped first. Each finished tile is announced to the window thread through the queue as ("tile", key).
+        """
         while True:
             self._tile_event.wait()
             with self._tile_lock:
@@ -147,7 +220,7 @@ class TerrainMixin:
             self._q.put(("tile", key))
 
     def build_view_tiles(self):
-        """every tile the current view needs, built now (tests)"""
+        """Build every tile the current view needs, now, on the calling thread (tests)."""
         w, h = self.canvas_size()
         for key in self._view_tiles(w, h, self._tile_level()):
             pix, mask = self._build_tile(*key)
@@ -155,7 +228,16 @@ class TerrainMixin:
                 self._tiles[(self._tile_gen, *key)] = (key, pix, mask)
 
     def _frame_weight(self, f):
-        """distance-to-edge weight (quarter resolution) so each spot comes from its most central screenshot"""
+        """Distance-to-edge weight of a screenshot (quarter resolution): each spot comes from its most central shot.
+
+        Cached per screenshot until the tiles are cleared. Called on the terrain tile worker's thread.
+
+        Args:
+            f: Screenshot entry from atlas.frames ("name", "path").
+
+        Returns:
+            float32 array of shape (h / 4, w / 4): distance in quarter px to the nearest invalid pixel.
+        """
         key = f["name"]
         if key not in self._weights:
             img = self.atlas.image(f["path"])
@@ -167,8 +249,22 @@ class TerrainMixin:
         return self._weights[key]
 
     def _build_tile(self, s, i, j):
-        """one tile from the screenshots: each pixel from the screenshot that owns it in the clean map (Fix
-        seams), else from the one that shows it nearest its own middle"""
+        """Build one sharp-ground tile from the screenshots.
+
+        Each pixel comes from the screenshot that owns it in the clean map (Fix seams), else from the one that shows it
+        nearest its own middle (at most HIRES_MAX_FRAMES screenshots, nearest the tile's middle first). A tile (level s,
+        column i, row j) covers atlas units [i, i+1) * HIRES_TILE / s by [j, j+1) * HIRES_TILE / s. Called on the
+        terrain tile worker's thread (or by build_view_tiles).
+
+        Args:
+            s: Tile level in tile px per atlas unit.
+            i: Tile column.
+            j: Tile row.
+
+        Returns:
+            (pixels, mask): BGR uint8 image of shape (HIRES_TILE, HIRES_TILE, 3), and a uint8 mask of the filled pixels
+            or None when the tile has no holes.
+        """
         T = HIRES_TILE
         unit = T / s
         ax0, ay0 = i * unit, j * unit
@@ -224,22 +320,45 @@ class TerrainMixin:
         return out, (None if mask.all() else mask)  # None: no holes
 
     def canvas_size(self) -> tuple[int, int]:
+        """Size of the map canvas; inside a redraw the size asked once for the frame (each Tk query was ~90 a frame).
+
+        Returns:
+            (width, height) in screen px, at least 1 each.
+        """
         fs = getattr(self, "_frame_size", None)
         if fs is not None:  # inside a redraw: asked once (each Tk query was ~90 a frame)
             return fs
         return max(1, self.canvas.winfo_width()), max(1, self.canvas.winfo_height())
 
     def canvas_size_half(self) -> tuple[float, float]:
+        """The middle of the map canvas.
+
+        Returns:
+            (width / 2, height / 2) in screen px.
+        """
         w, h = self.canvas_size()
         return w / 2, h / 2
 
     def _tk_error(self, tp, val, tb):
-        """an error inside a button / menu / key handler: logged with its traceback, shown in Log"""
+        """Handle an error inside a button / menu / key handler: logged with its traceback and shown in Log.
+
+        Set as the Tk root's report_callback_exception.
+
+        Args:
+            tp: The exception type.
+            val: The exception.
+            tb: The traceback.
+        """
         LOG.error("error in a window handler", exc_info=(tp, val, tb))
         with contextlib.suppress(Exception):
             self.log(f"error: {val!r} (details in {atlas_log.LOG_FILE.name})")
 
     def log(self, text: str):
+        """Write a line to the log file and the Log box.
+
+        Args:
+            text: The message (surrounding newlines are stripped).
+        """
         LOG.info(text.strip("\n"))
         self.log_box.configure(state="normal")
         self.log_box.insert("end", text.strip("\n") + "\n")

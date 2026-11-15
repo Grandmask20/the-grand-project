@@ -27,6 +27,14 @@ USER_DATA = ROOT / "user_data"
 # ATLAS_TEST_DATA environment variable; "atlas_test_data" inside this folder (the GitHub repo keeps a trimmed
 # set there, in Git LFS); "atlas_test_data" next to this folder (the full private set).
 def _test_data() -> Path:
+    """Find the test / training data folder.
+
+    Looked for in this order: the ATLAS_TEST_DATA environment variable; "atlas_test_data" inside this folder
+    (with a screenshots folder); "atlas_test_data" next to this folder.
+
+    Returns:
+        The folder path (it may not exist).
+    """
     if os.environ.get("ATLAS_TEST_DATA"):
         return Path(os.environ["ATLAS_TEST_DATA"])
     inside = ROOT / "atlas_test_data"
@@ -52,12 +60,24 @@ if _LOCAL.exists():
 
 
 def ref(name: str) -> Path:
-    """a file in the references folder"""
+    """Return a file in the references folder.
+
+    Args:
+        name: File name.
+
+    Returns:
+        Path of the file.
+    """
     return REFERENCES / name
 
 
 def test_data_problem() -> str | None:
-    """why the (not shipped) test screenshots can't be used, or None when they are there"""
+    """Why the (not shipped) test screenshots can't be used.
+
+    Returns:
+        A sentence saying what is wrong (not found, or Git LFS placeholders not downloaded) and how to get
+        them, or None when they are there.
+    """
     shot = next((TEST_DATA / "screenshots").rglob("*.png"), None) if (TEST_DATA / "screenshots").is_dir() else None
     pointer = shot is not None and shot.stat().st_size < 1024 and shot.read_bytes()[:20].startswith(b"version https")
     if shot is None or pointer:
@@ -69,8 +89,10 @@ def test_data_problem() -> str | None:
 
 
 def need_test_data() -> None:
-    """for tools that need the test screenshots: explain and stop if they are missing (tests use the `data`
-    marker instead, see tests/conftest.py)"""
+    """Stop if the (not shipped) test screenshots are missing; for tools that need them.
+
+    Prints why (test_data_problem) and exits with code 0. Tests use the `data` marker instead (tests/conftest.py).
+    """
     why = test_data_problem()
     if why:
         print("SKIP: " + why)
@@ -89,5 +111,9 @@ DEBUG = CHANNEL != "release"
 
 
 def title_tag() -> str:
-    """what the window title adds after the version ("" for the public release)"""
+    """Return what the window title adds after the version ("" for the public release).
+
+    Returns:
+        " internal" / " develop", or "" for the release.
+    """
     return "" if CHANNEL == "release" else f" {CHANNEL}"

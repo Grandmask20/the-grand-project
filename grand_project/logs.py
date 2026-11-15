@@ -22,6 +22,11 @@ _ready = False
 
 
 def _setup() -> None:
+    """Set up the "atlas" logger once: the rotating log file and the hooks for uncaught errors.
+
+    Uncaught errors in the main thread and in background threads are written to the log as well. A
+    read-only folder logs nowhere rather than crash.
+    """
     global _ready
     if _ready:
         return
@@ -39,12 +44,24 @@ def _setup() -> None:
     old_hook = sys.excepthook
 
     def hook(tp, val, tb):
+        """Log an uncaught error, then pass it to the previous sys.excepthook.
+
+        Args:
+            tp: Exception type.
+            val: Exception.
+            tb: Traceback.
+        """
         root.critical("uncaught error", exc_info=(tp, val, tb))
         old_hook(tp, val, tb)
 
     sys.excepthook = hook
 
     def thread_hook(args):
+        """Log an uncaught error in a background thread.
+
+        Args:
+            args: threading.ExceptHookArgs.
+        """
         root.error(
             f"uncaught error in thread {args.thread.name if args.thread else '?'}",
             exc_info=(args.exc_type, args.exc_value, args.exc_traceback),
@@ -54,16 +71,36 @@ def _setup() -> None:
 
 
 def get(name: str) -> logging.Logger:
-    """logger "atlas.<name>" writing to atlas_debug.log"""
+    """Return the logger "atlas.<name>" writing to atlas_debug.log.
+
+    Args:
+        name: Part of the program, e.g. "viewer" or "builder".
+
+    Returns:
+        The logging.Logger.
+    """
     _setup()
     return logging.getLogger(f"atlas.{name}")
 
 
 def printer(name: str):
-    """a log(msg) function for the builder / finalize `log=` arguments: prints and writes the file"""
+    """Return a log(msg) function for the builder / finalize `log=` arguments: prints and writes the file.
+
+    Args:
+        name: Part of the program, e.g. "builder".
+
+    Returns:
+        Function log(msg, *rest) that joins its arguments with spaces.
+    """
     lg = get(name)
 
     def log(msg, *rest):
+        """Print a line and write it to the log file at INFO level.
+
+        Args:
+            msg: First part of the line.
+            *rest: More parts, joined with spaces.
+        """
         text = " ".join(str(m) for m in (msg, *rest))
         lg.info(text)
         print(text, flush=True)

@@ -47,6 +47,16 @@ from .walls import fortress_walls
 
 @_per_image
 def path_dashes(img: np.ndarray) -> np.ndarray:
+    """Centres of the path dashes: amber, dim-gold and fog-orange (washed out by Delirium fog) blobs.
+
+    Blobs outside the HUD with DASH_AREA px area and at most DASH_SIZE px wide / tall. Cached per image.
+
+    Args:
+        img: BGR screenshot (1080p).
+
+    Returns:
+        (n, 2) float array of dash centre x, y in screen px.
+    """
     b, g, r = [img[..., i].astype(np.int16) for i in range(3)]
     hsv = cv2.cvtColor(img, cv2.COLOR_BGR2HSV)
     H, S, V = [hsv[..., i].astype(np.int16) for i in range(3)]
@@ -61,7 +71,18 @@ def path_dashes(img: np.ndarray) -> np.ndarray:
 
 
 def path_features(pts, dashes: np.ndarray) -> np.ndarray:
-    """dashes in rings around a spot, and in how many of 12 directions dashes leave it"""
+    """Path evidence around each spot: dashes around a spot are map evidence too.
+
+    Dash counts in rings 0-10, 10-20, 20-32 and 32-48 px, and in how many of 12 directions dashes (12-45 px away)
+    leave it: with at least one dash and with at least two.
+
+    Args:
+        pts: Spots, (n, 2) array or [(x, y), ...] in screen px.
+        dashes: (m, 2) dash centres (path_dashes).
+
+    Returns:
+        (n, 6) float32 array.
+    """
     F = []
     for x, y in pts:
         v = dashes - (x, y) if len(dashes) else np.zeros((0, 2))
@@ -79,9 +100,25 @@ def path_features(pts, dashes: np.ndarray) -> np.ndarray:
 
 
 def _walks_raw(nodes: list[dict], dashes: np.ndarray, loose: list | None = None) -> list[dict]:
-    """every walk from every map along the dashes until it reaches another map; walks that follow a
-    regular dotted line but reach no map are added to `loose` (their end point and direction).
-    Each dash's neighbours are looked up once; each step only tests the maps near it."""
+    """Every walk from every map node along the dashes until it reaches another map node.
+
+    Each step takes the cheapest dash ahead (within PATH_STEP, else PATH_JUMP px, at most PATH_MAX_ANG off the
+    heading predicted by the bend learned so far). A walk ends at the first map node whose ring (PATH_ARRIVE,
+    PATH_ARRIVE_TOWER for towers) it passes, or one within PATH_SNAP px just ahead when the dashes run out. Walks
+    need PATH_MIN_DASHES dashes, a detour of at most PATH_MAX_DETOUR and regular dash spacing (PATH_REGULAR).
+    Walks that follow a regular dotted line but reach no map are added to `loose` (their end point and
+    direction). Each dash's neighbours are looked up once; each step only tests the maps near it.
+
+    Args:
+        nodes: Map nodes, dicts with "x", "y" (and "tower").
+        dashes: (m, 2) dash centres in screen px.
+        loose: Optional list that receives (end point 10 px past the last dash, start node index, unit direction)
+            for each regular walk that reached no map node.
+
+    Returns:
+        Walks as dicts {"a", "b" (node indices), "dashes" (dash indices), "line" ([(x, y), ...] from a to b),
+        "score"}.
+    """
     N = np.array([[n["x"], n["y"]] for n in nodes], float)
     rad = np.array([PATH_ARRIVE_TOWER if n.get("tower") else PATH_ARRIVE for n in nodes])
     if len(dashes) == 0 or len(N) < 2:
@@ -195,13 +232,31 @@ def _walks_raw(nodes: list[dict], dashes: np.ndarray, loose: list | None = None)
 
 
 def _cross(l1: np.ndarray, l2: np.ndarray) -> bool:
-    """do two drawn lines cross (proper intersection of any segments)?"""
+    """Whether two drawn lines cross (proper intersection of any segments).
+
+    Args:
+        l1: (n, 2) polyline.
+        l2: (m, 2) polyline.
+
+    Returns:
+        True when any segment of l1 properly crosses any segment of l2.
+    """
     if (l1.min(0) > l2.max(0)).any() or (l2.min(0) > l1.max(0)).any():
         return False
     p1, p2 = l1[:-1, None], l1[1:, None]
     q1, q2 = l2[None, :-1], l2[None, 1:]
 
     def side(a, b, c):
+        """Signed area telling which side of line a-b each point c lies on (broadcast over arrays).
+
+        Args:
+            a: Line start points, (..., 2).
+            b: Line end points, (..., 2).
+            c: Points to test, (..., 2).
+
+        Returns:
+            Array of cross products: > 0 left, < 0 right, 0 on the line.
+        """
         return (b[..., 0] - a[..., 0]) * (c[..., 1] - a[..., 1]) - (b[..., 1] - a[..., 1]) * (c[..., 0] - a[..., 0])
 
     return bool(((side(p1, p2, q1) * side(p1, p2, q2) < 0) & (side(q1, q2, p1) * side(q1, q2, p2) < 0)).any())
@@ -210,16 +265,39 @@ def _cross(l1: np.ndarray, l2: np.ndarray) -> bool:
 def maps_from_paths(
     nodes: list[dict], dashes: np.ndarray, img: np.ndarray, map_pts: np.ndarray, map_p: np.ndarray, rounds: int = 3
 ) -> list[dict]:
-    """maps the map finder missed: where dotted lines from two different maps both run out, there is a
-    map (paths never cross or fork - user). A line that runs into the HUD, the screen edge or black fog
-    has not ended, it is only out of view: such ends do not count, and two lines must come in from
-    clearly different directions. Our walks also stop where a few dashes go undetected, so the map
-    finder must have seen a (weak) map candidate at the meeting point too. Repeated: a new map can open
-    more lines."""
+    """Map nodes the map finder missed, found where paths run out.
+
+    Where dotted lines from two different maps both run out, there is a map (paths never cross or fork - user). A
+    line that runs into the HUD, the screen edge or black fog has not ended, it is only out of view: such ends do
+    not count, and two lines must come in from clearly different directions. Our walks also stop where a few
+    dashes go undetected, so the map finder must have seen a (weak) map candidate at the meeting point too. 3+
+    lines from different maps running out at one spot (PATH_MEET_MANY) are a map however unlit its base (user's
+    grey bases the map model rates ~0). Repeated: a new map can open more lines.
+
+    Args:
+        nodes: Map nodes found so far, dicts with "x", "y".
+        dashes: (m, 2) dash centres (path_dashes).
+        img: BGR screenshot (1080p), for what is in view.
+        map_pts: (k, 2) array of all map candidates in screen px.
+        map_p: (k,) map probability of each map candidate.
+        rounds: Maximum number of rounds.
+
+    Returns:
+        New map nodes as dicts {"x", "y", "score", "source": "path ends"}.
+    """
     valid = core._valid_mask(img)
     h, w = valid.shape
 
     def in_view(p, d):
+        """Whether the point PATH_AHEAD px past a loose end is on screen and in clearly visible atlas.
+
+        Args:
+            p: Loose end point (x, y).
+            d: Unit direction the line runs in.
+
+        Returns:
+            True when the line's continuation is in view (so the line really ended).
+        """
         q = p + d * PATH_AHEAD
         x, y = int(round(q[0])), int(round(q[1]))
         return 0 <= x < w and 0 <= y < h and valid[y, x] > 0
@@ -275,8 +353,18 @@ def maps_from_paths(
 
 
 def _no_diamond_shortcuts(kept: list[dict], nodes: list[dict]) -> list[dict]:
-    """the old diamond rule: a path a-b is a shortcut across a diamond when maps on BOTH sides of it are
-    joined to both a and b by kept paths; the four sides are the real paths"""
+    """Drop shortcuts across diamonds (the old diamond rule).
+
+    A path a-b is a shortcut across a diamond when maps on BOTH sides of it are joined to both a and b by kept
+    paths; the four sides are the real paths.
+
+    Args:
+        kept: Walks as from _walks_raw ("a", "b" node indices).
+        nodes: Map nodes, dicts with "x", "y".
+
+    Returns:
+        The walks that are not shortcuts.
+    """
     N = np.array([[n["x"], n["y"]] for n in nodes], float)
     adj: dict = {}
     for w in kept:
@@ -298,17 +386,36 @@ def _no_diamond_shortcuts(kept: list[dict], nodes: list[dict]) -> list[dict]:
 
 
 def walk_paths(nodes: list[dict], dashes: np.ndarray) -> list[dict]:
-    """paths between the maps (hidden ones too): {a, b (node indices), conf, status, dashes, line}.
-    Walks along the dashes, then keeps the best walks first; a walk that crosses a kept path, reuses its
-    dashes, joins two maps already joined, leaves a map in the same direction as a kept path, or gives a
-    map more than 5 paths is dropped (paths never cross, fork or share a route - user); then the diamond
-    rule."""
+    """Paths between the map nodes (hidden ones too) from walks along the dashes.
+
+    Keeps the best walks first; a walk that crosses a kept path, reuses its dashes (more than PATH_SHARE), joins
+    two maps already joined, leaves a map in the same direction as a kept path (PATH_LEAVE_ANGLE), or gives a map
+    more than PATH_MAX_DEGREE (5) paths is dropped (paths never cross, fork or share a route - user); then the
+    diamond rule.
+
+    Args:
+        nodes: Map nodes, dicts with "x", "y" (and "tower").
+        dashes: (m, 2) dash centres (path_dashes).
+
+    Returns:
+        Paths as dicts {"a", "b" (node indices, a < b), "conf", "status": "traced", "dashes" (count), "line"
+        ([[x, y], ...] from a to b)}.
+    """
     walks = sorted(_walks(nodes, dashes), key=lambda w: -w["score"])
     kept, owner, pairs = [], {}, set()
     degree: dict = {}
     leave: dict = {}  # map -> directions its kept paths leave in
 
     def leaving(line, at_start):
+        """Unit direction a path leaves its end map node in (towards its first point 25 px or more away).
+
+        Args:
+            line: Path polyline, [(x, y), ...].
+            at_start: True for the start end, False for the far end.
+
+        Returns:
+            (2,) unit vector.
+        """
         L = np.asarray(line, float)
         L = L if at_start else L[::-1]
         far = next((q for q in L[1:] if np.hypot(*(q - L[0])) >= 25), L[-1])
@@ -359,7 +466,16 @@ def walk_paths(nodes: list[dict], dashes: np.ndarray) -> list[dict]:
 
 @_per_image
 def amber_dashes(img: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
-    """strict amber filter -> dash strokes: centres and unit directions"""
+    """Amber dash strokes from a strict amber filter: centres and unit directions.
+
+    Strokes outside the HUD with area, elongation and length in the CHAIN ranges. Cached per image.
+
+    Args:
+        img: BGR screenshot (1080p).
+
+    Returns:
+        (C, U): (n, 2) float array of stroke centres in screen px and (n, 2) unit directions along each stroke.
+    """
     b, g, r = [img[..., i].astype(np.int16) for i in range(3)]
     m = ((r > 145) & (g > 95) & (r - g > 32) & (g - b > 35) & (b < 145)).astype(np.uint8)
     m[core.hud_mask(img.shape[1], img.shape[0], -core.HUD_DEPTH) > 0] = 0
@@ -381,7 +497,15 @@ def amber_dashes(img: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
 
 
 def _dash_links(C: np.ndarray, U: np.ndarray) -> set:
-    """each dash links to its best neighbour ahead and behind along its own direction; mutual links kept"""
+    """Link each dash to its best neighbour ahead and behind along its own direction; mutual links kept.
+
+    Args:
+        C: (n, 2) amber stroke centres (amber_dashes).
+        U: (n, 2) unit stroke directions.
+
+    Returns:
+        Set of (i, j) index pairs, i < j.
+    """
     from scipy.spatial import cKDTree
 
     if len(C) < 2:
@@ -409,14 +533,33 @@ def _dash_links(C: np.ndarray, U: np.ndarray) -> set:
 
 
 def _chain_end(pts: np.ndarray, first: bool) -> tuple[np.ndarray, np.ndarray]:
+    """End point of a chain and the outward direction there (from up to 3 dashes inside).
+
+    Args:
+        pts: (n, 2) dash centres of the chain, in order.
+        first: True for the first end, False for the last.
+
+    Returns:
+        (end point, outward unit direction), each (2,).
+    """
     e, inn = (pts[0], pts[min(3, len(pts) - 1)]) if first else (pts[-1], pts[max(-4, -len(pts))])
     o = e - inn
     return e, o / max(1e-6, float(np.hypot(*o)))
 
 
 def dash_chains(C: np.ndarray, U: np.ndarray) -> list[list[int]]:
-    """linked dashes as chains; chain ends that line up across a short gap are joined, closest pair first
-    (a heap of candidate end pairs, refreshed only for the chain that just changed)"""
+    """Linked dashes as chains.
+
+    Chain ends that line up across a short gap (CHAIN["stitch"] px, CHAIN["stitch_ang"]) are joined, closest pair
+    first (a heap of candidate end pairs, refreshed only for the chain that just changed).
+
+    Args:
+        C: (n, 2) amber stroke centres (amber_dashes).
+        U: (n, 2) unit stroke directions.
+
+    Returns:
+        Chains as lists of dash indices, in order along each chain.
+    """
     import heapq
 
     from scipy.spatial import cKDTree
@@ -456,6 +599,11 @@ def dash_chains(C: np.ndarray, U: np.ndarray) -> list[list[int]]:
     heap: list = []
 
     def push_for(k):
+        """Push every chain end that lines up with end k onto the heap.
+
+        Args:
+            k: End key (chain id, first?).
+        """
         di, o1 = ends[k]
         for dj in tree.query_ball_point(C[di], CHAIN["stitch"]):
             for k2 in end_at.get(dj, ()):
@@ -497,13 +645,34 @@ def dash_chains(C: np.ndarray, U: np.ndarray) -> list[list[int]]:
 
 
 def chain_paths(nodes: list[dict], C: np.ndarray, U: np.ndarray) -> list[dict]:
-    """dash chains cut where they pass through a map; each piece between two maps is a path"""
+    """Paths from dash chains: chains cut where they pass through a map; each piece between two maps is a path.
+
+    An open chain end attaches to a map node within 12 px, or within CHAIN["map_r"] px straight ahead. Per pair
+    of map nodes, the piece with the most dashes is kept.
+
+    Args:
+        nodes: Map nodes, dicts with "x", "y".
+        C: (n, 2) amber stroke centres (amber_dashes).
+        U: (n, 2) unit stroke directions.
+
+    Returns:
+        Paths as dicts {"a", "b" (node indices, a < b), "conf", "status": "chain", "dashes" (count), "line"}.
+    """
     N = np.array([[n["x"], n["y"]] for n in nodes], float).reshape(-1, 2)
     if not len(N) or not len(C):
         return []
     cm = np.cos(np.radians(CHAIN["map_ang"]))
 
     def attach(e, o):
+        """The map node a chain end attaches to.
+
+        Args:
+            e: Chain end point (x, y).
+            o: Outward unit direction at that end.
+
+        Returns:
+            Index of the nearest qualifying map node, or None.
+        """
         v = N - e
         d = np.hypot(*v.T)
         ok = np.nonzero((d <= 12) | ((d <= CHAIN["map_r"]) & ((v @ o) / np.maximum(d, 1e-6) >= cm)))[0]
@@ -552,6 +721,17 @@ def chain_paths(nodes: list[dict], C: np.ndarray, U: np.ndarray) -> list[dict]:
 
 
 def _on_dots(line, tree) -> float:
+    """Share of a path's inner line (end points left out) that runs on dashes.
+
+    Sampled every ~4 px; a sample is on the dots when a dash is within 8 px.
+
+    Args:
+        line: Path polyline, [(x, y), ...] in screen px.
+        tree: cKDTree of dash centres.
+
+    Returns:
+        Share 0..1; 0.0 when the inner line has fewer than 2 points.
+    """
     L = np.asarray(line, float)[1:-1]
     if len(L) < 2:
         return 0.0
@@ -567,8 +747,20 @@ def _on_dots(line, tree) -> float:
 def trace_paths(
     nodes: list[dict], dashes: np.ndarray, img: np.ndarray | None = None, amber: tuple | None = None
 ) -> list[dict]:
-    """paths between the maps: amber dash chains first, then walk paths for pairs they missed that run on
-    the dots and cross nothing (no map gets more than PATH_MAX_DEGREE). `amber` = amber_dashes(img), if known."""
+    """Paths between the map nodes.
+
+    Amber dash chains first, then walk paths for pairs they missed that run on the dots (WALK_FILL_ON_DOTS) and
+    cross nothing (no map gets more than PATH_MAX_DEGREE). Without img and amber, walk paths only.
+
+    Args:
+        nodes: Map nodes, dicts with "x", "y" (and "tower").
+        dashes: (m, 2) dash centres (path_dashes).
+        img: BGR screenshot (1080p), used for amber_dashes when `amber` is not given.
+        amber: amber_dashes(img), if known.
+
+    Returns:
+        Paths as dicts {"a", "b", "conf", "status" ("chain" or "traced"), "dashes", "line"}.
+    """
     if img is None and amber is None:
         return walk_paths(nodes, dashes)
     from scipy.spatial import cKDTree
@@ -600,10 +792,20 @@ def trace_paths(
 
 
 def dash_record(img: np.ndarray) -> dict:
-    """what the atlas-wide path check needs from a screenshot, saved with its detection so the check never
-    re-reads or re-traces the image: every path dash (amber strokes + dim / fog dashes, screen px) and a
-    coarse grid of where the atlas is clearly visible (not dark fog, not HUD) - there an empty stretch along
-    a path really means "no path"; elsewhere it means nothing (user)"""
+    """What the atlas-wide path check needs from a screenshot.
+
+    Saved with its detection so the check never re-reads or re-traces the image: every path dash (amber strokes +
+    dim / fog dashes, screen px) and a coarse grid of where the atlas is clearly visible (not dark fog, not HUD) -
+    there an empty stretch along a path really means "no path"; elsewhere it means nothing (user). Also a coarse
+    grid of the fortress walls.
+
+    Args:
+        img: BGR screenshot (1080p).
+
+    Returns:
+        {"dash_pts": [[x, y], ...], "amber_pts": [[x, y], ...], "seen_grid": rows of "0"/"1" per SEEN_CELL px cell,
+        "wall_grid": rows of "0"/"1" per WALL_CELL px cell}.
+    """
     dim = path_dashes(img)
     C, _U = amber_dashes(img)
     pts = np.vstack([np.asarray(C, float).reshape(-1, 2), np.asarray(dim, float).reshape(-1, 2)])
@@ -627,9 +829,20 @@ def dash_record(img: np.ndarray) -> dict:
 
 
 def screen_paths(img_dashes: tuple, pts: np.ndarray, ok: np.ndarray, tower: np.ndarray | None = None) -> dict:
-    """for the builder's atlas-wide check: paths between given map positions (screen px) of one screenshot,
-    using only the maps inside it (ok). img_dashes = (path_dashes(img), amber_dashes(img)).
-    -> {(i, j): {"dashes", "from", "line", "detour"}}, i < j indices into pts (the atlas_trace format)"""
+    """Paths between given map positions of one screenshot, for the builder's atlas-wide check.
+
+    Uses only the map nodes inside the screenshot (ok).
+
+    Args:
+        img_dashes: (path_dashes(img), amber_dashes(img)).
+        pts: (n, 2) map positions in screen px.
+        ok: (n,) bool, True for map nodes inside this screenshot.
+        tower: Optional (n,) bool, True for towers.
+
+    Returns:
+        {(i, j): {"dashes", "from", "line", "detour"}} with i < j indices into pts (the atlas_trace format);
+        "from" is {i, j} for chain paths and {i} for walked ones.
+    """
     dashes, amber = img_dashes
     vis = np.nonzero(ok)[0]
     nodes = [
@@ -655,7 +868,16 @@ _WALK_MEMO: dict = {}
 
 
 def _walks(nodes: list[dict], dashes: np.ndarray, loose: list | None = None) -> list[dict]:
-    """_walks_raw, remembered for the last maps + dashes: tracing repeats the dead-end search's last round"""
+    """_walks_raw, remembered for the last maps + dashes: tracing repeats the dead-end search's last round.
+
+    Args:
+        nodes: Map nodes, dicts with "x", "y" (and "tower").
+        dashes: (m, 2) dash centres in screen px.
+        loose: Optional list that receives the loose ends (see _walks_raw).
+
+    Returns:
+        Walks as from _walks_raw (shared cached list).
+    """
     key = (
         len(dashes),
         float(dashes.sum()) if len(dashes) else 0.0,

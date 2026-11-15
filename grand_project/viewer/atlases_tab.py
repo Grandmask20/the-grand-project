@@ -33,13 +33,27 @@ from .settings import save_settings
 
 
 def thumb_file(json_path) -> Path:
-    """where an atlas's thumbnail is kept (no folder is made: listing atlases must not create files)"""
+    """Where an atlas's thumbnail is kept (no folder is made: listing atlases must not create files).
+
+    Args:
+        json_path: Path of the atlas JSON file (str or Path).
+
+    Returns:
+        Path <stem>_files/<stem>_thumb.png next to the atlas file.
+    """
     p = Path(json_path)
     return p.with_name(p.stem + "_files") / (p.stem + "_thumb.png")
 
 
 def make_thumb(canvas: np.ndarray) -> np.ndarray:
-    """the map image shrunk into ATLAS_THUMB, on the card's dark background"""
+    """The map image shrunk into ATLAS_THUMB, centred on the card's dark background.
+
+    Args:
+        canvas: BGR uint8 map image of any size.
+
+    Returns:
+        BGR uint8 image of shape (ATLAS_THUMB[1], ATLAS_THUMB[0], 3).
+    """
     tw, th = ATLAS_THUMB
     h, w = canvas.shape[:2]
     s = min(tw / max(1, w), th / max(1, h))
@@ -51,7 +65,14 @@ def make_thumb(canvas: np.ndarray) -> np.ndarray:
 
 
 def atlas_numbers(data: dict) -> dict:
-    """maps / icons / screenshots of a saved atlas (its JSON), as the viewer counts them"""
+    """Maps / icons / screenshots of a saved atlas (its JSON), as the viewer counts them.
+
+    Args:
+        data: The atlas JSON as read from disk.
+
+    Returns:
+        {"maps": map nodes kept by the atlas-wide check, "icons": number of icons, "shots": number of screenshots}.
+    """
     st = (data.get("final") or {}).get("stats", {})
     return {
         "maps": int(st.get("nodes_kept", 0)),
@@ -61,8 +82,15 @@ def atlas_numbers(data: dict) -> dict:
 
 
 class AtlasesTabMixin:
+    """Viewer mixin for the Saved atlases tab: one card per known atlas, open / rename / delete."""
+
     # ------------------------------------------------------------------ the tab
     def _build_atlases_tab(self, parent):
+        """Build the Saved atlases tab: a scrolling list of cards and the Refresh, Rename and Delete buttons.
+
+        Args:
+            parent: The tab's frame to build into.
+        """
         ttk.Label(parent, text="Click an atlas to open it.", foreground="#555", wraplength=330).pack(
             anchor="w", pady=(0, 4)
         )
@@ -91,7 +119,11 @@ class AtlasesTabMixin:
         self._atl_selected: str | None = None
 
     def refresh_atlas_cards(self):
-        """rebuild the list of cards (atlas list, numbers or thumbnails changed)"""
+        """Rebuild the list of cards (atlas list, numbers or thumbnails changed).
+
+        When another atlas was opened it becomes the selected card. Atlases without numbers or a thumbnail are read in
+        the background. Does nothing before the tab is built.
+        """
         if not hasattr(self, "atl_inner"):
             return
         for w in self.atl_inner.winfo_children():
@@ -109,6 +141,13 @@ class AtlasesTabMixin:
                 self._read_atlas_in_background(a["json"])
 
     def _atlas_card(self, a: dict):
+        """Add one card: thumbnail, name, maps / icons / screenshots ("reading…" until known), "open" if open.
+
+        Left-click picks the card (opens the atlas); right-click shows its menu.
+
+        Args:
+            a: The atlas's entry in the known atlas list ("json", "name" and optional "numbers").
+        """
         is_open = self.path is not None and same_file(a["json"], self.path)
         picked = a["json"] == self._atl_selected
         bg = "#dbe9ff" if picked else "white"
@@ -138,7 +177,12 @@ class AtlasesTabMixin:
             w.bind(f"<Button-{BTN_RIGHT}>", lambda e, j=a["json"]: self._atlas_card_menu(e, j))
 
     def _atlas_card_menu(self, e, json_path: str):
-        """right-click a card: open / rename / delete"""
+        """Show the right-click menu of a card: Open / Rename / Delete. Bound to the right mouse button on a card.
+
+        Args:
+            e: The Tk event (its x_root / y_root place the menu).
+            json_path: Atlas file of the card; it becomes the selected card.
+        """
         self._atl_selected = json_path
         self.refresh_atlas_cards()
         m = tk.Menu(self.root, tearoff=0)
@@ -149,6 +193,11 @@ class AtlasesTabMixin:
         m.tk_popup(e.x_root, e.y_root)
 
     def _rename_card(self, json_path: str | None):
+        """Rename the atlas of a card (also renames it in the Atlas menu).
+
+        Args:
+            json_path: Atlas file of the card, or None when no card is selected (says so in the status bar).
+        """
         if not json_path:
             self.status.set("select an atlas first")
             return
@@ -157,6 +206,13 @@ class AtlasesTabMixin:
             self.rename_atlas(k)  # also renames it in the Atlas menu
 
     def _pick_atlas_card(self, json_path: str):
+        """Select a card and open its atlas if it is not the open one. Bound to <Button-1> on a card.
+
+        Switching waits (and says so) while screenshots are being added.
+
+        Args:
+            json_path: Atlas file of the card.
+        """
         self._atl_selected = json_path
         if self.path is None or not same_file(json_path, self.path):
             self.switch_atlas(Path(json_path))  # waits (says so) while screenshots are being added
@@ -164,7 +220,7 @@ class AtlasesTabMixin:
 
     # ------------------------------------------------------------------ numbers and thumbnails
     def _note_atlas_numbers(self):
-        """the open atlas's numbers into its entry of the atlas list (shown on its card)"""
+        """Put the open atlas's maps / icons / screenshots into its entry of the atlas list (shown on its card)."""
         if not self.atlas or not self.path:
             return
         st = self.V.get("stats") or {}
@@ -181,7 +237,13 @@ class AtlasesTabMixin:
                 break
 
     def _write_thumb(self, canvas: np.ndarray):
-        """the open atlas's thumbnail, from its freshly built map image (background thread)"""
+        """Save the open atlas's thumbnail from its freshly built map image (background thread).
+
+        Then asks the window thread, through the queue, to rebuild the cards. A failed save is only logged.
+
+        Args:
+            canvas: BGR uint8 map image of the open atlas.
+        """
         if not self.path:
             return
         tf = thumb_file(self.path)
@@ -194,10 +256,18 @@ class AtlasesTabMixin:
         self._q.put(("atlas_cards", None))
 
     def _read_atlas_in_background(self, json_path: str):
-        """numbers and a thumbnail for an atlas not opened since thumbnails were added"""
+        """Read numbers and a thumbnail for an atlas not opened since thumbnails were added (on a background thread).
+
+        The thumbnail is made from the atlas's cached terrain image if there is one. The result goes to the window
+        thread through the queue as ("atlas_numbers", (json_path, numbers)).
+
+        Args:
+            json_path: Atlas file to read.
+        """
         self._atl_reading.add(json_path)
 
         def work():
+            """Read the atlas file and make its thumbnail (runs on the background thread)."""
             numbers = None
             try:
                 data = atlas_io.read_json(Path(json_path))
@@ -215,6 +285,11 @@ class AtlasesTabMixin:
         threading.Thread(target=work, daemon=True).start()
 
     def _got_atlas_numbers(self, val):
+        """Store numbers read in the background in the atlas list and rebuild the cards (window thread).
+
+        Args:
+            val: (json_path, numbers) as sent by _read_atlas_in_background; numbers is None when the read failed.
+        """
         json_path, numbers = val
         for a in self.known_atlases():
             if a["json"] == json_path and numbers is not None:
@@ -224,7 +299,10 @@ class AtlasesTabMixin:
 
     # ------------------------------------------------------------------ delete
     def ask_delete_atlas(self):
-        """stop tracking the selected atlas, or delete it and its data (asked in a small window)"""
+        """Ask what to do with the selected atlas: stop tracking it, or delete it and its data (in a small window).
+
+        Refused while screenshots are being added to it. The screenshots themselves are never deleted.
+        """
         sel = self._atl_selected
         if not sel:
             self.status.set("select an atlas first")
@@ -251,11 +329,13 @@ class AtlasesTabMixin:
         row.pack(fill="x", padx=14, pady=12)
 
         def stop():
+            """Stop tracking the atlas (its files stay); clears the window first if it is the open atlas."""
             win.destroy()
             self._close_if_open(sel)
             self._forget_atlas_path(sel)
 
         def delete():
+            """Delete the atlas and its data (asks once more, listing the files)."""
             win.destroy()
             self._delete_atlas_data(sel, name)
 
@@ -266,9 +346,14 @@ class AtlasesTabMixin:
         win.grab_set()
 
     def _close_if_open(self, json_path: str) -> None:
-        """the open atlas is about to be deleted or no longer tracked: the window is cleared first (an empty,
-        unsaved atlas; pick another one from the list), so nothing can save it back afterwards (review: having to
-        open another atlas first was clunky)"""
+        """Clear the window if this atlas is open, before it is deleted or no longer tracked.
+
+        The window gets an empty, unsaved atlas (pick another one from the list), so nothing can save it back
+        afterwards (review: having to open another atlas first was clunky). It is also dropped as the last atlas.
+
+        Args:
+            json_path: Atlas file about to be deleted or forgotten.
+        """
         if self.path is None or not same_file(json_path, self.path):
             return
         self._forget_session()
@@ -279,6 +364,11 @@ class AtlasesTabMixin:
         self.status.set("no atlas open: pick one in Saved atlases, or File > New atlas")
 
     def _forget_atlas_path(self, json_path: str):
+        """Remove an atlas from the known atlas list and the Atlas menu (its files stay).
+
+        Args:
+            json_path: Atlas file to forget.
+        """
         L = self.known_atlases()
         L[:] = [a for a in L if a["json"] != json_path]
         save_settings(self.settings)
@@ -288,15 +378,31 @@ class AtlasesTabMixin:
 
     @staticmethod
     def atlas_data_paths(json_path) -> list[Path]:
-        """everything the program wrote for an atlas: the atlas file, its saved detections (<stem>_frames),
-        its map images / exports / undo (<stem>_files) and outputs older versions left next to it. Never the
-        screenshots."""
+        """Everything the program wrote for an atlas, never the screenshots.
+
+        That is the atlas file, its saved detections (<stem>_frames), its map images / exports / undo (<stem>_files)
+        and outputs older versions left next to it.
+
+        Args:
+            json_path: Atlas file (str or Path).
+
+        Returns:
+            The paths that exist.
+        """
         p = Path(json_path)
         out = [p, p.with_name(p.stem + "_frames"), p.with_name(p.stem + "_files")]
         out += [p.with_name(p.stem + s) for s in (*core.ATLAS_OUTPUTS, "_undo")]
         return [q for q in out if q.exists()]
 
     def _delete_atlas_data(self, json_path: str, name: str):
+        """Delete an atlas and its data for good, after a yes / no question listing the files.
+
+        The window is cleared first if it is the open atlas; files that cannot be deleted are listed in a warning.
+
+        Args:
+            json_path: Atlas file.
+            name: Atlas name shown in the question and the log.
+        """
         paths = self.atlas_data_paths(json_path)
         listing = "\n".join(f"  {q.name}{'/' if q.is_dir() else ''}" for q in paths)
         if not messagebox.askyesno(

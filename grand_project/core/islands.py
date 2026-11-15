@@ -41,13 +41,28 @@ from .register import Registration, _inside_rect, mutual_pairs, refine
 
 @dataclass
 class Island:
+    """A group of waiting screenshots joined by their maps alone, as a mini-atlas.
+
+    Attributes:
+        atlas: The screenshots placed relative to the island's first one (maps only).
+        frames: Frame objects, in the order they joined (same order as atlas.frames).
+    """
+
     atlas: Atlas  # the screenshots placed relative to the island's first one (maps only)
     frames: list = field(default_factory=list)  # Frame objects, in the order they joined
 
 
 def build_islands(frames: list[Frame]) -> list[Island]:
-    """join waiting screenshots that match each other by their maps; every screenshot ends in exactly one
-    island (a lone one is an island of one)"""
+    """Join waiting screenshots that match each other by their maps.
+
+    Every screenshot ends in exactly one island (a lone one is an island of one). No terrain check.
+
+    Args:
+        frames: The waiting screenshots.
+
+    Returns:
+        The islands.
+    """
     left = list(frames)
     out = []
     while left:
@@ -68,7 +83,16 @@ def build_islands(frames: list[Frame]) -> list[Island]:
 
 
 def _footprint_masks(isl: Island, T: np.ndarray, pts: np.ndarray) -> np.ndarray:
-    """which of pts lie inside any island screenshot once the island is shifted by T"""
+    """Tell which of pts lie inside any island screenshot once the island is shifted by T.
+
+    Args:
+        isl: The island.
+        T: (2,) shift of the island, atlas units.
+        pts: (n, 2) atlas points.
+
+    Returns:
+        (n,) bool array.
+    """
     inside = np.zeros(len(pts), bool)
     for f in isl.atlas.frames:
         M = np.array(f["M"], float)
@@ -78,7 +102,16 @@ def _footprint_masks(isl: Island, T: np.ndarray, pts: np.ndarray) -> np.ndarray:
 
 
 def _cover(footprints) -> tuple[np.ndarray, np.ndarray]:
-    """the area screenshots cover, drawn on a coarse grid: (grid, its origin)"""
+    """Draw the area screenshots cover on a coarse grid of ISLAND_COVER_CELL cells.
+
+    Each screenshot is inset by 30 px, the same as the exact overlap test (_inside_rect).
+
+    Args:
+        footprints: Screenshots as (M, w, h, R): 2x3 placement, size in px, 3x3 rectifier.
+
+    Returns:
+        (grid, origin): uint8 grid (1 = covered) and the atlas position of its corner.
+    """
     polys = []
     for M, w, h, R in footprints:
         H = screen_to_atlas(np.asarray(M, float), R)
@@ -94,6 +127,15 @@ def _cover(footprints) -> tuple[np.ndarray, np.ndarray]:
 
 
 def _inside(cover, pts: np.ndarray) -> np.ndarray:
+    """Look up points in a coverage grid made by _cover.
+
+    Args:
+        cover: (grid, origin) from _cover.
+        pts: Atlas points, shape (..., 2).
+
+    Returns:
+        Bool array of shape pts.shape[:-1]: True where the point is covered.
+    """
     grid, o = cover
     g = np.floor((pts - o) / ISLAND_COVER_CELL).astype(int)
     ok = (g[..., 0] >= 0) & (g[..., 1] >= 0) & (g[..., 0] < grid.shape[1]) & (g[..., 1] < grid.shape[0])
@@ -103,10 +145,23 @@ def _inside(cover, pts: np.ndarray) -> np.ndarray:
 
 
 def _pair_candidates(main: Atlas, isl: Island, src: np.ndarray, dst: np.ndarray, top: int):
-    """shifts (dst - src for some pair) that pass the placement rules by a quick count: enough group maps land
-    on atlas maps, and enough of the maps that overlap do (or the raised-ground second chance); best first.
+    """Find the island shifts that pass the placement rules by a quick count.
+
+    Candidates are shifts (dst - src for some pair) where enough group maps land on atlas maps, and enough of
+    the maps that overlap do (or the raised-ground second chance); best first.
     A group's few true agreements are outnumbered by chance ones in a dense atlas, so every candidate gets the
-    overlap rule here, not just the best-voted few (groups are rare: this is a few array operations)"""
+    overlap rule here, not just the best-voted few (groups are rare: this is a few array operations).
+
+    Args:
+        main: The atlas.
+        isl: The island.
+        src: (n, 2) island map nodes (island coordinates).
+        dst: (m, 2) atlas map nodes (atlas units).
+        top: Most candidates to return.
+
+    Returns:
+        List of (tx, ty) shifts, most agreeing maps first.
+    """
     d = (dst[None, :, :] - src[:, None, :]).reshape(-1, 2)
     d = np.unique(np.round(d / 4.0) * 4.0, axis=0)  # pairs proposing (almost) the same shift count once
     tree = cKDTree(dst)
@@ -131,7 +186,18 @@ def _pair_candidates(main: Atlas, isl: Island, src: np.ndarray, dst: np.ndarray,
 
 
 def match_island(main: Atlas, isl: Island) -> tuple[np.ndarray | None, str]:
-    """the shift that puts the island into the atlas, or (None, why not)"""
+    """Find the shift that puts the island into the atlas.
+
+    Candidates from _pair_candidates are refined and checked exactly, like one screenshot in Atlas.add_frame;
+    the best few then get a terrain check of the island screenshot sharing the most maps with the atlas.
+
+    Args:
+        main: The atlas.
+        isl: The island.
+
+    Returns:
+        (T, why): the (2,) shift and a note on the evidence, or (None, why not).
+    """
     src, dst = isl.atlas.points(), main.points()
     if len(src) < MIN_INLIERS or len(dst) < MIN_INLIERS:
         return None, "too few maps"
@@ -197,7 +263,17 @@ def match_island(main: Atlas, isl: Island) -> tuple[np.ndarray | None, str]:
 
 
 def place_island(main: Atlas, isl: Island, T: np.ndarray, why: str) -> list[Frame]:
-    """add every island screenshot at its island place + T; returns the frames added"""
+    """Add every island screenshot at its island place + T.
+
+    Args:
+        main: The atlas.
+        isl: The island.
+        T: (2,) shift of the island, atlas units.
+        why: Evidence note, stored in each screenshot's placement reason.
+
+    Returns:
+        The frames added (screenshots already in the atlas are skipped).
+    """
     added = []
     for fr, f in zip(isl.frames, isl.atlas.frames, strict=True):
         M = np.array(f["M"], float)
@@ -210,7 +286,16 @@ def place_island(main: Atlas, isl: Island, T: np.ndarray, why: str) -> list[Fram
 
 
 def merge_waiting(main: Atlas, waiting: list[Frame], log=None) -> list[Frame]:
-    """try every island of 2+ waiting screenshots against the atlas; returns the screenshots added"""
+    """Try every island of 2+ waiting screenshots against the atlas.
+
+    Args:
+        main: The atlas.
+        waiting: Screenshots that fit nothing in the atlas yet.
+        log: Optional function taking one line of text, told what happened to each island.
+
+    Returns:
+        The screenshots added.
+    """
     if len(waiting) < ISLAND_MIN or not main.frames:
         return []
     added = []

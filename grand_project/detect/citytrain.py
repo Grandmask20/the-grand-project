@@ -48,6 +48,15 @@ class Examples:
     where: list = field(default_factory=list)
 
     def add(self, f: np.ndarray, city: bool, shot: int, shifted: bool, where: tuple) -> None:
+        """Append one example.
+
+        Args:
+            f: Feature row (citybase.features).
+            city: True for a city's map node.
+            shot: Index of the screenshot it came from.
+            shifted: True for a map node looked at a few px off its middle.
+            where: (screenshot name, x, y) in screen px.
+        """
         self.X.append(f)
         self.is_city.append(int(city))
         self.shot.append(shot)
@@ -55,7 +64,12 @@ class Examples:
         self.where.append(where)
 
     def arrays(self) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
-        """(X, is_city, shot, shifted) as numpy arrays"""
+        """The examples as numpy arrays.
+
+        Returns:
+            (X, is_city, shot, shifted): (n, k) features, (n,) int labels, (n,) screenshot indices and (n,) bool
+            shifted flags.
+        """
         return np.array(self.X), np.array(self.is_city), np.array(self.shot), np.array(self.shifted, bool)
 
 
@@ -81,7 +95,15 @@ def nearest_nodes(nodes: list, points: list) -> set[int]:
 
 
 def _detected_nodes(img: np.ndarray, entry: dict) -> list:
-    """The map nodes of one screenshot: cached in its truth entry, detected (and cached) the first time."""
+    """The map nodes of one screenshot: cached in its truth entry, detected (and cached) the first time.
+
+    Args:
+        img: BGR screenshot (1080p).
+        entry: The screenshot's cities_truth.json entry; gains a "nodes" list when it has none.
+
+    Returns:
+        Detected map node middles, [[x, y], ...] in screen px.
+    """
     if not entry.get("nodes"):
         from grand_project import detect
 
@@ -151,6 +173,12 @@ def fair_probabilities(ex: Examples) -> np.ndarray:
     """Barrel probability of every example, each judged by a model trained without its screenshot.
 
     Models are trained on map nodes themselves only (training on the shifted views made the model worse).
+
+    Args:
+        ex: The examples (collect).
+
+    Returns:
+        (n,) float array of barrel probabilities, one per example.
     """
     X, is_city, shot, shifted = ex.arrays()
     p = np.zeros(len(X))
@@ -216,5 +244,12 @@ def train(folders: list[Path] | None = None) -> dict | None:
 
 
 def cmd_train_cities() -> int:
+    """Command `python -m grand_project.detect train_cities [FOLDER ...]`: train only the City barrel model.
+
+    Folders are read from sys.argv (default: CITY_TRUTH_SETS).
+
+    Returns:
+        0 (process exit code).
+    """
     train([Path(a) for a in sys.argv[2:]] or None)
     return 0

@@ -20,7 +20,17 @@ from .walls import fortress_walls, wall_share
 
 
 def find_maps(img: np.ndarray, model) -> tuple[list[dict], np.ndarray, np.ndarray]:
-    """-> maps, all candidates, their map probability (badge rows can still rescue a weak one)"""
+    """Find the map nodes of a screenshot with the map classifier.
+
+    Args:
+        img: BGR screenshot (1080p).
+        model: The trained "maps" classifier (predict_proba over map_features + path_features).
+
+    Returns:
+        (maps, pts, p): maps as dicts {"x", "y", "score"} after non-maximum suppression, all candidates as an
+        (n, 2) int array of x, y in screen px, and their (n,) map probability (badge rows can still rescue a
+        weak one).
+    """
     pts, dv = map_candidates(img)
     if not len(pts):
         return [], pts, np.zeros(0)
@@ -29,7 +39,20 @@ def find_maps(img: np.ndarray, model) -> tuple[list[dict], np.ndarray, np.ndarra
 
 
 def detect(img: np.ndarray) -> dict:
-    """live mode: everything built so far for one screenshot (same shape as the old detector's result)"""
+    """Live mode: everything built so far for one screenshot (same shape as the old detector's result).
+
+    Runs map nodes, icons (badges), landmarks, map nodes found from paths, the Expedition rules, ship markers and
+    paths (dropping paths that cross a fortress wall).
+
+    Args:
+        img: BGR screenshot (1080p).
+
+    Returns:
+        Dict with "width", "height" (px), "nodes", "landmarks", "icons" and "edges" (paths) lists.
+
+    Raises:
+        RuntimeError: The maps, badges or towers model is not in the DB yet.
+    """
     for k in ("maps", "badges", "towers"):
         if k not in _models:
             _models[k] = load_model(k)
@@ -61,6 +84,13 @@ def detect(img: np.ndarray) -> dict:
 
 
 def cmd_run() -> int:  # noqa: E302
+    """Command `python -m grand_project.detect run IMG...`: detect each screenshot and print what was found.
+
+    Screenshot paths are read from sys.argv. Live mode: reads the DB, never writes it.
+
+    Returns:
+        0 (process exit code).
+    """
     for f in sys.argv[2:]:
         t0 = time.time()
         r = detect(core.read_screenshot(f))

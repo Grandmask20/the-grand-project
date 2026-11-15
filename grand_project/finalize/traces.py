@@ -21,9 +21,21 @@ _log = atlas_log.printer("finalize")
 
 class _Grid:
     """Spatial index: points in square cells, so 'what is near here' looks at a few cells
-    instead of the whole atlas (the atlas-wide check was quadratic: 35 min for 8k maps)."""
+    instead of the whole atlas (the atlas-wide check was quadratic: 35 min for 8k maps).
+
+    Attributes:
+        pts: the points as an (N, 2) float array (atlas units, or screen px for screen points).
+        cell: the cell size, same units as the points.
+        cells: (cell x, cell y) -> indices of the points in that cell.
+    """
 
     def __init__(self, pts, cell: float):
+        """Put the points into square cells.
+
+        Args:
+            pts: sequence of (x, y) points, any shape that reshapes to (N, 2).
+            cell: the cell size, same units as the points; best near the usual search radius.
+        """
         self.pts = np.asarray(pts, float).reshape(-1, 2)
         self.cell = float(cell)
         self.cells: dict[tuple[int, int], list[int]] = {}
@@ -32,7 +44,15 @@ class _Grid:
         self._blocks: dict = {}  # (cell x, cell y, reach) -> candidate indices and points, in the same order
 
     def near(self, p, r) -> list[int]:
-        """indices within distance r of p"""
+        """Return the indices of the points within distance r of p.
+
+        Args:
+            p: the query point (x, y).
+            r: the search radius, same units as the points.
+
+        Returns:
+            A list of point indices (p itself included if it is one of the points).
+        """
         c, k = self.cell, int(math.ceil(r / self.cell))
         cx, cy = int(p[0] // c), int(p[1] // c)
         block = self._blocks.get((cx, cy, k))
@@ -52,7 +72,14 @@ class _Grid:
         return idx[d <= r].tolist()
 
     def pairs(self, r):
-        """(distance, i, j) for every i < j closer than r"""
+        """List every pair of points closer than r.
+
+        Args:
+            r: the distance limit, same units as the points.
+
+        Returns:
+            A list of (distance, i, j) tuples with i < j.
+        """
         out = []
         for i, q in enumerate(self.pts):
             for j in self.near(q, r):
@@ -74,7 +101,15 @@ _DASHES: dict = {}
 
 
 def _dashes(atlas, f):
-    """the new detector's path dashes of a screenshot (dim/fog dashes, amber dash strokes), computed once"""
+    """Return the new detector's path dashes of a screenshot, computed once (up to GOLD_CACHE are kept).
+
+    Args:
+        atlas: the core.Atlas (used to load the image).
+        f: the screenshot (frame) dict (needs "path").
+
+    Returns:
+        (path_dashes result: dim / fog dashes, amber_dashes result: amber dash strokes) from the detector.
+    """
     key = f["path"]
     if key in _DASHES:
         _DASHES[key] = _DASHES.pop(key)
@@ -87,7 +122,14 @@ def _dashes(atlas, f):
 
 
 def _trace_one(job):
-    """worker: the new detector's paths between given map positions in one screenshot"""
+    """Trace the new detector's paths between given map positions in one screenshot (process-pool worker).
+
+    Args:
+        job: (screenshot path, map node positions in screen px as (N, 2), visible mask (N,), tower flags (N,)).
+
+    Returns:
+        The detector's screen_paths result: (i, j) -> path record (line, from, dashes ...).
+    """
 
     path, sp, ok, tower = job
     img = core.read_screenshot(path)
@@ -95,8 +137,20 @@ def _trace_one(job):
 
 
 def _trace_views(atlas, views, tower, log=None):
-    """(frame, screen pts, visible, traced paths) for every view; many views are traced in parallel
-    (each screenshot is independent), otherwise in this process with the dashes cache"""
+    """Trace the paths in every view with the new detector.
+
+    Many views (TRACE_PARALLEL_MIN or more) are traced in parallel (each screenshot is independent); otherwise,
+    or when the process pool fails, in this process with the dashes cache.
+
+    Args:
+        atlas: the core.Atlas.
+        views: list of (frame dict, map node positions in screen px (N, 2), visible mask (N,)).
+        tower: bool array (N,) marking tower map nodes.
+        log: callable taking one message string, or None.
+
+    Returns:
+        A list of (frame, screen pts, visible, traced paths) for every view; traced paths as in _trace_one.
+    """
     if len(views) >= TRACE_PARALLEL_MIN and TRACE_WORKERS > 1:
         try:
             jobs = [(f["path"], sp, ok, tower) for f, sp, ok in views]
@@ -116,9 +170,20 @@ SAVED_CACHE = 400
 
 
 def _saved(atlas, f):
-    """a screenshot's saved detection for the path check: its maps (screen px), its traced paths, a tree of
-    its dashes and its clearly-visible grid. Detections saved before v0.92 get their dash record added
-    (from the image, once). None when no saved detection is found (then the view is traced the old way)."""
+    """Load a screenshot's saved detection for the path check (up to SAVED_CACHE are kept).
+
+    Detections saved before v0.92 get their dash record added (from the image, once).
+
+    Args:
+        atlas: the core.Atlas (uses atlas.frames_dir).
+        f: the screenshot (frame) dict (needs "sha" and "path").
+
+    Returns:
+        A dict with "P" (its maps, (N, 2) screen px), "hidden" and "score" (per map), "edges" (its traced paths),
+        "tree" (KD-tree of its dashes or None), "amber" (KD-tree of amber dashes or None), "grid" (its
+        clearly-visible grid) and "wall" (its fortress wall grid). None when no saved detection is found (then
+        the view is traced the old way).
+    """
     d = getattr(atlas, "frames_dir", None)
     if d is None or not f.get("sha"):
         return None
@@ -160,7 +225,16 @@ def _saved(atlas, f):
 
 
 def _along(line, step=CHECK_STEP, skip=18.0):
-    """points every `step` px along a polyline, leaving out `skip` px at both ends (the map bases)"""
+    """Return points every `step` px along a polyline, leaving out `skip` px at both ends (the map bases).
+
+    Args:
+        line: the polyline as a sequence of (x, y) points.
+        step: spacing between the points, same units as line.
+        skip: length left out at each end, same units as line.
+
+    Returns:
+        An (N, 2) array of points; empty (0, 2) when the line is shorter than 2 * skip or has under 2 points.
+    """
     line = np.asarray(line, float).reshape(-1, 2)
     if len(line) < 2:
         return np.zeros((0, 2))
@@ -173,7 +247,17 @@ def _along(line, step=CHECK_STEP, skip=18.0):
 
 
 def _coverage(rec, f, line):
-    """(share of the path in clearly visible ground of this screenshot, share of that part covered by dashes)"""
+    """Measure how much of a path a screenshot shows clearly and how much of that has dashes.
+
+    Args:
+        rec: the screenshot's saved detection from _saved.
+        f: the screenshot (frame) dict (needs "w", "h").
+        line: the path's line in this screenshot's px.
+
+    Returns:
+        (share of the path in clearly visible ground of this screenshot, share of that part with a dash within
+        CHECK_NEAR px); (0.0, 0.0) when nothing is seen.
+    """
     q = _along(line)
     if not len(q) or rec["tree"] is None:
         return 0.0, 0.0
@@ -190,7 +274,15 @@ def _coverage(rec, f, line):
 
 
 def _on_wall(rec, line_screen) -> float:
-    """share of a path's middle (screen px of this screenshot) on the fortress wall (user: never crossed)"""
+    """Return the share of a path's middle on the fortress wall (user: never crossed).
+
+    Args:
+        rec: the screenshot's saved detection from _saved, or None.
+        line_screen: the path's line in this screenshot's px (30 px at each end are left out).
+
+    Returns:
+        The share (0.0 to 1.0) of points along the line in wall cells; 0.0 without a wall.
+    """
     if rec is None or not rec["wall"].any():
         return 0.0
     q = _along(line_screen, 6.0, 30.0)
@@ -203,7 +295,16 @@ def _on_wall(rec, line_screen) -> float:
 
 
 def _gold(atlas, f):
-    """gold path dashes of a screenshot: they depend only on the image, so they are computed once"""
+    """Return the gold path dashes of a screenshot; they depend only on the image, so they are computed once.
+
+    Args:
+        atlas: the core.Atlas (used to load the image).
+        f: the screenshot (frame) dict (needs "path").
+
+    Returns:
+        (dash centres as an (N, 2) float array in screen px, distance-to-gold field in screen px as float16,
+        capped at 255).
+    """
     key = f["path"]
     if key in _GOLD:
         _GOLD[key] = _GOLD.pop(key)
@@ -219,6 +320,14 @@ def _gold(atlas, f):
 
 
 def _maps(atlas):
+    """Return every screenshot with its atlas-to-screen homography.
+
+    Args:
+        atlas: the core.Atlas with placed screenshots.
+
+    Returns:
+        A list of (frame dict, 3x3 homography from atlas units to that screenshot's px).
+    """
     out = []
     for f in atlas.frames:
         H = core.screen_to_atlas(np.array(f["M"], float), atlas.frame_R(f))
@@ -227,6 +336,17 @@ def _maps(atlas):
 
 
 def _visible(f, Hi, pts, margin=FRAME_MARGIN):
+    """Project atlas points into a screenshot and tell which of them it shows.
+
+    Args:
+        f: the screenshot (frame) dict (needs "w", "h").
+        Hi: the 3x3 homography from atlas units to that screenshot's px.
+        pts: sequence of (x, y) points in atlas units.
+        margin: how far inside the screenshot's edges a point must be (screen px).
+
+    Returns:
+        (points in screen px as (N, 2), bool array (N,): inside the margin and not on the HUD).
+    """
     pts = np.asarray(pts, float).reshape(-1, 2)
     sp = core.persp(Hi, pts)
     if not len(sp):
@@ -237,12 +357,30 @@ def _visible(f, Hi, pts, margin=FRAME_MARGIN):
 
 
 def _seg_dist(p, a, b):
+    """Distance from a point to a line segment.
+
+    Args:
+        p: the point, a length-2 array.
+        a: the segment's start, a length-2 array.
+        b: the segment's end, a length-2 array.
+
+    Returns:
+        (distance to the nearest point of the segment, its position t along a -> b from 0 to 1).
+    """
     ab = b - a
     t = float(np.clip(np.dot(p - a, ab) / max(1e-9, np.dot(ab, ab)), 0, 1))
     return float(np.linalg.norm(p - (a + t * ab))), t
 
 
 def _mst(pts):
+    """Build a minimum spanning tree over points (Prim's algorithm; used to chain Abyss map nodes).
+
+    Args:
+        pts: (N, 2) array of points (atlas units), N >= 1.
+
+    Returns:
+        A list of N - 1 (i, j) index pairs, the tree's edges.
+    """
     n = len(pts)
     inside, edges = {0}, []
     while len(inside) < n:
@@ -260,8 +398,21 @@ def _mst(pts):
 
 
 def _diamond_shortcut(points, grid, i, j, supported) -> bool:
-    """atlas_paths._is_diamond_shortcut, looking only at maps near the link (the original
-    walks every map in the atlas per link: 85% of a 22-minute check on a 8k-map atlas)."""
+    """Tell whether a link is a diamond diagonal: atlas_paths._is_diamond_shortcut, looking only at maps near it.
+
+    The original walks every map in the atlas per link: 85% of a 22-minute check on a 8k-map atlas. A link of
+    48+ is a shortcut when supported links (>= 0.60) go round it through a third map on BOTH sides.
+
+    Args:
+        points: (N, 2) array of map node positions (atlas units).
+        grid: a _Grid over points.
+        i: index of one end.
+        j: index of the other end.
+        supported: (lower index, higher index) -> straight score of the proposed links.
+
+    Returns:
+        True when the link is a diamond diagonal.
+    """
     a, b = points[[i, j]]
     axis = b - a
     length = float(np.linalg.norm(axis))
@@ -269,6 +420,15 @@ def _diamond_shortcut(points, grid, i, j, supported) -> bool:
         return False
 
     def evidence(x, y):
+        """Return the straight score of the link between map nodes x and y (0.0 when not proposed).
+
+        Args:
+            x: index of one map node.
+            y: index of the other map node.
+
+        Returns:
+            The score as a float.
+        """
         return supported.get(tuple(sorted((x, y))), 0.0)
 
     side_a, side_b = [], []
@@ -289,7 +449,21 @@ def _diamond_shortcut(points, grid, i, j, supported) -> bool:
 
 
 def _bypasses_two(points, grid, i, j, supported) -> bool:
-    """atlas_paths._bypasses_two_shorter_paths, looking only at maps near the link."""
+    """Tell whether a link bypasses two shorter paths: atlas_paths._bypasses_two_shorter_paths, near maps only.
+
+    A link of 76+ is refused when a third map between its ends (each part 30 to 0.85 of its length) has
+    supported links (>= 0.64) to both ends.
+
+    Args:
+        points: (N, 2) array of map node positions (atlas units).
+        grid: a _Grid over points.
+        i: index of one end.
+        j: index of the other end.
+        supported: (lower index, higher index) -> straight score of the proposed links.
+
+    Returns:
+        True when the link runs past such a map.
+    """
     a, b = points[[i, j]]
     length = float(np.linalg.norm(a - b))
     if length < 76:

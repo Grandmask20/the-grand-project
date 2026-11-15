@@ -18,11 +18,31 @@ from .helpers import draw_paths, put_text
 
 
 class DebugMixin:
+    """Viewer mixin for debug marks (internal copy only), clicking things on the map, and cutting paths into pieces.
+
+    Debug marks are notes the user pins on wrong / missing map nodes and paths; they are stored per atlas in
+    debug_marks.json and drawn in magenta with their D number.
+    """
+
     # ------------------------------------------------------------------ debug marks (internal copy only)
     def _dbg_file(self) -> Path | None:
+        """Location of the open atlas's debug marks file.
+
+        Returns:
+            Path of debug_marks.json in the atlas's files folder, or None when no atlas file is open.
+        """
         return core.atlas_files(self.path) / "debug_marks.json" if self.path else None
 
     def _dbg_marks(self) -> list:
+        """The debug marks of the open atlas, read from disk once and cached per file.
+
+        A mark without an id gets its position number; a mark keeps its D number for good (user). An unreadable file
+        counts as no marks.
+
+        Returns:
+            List of mark dicts (kept in the cache, so changes to it are saved by _dbg_save); empty when no atlas
+            is open.
+        """
         fp = self._dbg_file()
         if fp is None:
             return []
@@ -38,6 +58,7 @@ class DebugMixin:
         return self._dbg_cache[1]
 
     def _dbg_save(self):
+        """Write the debug marks to disk, refresh the Debug list and redraw the map."""
         fp = self._dbg_file()
         if fp is not None:
             fp.write_text(json.dumps(self._dbg_marks(), indent=1), encoding="utf-8")
@@ -45,6 +66,7 @@ class DebugMixin:
         self.request_redraw()
 
     def _dbg_refresh(self):
+        """Refill the Debug tab's list and file label from the marks (does nothing before the tab exists)."""
         if not hasattr(self, "dbg_list"):
             return
         self.dbg_list.delete(0, "end")
@@ -59,22 +81,50 @@ class DebugMixin:
         self.dbg_file_lab.configure(text=f"{len(self._dbg_marks())} mark(s) in {fp}" if fp else "")
 
     def _dbg_goto(self):
+        """Centre the map on the debug mark selected in the Debug list (zoom at least 1).
+
+        Called by the "Go to" button and bound to <Double-Button-1> on the Debug list.
+        """
         sel = self.dbg_list.curselection()
         if sel:
             mk = self._dbg_marks()[sel[0]]
             self.center_on(mk["x"], mk["y"], min_zoom=1.0)
 
     def _dbg_delete(self):
+        """Delete the debug mark selected in the Debug list and save (the "Delete" button)."""
         sel = self.dbg_list.curselection()
         if sel:
             del self._dbg_marks()[sel[0]]
             self._dbg_save()
 
     def _dbg_shots(self, x, y, k=5) -> list[str]:
-        """the screenshots that show (x, y) best (nearest their centre)"""
+        """The screenshots that show an atlas point best (nearest their centre).
+
+        Args:
+            x: Atlas x in atlas units.
+            y: Atlas y in atlas units.
+            k: How many screenshot names to return at most.
+
+        Returns:
+            Screenshot names, best first.
+        """
         return [f["name"] for f, _x, _y in self.frames_at(x, y)[:k]]
 
     def _dbg_add(self, kind, reason, note, x=None, y=None, maps=(), path=None):
+        """Make a new debug mark, save it and say so in the status bar.
+
+        The mark records the time, program version, the listed map nodes' data, the path's data and end points, the
+        position and the screenshots that show it best. Its id is one more than the highest so far (never reused).
+
+        Args:
+            kind: Mark kind, e.g. "wrong map", "wrong path", "missing map", "missing path".
+            reason: The reason picked from the menu, e.g. "not a map (no base there)".
+            note: Free text; None asks for it in a dialog (cancelling the dialog adds no mark).
+            x: Atlas x of the mark in atlas units; None places it at the mean of its map nodes / path ends.
+            y: Atlas y of the mark in atlas units (used with x).
+            maps: Indices of the map nodes (into V["nodes"]) the mark is about.
+            path: Index of the path (into V["paths"]) the mark is about, or None.
+        """
         from tkinter import simpledialog
 
         if note is None:
@@ -129,6 +179,21 @@ class DebugMixin:
         self.status.set(f"debug mark saved: {kind} ({reason})")
 
     def _dbg_menu(self, parent, hit, wx, wy):
+        """Build the right-click "Debug" submenu for what was clicked.
+
+        On a map node (or an icon of one): "Map: ..." reasons and "Missing path from here", which starts a two-click
+        link (the next click on a map adds a "missing path" mark). On a path: "Path: ..." reasons. Always: "Add a map
+        here: ...".
+
+        Args:
+            parent: The Tk menu the submenu belongs to.
+            hit: What was clicked, as from pick(): (kind, index) with kind "node", "icon", "path", ...; or None.
+            wx: Atlas x of the click in atlas units.
+            wy: Atlas y of the click in atlas units.
+
+        Returns:
+            The tk.Menu to add as a cascade.
+        """
         dm = tk.Menu(parent, tearoff=0)
         if hit and hit[0] in ("node", "icon"):
             i = hit[1] if hit[0] == "node" else getattr(self, "icon_node", {}).get(hit[1])
@@ -146,6 +211,7 @@ class DebugMixin:
                 dm.add_separator()
 
                 def start_link():
+                    """Remember the clicked map node as the start of a "missing path" mark and ask for the other end."""
                     self._dbg_link = (i, "")
                     self.status.set("debug: now click the map this one should have a path to")
 
@@ -171,6 +237,14 @@ class DebugMixin:
         return dm
 
     def _dbg_draw(self, img):
+        """Draw every debug mark with its D number into the frame.
+
+        Missing paths are dotted lines, wrong paths a line with a cross, missing maps a cross, other marks a circle
+        with a cross.
+
+        Args:
+            img: BGR uint8 frame to draw into.
+        """
         col = (255, 0, 255)
         for k, mk in enumerate(self._dbg_marks(), 1):
             p = self.to_screen([[mk["x"], mk["y"]]])[0]
@@ -191,6 +265,20 @@ class DebugMixin:
             put_text(img, f"D{mk.get('id', k)}", (x + 14, y - 12), col, 0.45)
 
     def pick(self, sx, sy) -> tuple[str, int] | None:
+        """Find what is under a screen point: a bookmark, icon, landmark, map node, path or biome circle.
+
+        Bookmarks win outright; then the nearest icon or landmark. Map nodes are clickable even when hidden (layer off,
+        filtered out): a click right on a map's centre selects the map, also inside a landmark's box (only removed maps
+        are never picked). Paths come next, then anywhere inside a city / stronghold biome circle selects its map.
+
+        Args:
+            sx: Screen x in canvas px.
+            sy: Screen y in canvas px.
+
+        Returns:
+            (kind, index) with kind "bookmark", "icon", "landmark", "node" or "path" and an index into that list, or
+            None when nothing is there (or no atlas is open).
+        """
         if not self.atlas:
             return None
         best, bd = None, 1e9
@@ -244,8 +332,24 @@ class DebugMixin:
         return best
 
     def _path_pieces(self, ST, th, c_multi, c_single) -> dict:
-        """{(colour, width): (all piece points in atlas units, start index of each piece)} for the shown paths,
-        cut into dashes / dots for the style; cached until paths, filters, style or zoom change"""
+        """The shown paths cut into pieces for the path style, grouped by colour and width.
+
+        Solid paths are whole lines; dashed and dotted paths are cut into every dash of every path at once (cutting
+        them path by path took ~0.5 s per wheel step: user's frame log). Dash spacing follows the zoom in
+        quarter-octave steps (~19%). Cached until paths, filters, style or zoom change; the lines themselves are cached
+        apart from the zoom.
+
+        Args:
+            ST: The style dict from style() ("path_style" is "solid", "dashed" or "dotted").
+            th: Path width in screen px.
+            c_multi: BGR colour of confirmed paths (2+ screenshots or both ends seen).
+            c_single: BGR colour of paths with single evidence.
+
+        Returns:
+            {(colour, width): (points, starts, grid)}. Solid: points are all pieces' points in atlas units laid end to
+            end, starts the start index of each piece, grid None. Dashed / dotted: points and starts are None and grid
+            is (seg, ranges) from _dash_grid.
+        """
         # dash spacing follows the zoom in quarter-octave steps (~19%)
         z = 2.0 ** (round(math.log2(max(self.z, 1e-6)) * 4) / 4)
         style = ST["path_style"]
@@ -293,9 +397,17 @@ class DebugMixin:
 
     @staticmethod
     def _dash_grid(seg: np.ndarray):
-        """dashes (n, 2 ends, xy) sorted by the PATH_CELL cell of their first end, with each cell's range: a frame
-        draws only the cells in view (every dash was moved to the screen and tested each frame: 50-90 ms per frame
-        panning zoomed in, the user's frame log)"""
+        """Sort dashes by the PATH_CELL cell of their first end and note each cell's range.
+
+        A frame then draws only the cells in view (every dash was moved to the screen and tested each frame: 50-90 ms
+        per frame panning zoomed in, the user's frame log).
+
+        Args:
+            seg: Dashes as an array of shape (n, 2 ends, xy) in atlas units.
+
+        Returns:
+            (None, None, (seg, ranges)): seg sorted by cell, ranges maps a cell (i, j) to its (start, end) in seg.
+        """
         cell = np.floor(seg[:, 0, :] / PATH_CELL).astype(np.int64)
         order = np.lexsort((cell[:, 1], cell[:, 0]))
         seg, cell = seg[order], cell[order]
@@ -308,8 +420,22 @@ class DebugMixin:
         return None, None, (seg, ranges)
 
     def _path_lines(self, style, th, c_multi, c_single) -> dict:
-        """per (colour, width): the shown paths' lines laid end to end - points P, each path's first point,
-        each point's distance D along all of them (paths 1 unit apart), each path's start in D and length"""
+        """The shown paths' lines laid end to end, per colour and width.
+
+        Abyss chains get PATH_ABYSS and 1 px more width; dotted paths at least 2 px or twice the width. Each line's
+        ends are put on its map nodes.
+
+        Args:
+            style: Path style, "solid", "dashed" or "dotted".
+            th: Path width in screen px.
+            c_multi: BGR colour of confirmed paths.
+            c_single: BGR colour of paths with single evidence.
+
+        Returns:
+            {(colour, width): (P, starts, D, off, Lp)}: all points P in atlas units, each path's first point index,
+            each point's distance D along all of them (paths 1 unit apart, so D always increases), each path's start
+            in D and each path's length.
+        """
         N = self.V["nodes"]
         lines: dict = {}
         pm = self.shown_masks()[2]  # path_shown for every path, cached
@@ -338,7 +464,14 @@ class DebugMixin:
         return out
 
     def _path_atlas_line(self, p) -> np.ndarray:
-        """a path's line in atlas units with its ends on its maps, exactly as it is drawn"""
+        """A path's line in atlas units with its ends on its map nodes, exactly as it is drawn.
+
+        Args:
+            p: The path dict (from V["paths"]): "a" / "b" map node indices and an optional "line" of points.
+
+        Returns:
+            Float array of shape (n, 2) in atlas units.
+        """
         N = self.V["nodes"]
         L = np.array(p.get("line") or [[N[p["a"]]["x"], N[p["a"]]["y"]], [N[p["b"]]["x"], N[p["b"]]["y"]]], float)
         L[0] = (N[p["a"]]["x"], N[p["a"]]["y"])
@@ -346,7 +479,15 @@ class DebugMixin:
         return L
 
     def _pick_path(self, sx, sy):
-        """the path within a few px of the click (clicks right on a map pick the map first)"""
+        """The path within a few px (7) of a click; clicks right on a map pick the map first (see pick).
+
+        Args:
+            sx: Screen x in canvas px.
+            sy: Screen y in canvas px.
+
+        Returns:
+            ("path", index into V["paths"]) for the nearest shown path, or None.
+        """
         q = np.array([sx, sy], float)
         best, bd = None, 7.0
         for k, p in enumerate(self.V["paths"]):

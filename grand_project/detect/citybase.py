@@ -22,6 +22,17 @@ _model: dict | None = None
 
 
 def _hog(g: np.ndarray, cell: int = 8, bins: int = 9) -> np.ndarray:
+    """Histogram of gradient directions (a small HOG) of a grey window.
+
+    Args:
+        g: 2-D grey image; height and width must be multiples of `cell`.
+        cell: Cell size in px.
+        bins: Number of direction bins over 0..180 degrees.
+
+    Returns:
+        1-D float32 array of length (h // cell) * (w // cell) * bins, each cell's histogram normalised to unit
+        length.
+    """
     g = g.astype(np.float32)
     gx, gy = cv2.Sobel(g, cv2.CV_32F, 1, 0), cv2.Sobel(g, cv2.CV_32F, 0, 1)
     mag, ang = cv2.cartToPolar(gx, gy, angleInDegrees=True)
@@ -36,7 +47,19 @@ def _hog(g: np.ndarray, cell: int = 8, bins: int = 9) -> np.ndarray:
 
 
 def features(img: np.ndarray, x: float, y: float) -> np.ndarray | None:
-    """the window under the map node at (x, y), or None when it runs off the screenshot"""
+    """Barrel features of the window under the map node at (x, y).
+
+    The window is CITY_BARREL_WIN around the point: gradient directions (the barrel's upright sides), the brass
+    share per 8 px row band and per 8 px column (lower part), and mean brightness and saturation per row band.
+
+    Args:
+        img: BGR screenshot (1080p).
+        x: Map node centre x in screen px.
+        y: Map node centre y in screen px.
+
+    Returns:
+        1-D float32 feature vector, or None when the window runs off the screenshot.
+    """
     y0, y1, x0, x1 = CITY_BARREL_WIN
     X, Y = int(round(x)), int(round(y))
     if Y + y0 < 0 or X + x0 < 0 or Y + y1 > img.shape[0] or X + x1 > img.shape[1]:
@@ -53,6 +76,11 @@ def features(img: np.ndarray, x: float, y: float) -> np.ndarray | None:
 
 
 def _load() -> dict | None:
+    """Load the barrel model from CITY_BARREL_FILE once and keep it.
+
+    Returns:
+        Dict with "mean", "scale", "coef" and "intercept" arrays, or None when the file does not exist.
+    """
     global _model
     if _model is None and CITY_BARREL_FILE.exists():
         with np.load(CITY_BARREL_FILE) as z:
@@ -61,7 +89,14 @@ def _load() -> dict | None:
 
 
 def probability(F: np.ndarray) -> np.ndarray:
-    """barrel probability for feature rows F"""
+    """Barrel probability for feature rows.
+
+    Args:
+        F: (n, k) array of `features` rows.
+
+    Returns:
+        (n,) float array of probabilities; all zeros when no model is stored.
+    """
     m = _load()
     if m is None or not len(F):
         return np.zeros(len(F))
@@ -70,9 +105,20 @@ def probability(F: np.ndarray) -> np.ndarray:
 
 
 def barrel_p(img: np.ndarray, x: float, y: float, nodes=None) -> float:
-    """probability that the map node at (x, y) stands on a City's barrel. The model knows exact map node
-    middles: with nodes (detected map nodes, dicts or (x, y)) a rough point is moved to the nearest one
-    within CITY_BARREL_SNAP px first (none that close: 0)."""
+    """Probability that the map node at (x, y) stands on a City's barrel.
+
+    The model knows exact map node middles: with `nodes` a rough point is moved to the nearest one within
+    CITY_BARREL_SNAP px first (none that close: 0).
+
+    Args:
+        img: BGR screenshot (1080p).
+        x: Point x in screen px.
+        y: Point y in screen px.
+        nodes: Optional detected map nodes, as dicts with "x"/"y" or (x, y) pairs, to snap the point to.
+
+    Returns:
+        Probability 0..1; 0.0 when no map node is near or the window runs off the screenshot.
+    """
     if nodes is not None:
         pts = np.array([(n["x"], n["y"]) if isinstance(n, dict) else n for n in nodes], float).reshape(-1, 2)
         if not len(pts):
@@ -86,4 +132,13 @@ def barrel_p(img: np.ndarray, x: float, y: float, nodes=None) -> float:
 
 
 def save_model(path, mean, scale, coef, intercept) -> None:
+    """Store the barrel model as plain arrays in an .npz file (no pickled code).
+
+    Args:
+        path: Output .npz path (normally CITY_BARREL_FILE).
+        mean: Per-feature mean used to standardise features.
+        scale: Per-feature scale used to standardise features.
+        coef: Logistic regression weights, one per feature.
+        intercept: Logistic regression intercept.
+    """
     np.savez(path, mean=mean, scale=scale, coef=coef, intercept=np.asarray(intercept, float))

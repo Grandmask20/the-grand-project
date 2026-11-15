@@ -10,7 +10,16 @@ MAX_EXITS = 5
 
 
 def gold_stroke_mask(image: np.ndarray) -> np.ndarray:
-    """Find short golden dashes, filtering large gold scenery and icon art."""
+    """Find short golden dashes, filtering large gold scenery and icon art.
+
+    Keeps gold-coloured blobs (HSV 7..31 hue) of 2..47 px area that fit in 26 x 26 px and are at least 3 px long.
+
+    Args:
+        image: BGR screenshot.
+
+    Returns:
+        (h, w) uint8 mask, 255 = path dash pixel.
+    """
     hsv = cv2.cvtColor(image, cv2.COLOR_BGR2HSV)
     colors = cv2.inRange(hsv, np.array([7, 78, 83]), np.array([31, 255, 255]))
     count, labels, stats, _ = cv2.connectedComponentsWithStats(colors, 8)
@@ -28,8 +37,20 @@ _GROUPS = np.array([0, 5, 10, 15, 20, 25, 30, 35])  # = np.array_split(39 sample
 
 
 def route_score(field: np.ndarray, start: np.ndarray, end: np.ndarray) -> float:
-    """Evidence must be distributed across the *whole* segment, not one tree.
-    (all three bows at once; same result as the per-bow loop it replaced in v1.01, ~5x faster)"""
+    """Score how well a straight / gently bowed line between two maps is covered by path dashes.
+
+    Evidence must be distributed across the *whole* segment, not one tree.
+    (all three bows at once; same result as the per-bow loop it replaced in v1.01, ~5x faster)
+
+    Args:
+        field: (h, w) distance in px from each pixel to the nearest dash (a distance transform of the
+            gold_stroke_mask).
+        start: (2,) one map node position, px.
+        end: (2,) the other map node position, px.
+
+    Returns:
+        Score 0..1 of the best of the three bows; 0.0 for lines shorter than 34 px or longer than 285 px.
+    """
     delta = end - start
     length = float(np.linalg.norm(delta))
     if not 34 <= length <= 285:
@@ -61,9 +82,29 @@ def route_score(field: np.ndarray, start: np.ndarray, end: np.ndarray) -> float:
 
 
 def _crosses(a: np.ndarray, b: np.ndarray, c: np.ndarray, d: np.ndarray) -> bool:
-    """True interior segment intersection (sharing a node is allowed)."""
+    """True interior segment intersection (sharing a node is allowed).
+
+    Args:
+        a: (2,) first segment start.
+        b: (2,) first segment end.
+        c: (2,) second segment start.
+        d: (2,) second segment end.
+
+    Returns:
+        True when the segments a-b and c-d cross.
+    """
 
     def orient(p, q, r):
+        """Return the cross product (q - p) x (r - p): the side of p-q that r lies on.
+
+        Args:
+            p: (2,) point.
+            q: (2,) point.
+            r: (2,) point.
+
+        Returns:
+            Positive / negative for the two sides, 0 on the line.
+        """
         v = q - p
         u = r - p
         return float(v[0] * u[1] - v[1] * u[0])

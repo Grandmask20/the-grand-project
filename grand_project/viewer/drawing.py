@@ -30,28 +30,58 @@ from .helpers import blit_rgba, draw_map, hex_bgr, icon_col, icon_label, icon_th
 
 
 class DrawingMixin:
+    """Viewer mixin that renders the map canvas: terrain, city biomes, paths, map nodes, icons, landmarks and bookmarks.
+
+    Everything is drawn into one BGR numpy image per frame on the window thread and shown through a Tk PhotoImage.
+    """
+
     # ------------------------------------------------------------------ drawing
     def node_radius(self) -> float:
+        """Radius of a map node marker for the current zoom and the "map size" style setting.
+
+        Returns:
+            Radius in screen px (2 to 13 px before the style's size factor).
+        """
         return float(min(13, max(2, 8 * self.z))) * float(self.style()["map_size"])
 
     def _map_pic(self):
+        """Picture used to draw a map node, loaded once and cached.
+
+        Returns:
+            RGBA PIL image from references/map_node_icon.webp, or the "Unidentified" icon thumbnail if that file is
+            missing.
+        """
         if getattr(self, "_mpic", None) is None:
             fp = rc_paths.ref("map_node_icon.webp")
             self._mpic = Image.open(fp).convert("RGBA") if fp.exists() else icon_thumb("Unidentified", 48)
         return self._mpic
 
     def landmark_box(self):
-        """half-width, height above, depth below the landmark point, in screen px (scales with zoom)"""
+        """Size of the box drawn around a landmark, scaled with the zoom.
+
+        Returns:
+            Tuple (half_width, height_above, depth_below) of the landmark point, in screen px.
+        """
         s = max(0.12, self.z)
         return max(5, 30 * s), max(8, 60 * s), max(2, 10 * s)
 
     def request_redraw(self):
+        """Schedule one redraw of the map canvas about 8 ms from now.
+
+        Calls made while a redraw is already pending are merged into it, so many events in a row cost one frame.
+        """
         if not self._redraw_pending:
             self._redraw_pending = True
             self._fl_asked_redraw()
             self.root.after(8, self._redraw)
 
     def _redraw(self):
+        """Render the map and show it on the canvas (the scheduled callback of request_redraw, window thread).
+
+        Pastes into the PhotoImage already shown when the canvas size is unchanged (making a new one each frame cost
+        more), records frame-log timings and stores the time taken in last_render_ms. With PROFILE on, prints a warning
+        when a redraw takes over 200 ms.
+        """
         self._redraw_pending = False
         w, h = self.canvas_size()
         t0 = time.perf_counter()
@@ -74,6 +104,21 @@ class DrawingMixin:
             print(f"[viewer] slow on the window thread: redraw took {self.last_render_ms / 1000:.2f}s", flush=True)
 
     def _draw_dashes(self, img, w, h, grid, col, wdt, aa):
+        """Draw the dashed / dotted path pieces that lie in the cells around the current view.
+
+        A dash belongs to the PATH_CELL grid cell of its first end; dashes are short, so one extra cell around the view
+        is enough.
+
+        Args:
+            img: BGR uint8 canvas image to draw into, shape (h, w, 3).
+            w: Canvas width in screen px.
+            h: Canvas height in screen px.
+            grid: Tuple (seg, ranges) from _path_pieces: seg is an array of dash end points in atlas units, ranges
+                maps a grid cell (i, j) to the (start, end) slice of seg in that cell.
+            col: BGR colour of the dashes.
+            wdt: Line width in screen px.
+            aa: OpenCV line type (cv2.LINE_AA or cv2.LINE_8).
+        """
         seg, ranges = grid
         if not ranges:
             return
@@ -92,6 +137,18 @@ class DrawingMixin:
         cv2.polylines(img, list(q), False, col, wdt, aa)
 
     def render(self, w: int, h: int) -> np.ndarray:
+        """Render one frame of the map view.
+
+        Draws a hint text when no atlas is open. The toggle states are read once and kept in _frame_flags for the
+        frame (Tk variable reads were costly).
+
+        Args:
+            w: Width of the image in screen px.
+            h: Height of the image in screen px.
+
+        Returns:
+            BGR uint8 image of shape (h, w, 3).
+        """
         img = np.empty((h, w, 3), np.uint8)
         img[:] = BG
         if not self.atlas:
@@ -108,6 +165,22 @@ class DrawingMixin:
             self._frame_flags = None
 
     def _render(self, img, w, h, L):
+        """Draw every shown layer of the atlas into the frame (called by render).
+
+        Order: terrain (blurred composite, then sharp-ground tiles when zoomed in), city & stronghold biome tints,
+        paths, map nodes, icons, landmarks, bookmarks, pending / recent screenshots, lasso, ghost, progress, rings on
+        the Find results, debug marks, the go-to cross, the selection ring and the legend. Zoomed out (zoom < 0.45) maps
+        and icons become dots without small labels; below FAR_ZOOM they are stamped as 3x3 dots in one batch.
+
+        Args:
+            img: BGR uint8 image of shape (h, w, 3), already filled with the background colour.
+            w: Width in screen px.
+            h: Height in screen px.
+            L: Layer name -> bool, the state of each layer checkbox (e.g. "Terrain", "Paths", "Nodes", "Icons").
+
+        Returns:
+            The finished BGR uint8 image (may be a new array, e.g. after the ground is dimmed).
+        """
         z = self.z
         overview = z < 0.45  # zoomed out: dots, no small labels
         if L["Terrain"] and self.pyr:
@@ -366,6 +439,13 @@ class DrawingMixin:
         return img
 
     def _legend(self, img, L=None):
+        """Draw the colour legend along the bottom-left of the frame.
+
+        Args:
+            img: BGR uint8 frame to draw into.
+            L: Layer name -> bool as in _render; when "City & stronghold biomes" is on and the atlas has potential
+                cities, their biome colours are listed too. None means no layers.
+        """
         h = img.shape[0]
         L = L or {}
         items = [

@@ -44,12 +44,34 @@ _MASK = np.hypot(_xx - SIZE / 2 + 0.5, _yy - SIZE / 2 + 0.5) <= RADIUS
 
 
 def crop(img: np.ndarray, x: float, y: float, size: int = SIZE) -> np.ndarray | None:
+    """Cut a square icon crop centred on a point.
+
+    Args:
+        img: BGR screenshot (1080p px).
+        x: Icon centre x, px.
+        y: Icon centre y, px.
+        size: Crop side, px.
+
+    Returns:
+        (size, size, 3) crop, or None when it would reach past the image edge.
+    """
     x, y, r = int(round(x)), int(round(y)), size // 2
     c = img[y - r : y - r + size, x - r : x - r + size]
     return c if c.shape[:2] == (size, size) else None
 
 
 def feature(c: np.ndarray) -> np.ndarray:
+    """Turn an icon crop into a pattern vector for matching.
+
+    The crop is blurred (to tolerate a pixel or two of misalignment), the colour inside the rim (_MASK) taken,
+    its average colour removed and the result scaled to unit length, so a dot product is a correlation.
+
+    Args:
+        c: (SIZE, SIZE, 3) BGR icon crop.
+
+    Returns:
+        1-D float32 vector.
+    """
     c = cv2.GaussianBlur(c, (0, 0), 1.5)  # tolerate a pixel or two of misalignment
     v = c[_MASK].astype(np.float32)  # colour inside the rim
     v -= v.mean(axis=0)
@@ -58,7 +80,14 @@ def feature(c: np.ndarray) -> np.ndarray:
 
 
 def bright_colour(c: np.ndarray) -> np.ndarray:
-    """(a, b) colour of the brightest quarter inside the rim, 0 = grey / white"""
+    """Measure the (a, b) colour of the brightest quarter inside the rim, 0 = grey / white.
+
+    Args:
+        c: (SIZE, SIZE, 3) BGR icon crop.
+
+    Returns:
+        (2,) float32 array of Lab a/b units.
+    """
     lab = cv2.cvtColor(cv2.GaussianBlur(c, (0, 0), 1.0), cv2.COLOR_BGR2LAB)[_MASK].astype(np.float32)
     top = lab[lab[:, 0] >= np.percentile(lab[:, 0], 75)]
     return top[:, 1:].mean(axis=0) - 128.0
@@ -70,13 +99,32 @@ _RIM_RING = (np.hypot(_xx - SIZE / 2 + 0.5, _yy - SIZE / 2 + 0.5) >= 9.5) & (
 
 
 def bright_level(c: np.ndarray) -> float:
-    """brightness of the brightest quarter inside the rim, relative to the rim's own (fog dims both alike)"""
+    """Brightness of the brightest quarter inside the rim, relative to the rim's own (fog dims both alike).
+
+    Args:
+        c: (SIZE, SIZE, 3) BGR icon crop.
+
+    Returns:
+        The ratio (Grand Mirror 1.10-1.28, Delirium 1.38-1.75; see BRIGHT_SPLIT).
+    """
     lum = cv2.cvtColor(cv2.GaussianBlur(c, (0, 0), 1.0), cv2.COLOR_BGR2LAB)[..., 0].astype(np.float32)
     return float(np.percentile(lum[_MASK], 75) / (np.percentile(lum[_RIM_RING], 75) + 1.0))
 
 
 def colour_ok(names: list[str], profiles: dict[str, np.ndarray], c: np.ndarray) -> np.ndarray:
-    """per name: may a badge with crop c take it? (names outside COLOUR_CHECKED or without pictures: always)"""
+    """For each name, tell whether an icon with crop c may take it.
+
+    Names outside COLOUR_CHECKED or without pictures are always allowed by colour; the BRIGHT_SPLIT names must
+    also fit their brightness range.
+
+    Args:
+        names: Candidate icon names.
+        profiles: Name -> (k, 2) bright-part colours of its stored pictures (Refs.colours).
+        c: (SIZE, SIZE, 3) BGR icon crop.
+
+    Returns:
+        (len(names),) bool array.
+    """
     col = bright_colour(c)
     ok = {
         n: bool(np.linalg.norm(P - col, axis=1).min() <= BRIGHT_TOL)
@@ -90,6 +138,14 @@ def colour_ok(names: list[str], profiles: dict[str, np.ndarray], c: np.ndarray) 
 
 
 def _db(path: Path | None = None) -> sqlite3.Connection:
+    """Open the icon database, creating the badge_refs table if missing.
+
+    Args:
+        path: Database file; None uses DB_PATH.
+
+    Returns:
+        An open sqlite3 connection (the caller closes it).
+    """
     c = sqlite3.connect(str(path or DB_PATH))
     c.execute("""CREATE TABLE IF NOT EXISTS badge_refs (
                      id INTEGER PRIMARY KEY, name TEXT NOT NULL, png BLOB NOT NULL,
@@ -98,7 +154,18 @@ def _db(path: Path | None = None) -> sqlite3.Connection:
 
 
 def add(name: str, crop_bgr: np.ndarray, conn: sqlite3.Connection | None = None) -> bool:
-    """store one named badge crop; False when the same picture is already stored"""
+    """Store one named icon crop.
+
+    Clears the cached references so the next refs() call reads them again.
+
+    Args:
+        name: Icon name (NOT_A_BADGE for a false detection).
+        crop_bgr: BGR icon crop (SIZE x SIZE).
+        conn: Open connection to use (the caller commits); None opens, commits and closes one.
+
+    Returns:
+        False when the same picture is already stored, else True.
+    """
     png = cv2.imencode(".png", crop_bgr)[1].tobytes()
     c = conn or _db()
     try:
@@ -118,7 +185,14 @@ def add(name: str, crop_bgr: np.ndarray, conn: sqlite3.Connection | None = None)
 
 
 def load(name: str | None = None) -> list[tuple[str, np.ndarray]]:
-    """(name, BGR crop) of every stored reference, or of one name"""
+    """Read the stored icon references.
+
+    Args:
+        name: Only this name; None for every one.
+
+    Returns:
+        List of (name, BGR crop) in the order they were stored (empty when there is no database).
+    """
     if not DB_PATH.exists():
         return []
     c = _db()
@@ -135,7 +209,17 @@ def load(name: str | None = None) -> list[tuple[str, np.ndarray]]:
 
 
 class Refs:
+    """Every stored icon reference, ready for nearest-match naming.
+
+    Attributes:
+        names: Name of each reference (crops not SIZE x SIZE are skipped).
+        F: (n, d) float32 pattern vectors (see feature), one row per name.
+        colours: Name -> (k, 2) bright-part colours of its stored pictures (the colour check, BRIGHT_TOL);
+            NOT_A_BADGE has none.
+    """
+
     def __init__(self):
+        """Load every stored reference from the database."""
         self.names: list[str] = []
         feats, cols = [], {}
         for name, img in load():
@@ -150,6 +234,7 @@ class Refs:
         self.colours = {n: np.array(v, np.float32) for n, v in cols.items()}
 
     def __len__(self):
+        """Return the number of references."""
         return len(self.names)
 
 
@@ -157,6 +242,11 @@ _REFS: Refs | None = None
 
 
 def refs() -> Refs:
+    """Return the stored references, loaded once and kept until add() changes them.
+
+    Returns:
+        The Refs.
+    """
     global _REFS
     if _REFS is None:
         _REFS = Refs()

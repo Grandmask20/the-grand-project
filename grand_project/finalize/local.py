@@ -14,14 +14,35 @@ from .traces import _log
 
 
 def _footprint(atlas, f):
+    """Return the four corners of a screenshot placed on the atlas.
+
+    Args:
+        atlas: the core.Atlas the screenshot is placed in.
+        f: the screenshot (frame) dict (needs "M", "w", "h").
+
+    Returns:
+        A (4, 2) array of the screenshot's corners in atlas units (top-left, top-right, bottom-right, bottom-left).
+    """
     H = core.screen_to_atlas(np.array(f["M"], float), atlas.frame_R(f))
     return core.persp(H, [[0, 0], [f["w"], 0], [f["w"], f["h"]], [0, f["h"]]])
 
 
 def finalize_local(atlas, new_names: list[str], log=_log) -> dict:
-    """Re-check only the area around the screenshots in new_names and splice it into the existing
-    atlas-wide result.  The area gets exactly the evidence a full check would use (every
-    screenshot that shows any of it), so its result matches a full check; the rest is kept."""
+    """Re-check only the area around the screenshots in new_names and splice it into the existing atlas-wide result.
+
+    The area gets exactly the evidence a full check would use (every screenshot that shows any of it), so its
+    result matches a full check; the rest is kept. The core is each new screenshot's box grown by CORE_PAD; the
+    context around it (CONTEXT_PAD more) supplies screenshots, map nodes, icons and landmarks to the sub-check.
+    Without an earlier result (atlas.final is None) a full check is run.
+
+    Args:
+        atlas: the core.Atlas; atlas.final is replaced.
+        new_names: names of the newly added screenshots (frames).
+        log: callable taking one message string, or None for no log output.
+
+    Returns:
+        The new atlas.final dict (same shape as finalize's), with stats["local_updates"] counted up.
+    """
     if atlas.final is None:
         return finalize(atlas, log)
     polys = [_footprint(atlas, f) for f in atlas.frames if f["name"] in set(new_names)]
@@ -34,12 +55,41 @@ def finalize_local(atlas, new_names: list[str], log=_log) -> dict:
     ctx_b = core_b + [-CONTEXT_PAD, -CONTEXT_PAD, CONTEXT_PAD, CONTEXT_PAD]
 
     def _in(b, x, y, pad=0.0):
+        """Tell whether a point lies in any of the boxes.
+
+        Args:
+            b: (N, 4) array of boxes (x0, y0, x1, y1) in atlas units.
+            x: the point's x (atlas units).
+            y: the point's y (atlas units).
+            pad: extra margin around each box (atlas units).
+
+        Returns:
+            True when (x, y) is inside some box grown by pad.
+        """
         return bool(np.any((b[:, 0] - pad <= x) & (x <= b[:, 2] + pad) & (b[:, 1] - pad <= y) & (y <= b[:, 3] + pad)))
 
     def in_core(x, y):
+        """Tell whether atlas point (x, y) is in the core area whose result is replaced.
+
+        Args:
+            x: x in atlas units.
+            y: y in atlas units.
+
+        Returns:
+            True inside the core.
+        """
         return _in(core_b, x, y)
 
     def in_ctx(x, y):
+        """Tell whether atlas point (x, y) is in the context area that feeds the sub-check.
+
+        Args:
+            x: x in atlas units.
+            y: y in atlas units.
+
+        Returns:
+            True inside the context area.
+        """
         return _in(ctx_b, x, y)
 
     sub = core.Atlas()
@@ -74,7 +124,17 @@ def finalize_local(atlas, new_names: list[str], log=_log) -> dict:
     kept_ids = [j for j in old_map.values() if nodes[j]["status"] != "removed"]
 
     def end_of(i):
-        """sub node -> spliced node id (outside the core: the existing node at that spot)"""
+        """Map a sub-check map node to its id in the spliced result.
+
+        Outside the core the existing map node at that spot (within 12 atlas units) is used; failing that the
+        sub-check's map node is added.
+
+        Args:
+            i: index of the map node in the sub-check's result (fin["nodes"]).
+
+        Returns:
+            The map node's id in the spliced nodes list.
+        """
         if i in sub_map:
             return sub_map[i]
         n = fin["nodes"][i]
