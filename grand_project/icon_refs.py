@@ -52,6 +52,10 @@ MARGIN = 0.75  # best distance must beat the nearest OTHER name by this factor
 BRIGHT_TOL = 12.0
 # only these look-alikes are checked (other names' bright parts vary more, e.g. MapBoss up to 34)
 COLOUR_CHECKED = {"AzmeriSpirit", "Hideout", "HideoutRed"}
+# Grand Mirror (dark grey oval) and Delirium Mirror (bright white splash) differ in brightness, which the pattern
+# match removes (user: the two were flaky). Measured against the icon's own rim, so fog dims both alike: the
+# brightest quarter inside / the rim's, Grand Mirror 1.10-1.28 (35 crawl icons), Delirium 1.38-1.75 (184).
+BRIGHT_SPLIT = {"GrandMirror": (None, 1.35), "Delirium": (1.35, None)}
 NOT_A_BADGE = "NotABadge"
 
 _yy, _xx = np.mgrid[:SIZE, :SIZE]
@@ -79,6 +83,17 @@ def bright_colour(c: np.ndarray) -> np.ndarray:
     return top[:, 1:].mean(axis=0) - 128.0
 
 
+_RIM_RING = (np.hypot(_xx - SIZE / 2 + 0.5, _yy - SIZE / 2 + 0.5) >= 9.5) & (
+    np.hypot(_xx - SIZE / 2 + 0.5, _yy - SIZE / 2 + 0.5) <= 11.5
+)
+
+
+def bright_level(c: np.ndarray) -> float:
+    """brightness of the brightest quarter inside the rim, relative to the rim's own (fog dims both alike)"""
+    lum = cv2.cvtColor(cv2.GaussianBlur(c, (0, 0), 1.0), cv2.COLOR_BGR2LAB)[..., 0].astype(np.float32)
+    return float(np.percentile(lum[_MASK], 75) / (np.percentile(lum[_RIM_RING], 75) + 1.0))
+
+
 def colour_ok(names: list[str], profiles: dict[str, np.ndarray], c: np.ndarray) -> np.ndarray:
     """per name: may a badge with crop c take it? (names outside COLOUR_CHECKED or without pictures: always)"""
     col = bright_colour(c)
@@ -87,6 +102,9 @@ def colour_ok(names: list[str], profiles: dict[str, np.ndarray], c: np.ndarray) 
         for n, P in profiles.items()
         if n in COLOUR_CHECKED and len(P)
     }
+    lvl = bright_level(c)
+    for n, (lo, hi) in BRIGHT_SPLIT.items():
+        ok[n] = ok.get(n, True) and (lo is None or lvl >= lo) and (hi is None or lvl <= hi)
     return np.array([ok.get(n, True) for n in names])
 
 

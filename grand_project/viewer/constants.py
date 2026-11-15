@@ -238,8 +238,11 @@ ICON_INFO = {
     "SwampInfluence": ("Swamp Influence", (110, 140, 80), "swamp area, biome"),
     "DesertInfluence": ("Desert Influence", (220, 190, 120), "desert area, biome"),
     "EnergizedLeyLines": ("Energized Ley Lines", (240, 220, 150), "doubles effect of tablets"),
-    "FleeingExile": ("Fleeing Exile", (90, 130, 220), "rogue exile flees"),
-    "GrandExpedition": ("Grand Expedition", (150, 200, 230), "expedition"),
+    "FleeingExile": (
+        "Fleeing Exile",
+        (90, 130, 220),
+        "rogue exile, defeat all rogue exiles (the icon the atlas shows: user)",
+    ),
     "GreatBeast": ("Great Beast", (200, 150, 90), "hilda's favour"),
     "MapAreaModified": ("Map Area Modified", (170, 170, 170), "world area manipulated"),
     "NotableLocation": ("Notable Location", (230, 210, 120), "important objective"),

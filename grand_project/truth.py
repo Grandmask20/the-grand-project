@@ -205,7 +205,7 @@ BADGE_WORDS = [
     ("powerful map boss", "MapBoss"),
     ("deadly map boss", "MapBossSpecial"),
     ("breach hive", "BreachHive"),
-    ("rogue exile", "RogueExile"),
+    ("rogue exile", "FleeingExile"),  # the atlas shows the Fleeing Exile icon (user)
     ("wisdom", "WisdomsTeachings"),
     ("abyssal overrun", "AbyssOverrun"),
     ("same element", "UnnamedR5"),

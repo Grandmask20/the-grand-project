@@ -12,9 +12,12 @@ from .constants import (
     BADGE_MIN,
     BADGE_NMS,
     BADGE_ROW_MIN,
+    EXPEDITION,
+    EXPEDITION_WATER,
     HIDDEN_SNAP,
     ICON_CLEAR,
     ICON_RIM_R,
+    INFLUENCE_MIN,
     MAP_NMS,
     RIM_CANDIDATE,
     ROW_DY,
@@ -41,6 +44,23 @@ def _finder() -> dict:
         with np.load(BADGE_FINDER_FILE) as z:
             _rim["special"] = {k[8:]: z[k].astype(np.float32) for k in z.files if k.startswith("special_")}
     return _rim
+
+
+def _in_water(img: np.ndarray, x: float, y: float) -> bool:
+    """is the icon's map (under it) in the water zone: enough open water around it (EXPEDITION_WATER)?"""
+    from grand_project import finalize as fin
+    from grand_project.finalize import landmarks as fl
+
+    fin._ocean(img, x, y)  # fills the per-screenshot ground classes
+    cls, bad = fl._ocean_img[1]
+    R, need = EXPEDITION_WATER
+    h, w = cls.shape
+    X, Y = int(round(x)), int(round(y + ROW_DY))
+    x0, x1, y0, y1 = max(0, X - R), min(w, X + R + 1), max(0, Y - R), min(h, Y + R + 1)
+    yy, xx = np.mgrid[y0:y1, x0:x1]
+    c = cls[y0:y1, x0:x1][(np.hypot(xx - X, yy - Y) <= R) & ~bad[y0:y1, x0:x1]]
+    c = c[c >= 0]
+    return len(c) > 200 and float((c == 0).mean()) >= need
 
 
 def special_icons(img: np.ndarray) -> list[dict]:
@@ -213,6 +233,10 @@ def badges_from(
         if any(np.hypot(b["x"] - s_["x"], b["y"] - s_["y"]) <= BADGE_NMS for s_ in special):
             continue
         nm, d = name_badge(img, b["x"], b["y"], names, F)
+        if nm.endswith("Influence") and b["score"] < INFLUENCE_MIN:
+            continue  # a weak circle named a biome influence is usually terrain (user)
+        if nm == EXPEDITION and not _in_water(img, b["x"], b["y"]):
+            nm = "Unidentified"  # Expedition only appears in the water zone (user)
         if nm != icon_refs.NOT_A_BADGE:
             out.append(dict(b, name=nm, dist=round(d, 3)))
     more: list[dict] = []

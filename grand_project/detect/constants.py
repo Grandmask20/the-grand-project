@@ -257,6 +257,12 @@ TREE_NEG_WEIGHT = 1.0  # x15 tried: 48 -> 64 wrong maps on the labelled shots
 
 
 EXPEDITION = "Expedition"
+EXPEDITION_WATER = (600, 0.15)  # Expedition only appears in the water zone (user): open water within 600 px of its map,
+# at least this share (every labelled Expedition: >= 0.19; inland areas: little or none)
+INFLUENCE_MIN = (
+    0.9  # an icon is only named a biome influence (Mountain / Forest / ... Influence) when the finder is this
+)
+# sure of its rim (user: they look like terrain; "very strong rim assurance")
 
 
 NOT_ON_EXPEDITION = ("Hall", "Tower")  # user: Halls / Towers / Hideouts appear in the ocean, never with an
