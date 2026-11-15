@@ -161,7 +161,6 @@ class Viewer(
         fm.add_command(label="Place a screenshot by hand…", command=self.ask_place)
         fm.add_command(label="Re-check whole atlas", command=self.refinalize)
         fm.add_command(label="Fix seams (clean map)", command=self.fix_seams)
-        fm.add_command(label="Detector database…", command=self.ask_database)
         fm.add_command(label="Export map PNGs", command=self.export_pngs)
         fm.add_separator()
         fm.add_command(label="Exit", command=self.on_close)

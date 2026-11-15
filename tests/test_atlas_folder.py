@@ -50,7 +50,7 @@ for p in crawl:  # cached detections: no detector run needed
 shots = core.screenshots_in(work)
 check(len(shots) == 4, f"4 screenshots in the atlas folder ({len(shots)})")
 at = core.Atlas()
-frames = [B.extract_frame(p, Path("unused"), frames_dir) for p in shots]
+frames = [B.extract_frame(p, frames_dir) for p in shots]
 added, refused = B.place_frames(at, frames, log=lambda *_: None)
 at.save(atlas_path)
 B.export(at, atlas_path)

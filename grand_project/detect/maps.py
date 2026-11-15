@@ -1,4 +1,4 @@
-"""detect.maps (from atlas_detect.py)"""
+"""detect.maps"""
 
 from __future__ import annotations
 
@@ -11,18 +11,6 @@ from .constants import BLOB_MIN, BLOB_SIGMA, BLOB_WIN, MAP, MAP_MERGE, MAP_MIN, 
 
 # Towers are maps in the path network and are labelled MAP here: a separate tower class had only
 # ~17 examples and learned grass / water as "tower". Tower vs map is decided in the landmark stage.
-
-
-# ---------------------------------------------------------------- stage 1
-def drop_hud(result: dict, w: int, h: int) -> dict:
-    """remove maps, badges and landmarks that sit on the game HUD"""
-    out = dict(result)
-    for k in ("nodes", "icons", "landmarks"):
-        items = result.get(k, [])
-        if items:
-            on = core.on_hud_mask([(i["x"], i["y"]) for i in items], w, h)
-            out[k] = [i for i, bad in zip(items, on, strict=False) if not bad]
-    return out
 
 
 # ---------------------------------------------------------------- stage 2

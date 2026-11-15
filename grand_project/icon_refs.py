@@ -19,32 +19,13 @@ from pathlib import Path
 import cv2
 import numpy as np
 
-HERE = Path(__file__).resolve().parent
-REF_DIR = HERE / "icon_refs"  # old storage: imported into the database once, then unused
-
-from grand_project import paths as rc_paths  # noqa: E402
+from grand_project import paths as rc_paths
 
 DB_PATH = rc_paths.DATABASE
 SIZE = 34  # badge crop, px at 1080p
 RADIUS = 11  # compared area: the badge picture inside the gold rim
 SHIFT = 3  # search +-3 px for the best alignment
 MAX_DIST = 0.40  # 1 - correlation; leave-one-out on 350 labelled badges: 95% right
-RELABEL = {"Unidentified", "RogueExile", "StoneCircle"}  # matcher results to re-check
-# weak template assets: kept only when the taught references agree, otherwise unnamed
-CONFIRM = {
-    "Trader",
-    "Sanctification",
-    "SanctificationBoss",
-    "RogueExile",
-    "StoneCircle",
-    "AbyssalDepths",
-    "ExpeditionRemnant",
-    "Shrine",
-    "RareMonster",
-    "Checkpoint",
-    "NamelessSeer",
-}
-MARGIN = 0.75  # best distance must beat the nearest OTHER name by this factor
 # The pattern match removes each badge's average colour, so a bright blue blob (Azmeri Spirit) and a bright white
 # fleur-de-lis (Hideout) correlate well. The colour of the brightest quarter tells them apart: a badge can only take
 # a name whose stored pictures have a bright part this close in colour (Lab a/b units; pictures of one name differ
@@ -171,27 +152,6 @@ class Refs:
     def __len__(self):
         return len(self.names)
 
-    def classify(self, img: np.ndarray, x: float, y: float, exclude: int | None = None):
-        """(name, distance) of the closest reference, trying small shifts; None if no refs"""
-        if not len(self.names):
-            return None
-        big = crop(img, x, y, SIZE + 2 * SHIFT)
-        if big is None:
-            return None
-        names = np.array(self.names)
-        dmin = np.full(len(names), 9.0, np.float32)
-        for dy in range(0, 2 * SHIFT + 1, 1):
-            for dx in range(0, 2 * SHIFT + 1, 1):
-                f = feature(big[dy : dy + SIZE, dx : dx + SIZE])
-                dmin = np.minimum(dmin, 1.0 - self.F @ f)
-        dmin[~colour_ok(self.names, self.colours, big[SHIFT : SHIFT + SIZE, SHIFT : SHIFT + SIZE])] = 9.0
-        if exclude is not None:
-            dmin[exclude] = 9.0
-        k = int(np.argmin(dmin))
-        other = dmin[names != names[k]]
-        second = float(other.min()) if len(other) else 9.0
-        return self.names[k], float(dmin[k]), second
-
 
 _REFS: Refs | None = None
 
@@ -201,26 +161,3 @@ def refs() -> Refs:
     if _REFS is None:
         _REFS = Refs()
     return _REFS
-
-
-# Badges the template matcher never proposes (no ring found around them): searched for directly
-# with their taught reference crops.
-SEARCH_BY_REFS = {"GlimmeringMutation"}
-SEARCH_MIN = 0.70  # colour correlation; real Glimmering Mutation badges scored 0.72-0.80,
-# terrain at most 0.62
-
-
-def find_by_refs(img: np.ndarray, records: list[dict]) -> list[dict]:
-    """add badges of SEARCH_BY_REFS types found by template search with their references"""
-    out = list(records)
-    for name in SEARCH_BY_REFS:
-        for _n, c in load(name):
-            inner = c[7:27, 7:27]  # the picture inside the rim
-            res = cv2.matchTemplate(img, inner, cv2.TM_CCOEFF_NORMED)
-            ys, xs = np.where(res >= SEARCH_MIN)
-            for y, x in sorted(zip(ys, xs, strict=False), key=lambda t: -res[t[0], t[1]]):
-                cx, cy = int(x) + 10, int(y) + 10
-                if any(abs(m["x"] - cx) < 16 and abs(m["y"] - cy) < 16 for m in out):
-                    continue
-                out.append({"name": name, "x": cx, "y": cy, "score": round(float(res[y, x]), 3), "source": "taught"})
-    return out

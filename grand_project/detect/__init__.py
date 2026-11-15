@@ -1,4 +1,4 @@
-"""One detector for atlas screenshots (replaces node_recognition + icon matcher + path finder; being built).
+"""The detector for atlas screenshots.
 
 Stages, each scored against atlas_test_data/truth/truth.json (not shipped) with atlas_truth.score:
   1. HUD      the game's interface (hud_mask_full.png, drawn by the user) is never a map, badge or landmark
@@ -15,10 +15,11 @@ Stages, each scored against atlas_test_data/truth/truth.json (not shipped) with 
 Modes: TRAINING fits models from the hand-labelled truth and stores them in the reference DB
 (table detector_models); LIVE only reads them and never writes the DB.
 
-    py atlas_detect.py score       stage 1 on the old detector's output, then stage 2 tested
-                                   leave-one-screenshot-out (trained on 9, scored on the 10th)
-    py atlas_detect.py train       training mode: fit the map + badge models on all labelled screenshots -> DB
-    py atlas_detect.py run IMG...  live mode: maps per screenshot (reads the DB, never writes it)
+    python -m grand_project.detect score         every stage tested leave-one-screenshot-out (each labelled
+                                                 screenshot judged by models trained without it)
+    python -m grand_project.detect train         training mode: fit every model on all labelled screenshots -> DB
+    python -m grand_project.detect train_cities  only the City barrel model
+    python -m grand_project.detect run IMG...    live mode: maps per screenshot (reads the DB, never writes it)
 """
 
 from .annotate import (  # noqa: F401
@@ -50,7 +51,6 @@ from .constants import (  # noqa: F401
     BLOB_MIN,
     BLOB_SIGMA,
     BLOB_WIN,
-    CACHE,
     CHAIN,
     DASH_AREA,
     DASH_SIZE,
@@ -145,7 +145,6 @@ from .maps import (  # noqa: F401
     _xx,
     _yy,
     candidate_labels,
-    drop_hud,
     map_candidates,
     map_features,
 )

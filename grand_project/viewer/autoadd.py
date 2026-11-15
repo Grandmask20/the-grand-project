@@ -12,10 +12,6 @@ from tkinter import filedialog, messagebox
 import cv2
 import numpy as np
 
-try:  # drag and drop of screenshot files (pip install tkinterdnd2)
-    from tkinterdnd2 import TkinterDnD
-except Exception:
-    TkinterDnD = None
 from grand_project import builder, core
 from grand_project import cities as atlas_cities
 from grand_project import finalize as atlas_finalize
@@ -126,7 +122,7 @@ class AutoAddMixin:
         if not g:
             return
         self.request_redraw()
-        if self.database() is None:
+        if not self._detector_ready():
             return
         self._queue_job([g["path"]], ("drop", g["cx"], g["cy"]))
 
@@ -242,32 +238,16 @@ class AutoAddMixin:
         self.root.destroy()
 
     # ------------------------------------------------------------------ adding screenshots
-    def database(self, ask=True) -> Path | None:
-        p = self.settings.get("database")
-        if p and Path(p).exists():
-            return Path(p)
-        for cand in (rc_paths.DATABASE,):
-            if cand.exists():
-                return cand
-        try:
-            d = builder.default_database()
-            if d.exists():
-                return d
-        except Exception:
-            LOG.warning("detector default database not found", exc_info=True)
-        return self.ask_database() if ask else None
-
-    def ask_database(self) -> Path | None:
-        p = filedialog.askopenfilename(
-            title="Detector reference database (node_references_*.sqlite3)",
-            filetypes=[("SQLite", "*.sqlite3"), ("All", "*.*")],
-            initialdir=str(rc_paths.ROOT),
+    def _detector_ready(self) -> bool:
+        """the detector database (paths.DATABASE) is there; otherwise say so (nothing can be detected)"""
+        if rc_paths.DATABASE.exists():
+            return True
+        messagebox.showerror(
+            "Atlas viewer",
+            f"The detector database is missing:\n{rc_paths.DATABASE}\n\n"
+            "Reinstall, or set DATABASE in local_paths.json.",
         )
-        if not p:
-            return None
-        self.settings["database"] = p
-        save_settings(self.settings)
-        return Path(p)
+        return False
 
     def ask_add(self):
         if self.working():
@@ -307,7 +287,7 @@ class AutoAddMixin:
             self._jobs.task_done()
 
     def add_screenshots(self, paths: list[Path], sync: bool = False, mode: str = "manual"):
-        if self.database() is None:
+        if not self._detector_ready():
             return
         if mode == "manual":
             self._busy = True
@@ -349,7 +329,6 @@ class AutoAddMixin:
 
     def _redetect(self, paths: list[Path]):
         """detect these screenshots again with the current detector (their caches are rewritten)"""
-        db = self.database(ask=False)
         self.log(f"Re-check: {len(paths)} screenshot(s) were detected by an older detector: detecting them again")
         self._q.put(("progress", f"detecting {len(paths)} screenshots again (newer detector)"))
         for p, err in builder.detect_uncached(paths, self._cache_dir(), log=lambda t: self._q.put(("log", t))).items():
@@ -357,7 +336,7 @@ class AutoAddMixin:
         for i, p in enumerate(paths, 1):
             self._q.put(("progress", f"detecting again {p.name} ({i}/{len(paths)})"))
             try:
-                builder.extract_frame(p, db, self._cache_dir())
+                builder.extract_frame(p, self._cache_dir())
             except Exception as e:
                 LOG.exception(f"{p.name}: detection failed")
                 self._q.put(("log", f"{p.name}: detection failed: {e}"))
@@ -383,7 +362,6 @@ class AutoAddMixin:
                 self.atlas.save(self.path)
             self._q.put(("placed", ("recheck", 1, [], len(self.atlas.frames))))
             return
-        db = self.database(ask=False)
         cache_dir = self.path.with_name(self.path.stem + "_frames")
         frames = []
         if len(paths) > 1:
@@ -393,7 +371,7 @@ class AutoAddMixin:
         for i, p in enumerate(paths, 1):
             self._q.put(("progress", f"detecting {p.name} ({i}/{len(paths)})"))
             try:
-                fr = builder.extract_frame(p, db, cache_dir)
+                fr = builder.extract_frame(p, cache_dir)
                 frames.append(fr)
                 self._q.put(("log", f"{p.name}: {int(fr.usable.sum())} maps, {len(getattr(fr, 'icons', []))} icons"))
             except Exception as e:
@@ -869,67 +847,66 @@ class AutoAddMixin:
                     print(f"[viewer] slow on the window thread: {kind} took {dt:.2f}s", flush=True)
 
     def _handle(self, kind, val):
-        if True:
-            if kind == "status":
-                self.status.set(val)
-            elif kind == "hires":
-                if val[0] == self.view_key(*self.canvas_size()):
-                    self._hires = val
-                    self.request_redraw()
-            elif kind == "progress":
-                self._set_progress(val)
-            elif kind == "added_names":
-                self._remember_add(*val)
-            elif kind == "undone":
-                self.recent = [n for n in self.recent if n not in set(val)]
-                self._refresh_recent()
-                self.rebuild_model()
-                self._terrain = None
-                self.rebuild_terrain()
-                self._set_progress(None)
-                self.status.set(f"undone: {', '.join(val)}")
-                self.log(f"undone: {', '.join(val)}")
-            elif kind == "outline":
-                self._pending_outline = val
+        if kind == "status":
+            self.status.set(val)
+        elif kind == "hires":
+            if val[0] == self.view_key(*self.canvas_size()):
+                self._hires = val
                 self.request_redraw()
-            elif kind == "rebuild_terrain":
-                self.rebuild_terrain()
-            elif kind == "terrain_img":
-                job, canvas, weight, origin, labels = (*val, None)[:5]
-                if job is None or job == "seams" or job == self._terrain_job:
-                    self._set_terrain(canvas, weight, origin, labels=labels)
-                    if job == "seams":
-                        self._seams_ready(labels[1])
-                    self.footprints = [
-                        (poly, (*poly.min(axis=0), *poly.max(axis=0)))
-                        for poly in (self._poly(f) for f in self.atlas.frames)
-                    ]
-                    if self._progress and self._progress[0].startswith("building the map"):
-                        self._set_progress(None)
-            elif kind == "log":
-                self.log(val)
-            elif kind == "locks":
-                self._lock_job = False
-                if val and val[0] is self.atlas:
-                    _atlas, names, found = val
-                    self.atlas.locks = atlas_cities.merge_locks(self.atlas.locks, found)
-                    self.atlas.lock_scanned = sorted(set(self.atlas.lock_scanned) | set(names))
-                    if self.path:
-                        self.atlas.save(self.path)
-                    if found:
-                        self.log(f"{len(self.atlas.locks)} locked Breach stronghold(s) (hand badge)")
-                    self.rebuild_model()
-                    self.request_redraw()
-                    self.scan_locks()  # screenshots added meanwhile
-            elif kind == "placed":
-                self._after_placed(val)
-            elif kind == "done":
-                self.scan_locks()
-                self._set_progress(None)
-                self._busy = False
-                self.btn_add.state(["!disabled"])
-            elif kind == "ask":
-                self._answer.put(messagebox.askyesno("Check this screenshot", val))
+        elif kind == "progress":
+            self._set_progress(val)
+        elif kind == "added_names":
+            self._remember_add(*val)
+        elif kind == "undone":
+            self.recent = [n for n in self.recent if n not in set(val)]
+            self._refresh_recent()
+            self.rebuild_model()
+            self._terrain = None
+            self.rebuild_terrain()
+            self._set_progress(None)
+            self.status.set(f"undone: {', '.join(val)}")
+            self.log(f"undone: {', '.join(val)}")
+        elif kind == "outline":
+            self._pending_outline = val
+            self.request_redraw()
+        elif kind == "rebuild_terrain":
+            self.rebuild_terrain()
+        elif kind == "terrain_img":
+            job, canvas, weight, origin, labels = (*val, None)[:5]
+            if job is None or job == "seams" or job == self._terrain_job:
+                self._set_terrain(canvas, weight, origin, labels=labels)
+                if job == "seams":
+                    self._seams_ready(labels[1])
+                self.footprints = [
+                    (poly, (*poly.min(axis=0), *poly.max(axis=0)))
+                    for poly in (self._poly(f) for f in self.atlas.frames)
+                ]
+                if self._progress and self._progress[0].startswith("building the map"):
+                    self._set_progress(None)
+        elif kind == "log":
+            self.log(val)
+        elif kind == "locks":
+            self._lock_job = False
+            if val and val[0] is self.atlas:
+                _atlas, names, found = val
+                self.atlas.locks = atlas_cities.merge_locks(self.atlas.locks, found)
+                self.atlas.lock_scanned = sorted(set(self.atlas.lock_scanned) | set(names))
+                if self.path:
+                    self.atlas.save(self.path)
+                if found:
+                    self.log(f"{len(self.atlas.locks)} locked Breach stronghold(s) (hand badge)")
+                self.rebuild_model()
+                self.request_redraw()
+                self.scan_locks()  # screenshots added meanwhile
+        elif kind == "placed":
+            self._after_placed(val)
+        elif kind == "done":
+            self.scan_locks()
+            self._set_progress(None)
+            self._busy = False
+            self.btn_add.state(["!disabled"])
+        elif kind == "ask":
+            self._answer.put(messagebox.askyesno("Check this screenshot", val))
 
     def _poll_queue(self):
         self._drain_queue()

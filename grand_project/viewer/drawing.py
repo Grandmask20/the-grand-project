@@ -9,10 +9,6 @@ import cv2
 import numpy as np
 from PIL import Image, ImageTk
 
-try:  # drag and drop of screenshot files (pip install tkinterdnd2)
-    from tkinterdnd2 import TkinterDnD
-except Exception:
-    TkinterDnD = None
 from grand_project import paths as rc_paths
 
 from .constants import (

@@ -7,10 +7,6 @@ import tkinter as tk
 import cv2
 import numpy as np
 
-try:  # drag and drop of screenshot files (pip install tkinterdnd2)
-    from tkinterdnd2 import TkinterDnD
-except Exception:
-    TkinterDnD = None
 from grand_project import cities as atlas_cities
 from grand_project import paths as rc_paths
 

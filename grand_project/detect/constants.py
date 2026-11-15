@@ -1,4 +1,4 @@
-"""detect.constants (from atlas_detect.py)"""
+"""detect.constants"""
 
 from __future__ import annotations
 
@@ -19,9 +19,6 @@ TRUTH = TESTS / "truth" / "truth.json"
 
 
 SHOTS = rc_paths.SCREENSHOTS / "random_samples"
-
-
-CACHE = TESTS / "old_detector_cache"  # (not shipped: old-detector comparison only)
 
 
 TOWER_REFS = TESTS / "truth" / "tower_refs.json"  # towers / maps in the user's tower shots

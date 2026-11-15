@@ -1,4 +1,4 @@
-"""detect.paths (from atlas_detect.py)"""
+"""detect.paths"""
 
 from __future__ import annotations
 

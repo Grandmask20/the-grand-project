@@ -1,4 +1,4 @@
-"""detect.cache (from atlas_detect.py)"""
+"""detect.cache"""
 
 from __future__ import annotations
 

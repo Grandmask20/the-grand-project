@@ -12,10 +12,6 @@ from tkinter import messagebox
 import cv2
 import numpy as np
 
-try:  # drag and drop of screenshot files (pip install tkinterdnd2)
-    from tkinterdnd2 import TkinterDnD
-except Exception:
-    TkinterDnD = None
 from grand_project import cities as atlas_cities
 from grand_project import core
 from grand_project import finalize as atlas_finalize

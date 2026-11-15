@@ -12,10 +12,6 @@ import cv2
 import numpy as np
 from PIL import Image, ImageTk
 
-try:  # drag and drop of screenshot files (pip install tkinterdnd2)
-    from tkinterdnd2 import TkinterDnD
-except Exception:
-    TkinterDnD = None
 from grand_project import core
 
 from .constants import CATEGORIES, SAME_SPOT, SNAP_PX

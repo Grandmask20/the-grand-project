@@ -5,10 +5,6 @@ from __future__ import annotations
 from pathlib import Path
 from tkinter import filedialog
 
-try:  # drag and drop of screenshot files (pip install tkinterdnd2)
-    from tkinterdnd2 import TkinterDnD
-except Exception:
-    TkinterDnD = None
 from grand_project import core
 
 

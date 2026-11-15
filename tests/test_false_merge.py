@@ -45,10 +45,10 @@ def main() -> int:
         q = rng.choice(far)
         w = Path(tempfile.mkdtemp())
         T.copy_cache(base + [q], big_path.with_name("atlas_frames"), w / "f")
-        frames = [B.extract_frame(p, Path("x"), w / "f") for p in base]
+        frames = [B.extract_frame(p, w / "f") for p in base]
         at = C.Atlas()
         B.place_frames(at, frames, log=lambda *_: None)
-        fq = B.extract_frame(q, Path("x"), w / "f")
+        fq = B.extract_frame(q, w / "f")
         r = at.add_frame(fq, hints=[f["name"] for f in at.frames], commit=False)
         wrong += r.ok
         print(

@@ -4,10 +4,6 @@ from __future__ import annotations
 
 import math
 
-try:  # drag and drop of screenshot files (pip install tkinterdnd2)
-    from tkinterdnd2 import TkinterDnD
-except Exception:
-    TkinterDnD = None
 from grand_project import core
 
 from .constants import EDIT_SAME, EDIT_SPOT

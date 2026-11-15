@@ -1,4 +1,4 @@
-"""detect.annotate (from atlas_detect.py)"""
+"""detect.annotate"""
 
 from __future__ import annotations
 
@@ -68,7 +68,8 @@ def annotate(img: np.ndarray, r: dict) -> np.ndarray:
 
 
 def cmd_show() -> int:
-    """py atlas_detect.py show OUT_DIR IMG...   (or: show OUT_DIR random N  -> N random unlabelled samples)"""
+    """python -m grand_project.detect show OUT_DIR IMG...
+    (or: show OUT_DIR random N  -> N random unlabelled samples)"""
     out = Path(sys.argv[2])
     out.mkdir(parents=True, exist_ok=True)
     files = sys.argv[3:]

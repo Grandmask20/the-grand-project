@@ -1,7 +1,7 @@
 """PoE2 Atlas viewer: browse, search and bookmark a merged atlas, and add screenshots to it.
 
-    py atlas_viewer.py                      (reopens the last atlas)
-    py atlas_viewer.py my_atlas.json
+    python -m grand_project.viewer                      (reopens the last atlas)
+    python -m grand_project.viewer my_atlas.json
 
 Mouse:  wheel = zoom at cursor, drag = pan, click = select, double-click = zoom in,
         right-click = bookmark here / show source screenshots.

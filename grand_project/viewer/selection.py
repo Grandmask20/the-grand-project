@@ -5,11 +5,6 @@ from __future__ import annotations
 import re
 import tkinter as tk
 
-try:  # drag and drop of screenshot files (pip install tkinterdnd2)
-    from tkinterdnd2 import TkinterDnD
-except Exception:
-    TkinterDnD = None
-
 from .helpers import icon_aliases, icon_label, icon_name
 
 

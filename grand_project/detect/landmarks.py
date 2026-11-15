@@ -1,4 +1,4 @@
-"""detect.landmarks (from atlas_detect.py)"""
+"""detect.landmarks"""
 
 from __future__ import annotations
 

@@ -5,10 +5,6 @@ from __future__ import annotations
 import os
 import sys
 
-try:  # drag and drop of screenshot files (pip install tkinterdnd2)
-    from tkinterdnd2 import TkinterDnD
-except Exception:
-    TkinterDnD = None
 from grand_project import __version__, core
 
 VERSION = __version__  # one place: grand_project/__init__.py

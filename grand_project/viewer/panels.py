@@ -6,11 +6,6 @@ import tkinter as tk
 
 from PIL import ImageTk
 
-try:  # drag and drop of screenshot files (pip install tkinterdnd2)
-    from tkinterdnd2 import TkinterDnD
-except Exception:
-    TkinterDnD = None
-
 from .constants import PLACE_ICON, POTENTIAL_TYPES
 from .helpers import icon_aliases, icon_label, icon_thumb
 

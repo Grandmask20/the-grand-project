@@ -63,7 +63,7 @@ class Frame:
             ip = np.array([[m["x"], m["y"]] for m in icons], float)
             keep = ~on_hud_mask(ip, d["width"], d["height"])
             icons = [m for m, k in zip(icons, keep, strict=False) if k]
-        fr.icons = icons  # screen px; badges from the icon matcher
+        fr.icons = icons  # screen px; icons from the detector
         return fr
 
 

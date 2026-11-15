@@ -46,7 +46,7 @@ def test_unreadable_screenshot_gives_a_clear_error():
         shot = Path(tmp) / "half.png"
         shot.write_bytes(b"\x89PNG not finished")
         try:
-            builder.extract_frame_new(shot, Path(tmp) / "cache")
+            builder.extract_frame(shot, Path(tmp) / "cache")
         except ValueError as e:
             assert "not a readable image" in str(e)
         else:

@@ -1,7 +1,7 @@
 """Ground truth for the detector, labelled by hand on contact sheets (like the badge sheets).
 
-    py atlas_truth.py sheet --shots DIR --cache DIR --out DIR      make the sheets
-    py atlas_truth.py save  --out DIR --labels labels.txt          store your corrections
+    python -m grand_project.truth sheet --shots DIR --cache DIR --out DIR      make the sheets
+    python -m grand_project.truth save  --out DIR --labels labels.txt          store your corrections
 
 Three sheets, every tile numbered:
   truth_maps.png       map bases. Green border = the detector says "map", red = a loose candidate

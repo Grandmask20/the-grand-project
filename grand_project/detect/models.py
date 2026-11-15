@@ -1,4 +1,4 @@
-"""detect.models (from atlas_detect.py)"""
+"""detect.models"""
 
 from __future__ import annotations
 
