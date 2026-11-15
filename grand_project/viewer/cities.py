@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import contextlib
+import gc
 import math
 import threading
 import tkinter as tk
@@ -20,6 +21,22 @@ from grand_project import paths as rc_paths
 from .constants import EDIT_SPOT, LANDMARK_KINDS, POTENTIAL_TYPES, TERRAIN_PIXELS, VERSION
 from .helpers import LOG, icon_label
 from .model import view_model
+
+
+def settle_memory():
+    """after an atlas is opened: collect once, then leave everything alive now out of later full collections.
+    With a large atlas open (~470k objects) each automatic full collection paused the window for 120-180 ms,
+    at random while panning. Objects let go later are still freed (reference counting)."""
+    gc.unfreeze()  # the atlas opened before can be collected now
+    gc.collect()
+    gc.freeze()
+
+
+def _quiet(fn):
+    try:
+        fn()
+    except Exception:
+        LOG.warning("ground cache could not be saved", exc_info=True)
 
 
 class CitiesMixin:
@@ -158,9 +175,12 @@ class CitiesMixin:
     def _after_load(self, fit=False):
         self.sel = None
         self._terrain = None
+        # the cached map image first, so the maps model (and the city biomes in it) is built once, with the ground
+        # (it was built without, then again when the map image came: ~1.7 s and the icon filter twice, 25k maps)
+        self.rebuild_terrain(cities=False)
         self.rebuild_model()
-        self.rebuild_terrain()
         self.scan_locks()
+        settle_memory()
         self.root.title(f"The Grand Project v{VERSION}{rc_paths.title_tag()} - {self.path.name if self.path else ''}")
         self._show_watch_label()
         if self.path:
@@ -367,7 +387,7 @@ class CitiesMixin:
         if getattr(self, "_terrain", None):  # the biome's own ground, from the map image
             if getattr(self, "_ground_for", None) is not self._terrain:
                 canvas, weight, origin = self._terrain
-                self._ground = atlas_cities.ground_sampler(canvas, weight, origin)
+                self._ground = self._kept_ground(atlas_cities.ground_sampler(canvas, weight, origin))
                 self._ground_for = self._terrain
             ground = self._ground
         self.icon_node = atlas_cities.icon_maps(self.V["nodes"], self.V["icons"])
@@ -385,6 +405,8 @@ class CitiesMixin:
             f"strongholds {len(src) - len(cities)}, locked {len(getattr(self, 'locked_ids', ()))}, "
             f"biome maps {len(self.potential)}, blocked maps {len(self.blocked)}, ground {'yes' if ground else 'no'}"
         )
+        if ground is not None and hasattr(ground, "save"):
+            ground.save()
         self.apply_biome_edits()
         self.near_city = atlas_cities.near_city(self.V["nodes"], self.V["paths"], self.potential, self.blocked)
         if counts is None and getattr(self, "type_counts", None) is not None:  # map image arrived later
@@ -403,6 +425,48 @@ class CitiesMixin:
                 if st:
                     k = self.potential_kind(lab)
                     counts[k] = counts.get(k, 0) + 1
+
+    # The ground look under each map (ground_sampler) depends only on the map image: kept next to the map image
+    # cache (<stem>_files/<stem>_ground.npz, for that map image's key) so opening an atlas again doesn't sample it
+    # again (~1.6 s for 14.5k maps)
+    def _ground_file(self):
+        d = core.atlas_files(self.path)
+        return d / (self.path.stem + "_ground.npz")
+
+    def _kept_ground(self, sample):
+        key = self._terrain_key() if self.path else ""
+        kept: dict = {}
+        if self.path:
+            with contextlib.suppress(Exception):
+                z = np.load(self._ground_file())
+                if str(z["key"]) == key:
+                    kept = {
+                        (float(x), float(y)): (None if np.isnan(v[0]) else v)
+                        for x, y, v in zip(z["x"], z["y"], z["v"], strict=True)
+                    }
+        state = {"new": 0}
+
+        def ground(x, y):
+            k = (round(float(x), 2), round(float(y), 2))
+            if k not in kept:
+                kept[k] = sample(x, y)
+                state["new"] += 1
+            return kept[k]
+
+        def save():
+            if not state["new"] or not self.path or not kept:
+                return
+            state["new"] = 0
+            xs = np.array([k[0] for k in kept])
+            ys = np.array([k[1] for k in kept])
+            vs = np.array([np.full(6, np.nan) if v is None else v for v in kept.values()], np.float32)
+            path = self._ground_file()
+            threading.Thread(
+                target=lambda: _quiet(lambda: np.savez(path, key=key, x=xs, y=ys, v=vs)), daemon=True
+            ).start()
+
+        ground.save = save
+        return ground
 
     def near_city_text(self, v) -> str:
         """ "Potential city: ..." for a map, or "" when it is not on / next to a city biome"""
@@ -469,7 +533,7 @@ class CitiesMixin:
         d = core.atlas_files(self.path)
         return d / (self.path.stem + "_terrain.png"), d / (self.path.stem + "_terrain.npz")
 
-    def rebuild_terrain(self, background=True):
+    def rebuild_terrain(self, background=True, cities=True):
         """stitched map: from the cache next to the atlas when it matches, else built in the
         background (the window stays usable; the map appears when it is ready)"""
         if not self.atlas or not self.atlas.frames:
@@ -485,7 +549,7 @@ class CitiesMixin:
                 origin = tuple(float(v) for v in meta["origin"])
                 labels = (meta["labels"], [str(n) for n in meta["names"]]) if "labels" in meta.files else None
                 if canvas is not None and canvas.shape[:2] == weight.shape:
-                    self._set_terrain(canvas, weight, origin, save=False, labels=labels)
+                    self._set_terrain(canvas, weight, origin, save=False, labels=labels, cities=cities)
                     return
         except Exception:
             LOG.debug("map image cache not usable, rebuilding", exc_info=True)
@@ -507,7 +571,7 @@ class CitiesMixin:
             work()
             self._drain_queue()
 
-    def _set_terrain(self, canvas, weight, origin, save=True, labels=None):
+    def _set_terrain(self, canvas, weight, origin, save=True, labels=None, cities=True):
         """labels: (ownership map, screenshot names) of a clean map (Fix seams); None for the quick map"""
         self._labels = labels
         self.root.after(50, self._build_layer_grid)  # the Terrain toggle shows a piece of this map
@@ -517,7 +581,7 @@ class CitiesMixin:
         while max(pyr[-1].shape[:2]) > 600:
             pyr.append(cv2.pyrDown(pyr[-1]))
         self.pyr = pyr
-        if getattr(self, "V", None) and self.V.get("nodes"):
+        if cities and getattr(self, "V", None) and self.V.get("nodes"):
             self.rebuild_cities()  # biome clusters follow the ground now
         self._clear_tiles()
         self._pending_outline = []
