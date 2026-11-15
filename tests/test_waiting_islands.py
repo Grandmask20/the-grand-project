@@ -50,7 +50,7 @@ class Feeder(AutoAddMixin):
         self.asked = []
         self.log = []
 
-    def _ask(self, question: str) -> bool:  # the viewer would ask; the test answers yes and counts it
+    def _ask(self, question: str, preview=None) -> bool:  # the viewer would ask; the test answers yes, counts it
         self.asked.append(question)
         return True
 

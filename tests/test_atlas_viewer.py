@@ -721,6 +721,40 @@ if crawl.exists() and crawl_cache.exists():
             f"error {err:.1f} units",
         )
 
+# the wheel scrolls the icon list wherever the pointer is over it (not only on a row's text, user)
+import types as _types  # noqa: E402
+
+app.tabs.select(0)
+pump(0.3)
+ic = app.icon_canvas
+if ic.yview()[1] < 1.0:
+    ic.yview_moveto(0)
+    pump(0.2)
+    x = ic.winfo_rootx() + ic.winfo_width() - 8  # the right edge: blank space beside the rows
+    y = ic.winfo_rooty() + ic.winfo_height() // 2
+    app._wheel_router(_types.SimpleNamespace(x_root=x, y_root=y, delta=-120, num=0))
+    pump(0.2)
+    check("wheel scrolls the icon list from the blank space beside rows", ic.yview()[0] > 0, str(ic.yview()))
+else:
+    print("skip wheel check: the icon list fits without scrolling")
+
+# a weak match: while "Check this screenshot" asks, the screenshot is shown where it would go, then cleared
+f0 = app.atlas.frames[0]
+H0 = core.screen_to_atlas(np.array(f0["M"], float), app.atlas.frame_R(f0))
+seen = []
+messagebox.askyesno = lambda title, msg, **kw: (seen.append((msg, app._weak_preview is not None)), True)[1]
+app._handle("ask", ("Add it anyway?", (f0["path"], H0)))
+check(
+    "weak match: shown on the map while asking, cleared after",
+    seen
+    and seen[0][1]
+    and "shown and outlined" in seen[0][0]
+    and app._weak_preview is None
+    and app._answer.get_nowait() is True,
+    str(seen),
+)
+messagebox.askyesno = lambda *a, **k: True
+
 # Saved atlases tab: a card per known atlas; rename; stop tracking keeps the files; deleting an atlas and its
 # data removes the atlas file, its saved detections and its _files folder but never the screenshots
 gone_dir = work / "gone"
