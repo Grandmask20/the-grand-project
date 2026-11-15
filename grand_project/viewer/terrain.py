@@ -59,19 +59,29 @@ class TerrainMixin:
         with self._tile_lock:
             gen = self._tile_gen
             have = {k: self._tiles.get((gen, *k)) for k in want}
-            spare = []
-            for lvl in (s / 2, s * 2):
-                spare += [t for t in (self._tiles.get((gen, *k)) for k in self._view_tiles(w, h, lvl)) if t]
             for k in want:
                 if have[k] is not None:
                     self._tiles.move_to_end((gen, *k))
             missing = [k for k in want if have[k] is None]
+            spare = []  # only while some are missing (drawn under every frame before: ~35 tiles a frame)
+            for lvl in (s / 2, s * 2) if missing else ():
+                spare += [t for t in (self._tiles.get((gen, *k)) for k in self._view_tiles(w, h, lvl)) if t]
             self._tile_want = missing
         for t in spare + [t for t in have.values() if t is not None]:
             self._blit_tile(img, w, h, z, t)
         self._fl_tiles_drawn(len(want) - len(missing), len(missing))
         if missing:
             self._start_tile_worker()
+
+    def tiles_cover_view(self, w, h) -> bool:
+        """every tile the view needs is built and has no holes: the blurry map image under them can be skipped"""
+        with self._tile_lock:
+            gen = self._tile_gen
+            for k in self._view_tiles(w, h, self._tile_level()):
+                t = self._tiles.get((gen, *k))
+                if t is None or t[2] is not None:
+                    return False
+        return True
 
     def _blit_tile(self, img, w, h, z, t):
         (s, i, j), pix, mask = t
