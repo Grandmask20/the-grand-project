@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import contextlib
+import os
 import queue
 import threading
 import time
@@ -742,11 +743,23 @@ class AutoAddMixin:
         save_settings(self.settings)
 
     def _watch_files(self) -> dict[str, int]:
-        folder = Path(self._watch_dir())
+        """{full path: size} of the image files in the watched folder that can be screenshots by name. The
+        folder is listed once (os.scandir: sizes come with the listing) and its path resolved once: resolving
+        and checking every file each poll took ~750 ms every 2 s in a folder of 1261 screenshots, freezing
+        the window (user's frame log)"""
         out = {}
         with contextlib.suppress(OSError):
-            for f in core.screenshots_in(folder):
-                out[str(f.resolve())] = f.stat().st_size
+            base = Path(self._watch_dir()).resolve()
+            if base.name.endswith(("_files", "_frames", "_undo")):
+                return out
+            with os.scandir(base) as it:
+                for e in it:
+                    name = e.name
+                    if Path(name).suffix.lower() not in core.IMAGE_EXT or name.endswith(core.ATLAS_OUTPUTS):
+                        continue
+                    with contextlib.suppress(OSError):
+                        if e.is_file():
+                            out[str(base / name)] = e.stat().st_size
         return out
 
     def start_watch(self, initial=False):
@@ -850,10 +863,8 @@ class AutoAddMixin:
         match kind:
             case "status":
                 self.status.set(val)
-            case "hires":
-                if val[0] == self.view_key(*self.canvas_size()):
-                    self._hires = val
-                    self.request_redraw()
+            case "tile":  # a sharp ground tile is ready
+                self.request_redraw()
             case "progress":
                 self._set_progress(val)
             case "added_names":

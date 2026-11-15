@@ -75,7 +75,13 @@ class FoldersMixin:
         if self.path and Path(json_path) == self.path:
             return
         self.save_if_dirty()
-        self.open_atlas(Path(json_path))
+        self.status.set(f"opening {Path(json_path).parent.name}…")
+        self.root.config(cursor="watch")
+        self.root.update_idletasks()  # shown before the work starts (opening a large atlas takes a few seconds)
+        try:
+            self.open_atlas(Path(json_path))
+        finally:
+            self.root.config(cursor="")
         self.refresh_atlas_menu()
 
     @staticmethod

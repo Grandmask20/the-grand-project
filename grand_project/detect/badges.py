@@ -48,11 +48,9 @@ def _finder() -> dict:
 
 def _in_water(img: np.ndarray, x: float, y: float) -> bool:
     """is the icon's map (under it) in the water zone: enough open water around it (EXPEDITION_WATER)?"""
-    from grand_project import finalize as fin
     from grand_project.finalize import landmarks as fl
 
-    fin._ocean(img, x, y)  # fills the per-screenshot ground classes
-    cls, bad = fl._ocean_img[1]
+    cls, bad = fl.ground_of(img)  # the per-screenshot ground classes (kept for recent screenshots)
     R, need = EXPEDITION_WATER
     h, w = cls.shape
     X, Y = int(round(x)), int(round(y + ROW_DY))

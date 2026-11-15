@@ -9,6 +9,7 @@ atlas through the viewer's own add-screenshots path.  Saves window grabs to --ou
 
 import json
 import math
+import os
 import shutil
 import sys
 import tempfile
@@ -84,7 +85,7 @@ def grab(name):
 
 
 root = V.TkinterDnD.Tk() if V.TkinterDnD is not None else V.tk.Tk()
-root.geometry("1500x900+40+40")
+root.geometry(os.environ.get("ATLAS_TEST_GEOMETRY", "1500x900+40+40"))  # e.g. on another monitor
 app = V.Viewer(root, str(atlas_copy))
 root.lift()
 root.attributes("-topmost", True)
@@ -310,12 +311,12 @@ root.attributes("-topmost", True)
 nd = app.V["nodes"][target]
 app.center_on(nd["x"], nd["y"], min_zoom=1.6)
 app.z = 1.6
-app._hires = None
+app._clear_tiles()
 over = [k for k in ("Paths", "Nodes", "Icons", "Landmarks", "Labels", "Bookmarks") if app.layers[k].get()]
 for k in over:
     app.layers[k].set(False)  # measure the terrain alone
 low = app.render(W, H)
-app._make_hires(background=False)
+app.build_view_tiles()
 high = app.render(W, H)
 for k in over:
     app.layers[k].set(True)
@@ -327,11 +328,36 @@ def sharp(im):
 
 check(
     "zoomed-in terrain at screenshot resolution",
-    app._hires is not None and (app.t_origin[2] > 0.9 or sharp(high) > 1.3 * sharp(low)),
+    len(app._tiles) > 0 and (app.t_origin[2] > 0.9 or sharp(high) > 1.3 * sharp(low)),
     f"map image scale {app.t_origin[2]:.2f}, sharpness {sharp(low):.0f} -> {sharp(high):.0f}",
 )
 pump()
 grab("08_zoomed_native.png")
+
+# sharp-ground tiles meet without a line: at zooms that don't land on whole pixels, the column / row where two
+# tiles meet is not darker than the pixels beside it (a dark line along every tile edge: user)
+from grand_project.viewer.constants import HIRES_TILE  # noqa: E402
+
+for k in over:
+    app.layers[k].set(False)
+dips = []
+for zz in (0.73, 1.37):
+    app.z = zz
+    unit = HIRES_TILE / app._tile_level()
+    app.cx = math.floor(nd["x"] / unit) * unit + 37 / zz
+    app.cy = math.floor(nd["y"] / unit) * unit + 29 / zz
+    app.build_view_tiles()
+    g = cv2.cvtColor(app.render(W, H), cv2.COLOR_BGR2GRAY).astype(float)
+    for i in range(-20, 21):
+        x = round((math.floor(app.cx / unit + i) * unit - app.cx) * zz + W / 2)
+        if 3 < x < W - 3:
+            dips.append(float(np.median(np.minimum(g[:, x - 2], g[:, x + 2]) - g[:, x])))
+        y = round((math.floor(app.cy / unit + i) * unit - app.cy) * zz + H / 2)
+        if 3 < y < H - 3:
+            dips.append(float(np.median(np.minimum(g[y - 2, :], g[y + 2, :]) - g[y, :])))
+for k in over:
+    app.layers[k].set(True)
+check("no line where terrain tiles meet", dips and max(dips) < 6, f"darkest edge {max(dips, default=0):.0f}")
 
 # icon filter
 app.set_all_icons(False)
@@ -606,8 +632,17 @@ if crawl.exists() and crawl_cache.exists():
         pump(0.5)
     pump(1.0)
     messagebox.askyesno = lambda title, msg, **kw: (asked.append(msg), False)[1]
-    # a screenshot from far away waits and is listed (crawl #0 vs this run, if far enough)
-    far = crawl_only[0] if k > 60 else crawl_only[-1]
+    # a screenshot from far away waits and is listed: the crawl screenshot farthest from this run in the crawl
+    # atlas (the crawl doubles back: "first or last screenshot" sat next to the run for 18 starting points)
+    crawl_frames = json.loads(crawl_atlas.read_text(encoding="utf-8"))["frames"]
+    pos = {f["name"]: np.array(f["M"], float)[:, 2] for f in crawl_frames}
+    run = [pos[q.stem] for q in seq if q.stem in pos]
+    cands = [
+        q
+        for q in crawl_only
+        if q.stem in pos and (crawl_cache / f"{hashlib.sha256(q.read_bytes()).hexdigest()[:16]}_detect1.json").exists()
+    ]
+    far = max(cands, key=lambda q: min(np.hypot(*(pos[q.stem] - r)) for r in run))
     shutil.copy(crawl_cache / f"{hashlib.sha256(far.read_bytes()).hexdigest()[:16]}_detect1.json", wdir)
     app.add_screenshots([far], mode="watch")
     end = time.time() + 60

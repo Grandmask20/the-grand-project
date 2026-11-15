@@ -103,6 +103,12 @@ class NavigationMixin:
                 pm = nm[A] & nm[B]
                 if multi:
                     pm &= np.array([q["frames"] >= 2 or bool(q.get("abyss")) for q in P], bool)
+                share = key[0][3]
+                if share > 0:  # drawn by too few of the screenshots that show both maps (as path_shown)
+                    pm &= np.array(
+                        [bool(q.get("abyss")) or q.get("seen_in", 0) >= share * max(1, q.get("frames", 0)) for q in P],
+                        bool,
+                    )
                 strong = np.array([q.get("seen_in", q["frames"]) >= 2 or bool(q.get("both_ends")) for q in P], bool)
                 abyss = np.array([bool(q.get("abyss")) for q in P], bool)
             else:
@@ -152,6 +158,7 @@ class NavigationMixin:
 
     # ------------------------------------------------------------------ mouse
     def on_press(self, e, mark=False):
+        self._fl_input("press")
         self.canvas.focus_set()
         if getattr(self, "_lasso", None) is not None:
             self._lasso = [(e.x, e.y)]
@@ -165,6 +172,7 @@ class NavigationMixin:
         self._drag = (e.x, e.y, self.cx, self.cy, False)
 
     def on_drag(self, e):
+        self._fl_input("drag")
         if getattr(self, "_lasso", None):
             self._lasso.append((e.x, e.y))
             self.request_redraw()
@@ -185,6 +193,7 @@ class NavigationMixin:
         self.request_redraw()
 
     def on_release(self, e):
+        self._fl_input("release")
         if getattr(self, "_lasso", None) is not None:
             poly, self._lasso = self._lasso, None
             self.canvas.configure(cursor="fleur")
@@ -237,6 +246,7 @@ class NavigationMixin:
         self.zoom_at(e.x, e.y, 2.0)
 
     def on_wheel(self, e):
+        self._fl_input("wheel")
         # some Tk builds give wheel x/y relative to the screen: derive canvas coords from root coords
         x = e.x_root - self.canvas.winfo_rootx()
         y = e.y_root - self.canvas.winfo_rooty()

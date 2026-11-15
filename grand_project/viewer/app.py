@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import collections
 import contextlib
 import os
 import queue
@@ -28,6 +29,7 @@ from .debug import DebugMixin
 from .drawing import DrawingMixin
 from .files import FilesMixin
 from .folders import FoldersMixin
+from .framelog import FrameLogMixin
 from .helpers import LOG
 from .navigation import NavigationMixin
 from .panels import PanelsMixin
@@ -62,6 +64,7 @@ class Viewer(
     SelectionMixin,
     BookmarksMixin,
     DrawingMixin,
+    FrameLogMixin,
 ):
     def __init__(self, root: tk.Tk, atlas_path: str | None = None):
         self.root = root
@@ -80,7 +83,12 @@ class Viewer(
         self.node_pts = np.zeros((0, 2))
         self.icon_pts = np.zeros((0, 2))
         self.footprints: list = []  # (atlas polygon, bbox) per screenshot
-        self._hires = None  # (view key, image, mask) at native resolution
+        self._tiles: collections.OrderedDict = collections.OrderedDict()  # sharp ground tiles (viewer/terrain)
+        self._tile_lock = threading.Lock()
+        self._tile_event = threading.Event()
+        self._tile_want: list = []
+        self._tile_gen = 0
+        self._tile_thread = None
         self._jobs: queue.Queue = queue.Queue()  # (paths, mode) for the background worker
         self._lock = threading.RLock()  # held by the worker while it changes the atlas
         self._answer: queue.Queue = queue.Queue()
@@ -93,7 +101,6 @@ class Viewer(
         self._ghost = None  # hand placement: {"path", "img", "cx", "cy"}
         self._undo: list[dict] = []  # {"file", "names"} newest last
         self.recent: list[str] = []  # screenshots added, one each, newest last (outlined)
-        self._hires_job = None
         self._weights: dict = {}
         self._redraw_pending = False
         self._fit_pending = False
@@ -124,6 +131,7 @@ class Viewer(
                 )
         self.root.after(100, self._poll_queue)
         threading.Thread(target=self._worker, daemon=True).start()
+        self.frame_log_autostart()
         if self.settings.get("watch_on") and self._watch_dir():
             self.watch_var.set(True)
             self.start_watch(initial=True)
@@ -435,6 +443,18 @@ class Viewer(
             ttk.Button(row, text="Delete", command=self._dbg_delete).pack(side="left", padx=4)
             self.dbg_file_lab = ttk.Label(dbf, text="", foreground="#555", wraplength=330)
             self.dbg_file_lab.pack(anchor="w", pady=(4, 0))
+            ttk.Separator(dbf).pack(fill="x", pady=6)
+            self.frame_log_var = tk.BooleanVar(value=False)
+            ttk.Checkbutton(
+                dbf, text="Record frame timings", variable=self.frame_log_var, command=self.toggle_frame_log
+            ).pack(anchor="w")
+            ttk.Label(
+                dbf,
+                text="Every redraw, stall, wheel / drag and terrain tile, to user_data/frame_log_*.csv; "
+                "untick to stop and see a summary in Log.",
+                foreground="#555",
+                wraplength=330,
+            ).pack(anchor="w")
 
         # --- Log
         lgf = ttk.Frame(self.tabs, padding=6)

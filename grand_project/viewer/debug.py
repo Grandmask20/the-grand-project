@@ -13,7 +13,7 @@ import numpy as np
 
 from grand_project import core
 
-from .constants import PATH_ABYSS, VERSION
+from .constants import PATH_ABYSS, PATH_CELL, VERSION
 from .helpers import draw_paths, put_text
 
 
@@ -246,28 +246,75 @@ class DebugMixin:
     def _path_pieces(self, ST, th, c_multi, c_single) -> dict:
         """{(colour, width): (all piece points in atlas units, start index of each piece)} for the shown paths,
         cut into dashes / dots for the style; cached until paths, filters, style or zoom change"""
-        z = round(self.z, 3)
-        key = (
+        # dash spacing follows the zoom in quarter-octave steps (~19%)
+        z = 2.0 ** (round(math.log2(max(self.z, 1e-6)) * 4) / 4)
+        style = ST["path_style"]
+        geo_key = (
             id(self.V["paths"]),
             id(self.V["nodes"]),
             self._flags(),
             frozenset(self.icon_hidden),
-            ST["path_style"],
+            style,
             th,
             c_multi,
             c_single,
-            z if ST["path_style"] != "solid" else 0,
         )
+        key = (geo_key, z if style != "solid" else 0)
         c = getattr(self, "_pp_cache", None)
         if c is not None and c[0] == key:
             return c[1]
-        N = self.V["nodes"]
-        groups: dict = {}
-        style = ST["path_style"]
+        geo = getattr(self, "_pp_geo", None)
+        if geo is None or geo[0] != geo_key:
+            geo = self._pp_geo = (geo_key, self._path_lines(style, th, c_multi, c_single))
+        out = {}
         on = (max(6.0, 5.0 * th) if style == "dashed" else 0.6) / max(z, 1e-3)
         period = on + (max(4.0, 3.0 * th) if style == "dashed" else max(5.0, 4.0 * th)) / max(z, 1e-3)
-        for p in self.V["paths"]:
-            if not self.path_shown(p):
+        for k, (P, starts, D, off, Lp) in geo[1].items():
+            if style == "solid":
+                out[k] = (P, starts, None)
+                continue
+            # every dash of every path at once (cutting them path by path took ~0.5 s per wheel step: user's
+            # frame log): dash j of path p runs from j * period to j * period + on along it
+            use = np.nonzero(Lp >= 1e-6)[0]
+            n = np.ceil(Lp[use] / period).astype(np.intp)
+            if not n.sum():
+                continue
+            pid = np.repeat(use, n)
+            j = np.arange(len(pid)) - np.repeat(np.cumsum(n) - n, n)
+            t0 = j * period
+            t1 = np.minimum(t0 + on, Lp[pid])
+            g0, g1 = off[pid] + t0, off[pid] + t1  # along all paths laid end to end (D)
+            seg = np.empty((len(pid), 2, 2))
+            seg[:, 0, 0], seg[:, 0, 1] = np.interp(g0, D, P[:, 0]), np.interp(g0, D, P[:, 1])
+            seg[:, 1, 0], seg[:, 1, 1] = np.interp(g1, D, P[:, 0]), np.interp(g1, D, P[:, 1])
+            out[k] = self._dash_grid(seg)
+        self._pp_cache = (key, out)
+        return out
+
+    @staticmethod
+    def _dash_grid(seg: np.ndarray):
+        """dashes (n, 2 ends, xy) sorted by the PATH_CELL cell of their first end, with each cell's range: a frame
+        draws only the cells in view (every dash was moved to the screen and tested each frame: 50-90 ms per frame
+        panning zoomed in, the user's frame log)"""
+        cell = np.floor(seg[:, 0, :] / PATH_CELL).astype(np.int64)
+        order = np.lexsort((cell[:, 1], cell[:, 0]))
+        seg, cell = seg[order], cell[order]
+        if not len(seg):
+            return None, None, (seg, {})
+        brk = np.nonzero(np.any(np.diff(cell, axis=0) != 0, axis=1))[0] + 1
+        lo = np.concatenate([[0], brk])
+        hi = np.append(brk, len(seg))
+        ranges = {(int(cell[a, 0]), int(cell[a, 1])): (int(a), int(b)) for a, b in zip(lo, hi, strict=True)}
+        return None, None, (seg, ranges)
+
+    def _path_lines(self, style, th, c_multi, c_single) -> dict:
+        """per (colour, width): the shown paths' lines laid end to end - points P, each path's first point,
+        each point's distance D along all of them (paths 1 unit apart), each path's start in D and length"""
+        N = self.V["nodes"]
+        lines: dict = {}
+        pm = self.shown_masks()[2]  # path_shown for every path, cached
+        for p, shown in zip(self.V["paths"], pm, strict=False):
+            if not shown:
                 continue
             strong = p.get("seen_in", p["frames"]) >= 2 or p.get("both_ends")
             col = PATH_ABYSS if p.get("abyss") else c_multi if strong else c_single
@@ -275,26 +322,19 @@ class DebugMixin:
             L = np.array(p.get("line") or [[N[p["a"]]["x"], N[p["a"]]["y"]], [N[p["b"]]["x"], N[p["b"]]["y"]]], float)
             L[0] = (N[p["a"]]["x"], N[p["a"]]["y"])
             L[-1] = (N[p["b"]]["x"], N[p["b"]]["y"])
-            g = groups.setdefault((col, wdt if style != "dotted" else max(2, 2 * wdt)), [])
-            if style == "solid":
-                g.append(L)
-                continue
-            seg = np.hypot(*np.diff(L, axis=0).T)
-            cum = np.concatenate([[0], np.cumsum(seg)])
-            if cum[-1] < 1e-6:
-                continue
-            t0 = np.arange(0, cum[-1], period)
-            t1 = np.minimum(t0 + on, cum[-1])
-            a_ = np.column_stack([np.interp(t0, cum, L[:, 0]), np.interp(t0, cum, L[:, 1])])
-            b_ = np.column_stack([np.interp(t1, cum, L[:, 0]), np.interp(t1, cum, L[:, 1])])
-            g.extend(np.stack([a_, b_], 1))
+            lines.setdefault((col, wdt if style != "dotted" else max(2, 2 * wdt)), []).append(L)
         out = {}
-        for k, pieces in groups.items():
-            if not pieces:
-                continue
-            lens = np.array([len(x) for x in pieces])
-            out[k] = (np.vstack(pieces), np.concatenate([[0], np.cumsum(lens)[:-1]]))
-        self._pp_cache = (key, out)
+        for k, Ls in lines.items():
+            P = np.vstack(Ls)
+            counts = np.array([len(L) for L in Ls])
+            starts = np.concatenate([[0], np.cumsum(counts)[:-1]])
+            seg = np.hypot(*np.diff(P, axis=0).T)
+            seg[starts[1:] - 1] = 0.0  # no distance across from one path to the next
+            cum = np.concatenate([[0.0], np.cumsum(seg)])
+            Lp = cum[np.append(starts[1:], len(P)) - 1] - cum[starts]  # each path's length
+            off = cum[starts] + np.arange(len(Ls))  # paths 1 unit apart: D always increases between them
+            D = cum + np.repeat(np.arange(len(Ls)), counts)
+            out[k] = (P, starts, D, off, Lp)
         return out
 
     def _path_atlas_line(self, p) -> np.ndarray:
