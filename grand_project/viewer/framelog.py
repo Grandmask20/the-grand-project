@@ -7,7 +7,7 @@ tile built in the background, to user_data/frame_log_<date>_<time>.csv. Stopping
 tab. Columns:
 
     t_ms      time since recording started
-    kind      frame / stall / input / tile
+    kind      frame / stall / input / tile / gc (a full garbage collection)
     total_ms  frame: the whole redraw; stall: how long the window did not respond; tile: build time
     wait_ms   frame: from the redraw being asked for to it starting
     terrain .. landmarks, show: ms per part of the frame (show = putting the picture on the screen)
@@ -18,7 +18,9 @@ tab. Columns:
 
 from __future__ import annotations
 
+import contextlib
 import csv
+import gc
 import os
 import statistics
 import time
@@ -62,6 +64,7 @@ class FrameLogMixin:
         with open(self._fl_file, "w", newline="", encoding="utf-8") as fh:
             csv.writer(fh).writerow(COLUMNS)
         self.root.after(FRAME_TICK_MS, self._fl_tick)
+        gc.callbacks.append(self._fl_gc)
         if getattr(self, "frame_log_var", None) is not None:
             self.frame_log_var.set(True)
         self.log(f"frame log: recording to {self._fl_file}")
@@ -70,6 +73,8 @@ class FrameLogMixin:
         if self._fl_rows is None:
             return
         self._fl_flush()
+        with contextlib.suppress(ValueError):
+            gc.callbacks.remove(self._fl_gc)
         rows, self._fl_rows = self._fl_all, None
         if getattr(self, "frame_log_var", None) is not None:
             self.frame_log_var.set(False)
@@ -112,6 +117,14 @@ class FrameLogMixin:
              round(wait, 1) if wait != "" else "", *(round(parts[s], 2) for s in SECTIONS),
              round(self.z, 4), round(self.cx, 1), round(self.cy, 1), w, h, shown, missing, ""]
         )  # fmt: skip
+
+    def _fl_gc(self, phase, info):
+        """garbage collections of the oldest generation (the long ones), from whichever thread ran them"""
+        if phase == "start":
+            self._fl_gc_t = time.perf_counter()
+        elif info.get("generation") == 2 and self._fl_rows is not None:
+            ms = (time.perf_counter() - getattr(self, "_fl_gc_t", time.perf_counter())) * 1000
+            self._fl_rows.append(self._fl_row("gc", round(ms, 1), f"collected {info.get('collected', 0)}"))
 
     def _fl_tiles_drawn(self, shown: int, missing: int):
         if self._fl_rows is not None:
@@ -160,6 +173,7 @@ class FrameLogMixin:
         frames = [r for r in rows if r[1] == "frame"]
         stalls = [r[2] for r in rows if r[1] == "stall"]
         tiles = [r[2] for r in rows if r[1] == "tile"]
+        gcs = [r[2] for r in rows if r[1] == "gc"]
         if not frames:
             return "frame log: no frames recorded"
         tot = sorted(r[2] for r in frames)
@@ -174,4 +188,6 @@ class FrameLogMixin:
             out += f" (worst {max(stalls):.0f} ms)"
         if tiles:
             out += f" | {len(tiles)} tiles built, avg {statistics.mean(tiles):.0f} ms"
+        if gcs:
+            out += f" | {len(gcs)} full garbage collections, worst {max(gcs):.0f} ms"
         return out
