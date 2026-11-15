@@ -187,7 +187,7 @@ class AtlasesTabMixin:
         tf = thumb_file(self.path)
         try:
             tf.parent.mkdir(parents=True, exist_ok=True)
-            cv2.imencode(".png", make_thumb(canvas))[1].tofile(str(tf))
+            core.write_png(tf, make_thumb(canvas), "thumbnail")
         except Exception:
             LOG.warning("atlas thumbnail could not be saved", exc_info=True)
             return
@@ -207,7 +207,7 @@ class AtlasesTabMixin:
                 if not tf.exists() and terrain.exists():
                     canvas = cv2.imdecode(np.fromfile(str(terrain), np.uint8), cv2.IMREAD_COLOR)
                     if canvas is not None:
-                        cv2.imencode(".png", make_thumb(canvas))[1].tofile(str(tf))
+                        core.write_png(tf, make_thumb(canvas), "thumbnail")
             except Exception:
                 LOG.warning(f"could not read atlas {json_path} for its card", exc_info=True)
             self._q.put(("atlas_numbers", (json_path, numbers)))

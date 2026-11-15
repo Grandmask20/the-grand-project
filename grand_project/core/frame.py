@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import contextlib
+import zlib
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -10,7 +11,7 @@ import cv2
 import numpy as np
 
 from . import constants as K
-from .constants import ATLAS_OUTPUTS, HUD_DEPTH, HUD_MASK_FILE, ICON_BASE_DY, IMAGE_EXT, ROW_STEP_PX
+from .constants import ATLAS_OUTPUTS, GENERATED_TAG, HUD_DEPTH, HUD_MASK_FILE, ICON_BASE_DY, IMAGE_EXT, ROW_STEP_PX
 from .geometry import persp, rectifier
 
 
@@ -107,15 +108,42 @@ def atlas_files(atlas_path) -> Path:
     return d
 
 
+def png_bytes(img: np.ndarray, what: str = "output") -> bytes:
+    """img (BGR / grey) as PNG with the program's text tag (GENERATED_TAG: what) right after the header"""
+    data = cv2.imencode(".png", img)[1].tobytes()
+    body = b"tEXt" + GENERATED_TAG + b"\0" + what.encode("latin-1", "replace")
+    chunk = (len(body) - 4).to_bytes(4, "big") + body + zlib.crc32(body).to_bytes(4, "big")
+    return data[:33] + chunk + data[33:]  # 8-byte signature + 25-byte IHDR, then the tag
+
+
+def write_png(path, img: np.ndarray, what: str = "output") -> None:
+    """write an image the program made (map image, export, thumbnail, sheet): tagged, never taken for a
+    screenshot (works with non-ASCII paths, unlike cv2.imwrite)"""
+    Path(path).write_bytes(png_bytes(img, what))
+
+
+def is_generated(p) -> bool:
+    """a PNG the program wrote itself (its text tag sits in the first bytes)"""
+    try:
+        with open(p, "rb") as fh:
+            head = fh.read(512)
+    except OSError:
+        return False
+    return head[:8] == b"\x89PNG\r\n\x1a\n" and b"tEXt" + GENERATED_TAG + b"\0" in head
+
+
 def is_screenshot(p) -> bool:
     """an image file that can be a screenshot: not one of the atlas's own outputs (an old atlas may still have
-    them next to atlas.json), not inside an atlas's _files / _frames folder"""
+    them next to atlas.json), not inside an atlas's _files / _frames folder, and not any image the program
+    made (tagged: is_generated)"""
     p = Path(p)
     if p.suffix.lower() not in IMAGE_EXT or not p.is_file():
         return False
     if any(p.name.endswith(o) for o in ATLAS_OUTPUTS):
         return False
-    return not p.parent.name.endswith(("_files", "_frames", "_undo"))
+    if p.parent.name.endswith(("_files", "_frames", "_undo")):
+        return False
+    return not is_generated(p)
 
 
 def screenshots_in(folder) -> list[Path]:

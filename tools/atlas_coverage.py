@@ -65,7 +65,7 @@ def main() -> int:
             outline(placed[before], (0, 0, 255), 6, label=False)
         k = j
     target = Path(args.out) if args.out else core.atlas_files(atlas_path) / (atlas_path.stem + "_coverage.png")
-    cv2.imencode(".png", out)[1].tofile(str(target))
+    core.write_png(target, out, "coverage")
     print(f"{len(placed)} of {len(order)} screenshots placed -> {target}")
     for a, b, before, after in gaps:
         rng = f"#{a}" if a == b else f"#{a}-#{b}"

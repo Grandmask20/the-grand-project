@@ -88,6 +88,18 @@ check(
 )
 check(sorted(p.name for p in old.iterdir() if p.is_file()) == [crawl[0].name], "nothing generated left at the top")
 
+# an image the program made, under any name, in the screenshot folder (user: an overview image was added and
+# sat in Waiting): tagged, so it is never a screenshot; a plain image of the same size still is
+import numpy as np  # noqa: E402
+
+core.write_png(work / "atlas_network_overview.png", np.full((1080, 1920, 3), 60, np.uint8), "overview")
+(work / "plain_copy.png").write_bytes((work / shots[0].name).read_bytes())
+names = [p.name for p in core.screenshots_in(work)]
+check(
+    "atlas_network_overview.png" not in names and "plain_copy.png" in names,
+    "images the program wrote (any name) are not screenshots",
+)
+
 shutil.rmtree(work, ignore_errors=True)
 shutil.rmtree(old, ignore_errors=True)
 print("PASS: atlas folder = screenshot folder" if ok else "FAILED: atlas folder = screenshot folder")
