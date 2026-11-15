@@ -93,6 +93,8 @@ A screenshot that overlaps nothing yet goes to **Waiting** (Auto-add tab). Waiti
   - remove an atlas from the list
   - add new screenshots from an atlas's folder
 
+  The **Saved atlases tab** shows every atlas as a card with a thumbnail of its map and its numbers of maps, icons and screenshots. Click a card to open it; right-click (or **Rename…**) to rename it. **Refresh** re-checks the whole open atlas. **Delete…** asks whether to *stop tracking* the atlas (its files stay) or *delete the whole atlas and its data* (its `atlas.json`, `atlas_frames/` and `atlas_files/`; your screenshots are never deleted).
+
   Each atlas lives in its own folder: `atlas.json`, plus `atlas_frames/` (detections) and `atlas_files/` (map image, exports, undo). The screenshots can sit in that same folder; the atlas never takes its own files for screenshots. Keep new ones in `atlases/`.
 - **File menu:**
   - *New atlas*, *Open atlas*, *Save* (Ctrl+S; adding screenshots also saves).

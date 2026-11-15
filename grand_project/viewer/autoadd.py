@@ -851,6 +851,10 @@ class AutoAddMixin:
             self.status.set(val)
         elif kind == "tile":  # a sharp ground tile is ready
             self.request_redraw()
+        elif kind == "atlas_cards":  # a thumbnail was written
+            self.refresh_atlas_cards()
+        elif kind == "atlas_numbers":
+            self._got_atlas_numbers(val)
         elif kind == "progress":
             self._set_progress(val)
         elif kind == "added_names":

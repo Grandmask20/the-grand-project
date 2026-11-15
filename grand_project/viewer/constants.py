@@ -154,6 +154,7 @@ HIRES_MAX_FRAMES = 30  # screenshots warped at native resolution for one zoomed-
 HIRES_TILE = 512  # px per side of one tile
 HIRES_TILE_CACHE = 160  # tiles kept (~1 MB each)
 HIRES_MAX_LEVEL = 2.0  # px per atlas unit; zoomed in further, the level-2 tiles are scaled up
+ATLAS_THUMB = (112, 84)  # px: an atlas's thumbnail on its card in the Saved atlases tab
 
 
 # game icon -> (poe2db name, BGR colour, other names it can be searched by).  Names follow

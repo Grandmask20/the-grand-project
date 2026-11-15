@@ -21,6 +21,7 @@ except Exception:
 from grand_project import core
 from grand_project import paths as rc_paths
 
+from .atlases_tab import AtlasesTabMixin
 from .autoadd import AutoAddMixin
 from .bookmarks import BookmarksMixin
 from .cities import CitiesMixin
@@ -63,6 +64,7 @@ class Viewer(
     SelectionMixin,
     BookmarksMixin,
     DrawingMixin,
+    AtlasesTabMixin,
 ):
     def __init__(self, root: tk.Tk, atlas_path: str | None = None):
         self.root = root
@@ -147,7 +149,7 @@ class Viewer(
         bg = "#eceff3"
         r.configure(bg=bg)
         style.configure(".", background=bg)
-        style.configure("TNotebook.Tab", padding=(6 if rc_paths.DEBUG else 10, 4))  # internal has a Debug tab too
+        style.configure("TNotebook.Tab", padding=(3 if rc_paths.DEBUG else 6, 4))  # 7 tabs (internal: 8 with Debug)
         style.configure("Side.TFrame", background=bg)
 
         r.columnconfigure(0, weight=1)
@@ -419,6 +421,11 @@ class Viewer(
             foreground="#555",
             wraplength=330,
         ).pack(anchor="w", pady=(2, 0))
+
+        # --- Saved atlases: every known atlas as a card with its thumbnail and numbers
+        atf = ttk.Frame(self.tabs, padding=6)
+        self.tabs.add(atf, text="Saved atlases")
+        self._build_atlases_tab(atf)
 
         # --- Debug (internal copy only): the user's marks of wrong / missing maps and paths, for the next fixes
         if rc_paths.DEBUG:
