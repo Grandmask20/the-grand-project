@@ -103,6 +103,12 @@ class NavigationMixin:
                 pm = nm[A] & nm[B]
                 if multi:
                     pm &= np.array([q["frames"] >= 2 or bool(q.get("abyss")) for q in P], bool)
+                share = key[0][3]
+                if share > 0:  # drawn by too few of the screenshots that show both maps (as path_shown)
+                    pm &= np.array(
+                        [bool(q.get("abyss")) or q.get("seen_in", 0) >= share * max(1, q.get("frames", 0)) for q in P],
+                        bool,
+                    )
                 strong = np.array([q.get("seen_in", q["frames"]) >= 2 or bool(q.get("both_ends")) for q in P], bool)
                 abyss = np.array([bool(q.get("abyss")) for q in P], bool)
             else:

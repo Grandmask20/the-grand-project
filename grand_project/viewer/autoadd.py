@@ -849,10 +849,8 @@ class AutoAddMixin:
     def _handle(self, kind, val):
         if kind == "status":
             self.status.set(val)
-        elif kind == "hires":
-            if val[0] == self.view_key(*self.canvas_size()):
-                self._hires = val
-                self.request_redraw()
+        elif kind == "tile":  # a sharp ground tile is ready
+            self.request_redraw()
         elif kind == "progress":
             self._set_progress(val)
         elif kind == "added_names":

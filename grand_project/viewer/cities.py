@@ -205,7 +205,7 @@ class CitiesMixin:
             H = core.screen_to_atlas(np.array(f["M"], float), self.atlas.frame_R(f))
             poly = core.persp(H, [[0, 0], [f["w"], 0], [f["w"], f["h"]], [0, f["h"]]])
             self.footprints.append((poly, (*poly.min(axis=0), *poly.max(axis=0))))
-        self._hires, self._weights = None, {}
+        self._clear_tiles()
         self.refresh_bookmarks()
         self.run_search()
         self.show_info()
@@ -519,7 +519,7 @@ class CitiesMixin:
         self.pyr = pyr
         if getattr(self, "V", None) and self.V.get("nodes"):
             self.rebuild_cities()  # biome clusters follow the ground now
-        self._hires = None
+        self._clear_tiles()
         self._pending_outline = []
         if save and self.path:
             key = self._terrain_key()

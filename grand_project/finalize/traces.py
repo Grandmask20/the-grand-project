@@ -29,21 +29,27 @@ class _Grid:
         self.cells: dict[tuple[int, int], list[int]] = {}
         for i, (x, y) in enumerate(self.pts):
             self.cells.setdefault((int(x // cell), int(y // cell)), []).append(i)
+        self._blocks: dict = {}  # (cell x, cell y, reach) -> candidate indices and points, in the same order
 
     def near(self, p, r) -> list[int]:
         """indices within distance r of p"""
         c, k = self.cell, int(math.ceil(r / self.cell))
         cx, cy = int(p[0] // c), int(p[1] // c)
-        cand = [
-            i
-            for gx in range(cx - k, cx + k + 1)
-            for gy in range(cy - k, cy + k + 1)
-            for i in self.cells.get((gx, gy), ())
-        ]
-        if not cand:
+        block = self._blocks.get((cx, cy, k))
+        if block is None:  # the cells around: gathered once (the re-check asks ~1.4 million times per 80 adds)
+            cand = [
+                i
+                for gx in range(cx - k, cx + k + 1)
+                for gy in range(cy - k, cy + k + 1)
+                for i in self.cells.get((gx, gy), ())
+            ]
+            idx = np.array(cand, np.intp)
+            block = self._blocks[(cx, cy, k)] = (idx, self.pts[idx] if len(idx) else np.zeros((0, 2)))
+        idx, P = block
+        if not len(idx):
             return []
-        d = np.hypot(self.pts[cand, 0] - p[0], self.pts[cand, 1] - p[1])
-        return [cand[q] for q in np.nonzero(d <= r)[0]]
+        d = np.hypot(P[:, 0] - p[0], P[:, 1] - p[1])
+        return idx[d <= r].tolist()
 
     def pairs(self, r):
         """(distance, i, j) for every i < j closer than r"""

@@ -246,7 +246,9 @@ class DebugMixin:
     def _path_pieces(self, ST, th, c_multi, c_single) -> dict:
         """{(colour, width): (all piece points in atlas units, start index of each piece)} for the shown paths,
         cut into dashes / dots for the style; cached until paths, filters, style or zoom change"""
-        z = round(self.z, 3)
+        # dash spacing follows the zoom in quarter-octave steps (~19%): rebuilt per wheel step it cost ~2 s a step
+        # on a 23k-path atlas with dashed paths
+        z = 2.0 ** (round(math.log2(max(self.z, 1e-6)) * 4) / 4)
         key = (
             id(self.V["paths"]),
             id(self.V["nodes"]),
@@ -266,8 +268,9 @@ class DebugMixin:
         style = ST["path_style"]
         on = (max(6.0, 5.0 * th) if style == "dashed" else 0.6) / max(z, 1e-3)
         period = on + (max(4.0, 3.0 * th) if style == "dashed" else max(5.0, 4.0 * th)) / max(z, 1e-3)
-        for p in self.V["paths"]:
-            if not self.path_shown(p):
+        pm = self.shown_masks()[2]  # path_shown for every path, cached
+        for p, shown in zip(self.V["paths"], pm, strict=False):
+            if not shown:
                 continue
             strong = p.get("seen_in", p["frames"]) >= 2 or p.get("both_ends")
             col = PATH_ABYSS if p.get("abyss") else c_multi if strong else c_single

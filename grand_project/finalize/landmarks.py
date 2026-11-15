@@ -53,7 +53,8 @@ def _screen_nodes(atlas, f, x, y, reach: float = 80.0) -> np.ndarray:
     return core.persp(Hi, near)
 
 
-_ocean_img = [None, None]
+_OCEAN: dict = {}  # id(screenshot) -> (screenshot, ground classes, unusable pixels): recent ones kept
+_OCEAN_KEEP = 24  # the re-check goes back and forth between screenshots (one kept: ~300 rebuilds per 80 adds)
 
 
 def _ground_classes(hsv: np.ndarray) -> np.ndarray:
@@ -68,16 +69,27 @@ def _ground_classes(hsv: np.ndarray) -> np.ndarray:
     return out
 
 
-def _ocean(img, x, y) -> bool:
-    """is (x, y) in the ocean / Expedition biome? There are NO cities there (nor corruption / cleansed),
-    user's rule. Judged by open water around the map (an ocean map may sit on an island, so a wide circle)."""
-    if _ocean_img[0] is not img:
+def ground_of(img) -> tuple[np.ndarray, np.ndarray]:
+    """(per-pixel ground class, pixels to ignore: path dashes, black, outside the view) of a screenshot; recent
+    screenshots are kept (_OCEAN_KEEP)"""
+    got = _OCEAN.get(id(img))
+    if got is None or got[0] is not img:
         cls = _ground_classes(cv2.cvtColor(img, cv2.COLOR_BGR2HSV))
         bad = (
             (gp.gold_stroke_mask(img) > 0) | (cv2.cvtColor(img, cv2.COLOR_BGR2GRAY) < 22) | (core._valid_mask(img) == 0)
         )
-        _ocean_img[0], _ocean_img[1] = img, (cls, bad)
-    cls, bad = _ocean_img[1]
+        got = (img, cls, bad)
+        _OCEAN.pop(id(img), None)
+        _OCEAN[id(img)] = got
+        while len(_OCEAN) > _OCEAN_KEEP:
+            _OCEAN.pop(next(iter(_OCEAN)))
+    return got[1], got[2]
+
+
+def _ocean(img, x, y) -> bool:
+    """is (x, y) in the ocean / Expedition biome? There are NO cities there (nor corruption / cleansed),
+    user's rule. Judged by open water around the map (an ocean map may sit on an island, so a wide circle)."""
+    cls, bad = ground_of(img)
     h, w = cls.shape
     X, Y, R = int(round(x)), int(round(y)), OCEAN_R
     x0, x1, y0, y1 = max(0, X - R), min(w, X + R + 1), max(0, Y - R), min(h, Y + R + 1)

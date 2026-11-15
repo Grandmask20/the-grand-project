@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import collections
 import contextlib
 import os
 import queue
@@ -80,7 +81,12 @@ class Viewer(
         self.node_pts = np.zeros((0, 2))
         self.icon_pts = np.zeros((0, 2))
         self.footprints: list = []  # (atlas polygon, bbox) per screenshot
-        self._hires = None  # (view key, image, mask) at native resolution
+        self._tiles: collections.OrderedDict = collections.OrderedDict()  # sharp ground tiles (viewer/terrain)
+        self._tile_lock = threading.Lock()
+        self._tile_event = threading.Event()
+        self._tile_want: list = []
+        self._tile_gen = 0
+        self._tile_thread = None
         self._jobs: queue.Queue = queue.Queue()  # (paths, mode) for the background worker
         self._lock = threading.RLock()  # held by the worker while it changes the atlas
         self._answer: queue.Queue = queue.Queue()
@@ -93,7 +99,6 @@ class Viewer(
         self._ghost = None  # hand placement: {"path", "img", "cx", "cy"}
         self._undo: list[dict] = []  # {"file", "names"} newest last
         self.recent: list[str] = []  # screenshots added, one each, newest last (outlined)
-        self._hires_job = None
         self._weights: dict = {}
         self._redraw_pending = False
         self._fit_pending = False

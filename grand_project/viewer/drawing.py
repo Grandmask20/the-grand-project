@@ -53,9 +53,17 @@ class DrawingMixin:
         self._redraw_pending = False
         w, h = self.canvas_size()
         t0 = time.perf_counter()
-        img = self.render(w, h)
-        self.photo = ImageTk.PhotoImage(Image.fromarray(cv2.cvtColor(img, cv2.COLOR_BGR2RGB)))
-        self.canvas.itemconfigure(self.img_item, image=self.photo)
+        self._frame_size = (w, h)
+        try:
+            img = self.render(w, h)
+        finally:
+            self._frame_size = None
+        pic = Image.fromarray(cv2.cvtColor(img, cv2.COLOR_BGR2RGB))
+        if self.photo is not None and (self.photo.width(), self.photo.height()) == (w, h):
+            self.photo.paste(pic)  # same size: into the image already shown (a new one each frame cost more)
+        else:
+            self.photo = ImageTk.PhotoImage(pic)
+            self.canvas.itemconfigure(self.img_item, image=self.photo)
         self.last_render_ms = (time.perf_counter() - t0) * 1000
         if PROFILE and self.last_render_ms > 200:
             print(f"[viewer] slow on the window thread: redraw took {self.last_render_ms / 1000:.2f}s", flush=True)
@@ -87,10 +95,7 @@ class DrawingMixin:
             A = np.array([[a, 0, (x0 - self.cx) * z + w / 2], [0, a, (y0 - self.cy) * z + h / 2]])
             cv2.warpAffine(self.pyr[lvl], A, (w, h), dst=img, flags=cv2.INTER_LINEAR, borderMode=cv2.BORDER_TRANSPARENT)
             if self.hires_wanted():
-                if self._hires and self._hires[0] == self.view_key(w, h):
-                    img[self._hires[2]] = self._hires[1][self._hires[2]]  # screenshot pixels, 1:1
-                else:
-                    self._schedule_hires()  # sharpen once the view settles
+                self._draw_tiles(img, w, h)  # screenshot pixels, tile by tile
             if L["Paths"] or L["Nodes"]:
                 # dim the ground under the lines; a smooth slope (a step at the overview switch
                 # made the map jump ~20% darker between zoom 0.50 and 0.42)
@@ -250,11 +255,12 @@ class DrawingMixin:
         if L["Landmarks"]:
             hit_lm = {i for k, i in self.hits if k == "landmark"}
             hw, top, bot = self.landmark_box()
-            for i, lm in enumerate(self.V["landmarks"]):
+            LMS = self.V["landmarks"]
+            lp = self.to_screen([[lm["x"], lm["y"]] for lm in LMS]) if LMS else np.zeros((0, 2))
+            near = (lp[:, 0] > -80) & (lp[:, 0] < w + 80) & (lp[:, 1] > -80) & (lp[:, 1] < h + 120)
+            for i in np.nonzero(near)[0].tolist():  # only those in view are checked (~1000 a frame before)
+                lm, p = LMS[i], lp[i]
                 if not self.landmark_shown(lm):
-                    continue
-                p = self.to_screen([[lm["x"], lm["y"]]])[0]
-                if not (-80 < p[0] < w + 80 and -80 < p[1] < h + 120):
                     continue
                 removed = lm["status"].startswith("removed")
                 col = REMOVED_COL if removed else LANDMARK_COL.get(lm["kind"], (200, 200, 200))

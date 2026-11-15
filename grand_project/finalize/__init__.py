@@ -117,9 +117,9 @@ from .landmarks import (  # noqa: F401
     _ground_classes,
     _guessed,
     _ocean,
-    _ocean_img,
     _one_map,
     _settlements,
+    ground_of,
 )
 from .local import (  # noqa: F401
     _footprint,

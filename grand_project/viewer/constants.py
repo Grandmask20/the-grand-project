@@ -147,7 +147,13 @@ WEAK_NCC = 0.45  # ... AND terrain agreement below this
 PROFILE = bool(os.environ.get("ATLAS_VIEWER_PROFILE"))  # print slow window-thread steps
 
 
-HIRES_MAX_FRAMES = 30  # screenshots warped at native resolution for one zoomed-in view
+HIRES_MAX_FRAMES = 30  # screenshots warped at native resolution for one zoomed-in tile
+# Zoomed in, the ground is drawn from the screenshots themselves in fixed tiles at fixed zoom levels, kept in
+# memory: panning reuses them (a whole-view picture was thrown away on every pan, so each drag showed the blurry
+# map first and then swapped the ground: user). A level is a power of 2 in px per atlas unit, at least the zoom.
+HIRES_TILE = 512  # px per side of one tile
+HIRES_TILE_CACHE = 160  # tiles kept (~1 MB each)
+HIRES_MAX_LEVEL = 2.0  # px per atlas unit; zoomed in further, the level-2 tiles are scaled up
 
 
 # game icon -> (poe2db name, BGR colour, other names it can be searched by).  Names follow

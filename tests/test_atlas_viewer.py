@@ -9,6 +9,7 @@ atlas through the viewer's own add-screenshots path.  Saves window grabs to --ou
 
 import json
 import math
+import os
 import shutil
 import sys
 import tempfile
@@ -84,7 +85,7 @@ def grab(name):
 
 
 root = V.TkinterDnD.Tk() if V.TkinterDnD is not None else V.tk.Tk()
-root.geometry("1500x900+40+40")
+root.geometry(os.environ.get("ATLAS_TEST_GEOMETRY", "1500x900+40+40"))  # e.g. on another monitor
 app = V.Viewer(root, str(atlas_copy))
 root.lift()
 root.attributes("-topmost", True)
@@ -310,12 +311,12 @@ root.attributes("-topmost", True)
 nd = app.V["nodes"][target]
 app.center_on(nd["x"], nd["y"], min_zoom=1.6)
 app.z = 1.6
-app._hires = None
+app._clear_tiles()
 over = [k for k in ("Paths", "Nodes", "Icons", "Landmarks", "Labels", "Bookmarks") if app.layers[k].get()]
 for k in over:
     app.layers[k].set(False)  # measure the terrain alone
 low = app.render(W, H)
-app._make_hires(background=False)
+app.build_view_tiles()
 high = app.render(W, H)
 for k in over:
     app.layers[k].set(True)
@@ -327,7 +328,7 @@ def sharp(im):
 
 check(
     "zoomed-in terrain at screenshot resolution",
-    app._hires is not None and (app.t_origin[2] > 0.9 or sharp(high) > 1.3 * sharp(low)),
+    len(app._tiles) > 0 and (app.t_origin[2] > 0.9 or sharp(high) > 1.3 * sharp(low)),
     f"map image scale {app.t_origin[2]:.2f}, sharpness {sharp(low):.0f} -> {sharp(high):.0f}",
 )
 pump()
