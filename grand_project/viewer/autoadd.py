@@ -773,7 +773,7 @@ class AutoAddMixin:
         self.settings["watch_on"] = True
         files = self._watch_files()
         self._watch_seen = {k: -1 for k in files}  # -1: handled (not watched for changes)
-        todo = self._not_in_atlas(files)
+        todo = [q for q in self._not_in_atlas(files) if not core.is_generated(q)]  # tagged images never added
         own = Path(self._watch_dir()).resolve() == Path(self.path).resolve().parent
         # a folder that isn't this atlas's own, full of screenshots it doesn't have: likely another atlas's
         crowded = todo and not own and self.atlas.frames and len(todo) > WATCH_ASK
@@ -839,6 +839,7 @@ class AutoAddMixin:
                 self._watch_seen[f] = -1
             else:
                 self._watch_seen[f] = size
+        ready = [q for q in ready if not core.is_generated(q)]  # an image the program wrote (tagged): never added
         if ready:
             ready.sort(key=lambda q: q.stat().st_mtime)
             self.log(f"auto-add: {len(ready)} new screenshot(s): {', '.join(q.name for q in ready)}")
