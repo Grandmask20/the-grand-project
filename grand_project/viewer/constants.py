@@ -154,6 +154,10 @@ HIRES_MAX_FRAMES = 30  # screenshots warped at native resolution for one zoomed-
 HIRES_TILE = 512  # px per side of one tile
 HIRES_TILE_CACHE = 160  # tiles kept (~1 MB each)
 HIRES_MAX_LEVEL = 2.0  # px per atlas unit; zoomed in further, the level-2 tiles are scaled up
+# frame log (Debug tab / ATLAS_FRAME_LOG=1): a check every FRAME_TICK_MS; later than that by more than
+# FRAME_STALL_MS = the window did not respond (a stall)
+FRAME_TICK_MS = 15
+FRAME_STALL_MS = 50
 
 
 # game icon -> (poe2db name, BGR colour, other names it can be searched by).  Names follow

@@ -5,6 +5,7 @@ from __future__ import annotations
 import contextlib
 import math
 import threading
+import time
 from pathlib import Path
 
 import cv2
@@ -68,6 +69,7 @@ class TerrainMixin:
             self._tile_want = missing
         for t in spare + [t for t in have.values() if t is not None]:
             self._blit_tile(img, w, h, z, t)
+        self._fl_tiles_drawn(len(want) - len(missing), len(missing))
         if missing:
             self._start_tile_worker()
 
@@ -76,8 +78,11 @@ class TerrainMixin:
         unit = HIRES_TILE / s
         a = z / s
         tx, ty = (i * unit - self.cx) * z + w / 2, (j * unit - self.cy) * z + h / 2
-        x0, y0 = max(0, int(math.floor(tx))), max(0, int(math.floor(ty)))
-        x1, y1 = min(w, int(math.ceil(tx + HIRES_TILE * a))), min(h, int(math.ceil(ty + HIRES_TILE * a)))
+        # the screen block is the tile's edges rounded the same way its neighbours round them: tiles meet exactly
+        # (floor / ceil overlapped them by a pixel, and that pixel was blended with black: a dark line along
+        # every tile edge, user)
+        x0, y0 = max(0, round(tx)), max(0, round(ty))
+        x1, y1 = min(w, round(tx + HIRES_TILE * a)), min(h, round(ty + HIRES_TILE * a))
         if x1 <= x0 or y1 <= y0:
             return
         size = (x1 - x0, y1 - y0)
@@ -87,8 +92,14 @@ class TerrainMixin:
             m = None if mask is None else mask[sy : sy + size[1], sx : sx + size[0]] > 0
         else:
             A = np.array([[a, 0, tx - x0], [0, a, ty - y0]])
-            part = cv2.warpAffine(pix, A, size, flags=cv2.INTER_LINEAR if a < 1.5 else cv2.INTER_NEAREST)
-            m = None if mask is None else cv2.warpAffine(mask, A, size, flags=cv2.INTER_NEAREST) > 0
+            flags = cv2.INTER_LINEAR if a < 1.5 else cv2.INTER_NEAREST
+            # outside the tile: its own edge pixels repeated, never black
+            part = cv2.warpAffine(pix, A, size, flags=flags, borderMode=cv2.BORDER_REPLICATE)
+            m = (
+                None
+                if mask is None
+                else cv2.warpAffine(mask, A, size, flags=cv2.INTER_NEAREST, borderMode=cv2.BORDER_REPLICATE) > 0
+            )
         if m is None:  # a tile with no holes (most): copied whole, no per-pixel mask
             img[y0:y1, x0:x1] = part
         else:  # in place: boolean indexing copied every pixel twice
@@ -110,11 +121,13 @@ class TerrainMixin:
                     continue
                 key = self._tile_want.pop(0)
                 gen = self._tile_gen
+            t_build = time.perf_counter()
             try:
                 pix, mask = self._build_tile(*key)
             except Exception:
                 LOG.exception(f"terrain tile {key} could not be built")
                 continue
+            self._fl_tile_built(key, (time.perf_counter() - t_build) * 1000)
             with self._tile_lock:
                 if gen != self._tile_gen:  # the atlas or the map image changed meanwhile
                     continue
