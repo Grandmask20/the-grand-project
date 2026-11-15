@@ -202,6 +202,11 @@ ICON_RIM_R = (7.0, 12.5)  # px: the rim (dark line at 8-9, gold at 10-11) compar
 # radii of 480 hand-labelled icons
 RIM_CANDIDATE = 0.35  # rim score from which a circle is a candidate (493 of 523 labelled icons, ~1500 per shot)
 ICON_CLEAR = 12.0  # px: an icon's centre this far from the HUD and the screen edge (its whole rim visible)
+# icons with their own rim (not the standard one): found by a whole-icon template (in BADGE_FINDER_FILE) and named
+# by it. Match level per icon: known ones on 70 screenshots scored >= 0.89 / >= 0.83, the best other spot <= 0.77 /
+# <= 0.48. (Deadly-boss icons have a standard-like rim: the rim finder finds them.)
+SPECIAL_ICONS = {"AbyssalDepths": 0.83, "CorruptionNexus": 0.70}
+SPECIAL_R = 15  # px: the part of a special icon compared
 
 
 BADGE_MIN = 0.5  # badge probability

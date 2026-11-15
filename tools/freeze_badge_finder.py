@@ -45,7 +45,12 @@ def main():
             M = np.float32([[1, 0, dx - 3], [0, 1, dy - 3]])
             al.append(cv2.warpAffine(g, M, (S, S), borderMode=cv2.BORDER_REPLICATE))
         mean = np.mean(al, 0)
-    np.savez_compressed(BADGE_FINDER_FILE, rim=mean.astype(np.float32))
+    # the special icons' templates (detect.constants.SPECIAL_ICONS) are kept as they are
+    keep = {}
+    if BADGE_FINDER_FILE.exists():
+        with np.load(BADGE_FINDER_FILE) as z:
+            keep = {k: z[k] for k in z.files if k.startswith("special_")}
+    np.savez_compressed(BADGE_FINDER_FILE, rim=mean.astype(np.float32), **keep)
     print(f"{BADGE_FINDER_FILE}: rim template from {len(grey)} hand-labelled icons")
 
 

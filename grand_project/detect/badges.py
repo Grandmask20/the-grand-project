@@ -20,6 +20,8 @@ from .constants import (
     ROW_DY,
     ROW_RESCUE,
     ROW_STEP,
+    SPECIAL_ICONS,
+    SPECIAL_R,
 )
 from .maps import _keep_best
 
@@ -36,7 +38,29 @@ def _finder() -> dict:
         m = ((r >= ICON_RIM_R[0]) & (r < ICON_RIM_R[1])).astype(np.float32)
         t = (mean - (mean * m).sum() / m.sum()) * m
         _rim.update(T=t / np.linalg.norm(t), M=m, n=float(m.sum()))
+        with np.load(BADGE_FINDER_FILE) as z:
+            _rim["special"] = {k[8:]: z[k].astype(np.float32) for k in z.files if k.startswith("special_")}
     return _rim
+
+
+def special_icons(img: np.ndarray) -> list[dict]:
+    """icons with their own rim (SPECIAL_ICONS), found and named by a whole-icon template"""
+    out: list[dict] = []
+    clear = _clear(img)
+    f32 = img.astype(np.float32)
+    for name, t in _finder()["special"].items():
+        if name not in SPECIAL_ICONS:
+            continue
+        S = t.shape[0]
+        yy, xx = np.mgrid[:S, :S]
+        m = (np.hypot(xx - S / 2 + 0.5, yy - S / 2 + 0.5) <= SPECIAL_R).astype(np.float32)
+        r = np.nan_to_num(cv2.matchTemplate(f32, t, cv2.TM_CCOEFF_NORMED, mask=np.dstack([m] * 3)))
+        full = np.zeros(img.shape[:2], np.float32)
+        full[S // 2 : S // 2 + r.shape[0], S // 2 : S // 2 + r.shape[1]] = r
+        pk = (full >= cv2.dilate(full, np.ones((9, 9), np.uint8))) & (full >= SPECIAL_ICONS[name]) & clear
+        for y, x in zip(*np.nonzero(pk), strict=True):
+            out.append({"x": float(x), "y": float(y), "score": round(float(full[y, x]), 3), "name": name, "dist": 0.0})
+    return out
 
 
 _rim: dict = {}
@@ -183,8 +207,11 @@ def badges_from(
     R = icon_refs.refs()
     names = R.names + book["names"]
     F = np.vstack([R.F, book["F"]]) if len(book["names"]) else R.F
-    out = []
+    special = special_icons(img)  # own rims: found and named by their template, they win over the rim finder
+    out = list(special)
     for b in icons:
+        if any(np.hypot(b["x"] - s_["x"], b["y"] - s_["y"]) <= BADGE_NMS for s_ in special):
+            continue
         nm, d = name_badge(img, b["x"], b["y"], names, F)
         if nm != icon_refs.NOT_A_BADGE:
             out.append(dict(b, name=nm, dist=round(d, 3)))

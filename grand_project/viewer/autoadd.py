@@ -282,12 +282,38 @@ class AutoAddMixin:
                 self._q.put(("log", f"adding failed: {e}"))
                 self._q.put(("done", mode))
 
+    def _cache_dir(self) -> Path:
+        return self.path.with_name(self.path.stem + "_frames")
+
+    def _redetect(self, paths: list[Path]):
+        """detect these screenshots again with the current detector (their caches are rewritten)"""
+        db = self.database(ask=False)
+        self.log(f"Re-check: {len(paths)} screenshot(s) were detected by an older detector: detecting them again")
+        self._q.put(("progress", f"detecting {len(paths)} screenshots again (newer detector)"))
+        for p, err in builder.detect_uncached(paths, self._cache_dir(), log=lambda t: self._q.put(("log", t))).items():
+            LOG.warning(f"{Path(p).name}: detection failed in a worker: {err}")
+        for i, p in enumerate(paths, 1):
+            self._q.put(("progress", f"detecting again {p.name} ({i}/{len(paths)})"))
+            try:
+                builder.extract_frame(p, db, self._cache_dir())
+            except Exception as e:
+                LOG.exception(f"{p.name}: detection failed")
+                self._q.put(("log", f"{p.name}: detection failed: {e}"))
+
     def _run_job(self, paths, mode):
         if mode == "undo":
             self._run_undo()
             return
         retry = isinstance(mode, tuple) and mode[0] == "retry"
         if mode == "recheck_all":
+            # screenshots detected by an older detector are detected again first (user: Re-check = rescan)
+            stale = [
+                Path(f["path"])
+                for f in self.atlas.frames
+                if Path(f["path"]).exists() and not builder.is_cached(Path(f["path"]), self._cache_dir())
+            ]
+            if stale:
+                self._redetect(stale)
             self._q.put(("progress", "re-checking the whole atlas"))
             with self._lock:
                 self.atlas.rebuild_icons(builder.cached_frames(self.path))
