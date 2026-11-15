@@ -632,8 +632,17 @@ if crawl.exists() and crawl_cache.exists():
         pump(0.5)
     pump(1.0)
     messagebox.askyesno = lambda title, msg, **kw: (asked.append(msg), False)[1]
-    # a screenshot from far away waits and is listed (crawl #0 vs this run, if far enough)
-    far = crawl_only[0] if k > 60 else crawl_only[-1]
+    # a screenshot from far away waits and is listed: the crawl screenshot farthest from this run in the crawl
+    # atlas (the crawl doubles back: "first or last screenshot" sat next to the run for 18 starting points)
+    crawl_frames = json.loads(crawl_atlas.read_text(encoding="utf-8"))["frames"]
+    pos = {f["name"]: np.array(f["M"], float)[:, 2] for f in crawl_frames}
+    run = [pos[q.stem] for q in seq if q.stem in pos]
+    cands = [
+        q
+        for q in crawl_only
+        if q.stem in pos and (crawl_cache / f"{hashlib.sha256(q.read_bytes()).hexdigest()[:16]}_detect1.json").exists()
+    ]
+    far = max(cands, key=lambda q: min(np.hypot(*(pos[q.stem] - r)) for r in run))
     shutil.copy(crawl_cache / f"{hashlib.sha256(far.read_bytes()).hexdigest()[:16]}_detect1.json", wdir)
     app.add_screenshots([far], mode="watch")
     end = time.time() + 60
