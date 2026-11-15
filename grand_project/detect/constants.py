@@ -262,3 +262,8 @@ CITY_BARREL_FILE = rc_paths.ref("city_barrel.npz")
 CITY_BARREL_WIN = (-20, 44, -24, 24)  # px around a map node's middle: y0, y1, x0, x1 (the orb and the barrel below it)
 CITY_BARREL_SNAP = 30  # px: a rough point (under an icon row, from the atlas) is moved to the map node this close
 CITY_P = 0.5  # barrel probability from which a map node is a City
+
+
+# what the icon finder uses (rim template + "looks like a stored icon" score), frozen so teaching new icons
+# (naming) never changes which icons are found: tools/freeze_badge_finder.py
+BADGE_FINDER_FILE = rc_paths.ref("badge_finder.npz")

@@ -8,6 +8,7 @@ import numpy as np
 from grand_project import core, icon_refs
 
 from .constants import (
+    BADGE_FINDER_FILE,
     BADGE_MIN,
     BADGE_NMS,
     BADGE_ROW_MIN,
@@ -34,19 +35,22 @@ _K_RIM, _K_IN, _K_OUT = _ring_kernel(9.5, 11.5), _ring_kernel(7, 9), _ring_kerne
 _badge_tpl: dict = {}
 
 
-def _template() -> tuple[np.ndarray, np.ndarray]:
-    """average stored badge (grey) and its rim mask"""
+def _finder() -> dict:
+    """the finder's frozen data (BADGE_FINDER_FILE): average icon (grey) with its rim mask, and the picture set of
+    the "looks like a stored icon" score. Not the live stored pictures: those only decide an icon's NAME."""
     if not _badge_tpl:
-        g = [
-            cv2.cvtColor(im, cv2.COLOR_BGR2GRAY).astype(np.float32)
-            for _n, im in icon_refs.load()
-            if im.shape[:2] == (icon_refs.SIZE, icon_refs.SIZE)
-        ]
+        with np.load(BADGE_FINDER_FILE) as z:
+            _badge_tpl["t"], _badge_tpl["F"] = z["template"].astype(np.float32), z["F"].astype(np.float32)
         yy, xx = np.mgrid[: icon_refs.SIZE, : icon_refs.SIZE]
         r = np.hypot(xx - icon_refs.SIZE / 2 + 0.5, yy - icon_refs.SIZE / 2 + 0.5)
-        _badge_tpl["t"] = np.mean(g, 0).astype(np.float32)
         _badge_tpl["m"] = ((r >= 8.5) & (r <= 13.5)).astype(np.float32)
-    return _badge_tpl["t"], _badge_tpl["m"]
+    return _badge_tpl
+
+
+def _template() -> tuple[np.ndarray, np.ndarray]:
+    """average icon (grey) and its rim mask (frozen: _finder)"""
+    f = _finder()
+    return f["t"], f["m"]
 
 
 def badge_candidates(img: np.ndarray) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
@@ -76,11 +80,11 @@ def badge_candidates(img: np.ndarray) -> tuple[np.ndarray, np.ndarray, np.ndarra
 
 
 def _best_ref_corr(img: np.ndarray, pts: np.ndarray) -> np.ndarray:
-    """per point: best correlation with any stored badge picture (icon_refs.feature on every crop, but with
+    """per point: best correlation with the finder's frozen picture set (icon_refs.feature on every crop, but with
     the image blurred once - the blur never reaches the compared circle from a crop edge)"""
-    R = icon_refs.refs()
+    RF = _finder()["F"]
     out = np.zeros(len(pts), np.float32)
-    if not len(R) or not len(pts):
+    if not len(RF) or not len(pts):
         return out
     blur = cv2.GaussianBlur(img, (0, 0), 1.5)
     r = icon_refs.SIZE // 2
@@ -98,7 +102,7 @@ def _best_ref_corr(img: np.ndarray, pts: np.ndarray) -> np.ndarray:
         v = v.reshape(len(idx), -1)
         nrm = np.linalg.norm(v, axis=1, keepdims=True)
         v = np.where(nrm > 1e-6, v / np.maximum(nrm, 1e-12), v)
-        out[idx] = (v @ R.F.T).max(1)
+        out[idx] = (v @ RF.T).max(1)
     return out
 
 

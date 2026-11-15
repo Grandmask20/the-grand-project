@@ -46,6 +46,7 @@ file, terrain, waiting groups `islands.py`, clean map `seams.py`), `detect/` (th
   and reference images are not.
 - **Models**: no pickles from outside. Detector models are skops archives loaded with an allowlist
   (`test_model_safety`); small models are stored as plain arrays in `.npz` (e.g. `references/city_barrel.npz`).
+- **Icons: finding vs naming.** Finding (is there an icon here?) uses only frozen data (`references/badge_finder.npz`: rim template + one picture set); naming (which icon?) uses the growing stored pictures. Teaching icons must never change what is found; re-freeze only on purpose (`python -m tools.freeze_badge_finder`, then retrain and re-score).
 - **Viewer**: never block the Tk thread. Background work goes through the viewer's queue; CPU-heavy work that
   would starve the window (Python's GIL) runs as its own process (`python -m grand_project.core.seams ...`), not a
   thread and not `multiprocessing` (spawn re-runs the caller's main script).
