@@ -139,6 +139,7 @@ Run these from this folder:
 - `python -m grand_project.builder add --atlas X.json --image FOLDER` builds an atlas without the window.
 - `python -m tools.atlas_marks` checks the detector against all hand-drawn mark layers and true paths.
 - `python -m tools.train_city_barrel FOLDER` retrains the City check (a city's map node always stands on a brass barrel) from screenshots plus a `cities_truth.json` listing each city's map node; it prints a fair score first and saves `references/city_barrel.npz`.
+- `python -m tools.import_poe2db_art` adds poe2db's Map Content art (`references/poe2db_icons/`) as icon pictures for types with no on-screen example yet, so rare icons can still be named.
 - `python -m tools.make_hud_mask SCREENSHOT` rebuilds `references/hud_mask_full.png` from a 1920×1080 atlas screenshot taken over black unexplored fog (everything not black is interface).
 - Tests: `make test`, `tests/Run all tests.bat`, `tests/run_all_tests.sh`, or one at a time with `python -m tests.test_atlas_builder`. `test_atlas_viewer` opens a window for about 20 s.
 - Lint: `make lint` (ruff check + format); CI runs the same on every push and pull request.
