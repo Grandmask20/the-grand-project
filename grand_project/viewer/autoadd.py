@@ -860,64 +860,65 @@ class AutoAddMixin:
                     print(f"[viewer] slow on the window thread: {kind} took {dt:.2f}s", flush=True)
 
     def _handle(self, kind, val):
-        if kind == "status":
-            self.status.set(val)
-        elif kind == "tile":  # a sharp ground tile is ready
-            self.request_redraw()
-        elif kind == "progress":
-            self._set_progress(val)
-        elif kind == "added_names":
-            self._remember_add(*val)
-        elif kind == "undone":
-            self.recent = [n for n in self.recent if n not in set(val)]
-            self._refresh_recent()
-            self.rebuild_model()
-            self._terrain = None
-            self.rebuild_terrain()
-            self._set_progress(None)
-            self.status.set(f"undone: {', '.join(val)}")
-            self.log(f"undone: {', '.join(val)}")
-        elif kind == "outline":
-            self._pending_outline = val
-            self.request_redraw()
-        elif kind == "rebuild_terrain":
-            self.rebuild_terrain()
-        elif kind == "terrain_img":
-            job, canvas, weight, origin, labels = (*val, None)[:5]
-            if job is None or job == "seams" or job == self._terrain_job:
-                self._set_terrain(canvas, weight, origin, labels=labels)
-                if job == "seams":
-                    self._seams_ready(labels[1])
-                self.footprints = [
-                    (poly, (*poly.min(axis=0), *poly.max(axis=0)))
-                    for poly in (self._poly(f) for f in self.atlas.frames)
-                ]
-                if self._progress and self._progress[0].startswith("building the map"):
-                    self._set_progress(None)
-        elif kind == "log":
-            self.log(val)
-        elif kind == "locks":
-            self._lock_job = False
-            if val and val[0] is self.atlas:
-                _atlas, names, found = val
-                self.atlas.locks = atlas_cities.merge_locks(self.atlas.locks, found)
-                self.atlas.lock_scanned = sorted(set(self.atlas.lock_scanned) | set(names))
-                if self.path:
-                    self.atlas.save(self.path)
-                if found:
-                    self.log(f"{len(self.atlas.locks)} locked Breach stronghold(s) (hand badge)")
-                self.rebuild_model()
+        match kind:
+            case "status":
+                self.status.set(val)
+            case "tile":  # a sharp ground tile is ready
                 self.request_redraw()
-                self.scan_locks()  # screenshots added meanwhile
-        elif kind == "placed":
-            self._after_placed(val)
-        elif kind == "done":
-            self.scan_locks()
-            self._set_progress(None)
-            self._busy = False
-            self.btn_add.state(["!disabled"])
-        elif kind == "ask":
-            self._answer.put(messagebox.askyesno("Check this screenshot", val))
+            case "progress":
+                self._set_progress(val)
+            case "added_names":
+                self._remember_add(*val)
+            case "undone":
+                self.recent = [n for n in self.recent if n not in set(val)]
+                self._refresh_recent()
+                self.rebuild_model()
+                self._terrain = None
+                self.rebuild_terrain()
+                self._set_progress(None)
+                self.status.set(f"undone: {', '.join(val)}")
+                self.log(f"undone: {', '.join(val)}")
+            case "outline":
+                self._pending_outline = val
+                self.request_redraw()
+            case "rebuild_terrain":
+                self.rebuild_terrain()
+            case "terrain_img":
+                job, canvas, weight, origin, labels = (*val, None)[:5]
+                if job is None or job == "seams" or job == self._terrain_job:
+                    self._set_terrain(canvas, weight, origin, labels=labels)
+                    if job == "seams":
+                        self._seams_ready(labels[1])
+                    self.footprints = [
+                        (poly, (*poly.min(axis=0), *poly.max(axis=0)))
+                        for poly in (self._poly(f) for f in self.atlas.frames)
+                    ]
+                    if self._progress and self._progress[0].startswith("building the map"):
+                        self._set_progress(None)
+            case "log":
+                self.log(val)
+            case "locks":
+                self._lock_job = False
+                if val and val[0] is self.atlas:
+                    _atlas, names, found = val
+                    self.atlas.locks = atlas_cities.merge_locks(self.atlas.locks, found)
+                    self.atlas.lock_scanned = sorted(set(self.atlas.lock_scanned) | set(names))
+                    if self.path:
+                        self.atlas.save(self.path)
+                    if found:
+                        self.log(f"{len(self.atlas.locks)} locked Breach stronghold(s) (hand badge)")
+                    self.rebuild_model()
+                    self.request_redraw()
+                    self.scan_locks()  # screenshots added meanwhile
+            case "placed":
+                self._after_placed(val)
+            case "done":
+                self.scan_locks()
+                self._set_progress(None)
+                self._busy = False
+                self.btn_add.state(["!disabled"])
+            case "ask":
+                self._answer.put(messagebox.askyesno("Check this screenshot", val))
 
     def _poll_queue(self):
         self._drain_queue()
