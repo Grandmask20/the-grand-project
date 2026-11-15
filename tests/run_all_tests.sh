@@ -1,8 +1,6 @@
 #!/usr/bin/env bash
-# Runs the regression tests one after another (several minutes; the viewer test opens a window).
+# Runs the tests with pytest (several minutes; the viewer test opens a window). Extra arguments go to pytest,
+# e.g. ./tests/run_all_tests.sh -m "" for every test, the slow ones too.
 cd "$(dirname "$0")/.." || exit 1
 if [ -x .venv/bin/python ]; then PY=.venv/bin/python; else PY="${PYTHON:-python3}"; fi
-for t in test_atlas_builder test_atlas_io test_model_safety test_atlas_folder test_random_sequence test_drop_placement test_false_merge test_citybase test_detect_pairs test_atlas_viewer; do
-  echo "===== $t"
-  "$PY" -m "tests.$t"
-done
+"$PY" -m pytest -m "not slow" "$@"
