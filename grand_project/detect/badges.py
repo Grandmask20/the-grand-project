@@ -1,4 +1,4 @@
-"""detect.badges (from atlas_detect.py)"""
+"""detect.badges"""
 
 from __future__ import annotations
 

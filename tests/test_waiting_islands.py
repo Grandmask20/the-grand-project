@@ -75,7 +75,7 @@ class Known:
             H = C.screen_to_atlas(np.array(f["M"], float), C.rectifier(f["w"], f["h"], f.get("horizon")))
             p = C.persp(H, [[0, 0], [f["w"], 0], [f["w"], f["h"]], [0, f["h"]]])
             self.box[k] = np.array([*p.min(axis=0), *p.max(axis=0)])
-            fr = B.extract_frame(on_disk[k], Path("x"), cache)
+            fr = B.extract_frame(on_disk[k], cache)
             self.fr[k] = fr
             self.pts[k] = C.apply(np.array(f["M"], float), fr.pts[fr.usable])
 
@@ -222,7 +222,7 @@ def main() -> int:
                 shutil.copy(cache / f"{h}_detect1.json", work / "f")
         else:  # new screenshots: detected from the image, several at a time like auto-add does
             B.detect_uncached([on_disk[k] for k in everything], work / "f")
-        fr = {k: B.extract_frame(on_disk[k], Path("x"), work / "f") for k in everything}
+        fr = {k: B.extract_frame(on_disk[k], work / "f") for k in everything}
         feeder = Feeder()
         feeder.feed([fr[k] for k in sc["main"]])
         main_ok = len(feeder.atlas.frames) == len(sc["main"])

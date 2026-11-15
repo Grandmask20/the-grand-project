@@ -5,11 +5,6 @@ from __future__ import annotations
 import tkinter as tk
 from tkinter import ttk
 
-try:  # drag and drop of screenshot files (pip install tkinterdnd2)
-    from tkinterdnd2 import TkinterDnD
-except Exception:
-    TkinterDnD = None
-
 from .constants import CATEGORIES
 
 

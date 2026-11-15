@@ -7,10 +7,6 @@ import tkinter as tk
 from pathlib import Path
 from tkinter import filedialog, messagebox
 
-try:  # drag and drop of screenshot files (pip install tkinterdnd2)
-    from tkinterdnd2 import TkinterDnD
-except Exception:
-    TkinterDnD = None
 from grand_project import builder, core
 
 from .settings import save_settings
@@ -84,16 +80,16 @@ class FoldersMixin:
 
     @staticmethod
     def _atlas_shot_dir(json_path: Path) -> Path | None:
-        """folder of an atlas's first screenshot, read from the start of the file (atlas files are large)"""
+        """folder of an atlas's first screenshot (None: no screenshots, or not an atlas file). Read as JSON:
+        it used to search the text for '"path": "', which broke on other field orders and relative paths."""
         try:
-            head = json_path.read_text(encoding="utf-8", errors="replace")[:20000]
-            k = head.find('"path": "')
-            if k < 0:
-                return None
-            v = head[k + 9 : head.find('"', k + 9)]
-            return Path(json.loads(f'"{v}"')).parent
-        except OSError:
+            frames = json.loads(json_path.read_text(encoding="utf-8")).get("frames") or []
+            first = frames[0]["path"] if frames and isinstance(frames[0], dict) else None
+        except (OSError, ValueError, AttributeError, KeyError):
             return None
+        if not first:
+            return None
+        return Path(core.find_screenshot(first, json_path.resolve().parent)).parent
 
     def atlases_for_folder(self, folder: Path) -> list[Path]:
         """atlas files belonging to a screenshot folder: inside it, or known / next to it and built from it"""

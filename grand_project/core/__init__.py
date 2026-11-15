@@ -1,7 +1,7 @@
 """PoE2 atlas builder core: add screenshots one at a time to a growing node graph.
 
 Pure numpy + OpenCV (no new installs).  The unit of work is a *frame*: one screenshot that
-the recognizer (node_recognition_0_48) has already turned into nodes, dotted-path edges and landmarks.
+the detector (grand_project.detect) has already turned into nodes, dotted-path edges and landmarks.
 
 Registration is done on the node graph (not on terrain features):
   1. every (frame node, atlas node) pair votes for a translation; pairs whose local
@@ -16,7 +16,7 @@ every extra screenshot makes an existing part of the atlas more certain.
 
 from .atlas import (  # noqa: F401
     Atlas,
-    _find_screenshot,
+    find_screenshot,
 )
 from .constants import (  # noqa: F401
     ATLAS_OUTPUTS,

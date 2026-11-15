@@ -81,7 +81,7 @@ def main() -> int:
             order.insert(rng.randrange(1, len(order) + 1), decoy)  # after the first (the first one is the centre)
         work = Path(tempfile.mkdtemp())
         copy_cache(order, src_cache, work / "t_frames")
-        frames = [B.extract_frame(p, Path("unused"), work / "t_frames") for p in order]
+        frames = [B.extract_frame(p, work / "t_frames") for p in order]
         at = C.Atlas()
         added, refused = B.place_frames(at, frames, log=lambda *_: None)
         got = {f["name"]: np.array(f["M"], float)[:, 2] for f in at.frames}

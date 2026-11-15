@@ -45,7 +45,7 @@ def main() -> int:
         seq = shots[k : k + 4]
         w = Path(tempfile.mkdtemp())
         T.copy_cache(seq, big_path.with_name("atlas_frames"), w / "f")
-        fr = [B.extract_frame(p, Path("x"), w / "f") for p in seq]
+        fr = [B.extract_frame(p, w / "f") for p in seq]
         at = C.Atlas()
         B.place_frames(at, fr[:3], log=lambda *_: None)
         names = [f["name"] for f in at.frames]

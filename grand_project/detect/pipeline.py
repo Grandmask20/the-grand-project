@@ -1,4 +1,4 @@
-"""detect.pipeline (from atlas_detect.py)"""
+"""detect.pipeline"""
 
 from __future__ import annotations
 
@@ -34,7 +34,7 @@ def detect(img: np.ndarray) -> dict:
         if k not in _models:
             _models[k] = load_model(k)
             if _models[k] is None:
-                raise RuntimeError(f"no {k} model in the DB yet: run  py atlas_detect.py train")
+                raise RuntimeError(f"no {k} model in the DB yet: run  python -m grand_project.detect train")
     nodes, mp, mprob = find_maps(img, _models["maps"])
     icons, more = find_badges(img, _models["badges"], nodes, mp, mprob)
     lms, nodes = find_landmarks(img, _models["towers"], nodes + more, icons)

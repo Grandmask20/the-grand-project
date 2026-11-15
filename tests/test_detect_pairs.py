@@ -54,7 +54,7 @@ def frames() -> dict:
     d = json.loads(ATLAS.read_text(encoding="utf-8"))
     out = {}
     for f in d["frames"]:
-        f["path"] = core._find_screenshot(f["path"], ATLAS.parent)  # relative in the GitHub test data
+        f["path"] = core.find_screenshot(f["path"], ATLAS.parent)  # relative in the GitHub test data
         if Path(f["path"]).exists():
             out[Path(f["path"]).name] = f
     return out

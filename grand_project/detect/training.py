@@ -1,8 +1,7 @@
-"""detect.training (from atlas_detect.py)"""
+"""detect.training"""
 
 from __future__ import annotations
 
-import hashlib
 import json
 import time
 from pathlib import Path
@@ -16,7 +15,6 @@ from grand_project import truth as atlas_truth
 
 from .badges import badge_book, badge_candidates, badge_features, badge_labels, badges_from
 from .constants import (
-    CACHE,
     DB_PATH,
     EXTRA_BADGES,
     EXTRA_MAPS,
@@ -28,7 +26,7 @@ from .constants import (
     TRUTH_SETS,
 )
 from .landmarks import expedition_rules, landmarks_from, old_landmarks, tower_features, tower_labels
-from .maps import _nms, candidate_labels, drop_hud, map_candidates, map_features
+from .maps import _nms, candidate_labels, map_candidates, map_features
 from .models import save_model
 from .paths import maps_from_paths, path_dashes, path_features, trace_paths
 from .walls import fortress_walls
@@ -242,21 +240,10 @@ def cmd_score() -> int:
     data["_tower_refs"] = _tower_refs()
     data["_extra_maps"] = _extra_maps()
     data["_extra_badges"] = _extra_badges()
-    before, after, new = {}, {}, {}
-    for name in truth:
-        img = data[name]["img"]
-        cf = CACHE / f"{hashlib.sha256(Path(data[name]['path']).read_bytes()).hexdigest()[:16]}.json"
-        if cf.exists():
-            r = json.loads(cf.read_text(encoding="utf-8"))
-            before[name], after[name] = r, drop_hud(r, img.shape[1], img.shape[0])
-        new[name] = _run_stages(data[name], _fit_all(truth, data, [n for n in truth if n != name]))
-    for title, outs in (
-        ("old detector", before),
-        ("old detector + stage 1 (HUD)", after),
-        ("NEW stages 2-4 (leave-one-screenshot-out)", new),
-    ):
-        print(f"\n== {title}")
-        atlas_truth.print_score(atlas_truth.score(truth, outs))
+    # each screenshot judged by models trained without it
+    new = {name: _run_stages(data[name], _fit_all(truth, data, [n for n in truth if n != name])) for name in truth}
+    print("\n== detector (leave-one-screenshot-out)")
+    atlas_truth.print_score(atlas_truth.score(truth, new))
     print(f"\nhidden maps from badge rows: {sum(1 for o in new.values() for n in o['nodes'] if n.get('hidden'))}")
     (TRUTH.parent / "last_score_outputs.json").write_text(json.dumps(new, default=float), encoding="utf-8")
     print(f"{time.time() - t0:.0f} s")

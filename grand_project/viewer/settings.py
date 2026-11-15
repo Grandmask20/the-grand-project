@@ -4,10 +4,6 @@ from __future__ import annotations
 
 import json
 
-try:  # drag and drop of screenshot files (pip install tkinterdnd2)
-    from tkinterdnd2 import TkinterDnD
-except Exception:
-    TkinterDnD = None
 from grand_project import fileio as atlas_io
 from grand_project import paths as rc_paths
 

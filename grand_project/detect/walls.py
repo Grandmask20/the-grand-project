@@ -1,4 +1,4 @@
-"""detect.walls (from atlas_detect.py)"""
+"""detect.walls"""
 
 from __future__ import annotations
 
@@ -103,7 +103,7 @@ def _lit_walls(img: np.ndarray) -> np.ndarray:
 
 
 def cmd_train_fortress() -> int:
-    """py atlas_detect.py train_fortress   (user-painted walls + non-fortress shots as negatives)"""
+    """python -m grand_project.detect train_fortress   (user-painted walls + non-fortress shots as negatives)"""
     import glob
 
     from sklearn.ensemble import HistGradientBoostingClassifier

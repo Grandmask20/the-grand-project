@@ -35,7 +35,7 @@ from .terrain import _valid_mask, terrain_ncc
 
 
 # ------------------------------------------------------------------ terrain verification
-def _find_screenshot(p: str, atlas_dir: Path) -> str:
+def find_screenshot(p: str, atlas_dir: Path) -> str:
     """a screenshot path saved in an atlas, wherever the atlas now is: relative paths are relative to the
     atlas file; an absolute path that no longer exists (atlas folder moved, or copied to another computer)
     falls back to the same file name next to the atlas"""
@@ -600,7 +600,7 @@ class Atlas:
         ]
         base = Path(path).resolve().parent
         for f in at.frames:
-            f["path"] = _find_screenshot(f["path"], base)
+            f["path"] = find_screenshot(f["path"], base)
         return at
 
     # -------- composite image

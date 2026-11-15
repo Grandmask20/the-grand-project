@@ -49,7 +49,7 @@ work = Path(tempfile.mkdtemp())
 atlas_copy = work / "atlas.json"
 _d = json.loads(src.read_text(encoding="utf-8"))
 for _f in _d["frames"]:  # the copy lives elsewhere: screenshot paths as they resolve here
-    _f["path"] = core._find_screenshot(_f["path"], src.parent)
+    _f["path"] = core.find_screenshot(_f["path"], src.parent)
 atlas_copy.write_text(json.dumps(_d), encoding="utf-8")
 if src.with_name(src.stem + "_frames").exists():
     shutil.copytree(src.with_name(src.stem + "_frames"), work / "atlas_frames")
@@ -490,10 +490,8 @@ if shots:
         shutil.copytree(work / "atlas_frames", work / "fresh_frames")
     app.open_atlas(new)
     pump()
-    app.settings["database"] = str(Path(app.settings.get("database") or "") or "")
-    db = app.database(ask=False)
-    if db is None:
-        print("skip: no detector database found for the add test (set one with File > Detector database)")
+    if not rc_paths.DATABASE.exists():
+        print(f"skip: no detector database for the add test ({rc_paths.DATABASE})")
     else:
         t0 = time.time()
         app.add_screenshots(shots, sync=True)
@@ -663,7 +661,7 @@ if crawl.exists() and crawl_cache.exists():
 
     # hand placement: the 5th screenshot, dropped ~300 units off, fitted with Enter
     r0 = app.atlas.add_frame(
-        builder_frame := builder.extract_frame(seq[4], None, wdir),
+        builder_frame := builder.extract_frame(seq[4], wdir),
         hints=[f["name"] for f in app.atlas.frames],
         commit=False,
     )

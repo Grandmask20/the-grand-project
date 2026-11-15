@@ -13,9 +13,10 @@ import logging
 import logging.handlers
 import sys
 import threading
-from pathlib import Path
 
-LOG_FILE = Path(__file__).resolve().parent.parent / "user_data" / "atlas_debug.log"
+from grand_project import paths as rc_paths
+
+LOG_FILE = rc_paths.USER_DATA / "atlas_debug.log"  # follows USER_DATA in local_paths.json
 LOG_FILE.parent.mkdir(parents=True, exist_ok=True)
 _ready = False
 
