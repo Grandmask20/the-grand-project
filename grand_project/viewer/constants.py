@@ -157,6 +157,7 @@ HIRES_MAX_LEVEL = 2.0  # px per atlas unit; zoomed in further, the level-2 tiles
 # frame log (Debug tab / ATLAS_FRAME_LOG=1): a check every FRAME_TICK_MS; later than that by more than
 # FRAME_STALL_MS = the window did not respond (a stall)
 FRAME_TICK_MS = 15
+PATH_CELL = 512.0  # atlas units: dashes are sorted into cells this big; a frame only touches those in view
 FRAME_STALL_MS = 50
 
 
