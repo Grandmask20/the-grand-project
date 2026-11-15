@@ -15,7 +15,7 @@ from grand_project import core
 class FilesMixin:
     # ------------------------------------------------------------------ files
     def ask_open(self):
-        if self._busy:
+        if self.working():
             self.status.set("wait until the screenshots being added are done")
             return
         self.save_if_dirty()
@@ -26,7 +26,7 @@ class FilesMixin:
             self.open_atlas(Path(p))
 
     def new_atlas(self):
-        if self._busy:
+        if self.working():
             self.status.set("wait until the screenshots being added are done")
             return
         self.save_if_dirty()

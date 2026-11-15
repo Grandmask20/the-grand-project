@@ -128,7 +128,7 @@ class AutoAddMixin:
         self.request_redraw()
         if self.database() is None:
             return
-        self._jobs.put(([g["path"]], ("drop", g["cx"], g["cy"])))
+        self._queue_job([g["path"]], ("drop", g["cx"], g["cy"]))
 
     def _cancel_lasso(self):
         self._lasso = None
@@ -195,13 +195,45 @@ class AutoAddMixin:
         """full re-check, in the background (minutes on a large atlas)"""
         if not self.atlas or not self.atlas.frames:
             return
-        self._jobs.put(([], "recheck_all"))
+        self._queue_job([], "recheck_all")
 
     def on_close(self):
-        if self._busy and not messagebox.askyesno("Atlas viewer", "Screenshots are still being added. Quit anyway?"):
+        """close the window. While the worker has jobs, the step in progress is finished and saved first
+        (closing used to drop it: the save waited for the worker's lock and the window was gone before it ran);
+        jobs still queued are left (auto-add finds their screenshots in the folder next time)."""
+        if self.working():
+            if self._closing:  # second click while waiting
+                if messagebox.askyesno(
+                    "Atlas viewer",
+                    "Quit now without waiting?\n\nThe step in progress is lost; the atlas keeps what was saved last.",
+                ):
+                    self._finish_close(save=False)
+                return
+            if not messagebox.askyesno(
+                "Atlas viewer",
+                "Screenshots are still being processed.\n\nClose once the current step is finished and saved? "
+                "(Screenshots still queued are left out; auto-add finds them in the folder next time.)",
+            ):
+                return
+            self._closing = True
+            self._drop_queued_jobs()
+            self.status.set("closing: finishing the current step first")
+            self.root.after(200, self._close_when_idle)
             return
+        self._finish_close()
+
+    def _close_when_idle(self):
+        if self.working():
+            self.root.after(200, self._close_when_idle)
+            return
+        self._finish_close()
+
+    def _finish_close(self, save: bool = True):
+        self._closing = True
         self.stop_seams()
-        self.save_if_dirty()
+        if save and self.atlas and self.path:
+            with self._lock:  # the worker is idle; a PNG export may hold it for a moment
+                self.atlas.save(self.path)
         self.settings["geometry"] = self.root.geometry()
         self.settings["layers"] = {k: v.get() for k, v in self.layers.items()}
         self.settings["multi_only"] = self.multi_only.get()
@@ -238,7 +270,7 @@ class AutoAddMixin:
         return Path(p)
 
     def ask_add(self):
-        if self._busy:
+        if self.working():
             return
         if not self.atlas or not self.path:
             self.new_atlas()
@@ -253,6 +285,27 @@ class AutoAddMixin:
             self.settings["shots_dir"] = str(Path(paths[0]).parent)
             self.add_screenshots([Path(p) for p in paths])
 
+    def working(self) -> bool:
+        """a job is queued or running (any kind: added by hand, auto-add, re-check, undo, retry, drop). Opening
+        or switching atlases waits for this: a job works on the atlas it was queued for."""
+        return self._busy or self._jobs.unfinished_tasks > 0
+
+    def _queue_job(self, paths, mode):
+        """hand a job to the background worker, tagged with the atlas it is for"""
+        if self._closing:
+            self.log(f"closing: {len(paths) or 'a'} job(s) not started")
+            return
+        self._jobs.put((list(paths), mode, self.atlas))
+
+    def _drop_queued_jobs(self):
+        """forget jobs that have not started (closing)"""
+        while True:
+            try:
+                self._jobs.get_nowait()
+            except queue.Empty:
+                return
+            self._jobs.task_done()
+
     def add_screenshots(self, paths: list[Path], sync: bool = False, mode: str = "manual"):
         if self.database() is None:
             return
@@ -263,24 +316,33 @@ class AutoAddMixin:
             self._run_job(list(paths), mode)
             self._drain_queue()
         else:
-            self._jobs.put((list(paths), mode))
+            self._queue_job(paths, mode)
 
     # ------------------------------------------------------------------ background worker
     def _worker(self):
         while True:
-            paths, mode = self._jobs.get()
+            paths, mode, atlas = self._jobs.get()
+            jobs = 1
             if mode == "watch":  # screenshots that arrived meanwhile: one batch, one re-check
                 paths = list(paths)  # (v1.00 re-checked after every 2-3: ~45 s each)
                 with self._jobs.mutex:
                     q = self._jobs.queue
-                    while q and q[0][1] == "watch" and len(paths) < WATCH_BATCH:
+                    while q and q[0][1] == "watch" and q[0][2] is atlas and len(paths) < WATCH_BATCH:
                         paths += q.popleft()[0]
+                        jobs += 1
             try:
-                self._run_job(paths, mode)
+                if atlas is not self.atlas or self._closing:  # queued for an atlas that is no longer open
+                    self._q.put(("log", f"skipped a job queued for another atlas ({mode})"))
+                    self._q.put(("done", mode))
+                else:
+                    self._run_job(paths, mode)
             except Exception as e:
                 LOG.exception(f"adding failed ({mode}): {paths}")
                 self._q.put(("log", f"adding failed: {e}"))
                 self._q.put(("done", mode))
+            finally:
+                for _ in range(jobs):
+                    self._jobs.task_done()
 
     def _cache_dir(self) -> Path:
         return self.path.with_name(self.path.stem + "_frames")
@@ -427,12 +489,12 @@ class AutoAddMixin:
         self.request_redraw()
 
     def undo_last(self):
-        if not self._undo or self._busy:
+        if not self._undo or self.working():
             return
         names = self._undo[-1]["names"]
         if not messagebox.askyesno("Undo last add", "Remove the screenshot(s) added last?\n\n" + "\n".join(names)):
             return
-        self._jobs.put(([], "undo"))
+        self._queue_job([], "undo")
 
     def _run_undo(self):
         entry = self._undo.pop()
@@ -462,7 +524,7 @@ class AutoAddMixin:
                 return
             idx = [k for k in sel if k < len(self._pending_watch)]
         self.status.set(f"retrying {len(idx) if idx else len(self._pending_watch)} waiting screenshot(s)")
-        self._jobs.put(([], ("retry", idx)))
+        self._queue_job([], ("retry", idx))
 
     def place_waiting(self):
         sel = self.wait_list.curselection()
@@ -769,7 +831,7 @@ class AutoAddMixin:
 
     def _poll_watch(self):
         self._watch_job = None
-        if not self.watch_var.get() or not self.atlas:
+        if not self.watch_var.get() or not self.atlas or self._closing:
             return
         key = (id(self.atlas), len(self.atlas.frames))
         if getattr(self, "_known_key", None) != key:  # resolving ~800 paths every 2 s cost the window thread

@@ -688,9 +688,65 @@ if crawl.exists() and crawl_cache.exists():
             f"error {err:.1f} units",
         )
 
+# background jobs of any kind (auto-add too, not only Add screenshots) keep their atlas: no switching
+# while one runs, a job queued for another atlas is skipped, and closing finishes the step in progress and
+# saves it (closing used to lose it: the save waited for the worker and the window was gone first)
+import threading  # noqa: E402
+
+job_a, job_b = work / "job_a.json", work / "job_b" / "atlas.json"
+job_b.parent.mkdir(exist_ok=True)
+core.Atlas().save(job_a)
+core.Atlas().save(job_b)
+app.watch_var.set(False)
+app.open_atlas(job_a)
+pump(0.3)
+gate, ran = threading.Event(), []
+
+
+def slow_job(paths, mode):  # stands in for a long auto-add: changes the atlas, doesn't save it
+    ran.append(mode)
+    gate.wait(30)
+    app.atlas.bookmarks.append(
+        {"name": "made by the job", "group": "Other", "note": "", "x": 1.0, "y": 2.0, "created": "test"}
+    )
+    app._q.put(("done", mode))
+
+
+app._run_job = slow_job
+app._queue_job([], "watch")
+end = time.time() + 5
+while time.time() < end and not ran:
+    pump(0.1)
+check("an auto-add job counts as working", app.working() and ran == ["watch"], str(ran))
+app.switch_atlas(job_b)
+pump(0.2)
+check("no atlas switch while a job runs", app.path == job_a, str(app.path))
+app._jobs.put(([], "watch", core.Atlas()))  # queued for an atlas that is not open
+messagebox.askyesno = lambda *a, **k: True
+app.on_close()
+pump(0.3)
+check("closing waits for the step in progress", app._closing and root.winfo_exists() and app.working())
+app._queue_job([], "recheck_all")
+check("no new jobs while closing", app._jobs.unfinished_tasks == 1, f"{app._jobs.unfinished_tasks} jobs")
+gate.set()
+end = time.time() + 20
+closed = False
+while time.time() < end and not closed:
+    try:
+        root.update()
+        root.winfo_exists()
+    except V.tk.TclError:  # the window is gone ("application has been destroyed")
+        closed = True
+    time.sleep(0.02)
+saved = [b["name"] for b in core.Atlas.load(job_a).bookmarks]
+check("window closes once the job is done", closed)
+check("the job's work is saved on close", "made by the job" in saved, str(saved))
+check("the job queued for another atlas never ran", ran == ["watch"], str(ran))
+
 print(f"\nwindow grabs in {out}")
 print("PASS: atlas viewer" if not fails else f"FAILED: {fails}")
-root.destroy()
+if not closed:
+    root.destroy()
 if "pytest" in sys.modules:  # under pytest: a failure, not an exit
     assert not fails, "see the FAIL lines above"
 else:

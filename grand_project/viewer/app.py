@@ -98,7 +98,8 @@ class Viewer(
         self._redraw_pending = False
         self._fit_pending = False
         self._drag = None
-        self._busy = False
+        self._busy = False  # screenshots being added by hand (the Add button is off meanwhile)
+        self._closing = False  # the window is closing: no new jobs
         self._q: queue.Queue = queue.Queue()
         self.last_render_ms = 0.0
         self._build_ui()
