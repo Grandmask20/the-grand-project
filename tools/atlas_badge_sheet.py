@@ -129,7 +129,7 @@ def main() -> int:
             if cs:
                 row(f"taught as\n{t} ({len(bs)})", cs)
     out = Path(args.out) if args.out else core.atlas_files(atlas_path) / (atlas_path.stem + "_badges.png")
-    cv2.imencode(".png", np.vstack(rows))[1].tofile(str(out))
+    core.write_png(out, np.vstack(rows), "badge sheet")
     out.with_suffix(".json").write_text(json.dumps(record), encoding="utf-8")
     print(f"{len(unk)} unidentified badges in {len(order)} groups -> {out}")
     return 0

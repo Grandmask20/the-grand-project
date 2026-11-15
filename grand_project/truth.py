@@ -143,11 +143,9 @@ def cmd_sheet(a) -> int:
         badge_rows.append((f"R{r}: detector says {n}  ({len(by_name[n])})", by_name[n]))
     for b in key["badges"].values():
         b.pop("_row", None)
-    cv2.imwrite(str(out / "truth_maps.png"), grid(map_rows, MAP_ROW, MAP_TILE, MAP_TILE))
-    cv2.imwrite(
-        str(out / "truth_landmarks.png"), grid([("landmarks (cross = map base)", lm_tiles)], LM_ROW, LM_W, LM_H)
-    )
-    cv2.imwrite(str(out / "truth_badges.png"), grid(badge_rows, BADGE_ROW, BADGE_TILE, BADGE_TILE))
+    core.write_png(out / "truth_maps.png", grid(map_rows, MAP_ROW, MAP_TILE, MAP_TILE))
+    core.write_png(out / "truth_landmarks.png", grid([("landmarks (cross = map base)", lm_tiles)], LM_ROW, LM_W, LM_H))
+    core.write_png(out / "truth_badges.png", grid(badge_rows, BADGE_ROW, BADGE_TILE, BADGE_TILE))
     (out / "truth_key.json").write_text(json.dumps(key, indent=1), encoding="utf-8")
     print(
         f"{len(key['shots'])} screenshots: {len(key['maps'])} map tiles, {len(key['landmarks'])} landmarks, "
@@ -189,7 +187,7 @@ def cmd_more(a) -> int:
             added += 1
         if tiles:
             rows.append((f"{S}: {s['name']}  (new finds - counted as maps unless you name them)", tiles))
-    cv2.imwrite(str(out / f"truth_maps_round{rnd}.png"), grid(rows, MAP_ROW, MAP_TILE, MAP_TILE))
+    core.write_png(out / f"truth_maps_round{rnd}.png", grid(rows, MAP_ROW, MAP_TILE, MAP_TILE))
     (out / "truth_key.json").write_text(json.dumps(key, indent=1), encoding="utf-8")
     print(f"round {rnd}: {added} new map tiles -> truth_maps_round{rnd}.png")
     return 0

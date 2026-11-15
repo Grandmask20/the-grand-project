@@ -88,6 +88,10 @@ HUD_MASK_FILE = rc_paths.ref("hud_mask_full.png")
 
 
 IMAGE_EXT = {".png", ".jpg", ".jpeg", ".webp", ".bmp"}
+# every PNG the program writes carries this text tag; the screenshot check skips tagged files, so a map image,
+# thumbnail or export left in a screenshot folder is never added as a screenshot (user: an overview image
+# landed in Waiting)
+GENERATED_TAG = b"GrandProject"
 
 
 # images the atlas itself writes (never screenshots): <atlas>_terrain.png, _composite.png, _network.png, ...

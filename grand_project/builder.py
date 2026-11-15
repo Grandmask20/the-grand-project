@@ -174,12 +174,11 @@ def detect_uncached(paths: list, cache_dir: Path, log=None) -> dict:
 
 
 def export(atlas: core.Atlas, base: Path) -> None:
-    import cv2
 
     canvas, origin = atlas.composite()
     d = core.atlas_files(base)
-    cv2.imencode(".png", canvas)[1].tofile(str(d / (base.stem + "_composite.png")))
-    cv2.imencode(".png", core.render_overlay(atlas, canvas, origin))[1].tofile(str(d / (base.stem + "_network.png")))
+    core.write_png(d / (base.stem + "_composite.png"), canvas, "composite")
+    core.write_png(d / (base.stem + "_network.png"), core.render_overlay(atlas, canvas, origin), "network")
 
 
 LINK_SPAN = 3  # terrain links are measured between each screenshot and its next 3

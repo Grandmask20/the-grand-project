@@ -15,7 +15,7 @@ import sys
 import cv2
 import numpy as np
 
-from grand_project import paths
+from grand_project import core, paths
 
 BLACK = 6  # brightest channel above this = interface (unexplored fog stays at 0..4)
 GAP = 25  # px: gaps this narrow inside the interface are closed
@@ -57,7 +57,7 @@ def main():
         sys.exit("need a 1920x1080 screenshot")
     m = build(img)
     out = paths.ref("hud_mask_full.png")
-    cv2.imencode(".png", m)[1].tofile(str(out))
+    core.write_png(out, m, "hud mask")
     print(f"{out}: {100 * (m > 0).mean():.1f}% interface")
 
 

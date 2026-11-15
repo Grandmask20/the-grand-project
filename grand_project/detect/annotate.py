@@ -83,7 +83,7 @@ def cmd_show() -> int:
         t0 = time.time()
         img = core.read_screenshot(f)
         r = detect(img)
-        cv2.imwrite(str(out / f"{Path(f).stem}_annotated.png"), annotate(img, r))
+        core.write_png(out / f"{Path(f).stem}_annotated.png", annotate(img, r), "annotated")
         (out / f"{Path(f).stem}_detect.json").write_text(json.dumps(r, default=float), encoding="utf-8")
         hid = sum(1 for n in r["nodes"] if n.get("hidden"))
         print(

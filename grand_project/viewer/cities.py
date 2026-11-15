@@ -528,7 +528,7 @@ class CitiesMixin:
 
             def write():
                 try:
-                    cv2.imencode(".png", canvas)[1].tofile(str(png))
+                    core.write_png(png, canvas, "map image")
                     self._write_thumb(canvas)  # the atlas's card in Saved atlases
                     extra = {} if labels is None else {"labels": labels[0], "names": np.array(labels[1])}
                     np.savez_compressed(
