@@ -13,7 +13,7 @@ import numpy as np
 
 from grand_project import core
 
-from .constants import PATH_ABYSS, VERSION
+from .constants import PATH_ABYSS, PATH_CELL, VERSION
 from .helpers import draw_paths, put_text
 
 
@@ -271,7 +271,7 @@ class DebugMixin:
         period = on + (max(4.0, 3.0 * th) if style == "dashed" else max(5.0, 4.0 * th)) / max(z, 1e-3)
         for k, (P, starts, D, off, Lp) in geo[1].items():
             if style == "solid":
-                out[k] = (P, starts)
+                out[k] = (P, starts, None)
                 continue
             # every dash of every path at once (cutting them path by path took ~0.5 s per wheel step: user's
             # frame log): dash j of path p runs from j * period to j * period + on along it
@@ -284,12 +284,28 @@ class DebugMixin:
             t0 = j * period
             t1 = np.minimum(t0 + on, Lp[pid])
             g0, g1 = off[pid] + t0, off[pid] + t1  # along all paths laid end to end (D)
-            pts = np.empty((2 * len(pid), 2))
-            pts[0::2, 0], pts[0::2, 1] = np.interp(g0, D, P[:, 0]), np.interp(g0, D, P[:, 1])
-            pts[1::2, 0], pts[1::2, 1] = np.interp(g1, D, P[:, 0]), np.interp(g1, D, P[:, 1])
-            out[k] = (pts, np.arange(0, len(pts), 2))
+            seg = np.empty((len(pid), 2, 2))
+            seg[:, 0, 0], seg[:, 0, 1] = np.interp(g0, D, P[:, 0]), np.interp(g0, D, P[:, 1])
+            seg[:, 1, 0], seg[:, 1, 1] = np.interp(g1, D, P[:, 0]), np.interp(g1, D, P[:, 1])
+            out[k] = self._dash_grid(seg)
         self._pp_cache = (key, out)
         return out
+
+    @staticmethod
+    def _dash_grid(seg: np.ndarray):
+        """dashes (n, 2 ends, xy) sorted by the PATH_CELL cell of their first end, with each cell's range: a frame
+        draws only the cells in view (every dash was moved to the screen and tested each frame: 50-90 ms per frame
+        panning zoomed in, the user's frame log)"""
+        cell = np.floor(seg[:, 0, :] / PATH_CELL).astype(np.int64)
+        order = np.lexsort((cell[:, 1], cell[:, 0]))
+        seg, cell = seg[order], cell[order]
+        if not len(seg):
+            return None, None, (seg, {})
+        brk = np.nonzero(np.any(np.diff(cell, axis=0) != 0, axis=1))[0] + 1
+        lo = np.concatenate([[0], brk])
+        hi = np.append(brk, len(seg))
+        ranges = {(int(cell[a, 0]), int(cell[a, 1])): (int(a), int(b)) for a, b in zip(lo, hi, strict=True)}
+        return None, None, (seg, ranges)
 
     def _path_lines(self, style, th, c_multi, c_single) -> dict:
         """per (colour, width): the shown paths' lines laid end to end - points P, each path's first point,

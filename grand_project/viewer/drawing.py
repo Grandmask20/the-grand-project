@@ -19,6 +19,7 @@ from .constants import (
     LANDMARK_COL,
     NODE_COL,
     PATH_ABYSS,
+    PATH_CELL,
     PATH_MULTI,
     PATH_SINGLE,
     PROFILE,
@@ -72,6 +73,24 @@ class DrawingMixin:
         if PROFILE and self.last_render_ms > 200:
             print(f"[viewer] slow on the window thread: redraw took {self.last_render_ms / 1000:.2f}s", flush=True)
 
+    def _draw_dashes(self, img, w, h, grid, col, wdt, aa):
+        seg, ranges = grid
+        if not ranges:
+            return
+        z = self.z
+        ax0, ay0 = self.cx - (w / 2 + 50) / z, self.cy - (h / 2 + 50) / z
+        ax1, ay1 = self.cx + (w / 2 + 50) / z, self.cy + (h / 2 + 50) / z
+        # a dash belongs to the cell of its first end; dashes are short, so one extra cell around is enough
+        cx0, cy0 = math.floor(ax0 / PATH_CELL) - 1, math.floor(ay0 / PATH_CELL) - 1
+        cx1, cy1 = math.floor(ax1 / PATH_CELL), math.floor(ay1 / PATH_CELL)
+        parts = [ranges.get((i, j)) for i in range(cx0, cx1 + 1) for j in range(cy0, cy1 + 1)]
+        idx = [np.arange(a, b) for a, b in (p for p in parts if p)]
+        if not idx:
+            return
+        S = seg[np.concatenate(idx)]
+        q = ((S - [self.cx, self.cy]) * self.z + [w / 2, h / 2]).astype(np.int32)
+        cv2.polylines(img, list(q), False, col, wdt, aa)
+
     def render(self, w: int, h: int) -> np.ndarray:
         img = np.empty((h, w, 3), np.uint8)
         img[:] = BG
@@ -97,9 +116,13 @@ class DrawingMixin:
             sl = s0 / (2**lvl)
             a = z / sl
             A = np.array([[a, 0, (x0 - self.cx) * z + w / 2], [0, a, (y0 - self.cy) * z + h / 2]])
-            cv2.warpAffine(self.pyr[lvl], A, (w, h), dst=img, flags=cv2.INTER_LINEAR, borderMode=cv2.BORDER_TRANSPARENT)
+            sharp = self.hires_wanted()
+            if not (sharp and self.tiles_cover_view(w, h)):  # tiles without holes everywhere: nothing shows through
+                cv2.warpAffine(
+                    self.pyr[lvl], A, (w, h), dst=img, flags=cv2.INTER_LINEAR, borderMode=cv2.BORDER_TRANSPARENT
+                )
             self._fl_mark("terrain")
-            if self.hires_wanted():
+            if sharp:
                 self._draw_tiles(img, w, h)  # screenshot pixels, tile by tile
                 self._fl_mark("tiles")
             if L["Paths"] or L["Nodes"]:
@@ -154,7 +177,10 @@ class DrawingMixin:
             # pieces (whole lines, dashes or dots) are cut once in atlas units and cached; a pan only moves them
             groups = self._path_pieces(ST, pth, c_multi, c_single)
             aa = cv2.LINE_AA if z >= 0.8 else cv2.LINE_8
-            for (col, wdt), (pts_a, starts) in groups.items():
+            for (col, wdt), (pts_a, starts, grid) in groups.items():
+                if grid is not None:  # dashes / dots: only the cells in view
+                    self._draw_dashes(img, w, h, grid, col, wdt, aa)
+                    continue
                 q = self.to_screen(pts_a)
                 inside = (q[:, 0] > -50) & (q[:, 0] < w + 50) & (q[:, 1] > -50) & (q[:, 1] < h + 50)
                 keep = np.logical_or.reduceat(inside, starts) if len(starts) else np.zeros(0, bool)
