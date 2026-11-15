@@ -136,8 +136,8 @@ class CitiesMixin:
         missing = [f["name"] for f in self.atlas.frames if not Path(f["path"]).exists()]
         if missing:
             self.log(f"screenshots not found (terrain missing there): {', '.join(missing)}")
-        if self.watch_var.get() and not self.settings.get("watch_folder"):
-            self.start_watch()  # auto-add follows the atlas: now its folder is watched
+        if self.watch_var.get():
+            self.start_watch()  # auto-add follows the atlas: its own folder, or the one picked for it
 
     def _forget_session(self):
         """undo / recently added / waiting belong to the atlas they were made in: cleared when another atlas

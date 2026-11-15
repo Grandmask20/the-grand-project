@@ -30,7 +30,7 @@ A small part of the author's own test set, so the tests and `atlas_detect.py sco
 
 | Folder | What |
 |---|---|
-| `screenshots/random_samples/`, `truth/` | 10 hand-labelled screenshots and their truth |
+| `screenshots/random_samples/`, `truth/` | 10 hand-labelled screenshots and their truth (+ `cities_truth.json`) |
 | `screenshots/ocean/`, `truth_ocean/` | 10 hand-labelled ocean (Expedition) screenshots |
 | `screenshots/crawl/` | the first {crawl} screenshots of a crawl across the atlas, plus the small atlas's 5 |
 | `crawl_atlas/`, `small_atlas/` | finished atlases of those screenshots, with their cached detections |
@@ -99,6 +99,10 @@ def main() -> None:
         (TARGET / "screenshots" / shots).mkdir()
         for name in truth:
             shutil.copy2(SRC / "screenshots" / shots / name, TARGET / "screenshots" / shots / name)
+    # the cities of the hand-labelled screenshots (tests/test_citybase.py; map nodes cached in it)
+    cities = SRC / "screenshots" / "random_samples" / "cities_truth.json"
+    if cities.exists():
+        shutil.copy2(cities, TARGET / "screenshots" / "random_samples" / "cities_truth.json")
     # crawl screenshots: the first CRAWL_SHOTS + the small atlas's own
     crawl = sorted((SRC / "screenshots" / "crawl").glob("*.png"))
     small = json.loads((SRC / "small_atlas" / "atlas.json").read_text(encoding="utf-8"))

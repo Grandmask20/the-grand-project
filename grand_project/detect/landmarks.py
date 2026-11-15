@@ -5,14 +5,14 @@ from __future__ import annotations
 import cv2
 import numpy as np
 
+from . import citybase
 from .badges import badge_rows
 from .constants import (
-    CITY_BLUE,
+    CITY_P,
     EXP_REACH,
     EXPEDITION,
     HALL_ORANGE,
     NOT_ON_EXPEDITION,
-    RED_CITY,
     ROW_DY,
     STRONGHOLD_EMPTY,
     TOWER_BADGES,
@@ -77,25 +77,22 @@ def tower_labels(pts, t: dict) -> np.ndarray:
     return np.array([int(any(np.hypot(tower["x"] - x, tower["y"] - y) < 25 for tower in towers)) for x, y in pts], int)
 
 
-def deadly_kind(img: np.ndarray, x: float, y: float) -> tuple[str, str]:
-    """the map at (x, y) carries a Deadly Map Boss badge: City / Hall / plain deadly boss, and why"""
+def deadly_kind(img: np.ndarray, x: float, y: float, nodes=None) -> tuple[str, str]:
+    """the map at (x, y) carries a Deadly Map Boss badge: City / Hall / plain deadly boss, and why.
+    A City's map always stands on the brass barrel (user); beams don't decide it: every city type can show
+    a blue one, and the brown lantern structures (Halls) have orange beams."""
     from grand_project import finalize as fin
 
-    blue, orange = fin._beam(img, x, y)
-    sblue, sorange = fin._beam(img, x, y, spread=80)
+    _sblue, sorange = fin._beam(img, x, y, spread=80)
     if fin._ocean(img, x, y):  # ocean (Expedition) biome: never a City (user's rule)
         if sorange >= HALL_ORANGE:
             return "Hall", "beam on a structure next to it (ocean)"
         return "Deadly boss map", "ocean biome: no cities"
-    if fin._barrel(img, x, y, max(blue, sblue) >= fin.BARREL_LIT):
+    if citybase.barrel_p(img, x, y, nodes) >= CITY_P:
         return "City", "brass barrel map base"
-    if max(blue, sblue) >= CITY_BLUE:
-        return "City", "blue beam"
     if sorange >= HALL_ORANGE:
         return "Hall", "beam on a structure next to it"
-    if orange >= RED_CITY:
-        return "City", "red beam right above the map"
-    return "Deadly boss map", "no beam"
+    return "Deadly boss map", "normal map base"
 
 
 def landmarks_from(
@@ -132,8 +129,21 @@ def landmarks_from(
         mx, my = (row[0]["x"] + row[-1]["x"]) / 2, float(np.mean([b["y"] for b in row])) + ROW_DY
         if any(abs(mx - t["x"]) <= dx and up0 <= t["y"] - my + ROW_DY <= up1 for t in towers):
             continue  # a tower's badges, not a map of its own
-        kind, why = deadly_kind(img, mx, my)
+        kind, why = deadly_kind(img, mx, my, vis)
         out.append({"kind": kind, "x": round(mx, 1), "y": round(my, 1), "why": why})
+    # completed (green) cities have no badge and no beam left, but still stand on the barrel
+    from grand_project import finalize as fin
+
+    for n in vis:
+        x, y = n["x"], n["y"]
+        if n.get("tower") or any(
+            lm["kind"] in ("City", "Hall", "Deadly boss map") and np.hypot(lm["x"] - x, lm["y"] - y) < 45 for lm in out
+        ):
+            continue
+        if citybase.barrel_p(img, x, y) >= CITY_P and not fin._ocean(img, x, y):
+            out.append(
+                {"kind": "City", "x": round(float(x), 1), "y": round(float(y), 1), "why": "brass barrel map base"}
+            )
     locks = __import__("grand_project.cities", fromlist=["cities"]).locks_in(img)
     for x, y in old["strongholds"]:
         hand = any(np.hypot(x - a, y - b) < 200 for a, b in locks)

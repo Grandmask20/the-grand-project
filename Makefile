@@ -1,5 +1,5 @@
 ########## PROJECT RECIPES ##########
-.PHONY: install lint test
+.PHONY: install lint test evaluate_detector pr_precheck
 
 # GNU Make exposes OS=Windows_NT on Windows. On Unix-like systems, uname
 # distinguishes macOS (Darwin) from Linux; both use the same venv layout.
@@ -45,3 +45,11 @@ lint:
 test:
 	@echo Running tests on $(PLATFORM) with $(PYTHON)
 	$(foreach test,$(TESTS),$(PYTHON) -m $(test) && )$(PYTHON) -c "pass"
+
+# score the detector on the hand-labelled screenshots (needs the full test data; takes ~15 min).
+# Put the numbers from before and after a detector change in the pull request.
+evaluate_detector:
+	$(PYTHON) -m grand_project.detect score
+
+# everything to run before opening a pull request: lint, the tests, then the detector score
+pr_precheck: lint test evaluate_detector

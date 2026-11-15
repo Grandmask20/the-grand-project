@@ -28,6 +28,7 @@ from .constants import (
     RECENT_FADE,
     RECENT_KEEP,
     UNDO_KEEP,
+    WATCH_ASK,
     WATCH_BATCH,
     WATCH_POLL_MS,
     WEAK_INLIERS,
@@ -163,7 +164,7 @@ class AutoAddMixin:
         p = filedialog.askopenfilename(
             title="Screenshot to place by hand",
             filetypes=[("Images", "*.png *.jpg *.jpeg *.webp *.bmp")],
-            initialdir=self.settings.get("watch_folder") or self.settings.get("shots_dir") or self._initial_dir(),
+            initialdir=self._hand_watch() or self.settings.get("shots_dir") or self._initial_dir(),
         )
         if p:
             self.start_ghost(Path(p))
@@ -281,12 +282,38 @@ class AutoAddMixin:
                 self._q.put(("log", f"adding failed: {e}"))
                 self._q.put(("done", mode))
 
+    def _cache_dir(self) -> Path:
+        return self.path.with_name(self.path.stem + "_frames")
+
+    def _redetect(self, paths: list[Path]):
+        """detect these screenshots again with the current detector (their caches are rewritten)"""
+        db = self.database(ask=False)
+        self.log(f"Re-check: {len(paths)} screenshot(s) were detected by an older detector: detecting them again")
+        self._q.put(("progress", f"detecting {len(paths)} screenshots again (newer detector)"))
+        for p, err in builder.detect_uncached(paths, self._cache_dir(), log=lambda t: self._q.put(("log", t))).items():
+            LOG.warning(f"{Path(p).name}: detection failed in a worker: {err}")
+        for i, p in enumerate(paths, 1):
+            self._q.put(("progress", f"detecting again {p.name} ({i}/{len(paths)})"))
+            try:
+                builder.extract_frame(p, db, self._cache_dir())
+            except Exception as e:
+                LOG.exception(f"{p.name}: detection failed")
+                self._q.put(("log", f"{p.name}: detection failed: {e}"))
+
     def _run_job(self, paths, mode):
         if mode == "undo":
             self._run_undo()
             return
         retry = isinstance(mode, tuple) and mode[0] == "retry"
         if mode == "recheck_all":
+            # screenshots detected by an older detector are detected again first (user: Re-check = rescan)
+            stale = [
+                Path(f["path"])
+                for f in self.atlas.frames
+                if Path(f["path"]).exists() and not builder.is_cached(Path(f["path"]), self._cache_dir())
+            ]
+            if stale:
+                self._redetect(stale)
             self._q.put(("progress", "re-checking the whole atlas"))
             with self._lock:
                 self.atlas.rebuild_icons(builder.cached_frames(self.path))
@@ -614,24 +641,34 @@ class AutoAddMixin:
             self._q.put(("log", f"PNG export failed: {e}"))
 
     # ------------------------------------------------------------------ watched folder
+    def _atlas_key(self) -> str:
+        return str(Path(self.path).resolve()) if getattr(self, "path", None) else ""
+
+    def _hand_watch(self) -> str | None:
+        """the folder picked by hand for the open atlas (each atlas remembers its own; a folder picked for one
+        atlas used to follow you to the next and pour its screenshots into it)"""
+        self.settings.pop("watch_folder", None)  # before v1.11 one folder for every atlas: forgotten
+        return self.settings.get("watch_folders", {}).get(self._atlas_key())
+
     def _watch_dir(self) -> str:
-        """the folder auto-add watches: one chosen by hand, otherwise the open atlas's own folder (where Steam
-        should save the screenshots while you map: README)"""
-        if self.settings.get("watch_folder"):
-            return self.settings["watch_folder"]
+        """the folder auto-add watches: one chosen by hand for this atlas, otherwise the open atlas's own folder
+        (where Steam should save the screenshots while you map: README)"""
+        hand = self._hand_watch()
+        if hand:
+            return hand
         return str(self.path.parent) if getattr(self, "path", None) else ""
 
     def _show_watch_label(self):
         d = self._watch_dir()
         self.watch_label.set(
-            ("watching: " if self.settings.get("watch_folder") else "watching this atlas's folder: ") + d
+            ("watching: " if self._hand_watch() else "watching this atlas's folder: ") + d
             if d
             else "open an atlas first"
         )
 
     def use_atlas_folder(self):
         """forget a hand-picked folder: watch the open atlas's own folder again"""
-        self.settings.pop("watch_folder", None)
+        self.settings.setdefault("watch_folders", {}).pop(self._atlas_key(), None)
         save_settings(self.settings)
         self._show_watch_label()
         if self.watch_var.get():
@@ -640,10 +677,13 @@ class AutoAddMixin:
     def ask_watch_folder(self):
         d = filedialog.askdirectory(
             title="Folder your screenshots are saved to",
-            initialdir=self.settings.get("watch_folder") or self.settings.get("shots_dir") or self._initial_dir(),
+            initialdir=self._hand_watch() or self.settings.get("shots_dir") or self._initial_dir(),
         )
         if d:
-            self.settings["watch_folder"] = d
+            if not self._atlas_key():
+                self.status.set("open or create an atlas first")
+                return
+            self.settings.setdefault("watch_folders", {})[self._atlas_key()] = d
             self._show_watch_label()
             save_settings(self.settings)
             if self.watch_var.get():
@@ -681,6 +721,16 @@ class AutoAddMixin:
         files = self._watch_files()
         self._watch_seen = {k: -1 for k in files}  # -1: handled (not watched for changes)
         todo = self._not_in_atlas(files)
+        own = Path(self._watch_dir()).resolve() == Path(self.path).resolve().parent
+        # a folder that isn't this atlas's own, full of screenshots it doesn't have: likely another atlas's
+        crowded = todo and not own and self.atlas.frames and len(todo) > WATCH_ASK
+        if crowded and not messagebox.askyesno(
+            "Add screenshots?",
+            f"{len(todo)} screenshots in\n{self._watch_dir()}\nare not in this atlas.\n\n"
+            "Add them all to this atlas? (No: only new screenshots from now on.)",
+        ):
+            self.log(f"auto-add: left the {len(todo)} screenshot(s) already in {self._watch_dir()} out")
+            todo = []
         self._show_watch_label()
         self.status.set(f"watching {self._watch_dir()} for new screenshots")
         self.log(

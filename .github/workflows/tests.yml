@@ -25,7 +25,7 @@ jobs:
         shell: bash
         run: |
           set -e
-          for t in test_atlas_builder test_atlas_io test_model_safety test_atlas_folder test_random_sequence test_drop_placement test_false_merge test_detect_pairs; do
+          for t in test_atlas_builder test_atlas_io test_model_safety test_atlas_folder test_random_sequence test_drop_placement test_false_merge test_citybase test_detect_pairs; do
             echo "===== $t"
             python -m "tests.$t"
           done

@@ -21,6 +21,11 @@ from scipy.spatial import cKDTree
 
 from .atlas import Atlas
 from .constants import (
+    ISLAND_CANDIDATES,
+    ISLAND_COVER_CELL,
+    ISLAND_MIN,
+    ISLAND_QUICK_TOL,
+    ISLAND_TERRAIN_TRIES,
     MERGE_TOL,
     MIN_INLIERS,
     MIN_NCC,
@@ -32,10 +37,6 @@ from .constants import (
 from .frame import Frame
 from .geometry import apply, persp, screen_to_atlas
 from .register import Registration, _inside_rect, mutual_pairs, refine
-
-ISLAND_MIN = 2  # screenshots in an island before it is matched as one piece
-ISLAND_CANDIDATES = 12  # shifts passing the quick count that get the exact check
-TERRAIN_TRIES = 3  # of those passing it, the best this many get the terrain check
 
 
 @dataclass
@@ -76,10 +77,6 @@ def _footprint_masks(isl: Island, T: np.ndarray, pts: np.ndarray) -> np.ndarray:
     return inside
 
 
-COVER_CELL = 20.0  # atlas units: grid cell for "which area does an atlas / a group cover"
-QUICK_TOL = 8.0  # px: a map counts as landing on one in the quick count (shifts are rounded to 4 units)
-
-
 def _cover(footprints) -> tuple[np.ndarray, np.ndarray]:
     """the area screenshots cover, drawn on a coarse grid: (grid, its origin)"""
     polys = []
@@ -88,17 +85,17 @@ def _cover(footprints) -> tuple[np.ndarray, np.ndarray]:
         m = 30  # the same inset as the exact overlap test (_inside_rect)
         polys.append(persp(H, [[m, m], [w - m, m], [w - m, h - m], [m, h - m]]))
     allp = np.vstack(polys)
-    o = allp.min(axis=0) - COVER_CELL
-    size = np.ceil((allp.max(axis=0) - o) / COVER_CELL).astype(int) + 2
+    o = allp.min(axis=0) - ISLAND_COVER_CELL
+    size = np.ceil((allp.max(axis=0) - o) / ISLAND_COVER_CELL).astype(int) + 2
     grid = np.zeros((size[1], size[0]), np.uint8)
     for p in polys:
-        cv2.fillConvexPoly(grid, np.round((p - o) / COVER_CELL).astype(np.int32), 1)
+        cv2.fillConvexPoly(grid, np.round((p - o) / ISLAND_COVER_CELL).astype(np.int32), 1)
     return grid, o
 
 
 def _inside(cover, pts: np.ndarray) -> np.ndarray:
     grid, o = cover
-    g = np.floor((pts - o) / COVER_CELL).astype(int)
+    g = np.floor((pts - o) / ISLAND_COVER_CELL).astype(int)
     ok = (g[..., 0] >= 0) & (g[..., 1] >= 0) & (g[..., 0] < grid.shape[1]) & (g[..., 1] < grid.shape[0])
     out = np.zeros(pts.shape[:-1], bool)
     out[ok] = grid[g[..., 1][ok], g[..., 0][ok]] > 0
@@ -120,7 +117,7 @@ def _pair_candidates(main: Atlas, isl: Island, src: np.ndarray, dst: np.ndarray,
         blk = d[k : k + 1000]
         q = src[None, :, :] + blk[:, None, :]  # (shifts, src, 2)
         dist = tree.query(q.reshape(-1, 2), distance_upper_bound=PARALLAX_TOL)[0].reshape(len(blk), len(src))
-        exact = (dist <= QUICK_TOL).sum(axis=1)  # (the exact check that follows uses 5 px)
+        exact = (dist <= ISLAND_QUICK_TOL).sum(axis=1)  # (the exact check that follows uses 5 px)
         loose = (dist <= PARALLAX_TOL).sum(axis=1)
         o_src = _inside(cover_main, q).sum(axis=1)
         o_dst = _inside(cover_isl, dst[None, :, :] - blk[:, None, :]).sum(axis=1)
@@ -182,7 +179,7 @@ def match_island(main: Atlas, isl: Island) -> tuple[np.ndarray | None, str]:
     good.sort(key=lambda g: -g[1])
     tree = cKDTree(dst)
     why = ""
-    for T, inl, _ratio in good[:TERRAIN_TRIES]:
+    for T, inl, _ratio in good[:ISLAND_TERRAIN_TRIES]:
         best_f, best_M, best_n = None, None, -1
         for fr, f in zip(isl.frames, isl.atlas.frames, strict=True):
             Mf = np.array(f["M"], float)

@@ -4,7 +4,6 @@ from __future__ import annotations
 
 from grand_project import fileio as atlas_io
 from grand_project import gold_paths as gp
-from grand_project import paths as rc_paths
 
 FRAME_MARGIN = 22  # px from a screenshot edge: a node closer than this may be cut off
 
@@ -213,16 +212,13 @@ SETTLE_BADGE = 200.0  # a Hall / City has a Deadly Map Boss badge this close (cr
 
 
 # cities within 26; "Halls" with none within 350 were corruption / fog / forest)
-CITY_BASE = rc_paths.ref("city_base.png")  # the brass barrel a City's map stands on
-
-
-BARREL_NCC, BARREL_SAT = 0.42, 88  # fitted on 30 bases the user labelled: 17 of 18 cities, 2 of 12 halls
 
 
 # map types that never share a map (user's rule): hideout, city, corruption, cleansed, hall, deadly
 # map boss, breach stronghold, merchant, abyss.  Badge families of one type are listed together.
 EXCLUSIVE = {
     "Hideout": "hideout",
+    "HideoutRed": "hideout",
     "Corruption": "corruption",
     "CorruptionNexus": "corruption",
     "CorruptionNexusNoGrowth": "corruption",
@@ -236,12 +232,6 @@ EXCLUSIVE = {
 }  # ocean: never a Hall / City / Tower / Hideout (user)
 
 
-BARREL_BLUE = (70, 130)
-
-
-BARREL_LIT = 60  # blue beam px above that make a blue-tinted barrel still count
-
-
 OCEAN_R, OCEAN_WATER = 350, 0.33  # water share within 350 px: ocean (Expedition) biome. 351 crawl cities: max 0.29
 
 
@@ -253,3 +243,6 @@ CORE_PAD = 600.0  # around the new screenshots: this area's result is replaced
 
 
 CONTEXT_PAD = 700.0  # evidence margin: > the longest path (300) + parallax; tested identical to a full check
+
+
+SAME_MAP = 15.0  # atlas units: two map nodes this close are one map seen twice (the better-seen one counts)

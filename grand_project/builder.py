@@ -45,6 +45,40 @@ NEW_DETECTOR_ID = "detect1"  # = atlas_detect.DETECTOR_ID, in cache file names (
 # import the detector just to tell atlases apart)
 
 
+_STAMP: list[str] = []
+
+
+def detector_stamp() -> str:
+    """which detector a cached detection came from: the trained models and icon pictures in the detector
+    database, plus the rim / barrel reference files. A cache with another stamp is detected again (Re-check
+    re-detects with the current detector: user)."""
+    if not _STAMP:
+        import sqlite3
+
+        from grand_project.detect.constants import BADGE_FINDER_FILE, CITY_BARREL_FILE, DB_PATH
+
+        h = hashlib.sha1()
+        try:
+            c = sqlite3.connect(f"file:{DB_PATH.as_posix()}?mode=ro", uri=True)
+            h.update(repr(sorted(c.execute("SELECT name, created FROM detector_models"))).encode())
+            h.update(repr(c.execute("SELECT COUNT(*), MAX(id) FROM badge_refs").fetchone()).encode())
+            c.close()
+        except Exception:  # no database: models load nothing either
+            h.update(b"no database")
+        for f in (BADGE_FINDER_FILE, CITY_BARREL_FILE):
+            h.update(f.read_bytes() if f.exists() else b"-")
+        _STAMP.append(h.hexdigest()[:12])
+    return _STAMP[0]
+
+
+def _fresh(cache: Path) -> dict | None:
+    """a cached detection made by the current detector, else None"""
+    if not cache.exists():
+        return None
+    data = atlas_io.read_json(cache)
+    return data if data is not None and data.get("models") == detector_stamp() else None
+
+
 def extract_frame_new(image_path: Path, cache_dir: Path) -> core.Frame:
     """atlas_detect in live mode (reads its trained models from the reference DB, never writes it);
     cached by file hash + detector id"""
@@ -53,8 +87,8 @@ def extract_frame_new(image_path: Path, cache_dir: Path) -> core.Frame:
 
     digest = hashlib.sha256(image_path.read_bytes()).hexdigest()
     cache = cache_dir / f"{digest[:16]}_{atlas_detect.DETECTOR_ID}.json"
-    cached = atlas_io.read_json(cache) if cache.exists() else None
-    if cached is not None:  # a cut-off cache (crash mid-write) is detected again
+    cached = _fresh(cache)
+    if cached is not None:  # a cut-off cache (crash mid-write) or one from an older detector is detected again
         cached["path"] = str(image_path.resolve())  # the file as it is now (moved / another computer)
         return core.Frame.from_json(cached)
     img = core.read_screenshot(str(image_path))
@@ -66,6 +100,7 @@ def extract_frame_new(image_path: Path, cache_dir: Path) -> core.Frame:
         "path": str(image_path.resolve()),
         "sha256": digest,
         "detector": atlas_detect.DETECTOR_ID,
+        "models": detector_stamp(),
         "width": img.shape[1],
         "height": img.shape[0],
         "nodes": [
@@ -123,7 +158,7 @@ def is_cached(image_path: Path, cache_dir: Path) -> bool:
     from grand_project import detect as atlas_detect
 
     digest = hashlib.sha256(image_path.read_bytes()).hexdigest()
-    return (cache_dir / f"{digest[:16]}_{atlas_detect.DETECTOR_ID}.json").exists()
+    return _fresh(cache_dir / f"{digest[:16]}_{atlas_detect.DETECTOR_ID}.json") is not None
 
 
 def detect_uncached(paths: list, cache_dir: Path, log=None) -> dict:

@@ -205,7 +205,7 @@ BADGE_WORDS = [
     ("powerful map boss", "MapBoss"),
     ("deadly map boss", "MapBossSpecial"),
     ("breach hive", "BreachHive"),
-    ("rogue exile", "RogueExile"),
+    ("rogue exile", "FleeingExile"),  # the atlas shows the Fleeing Exile icon (user)
     ("wisdom", "WisdomsTeachings"),
     ("abyssal overrun", "AbyssOverrun"),
     ("same element", "UnnamedR5"),
@@ -549,10 +549,29 @@ def _match(pred: list, truth: list, radius) -> tuple[list, list, list]:
     return pairs, [i for i in range(len(pred)) if i not in used_p], [j for j in range(len(truth)) if j not in used_t]
 
 
+_ICON_CLEAR: list = []
+
+
+def _icon_visible(x: float, y: float) -> bool:
+    """is a labelled icon's whole rim on screen and clear of the HUD (1920x1080)? The finder leaves the others
+    out on purpose (another screenshot shows them whole), so they don't count either way."""
+    if not _ICON_CLEAR:
+        from grand_project.detect.constants import ICON_CLEAR
+
+        free = (core.hud_mask(1920, 1080) == 0).astype(np.uint8)
+        free[[0, -1], :] = 0
+        free[:, [0, -1]] = 0
+        _ICON_CLEAR.append(cv2.distanceTransform(free, cv2.DIST_L2, 3) >= ICON_CLEAR)
+    m = _ICON_CLEAR[0]
+    X, Y = int(round(x)), int(round(y))
+    return 0 <= Y < m.shape[0] and 0 <= X < m.shape[1] and bool(m[Y, X])
+
+
 def score(truth: dict, outputs: dict) -> dict:
     """compare detector outputs {shot name: {nodes, landmarks, icons}} with truth.json.
     Maps hidden behind the HUD and 'maybe' spots never count against the detector; misses are split
-    into plainly visible ones and hidden/occluded ones."""
+    into plainly visible ones and hidden/occluded ones. Icons not wholly visible (HUD / screen edge) count
+    neither way (the finder leaves them out on purpose)."""
     s = {
         "maps": {"tp": 0, "fp": 0, "miss_visible": 0, "miss_hidden": 0, "fp_what": {}},
         "landmarks": {},
@@ -592,7 +611,16 @@ def score(truth: dict, outputs: dict) -> dict:
             k["fp"] += len(fp)
             k["fn"] += len(fn)
         # badges
-        tb, pb = T["badges"], out["icons"]
+        tb_all, pb_all = T["badges"], out["icons"]
+        tb = [b for b in tb_all if _icon_visible(b["x"], b["y"])]
+        hidden = [b for b in tb_all if not _icon_visible(b["x"], b["y"])]
+        # a found icon on a hidden label (or itself at the edge) is neither right nor extra
+        pb = [
+            p
+            for p in pb_all
+            if _icon_visible(p["x"], p["y"])
+            and not any(np.hypot(p["x"] - h["x"], p["y"] - h["y"]) <= BADGE_R for h in hidden)
+        ]
         pairs, fp, fn = _match(pb, tb, BADGE_R)
         B = s["badges"]
         for i, j in pairs:

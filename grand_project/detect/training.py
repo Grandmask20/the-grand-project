@@ -15,7 +15,18 @@ from grand_project import paths as rc_paths
 from grand_project import truth as atlas_truth
 
 from .badges import badge_book, badge_candidates, badge_features, badge_labels, badges_from
-from .constants import CACHE, DB_PATH, EXTRA_MAPS, MAP, TESTS, TOWER_REFS, TREE_NEG_WEIGHT, TRUTH, TRUTH_SETS
+from .constants import (
+    CACHE,
+    DB_PATH,
+    EXTRA_BADGES,
+    EXTRA_MAPS,
+    MAP,
+    TESTS,
+    TOWER_REFS,
+    TREE_NEG_WEIGHT,
+    TRUTH,
+    TRUTH_SETS,
+)
 from .landmarks import expedition_rules, landmarks_from, old_landmarks, tower_features, tower_labels
 from .maps import _nms, candidate_labels, drop_hud, map_candidates, map_features
 from .models import save_model
@@ -94,6 +105,22 @@ def _extra_maps() -> dict:
     return out
 
 
+def _extra_badges() -> dict:
+    """extra icon-finder training data (positions only, no names): crawl screenshots with every icon marked, so
+    the finder sees the glowing / rare icons the hand-labelled shots barely have"""
+    if not EXTRA_BADGES.exists():
+        return {}
+    out = {}
+    for f, v in json.loads(EXTRA_BADGES.read_text(encoding="utf-8")).items():
+        img = cv2.imdecode(np.fromfile(str(TESTS / f), np.uint8), cv2.IMREAD_COLOR)
+        if img is None:
+            continue
+        bp, ring, extra = badge_candidates(img)
+        t = {"badges": [{"x": x, "y": y} for x, y in v["badges"]]}
+        out[f] = (bp, badge_features(img, bp, ring, extra), badge_labels(bp, t))
+    return out
+
+
 def _tree_rounds():
     """(key file, labels file, labels name the maps?) of every arborist round"""
     return [
@@ -152,6 +179,9 @@ def _fit(data: dict, names, stage: str, weight: float = 5, leaf: int = 20):
 
     X = np.vstack([data[n][stage][1][data[n][stage][2] >= 0] for n in names])
     y = np.concatenate([data[n][stage][2][data[n][stage][2] >= 0] for n in names])
+    if stage == "badges" and data.get("_extra_badges"):
+        X = np.vstack([X] + [v[1][v[2] >= 0] for v in data["_extra_badges"].values()])
+        y = np.concatenate([y] + [v[2][v[2] >= 0] for v in data["_extra_badges"].values()])
     if stage == "maps" and data.get("_extra_maps"):
         X = np.vstack([X] + [v[1][v[2] >= 0] for v in data["_extra_maps"].values()])
         y = np.concatenate([y] + [v[2][v[2] >= 0] for v in data["_extra_maps"].values()])
@@ -211,6 +241,7 @@ def cmd_score() -> int:
     truth, data = _labelled()
     data["_tower_refs"] = _tower_refs()
     data["_extra_maps"] = _extra_maps()
+    data["_extra_badges"] = _extra_badges()
     before, after, new = {}, {}, {}
     for name in truth:
         img = data[name]["img"]
@@ -236,6 +267,7 @@ def cmd_train() -> int:
     truth, data = _labelled()
     data["_tower_refs"] = _tower_refs()
     data["_extra_maps"] = _extra_maps()
+    data["_extra_badges"] = _extra_badges()
     data["_trees"] = _tree_examples()
     if data["_trees"] is not None:
         print(f"arborist round: {len(data['_trees'][1])} labelled spots ({int(data['_trees'][1].sum())} maps)")
@@ -250,4 +282,7 @@ def cmd_train() -> int:
         f"trained on {len(truth)} screenshots: map model ({nm} maps), badge model ({nb} badges, "
         f"{len(m['badges']['names'])} labelled pictures) -> {DB_PATH.name}"
     )
+    from .citytrain import train as train_cities
+
+    train_cities()  # the City barrel model (references/city_barrel.npz)
     return 0

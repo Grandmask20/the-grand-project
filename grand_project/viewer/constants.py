@@ -114,6 +114,7 @@ IMAGE_EXT = core.IMAGE_EXT
 WATCH_BATCH = 24  # auto-add: screenshots waiting in the queue are added together (one re-check)
 
 
+WATCH_ASK = 50  # a hand-picked folder (not the atlas's own) with more screenshots the atlas lacks: ask first
 WATCH_POLL_MS = 2000  # how often the watched folder is checked
 
 
@@ -184,7 +185,8 @@ ICON_INFO = {
     "SanctificationBoss": ("Immured Fury", (200, 220, 255), "doryani"),
     "Trader": ("Wandering Trader", (120, 220, 255), "trader"),
     "NamelessSeer": ("Nameless Seer", (200, 140, 255), "seer"),
-    "Hideout": ("Hideout", (200, 255, 200), ""),
+    "Hideout": ("Hideout", (200, 255, 200), "felled hideout"),
+    "HideoutRed": ("Red hideout", (230, 90, 90), "hideout, red fleur-de-lis (user: kept apart from Hideout)"),
     "LostTower": ("Precursor Tower", (100, 235, 100), "lost tower, tower"),
     "Unidentified": ("Unidentified badge", (160, 160, 160), "unknown"),
     # taught by hand on the badge sheet (atlas_icon_refs, badge_refs table in the icon database);
@@ -231,6 +233,21 @@ ICON_INFO = {
     "TightPockets": ("Tight Pockets", (200, 110, 150), "gold replaced"),
     "ForestInfluence": ("Forest Influence", (60, 160, 60), "forest area, biome"),
     "MountainInfluence": ("Mountain Influence", (190, 190, 190), "mountain area, biome"),
+    # named from poe2db's Map Content art (no on-screen example taught yet, or only a few)
+    "WaterInfluence": ("Water Influence", (70, 150, 230), "water area, biome"),
+    "SwampInfluence": ("Swamp Influence", (110, 140, 80), "swamp area, biome"),
+    "DesertInfluence": ("Desert Influence", (220, 190, 120), "desert area, biome"),
+    "EnergizedLeyLines": ("Energized Ley Lines", (240, 220, 150), "doubles effect of tablets"),
+    "FleeingExile": (
+        "Fleeing Exile",
+        (90, 130, 220),
+        "rogue exile, defeat all rogue exiles (the icon the atlas shows: user)",
+    ),
+    "GreatBeast": ("Great Beast", (200, 150, 90), "hilda's favour"),
+    "MapAreaModified": ("Map Area Modified", (170, 170, 170), "world area manipulated"),
+    "NotableLocation": ("Notable Location", (230, 210, 120), "important objective"),
+    "SekhemasStudent": ("Sekhema's Student", (220, 180, 90), "map boss drops a djinn barya"),
+    "TrialmastersTrainee": ("Trialmaster's Trainee", (200, 120, 90), "map boss drops an inscribed ultimatum"),
     "StolenPower": ("Stolen Power", (40, 120, 255), "summoning circle bosses, power of enemy slain"),
     "GlimmeringMutation": ("Glimmering Mutation", (40, 200, 255), "currency replaced with rarer varieties"),
     "PlayerOrBookmark": ("Player / bookmark marker", (255, 255, 255), "player, bookmark, pin, ritual"),

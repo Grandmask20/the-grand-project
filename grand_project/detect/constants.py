@@ -34,6 +34,8 @@ TRUTH_SETS = [
 
 
 EXTRA_MAPS = TESTS / "truth" / "extra_maps.json"  # maps only: the user's path-marked shots
+EXTRA_BADGES = TESTS / "truth" / "extra_badges.json"  # icon positions only (finder training): 50 crawl shots,
+# the old and new finder's icons as reviewed by the user (paths relative to the test data)
 
 
 DB_PATH = rc_paths.DATABASE
@@ -197,10 +199,16 @@ FORTRESS_PAINT = TESTS / "fortress_paint"  # user-painted walls: <k>.png alpha m
 
 
 # ---------------------------------------------------------------- stage 3
-RING_MIN = 25  # gold-ring filter at the rim radius (10.5 px)
-
-
-TEMPLATE_MIN = 0.90  # or: correlation with the average stored badge (catches white badges on bright ground)
+# icons are found by their rim alone (user: the rim is the same on every icon), then named by what's inside
+ICON_RIM_R = (7.0, 12.5)  # px: the rim (dark line at 8-9, gold at 10-11) compared with the template; the most constant
+# radii of 480 hand-labelled icons
+RIM_CANDIDATE = 0.35  # rim score from which a circle is a candidate (493 of 523 labelled icons, ~1500 per shot)
+ICON_CLEAR = 12.0  # px: an icon's centre this far from the HUD and the screen edge (its whole rim visible)
+# icons with their own rim (not the standard one): found by a whole-icon template (in BADGE_FINDER_FILE) and named
+# by it. Match level per icon: known ones on 70 screenshots scored >= 0.89 / >= 0.83, the best other spot <= 0.77 /
+# <= 0.48. (Deadly-boss icons have a standard-like rim: the rim finder finds them.)
+SPECIAL_ICONS = {"AbyssalDepths": 0.83, "CorruptionNexus": 0.70}
+SPECIAL_R = 15  # px: the part of a special icon compared
 
 
 BADGE_MIN = 0.5  # badge probability
@@ -237,13 +245,9 @@ TOWER_BADGES = (45, 100, 230)  # a badge row this close sideways and 100-230 px 
 
 # Deadly Map Boss badge -> its map (under the row's middle) is a City / Hall / plain deadly boss (user rules,
 # thresholds from the 14 labelled ones: 13 right)
-CITY_BLUE = 150  # blue beam pixels (column above the map, or +-80 px) -> City
 
 
 HALL_ORANGE = 700  # orange beam pixels within +-80 px (the beam on the Hall's structure)
-
-
-RED_CITY = 200  # some orange right above the map itself: a City with a red beam
 
 
 STRONGHOLD_EMPTY = 120  # a Breach stronghold with no map found this close is locked (only ground shows)
@@ -253,9 +257,33 @@ TREE_NEG_WEIGHT = 1.0  # x15 tried: 48 -> 64 wrong maps on the labelled shots
 
 
 EXPEDITION = "Expedition"
+EXPEDITION_WATER = (600, 0.15)  # Expedition only appears in the water zone (user): open water within 600 px of its map,
+# at least this share (every labelled Expedition: >= 0.19; inland areas: little or none)
+INFLUENCE_MIN = (
+    0.9  # an icon is only named a biome influence (Mountain / Forest / ... Influence) when the finder is this
+)
+# sure of its rim (user: they look like terrain; "very strong rim assurance")
 
 
 NOT_ON_EXPEDITION = ("Hall", "Tower")  # user: Halls / Towers / Hideouts appear in the ocean, never with an
 
 
 EXP_REACH = (40, 15, 40)  # Expedition badge.  badge -> its map: |dx| <= 40, 15 <= dy <= 40
+
+
+# the brass barrel under a City's map node (detect/citybase.py)
+CITY_BARREL_FILE = rc_paths.ref("city_barrel.npz")
+CITY_BARREL_WIN = (-20, 44, -24, 24)  # px around a map node's middle: y0, y1, x0, x1 (the orb and the barrel below it)
+CITY_BARREL_SNAP = 30  # px: a rough point (under an icon row, from the atlas) is moved to the map node this close
+CITY_P = 0.5  # barrel probability from which a map node is a City
+# training (citytrain.py, part of `python -m grand_project.detect train`): folders with screenshots + cities_truth.json
+CITY_TRUTH_SETS = [SHOTS, rc_paths.SCREENSHOTS / "cities"]  # 10 hand-labelled + 31 city screenshots (78 cities)
+CITY_TRAIN_SNAP = 40  # px: a truth point belongs to the nearest detected map node this close
+CITY_TRAIN_C = 0.05  # logistic regularisation: few cities, many features
+# robustness report only (training on them made the model worse): ordinary map nodes looked at a few px off
+CITY_OFF_SHIFTS = [(0, -8), (0, -5), (0, 5), (0, 8), (-6, 0), (6, 0)]
+
+
+# the icon finder's rim template (the average icon as seen on screen, from the hand labels), so teaching new icon
+# pictures (naming) never changes which icons are found: tools/freeze_badge_finder.py
+BADGE_FINDER_FILE = rc_paths.ref("badge_finder.npz")

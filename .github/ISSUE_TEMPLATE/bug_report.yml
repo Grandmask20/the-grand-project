@@ -1,0 +1,45 @@
+name: Bug report
+description: Something doesn't work, or the map comes out wrong
+labels: ["bug"]
+body:
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened
+      description: What you did, what you expected, and what you got instead.
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: How to make it happen again
+      placeholder: |
+        1. Open atlas ...
+        2. Add screenshot ...
+        3. ...
+  - type: input
+    id: version
+    attributes:
+      label: Version
+      description: Shown in the window title, e.g. v1.11
+    validations:
+      required: true
+  - type: dropdown
+    id: os
+    attributes:
+      label: Operating system
+      options: [Windows, macOS, Linux]
+    validations:
+      required: true
+  - type: input
+    id: resolution
+    attributes:
+      label: Game resolution and render resolution
+      placeholder: e.g. 1920x1080, render resolution 100%
+  - type: textarea
+    id: shots
+    attributes:
+      label: Screenshots and log
+      description: >
+        Drag in the screenshots involved (full game window) and, if there was an error, the end of
+        user_data/atlas_debug.log. Leave out anything you'd rather keep private.

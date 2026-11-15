@@ -587,6 +587,7 @@ BLOCK_ICONS = {
     "Sanctification": "cleansed",
     "SanctificationBoss": "cleansed",
     "Hideout": "hideout",
+    "HideoutRed": "hideout",
     "Abyss": "Abyss",
     "AbyssOverrun": "Abyss",
     "AbyssalDepths": "Abyss",
