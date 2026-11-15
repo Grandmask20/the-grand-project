@@ -73,7 +73,7 @@ class FoldersMixin:
         self.refresh_atlas_menu()
 
     def switch_atlas(self, json_path: Path):
-        if self._busy:
+        if self.working():
             self.status.set("wait until the screenshots being added are done")
             return
         if self.path and Path(json_path) == self.path:
@@ -118,7 +118,7 @@ class FoldersMixin:
         """pick a folder of atlas screenshots: its atlas opens (the newest, if several were built from it) and
         screenshots in the folder that are not in it yet are offered for adding; no atlas yet = a new one in
         that folder, built from all its screenshots"""
-        if self._busy:
+        if self.working():
             self.status.set("wait until the screenshots being added are done")
             return
         if folder is None:
