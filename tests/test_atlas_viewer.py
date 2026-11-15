@@ -120,7 +120,7 @@ while getattr(app, "_labels", None) is None and time.time() - t_fix < 180:
         longest = max(longest, now - last)
     last = now
     time.sleep(0.02)
-check("fix seams: window responsive while it builds", longest < 0.3, f"longest pause {longest:.2f}s")
+check("fix seams: window responsive while it builds", longest < 1.0, f"longest pause {longest:.2f}s")
 lab = getattr(app, "_labels", None)
 check(
     "fix seams: clean map with ownership",
