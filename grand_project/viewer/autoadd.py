@@ -20,6 +20,7 @@ from grand_project import paths as rc_paths
 from grand_project.core import islands
 
 from .constants import (
+    DETECT_LOG_EVERY,
     PROFILE,
     RECENT_COL,
     RECENT_FADE,
@@ -451,6 +452,25 @@ class AutoAddMixin:
         """
         return self.path.with_name(self.path.stem + "_frames")
 
+    def _counter(self, what: str):
+        """A progress function for detecting many screenshots: "<what> 652 / 1261" in the progress box, and every
+        DETECT_LOG_EVERY in the debug log (user: only the total and the time showed while 1261 were re-detected).
+
+        Args:
+            what: The first words, e.g. "detecting again".
+
+        Returns:
+            Function (done, total), safe to call from the worker thread.
+        """
+
+        def progress(done: int, total: int):
+            """Show how many screenshots are done (worker thread)."""
+            self._q.put(("progress", f"{what} {done} / {total}"))
+            if done % DETECT_LOG_EVERY == 0 or done == total:
+                LOG.info(f"{what}: {done} / {total} screenshots")
+
+        return progress
+
     def _redetect(self, paths: list[Path]):
         """Detects these screenshots again with the current detector (their caches are rewritten). Worker thread.
 
@@ -459,7 +479,9 @@ class AutoAddMixin:
         """
         self.log(f"Re-check: {len(paths)} screenshot(s) were detected by an older detector: detecting them again")
         self._q.put(("progress", f"detecting {len(paths)} screenshots again (newer detector)"))
-        for p, err in builder.detect_uncached(paths, self._cache_dir(), log=lambda t: self._q.put(("log", t))).items():
+        for p, err in builder.detect_uncached(
+            paths, self._cache_dir(), log=lambda t: self._q.put(("log", t)), progress=self._counter("detecting again")
+        ).items():
             LOG.warning(f"{Path(p).name}: detection failed in a worker: {err}")
         for i, p in enumerate(paths, 1):
             self._q.put(("progress", f"detecting again {p.name} ({i}/{len(paths)})"))
@@ -506,7 +528,9 @@ class AutoAddMixin:
         failed = []
         if len(paths) > 1:
             self._q.put(("progress", f"detecting {len(paths)} screenshots"))
-            for p, err in builder.detect_uncached(paths, cache_dir, log=lambda t: self._q.put(("log", t))).items():
+            for p, err in builder.detect_uncached(
+                paths, cache_dir, log=lambda t: self._q.put(("log", t)), progress=self._counter("detecting")
+            ).items():
                 LOG.warning(f"{Path(p).name}: detection failed in a worker: {err}")
         for i, p in enumerate(paths, 1):
             self._q.put(("progress", f"detecting {p.name} ({i}/{len(paths)})"))
@@ -1089,7 +1113,7 @@ class AutoAddMixin:
             with os.scandir(base) as it:
                 for e in it:
                     name = e.name
-                    if Path(name).suffix.lower() not in core.IMAGE_EXT or name.endswith(core.ATLAS_OUTPUTS):
+                    if Path(name).suffix.lower() not in core.IMAGE_EXT or core.is_atlas_output(name):
                         continue
                     with contextlib.suppress(OSError):
                         if e.is_file():

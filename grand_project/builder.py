@@ -16,6 +16,7 @@ import hashlib
 import json
 import sys
 import types
+from concurrent.futures import as_completed
 from pathlib import Path
 
 import numpy as np
@@ -190,7 +191,7 @@ def is_cached(image_path: Path, cache_dir: Path) -> bool:
     return _fresh(cache_dir / f"{digest[:16]}_{atlas_detect.DETECTOR_ID}.json") is not None
 
 
-def detect_uncached(paths: list, cache_dir: Path, log=None) -> dict:
+def detect_uncached(paths: list, cache_dir: Path, log=None, progress=None) -> dict:
     """Detect the screenshots not cached yet, several at a time (the viewer's batches).
 
     Afterwards extract_frame reads each from the cache. Does nothing for fewer than 2 screenshots or when
@@ -200,6 +201,8 @@ def detect_uncached(paths: list, cache_dir: Path, log=None) -> dict:
         paths: Screenshot paths.
         cache_dir: Folder of the cached detections.
         log: Optional function taking one line of text.
+        progress: Optional function (done, total) called as each screenshot finishes (user: the progress box
+            showed only the total while 1261 screenshots were re-detected).
 
     Returns:
         {path: error} for failures.
@@ -211,9 +214,13 @@ def detect_uncached(paths: list, cache_dir: Path, log=None) -> dict:
     errors = {}
     try:
         with atlas_io.process_pool(min(DETECT_WORKERS, len(todo))) as ex:
-            for p, err in ex.map(_detect_one, [(str(p), str(cache_dir)) for p in todo]):
+            jobs = [ex.submit(_detect_one, (str(p), str(cache_dir))) for p in todo]
+            for done, job in enumerate(as_completed(jobs), 1):
+                p, err = job.result()
                 if err:
                     errors[p] = err
+                if progress:
+                    progress(done, len(todo))
     except Exception as e:  # no worker processes: one at a time later
         if log:
             log(f"parallel detection failed ({e}); detecting one at a time")

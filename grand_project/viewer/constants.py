@@ -112,6 +112,7 @@ WATCH_BATCH = 24  # auto-add: screenshots waiting in the queue are added togethe
 
 WATCH_ASK = 50  # a hand-picked folder (not the atlas's own) with more screenshots the atlas lacks: ask first
 WATCH_POLL_MS = 2000  # how often the watched folder is checked
+DETECT_LOG_EVERY = 50  # detecting many screenshots: a progress line in the debug log every this many
 WATCH_RETRIES = 2  # a watched screenshot whose detection failed is tried this many more times
 
 
