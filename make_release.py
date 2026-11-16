@@ -75,9 +75,9 @@ jobs:
         with:
           python-version: "3.13"
           cache: pip
-      - run: python -m pip install -r requirements.txt
+      - run: python -m pip install -r requirements.txt pytest
       - name: the stored detector models load, and a tampered database is refused
-        run: python -m tests.test_model_safety
+        run: python -m pytest tests/test_model_safety.py
 """
 
 

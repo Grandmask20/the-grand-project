@@ -192,6 +192,49 @@ class PanelsMixin:
         c.update_idletasks()
         return "break"
 
+    def _wheel_router(self, e):
+        """Scroll the list under the mouse pointer, wherever in it the pointer is.
+
+        Bound once for the whole window (bind_all <MouseWheel> / <Button-4> / <Button-5>). The icon list used to
+        scroll only with the pointer on a row's text and the list focused: Windows sends wheel events to the focused
+        widget, and headers and the space beside short rows had no binding (user). Lists: the icon / place type
+        list (Find tab) and the Saved atlases cards.
+
+        Args:
+            e: The Tk wheel event (e.x_root / e.y_root: pointer position on the screen).
+
+        Returns:
+            "break" when a list was scrolled, else None (the event goes on, e.g. to the map's zoom).
+        """
+        try:
+            w = self.root.winfo_containing(e.x_root, e.y_root)
+        except (KeyError, tk.TclError):  # a menu or a closed window under the pointer
+            return None
+        while w is not None:
+            if w is getattr(self, "icon_canvas", None):
+                return self._scroll_icons(e)
+            if w is getattr(self, "atl_canvas", None):
+                return self._scroll_canvas(self.atl_canvas, e)
+            w = w.master
+        return None
+
+    @staticmethod
+    def _scroll_canvas(c, e):
+        """Scroll a canvas list by the wheel, never past its ends.
+
+        Args:
+            c: The tk.Canvas holding the list.
+            e: The Tk wheel event.
+
+        Returns:
+            "break".
+        """
+        first, last = c.yview()
+        step = -1 if (e.num == 4 or getattr(e, "delta", 0) > 0) else 1
+        if not ((step < 0 and first <= 0.0) or (step > 0 and last >= 1.0)):
+            c.yview_scroll(step * 3, "units")
+        return "break"
+
     def list_type(self, label):
         """List every map / place of one type in the results (keeps the type list as it is).
 

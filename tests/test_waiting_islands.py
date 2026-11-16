@@ -1,8 +1,8 @@
 """Waiting screenshots that form islands, fed through the viewer's own auto-add (AutoAddMixin) on known
-positions from a finished atlas (the crawl atlas, or --atlas). Every screenshot is detected again as a new
+positions from a finished atlas (the crawl atlas). Every screenshot is detected again as a new
 one (--cached reuses the saved detections: quick).
 
-    python -m tests.test_waiting_islands [--seed N] [--cases 6] [--cached] [--atlas A.json --folder DIR]
+    pytest -m slow tests/test_waiting_islands.py [--seed N] [--runs 6] [--cached]
 
 Scenarios (picked by the screenshots' true positions; "shares N maps" = N of its maps land on maps of the
 other side there):
@@ -16,25 +16,19 @@ other side there):
 
 from __future__ import annotations
 
-import argparse
 import hashlib
 import queue
-import random
 import shutil
-import tempfile
-from pathlib import Path
 
 import numpy as np
+import pytest
 from scipy.spatial import cKDTree
 
-from grand_project import paths as rc_paths
+from grand_project import builder as B
+from grand_project import core as C
+from grand_project.viewer.autoadd import AutoAddMixin
 
-rc_paths.need_test_data()
-from grand_project import builder as B  # noqa: E402
-from grand_project import core as C  # noqa: E402
-from grand_project.viewer.autoadd import AutoAddMixin  # noqa: E402
-
-TD = rc_paths.TEST_DATA
+pytestmark = [pytest.mark.data, pytest.mark.slow]
 LINK_SHARE = 0.45  # shots inside one chain / island overlap at least this much (screen boxes)
 STRONG = 10  # maps a bridge shares with each side
 TOL = 12.0  # atlas units: placement vs the finished atlas (relative to the main chain)
@@ -50,7 +44,7 @@ class Feeder(AutoAddMixin):
         self.asked = []
         self.log = []
 
-    def _ask(self, question: str) -> bool:  # the viewer would ask; the test answers yes and counts it
+    def _ask(self, question: str, preview=None) -> bool:  # the viewer would ask; the test answers yes, counts it
         self.asked.append(question)
         return True
 
@@ -188,35 +182,26 @@ def edge_case(rng, K: Known):
     return None
 
 
-def main() -> int:
-    ap = argparse.ArgumentParser()
-    ap.add_argument("--seed", type=int)
-    ap.add_argument("--cases", type=int, default=6)
-    ap.add_argument("--atlas", help="finished atlas.json with cached detections (default: the crawl atlas)")
-    ap.add_argument("--folder", help="its screenshots (default: screenshots/crawl)")
-    ap.add_argument("--cached", action="store_true", help="reuse the saved detections (quick)")
-    a = ap.parse_args()
-    seed = a.seed if a.seed is not None else random.randrange(10**6)
-    rng = random.Random(seed)
-    big_path = Path(a.atlas) if a.atlas else TD / "crawl_atlas" / "atlas.json"
-    folder = Path(a.folder) if a.folder else TD / "screenshots" / "crawl"
-    on_disk = {p.stem: p for p in folder.glob("*.png")}
-    cache = big_path.with_name(big_path.stem + "_frames")
-    K = Known(C.Atlas.load(big_path), on_disk, cache)
-    print(f"seed {seed}: {len(K.names)} screenshots ({'saved detections' if a.cached else 'detected as new'})")
-    fails = 0
-    for case in range(a.cases):
+def test_waiting_islands_join_and_decoys_stay_out(crawl, rng, runs, seed, request, tmp_path):
+    """Bridge, two-island and edge cases: islands join once connected, decoys never do."""
+    cached = request.config.getoption("--cached")
+    on_disk = {p.stem: p for p in crawl.folder.glob("*.png")}
+    cache = crawl.cache
+    K = Known(crawl.atlas, on_disk, cache)
+    print(f"{len(K.names)} screenshots ({'saved detections' if cached else 'detected as new'})")
+    failed = []
+    for case in range(runs(6)):
         kind = ("bridge", "two islands", "edge")[case % 3]
         sc = edge_case(rng, K) if kind == "edge" else bridge_case(rng, K, kind == "two islands")
         if sc is None:
             print(f"  --   no {kind} case found")
             continue
-        work = Path(tempfile.mkdtemp())
-        (work / "f").mkdir()
+        work = tmp_path / f"case{case}"
+        (work / "f").mkdir(parents=True)
         isl_all = [k for isl in sc["islands"] for k in isl]
         dec_all = [k for d in sc["decoys"] for k in d]
         everything = sc["main"] + isl_all + dec_all + sc["bridges"]
-        if a.cached:
+        if cached:
             for k in everything:
                 h = hashlib.sha256(on_disk[k].read_bytes()).hexdigest()[:16]
                 shutil.copy(cache / f"{h}_detect1.json", work / "f")
@@ -245,7 +230,8 @@ def main() -> int:
         decoy_in = [k[-8:] for k in dec_all if k in got]
         groups = [m for m in feeder.log if m.startswith("waiting group") and "joined" in m]
         ok = main_ok and not early and not missing and not decoy_in and max(errs) <= TOL
-        fails += not ok
+        if not ok:
+            failed.append(sc["kind"])
         print(
             f"  {'ok  ' if ok else 'FAIL'} {sc['kind']:<11}: main {len(sc['main'])}, islands "
             f"{[len(i) for i in sc['islands']]}"
@@ -260,10 +246,4 @@ def main() -> int:
             for m in feeder.log:
                 if "waiting group" in m or "no place found" in m:
                     print("       " + m[:150])
-        shutil.rmtree(work, ignore_errors=True)
-    print("PASS: waiting islands join, decoys stay out" if not fails else f"FAILED: {fails} case(s) (seed {seed})")
-    return 1 if fails else 0
-
-
-if __name__ == "__main__":
-    raise SystemExit(main())
+    assert not failed, f"failed cases (seed {seed}): {failed}"

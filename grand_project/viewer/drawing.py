@@ -418,6 +418,7 @@ class DrawingMixin:
         if getattr(self, "_lasso", None) and len(self._lasso) > 1:
             cv2.polylines(img, [np.array(self._lasso, np.int32)], True, (0, 255, 255), 2, cv2.LINE_AA)
         self._draw_ghost(img, w, h)
+        self._draw_weak_preview(img, w, h)
         self._draw_progress(img, w, h)
         if self.hits:  # everything listed in Find: a ring on each
             R = int(np.clip(30 * z, 16, 34))  # grows when zooming in, stays visible zoomed out
