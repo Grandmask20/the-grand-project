@@ -30,7 +30,6 @@ def test_by_time_reveals_an_island_when_taken_and_the_bridge_last():
     fp = [_frame(n, 2000.0 * k)[1] for k, n in enumerate(names)]
     plan = R.make_plan(fr, fp, "by time")
     assert plan.order == [0, 2, 1, 3]
-    assert R.make_plan(fr, fp, "by placement").order == [0, 1, 2, 3]
 
 
 def test_steps_sessions_and_batches():
@@ -74,3 +73,30 @@ def test_items_appear_with_their_first_screenshot():
     _f, fp_b = _frame("b", 1000, 0)
     pts = np.array([[1500.0, 500.0], [100.0, 100.0], [9000.0, 9000.0]])
     assert list(R.point_steps(pts, [fp_a, fp_b], np.array([1, 0]), default=7)) == [0, 1, 7]
+
+
+def test_scan_lines_go_column_by_column_from_the_right():
+    pos = [(5000, 0), (5000, 3000), (0, 0), (2500, 1500), (0, 3000)]
+    names = [f"2694490_2026111510000{k}_1" for k in range(5)]
+    fr, fp = zip(*[_frame(n, x, y) for n, (x, y) in zip(names, pos, strict=True)], strict=True)
+    assert R.make_plan(list(fr), list(fp), "scan lines").order == [0, 1, 3, 2, 4]
+
+
+def test_reveal_by_area_sweeps_smoothly():
+    """By area: a fixed number of steps, screenshots and points revealed as the sweep reaches them."""
+    pos = [(0, 0), (4000, 0), (8000, 0), (0, 4000)]
+    names = [f"2694490_2026111510000{k}_1" for k in range(4)]
+    fr, fp = zip(*[_frame(n, x, y) for n, (x, y) in zip(names, pos, strict=True)], strict=True)
+    plan = R.make_plan(list(fr), list(fp), "distance", reveal="area")
+    assert plan.sweep is not None and plan.n_steps > 100
+    assert plan.step_of[0] < plan.step_of[1] < plan.step_of[2], "farther screenshots later"
+    near, far = plan.steps_at([[960, 540], [9000, 540]])
+    assert near < far
+    assert R.make_plan(list(fr), list(fp), "by time", reveal="area").sweep is None, "by time: whole screenshots"
+
+
+def test_real_span_leaves_out_pauses():
+    t = R.capture_time
+    stamps = ("20261115100000", "20261115100500", "20261115150000")  # 5 min, then a 5 h pause
+    times = [t({"name": f"2694490_{s}_1", "path": "/x"}) for s in stamps]
+    assert R.real_span(times) == 300

@@ -19,7 +19,14 @@ from pathlib import Path
 import cv2
 import numpy as np
 
-from .constants import REPLAY_BATCH_GAP, REPLAY_SESSION_GAP, REPLAY_SPIRAL_PITCH
+from .constants import (
+    REPLAY_AREA_RES,
+    REPLAY_AREA_STEPS,
+    REPLAY_BATCH_GAP,
+    REPLAY_SCAN_COLUMN,
+    REPLAY_SESSION_GAP,
+    REPLAY_SPIRAL_PITCH,
+)
 
 STEAM_TIME = re.compile(r"_(\d{14})_\d+$")  # Steam names screenshots <app id>_<YYYYMMDDHHMMSS>_<n>
 
@@ -98,32 +105,99 @@ def centres(footprints: list) -> np.ndarray:
     return np.array([np.asarray(poly, float).mean(axis=0) for poly, _bb in footprints])
 
 
-def reveal_order(kind: str, times: list[float | None], mids: np.ndarray, pitch: float = REPLAY_SPIRAL_PITCH):
-    """The order screenshots are revealed in.
+def sweep_key(kind: str, pts: np.ndarray, start: np.ndarray, x_right: float, y_top: float, y_span: float):
+    """Where along a sweep each point is (smaller = earlier): the order spiral / distance / scan lines reveal in.
 
     Args:
-        kind: "by time" (when taken), "by placement" (when added to the atlas), "spiral" (around the first
-            screenshot taken, turning outward) or "distance" (rings around it).
+        kind: "spiral" (around the start, turning outward), "distance" (rings around the start) or "scan lines"
+            (columns REPLAY_SCAN_COLUMN wide from the right, each from the top down).
+        pts: (..., 2) atlas points.
+        start: The start point (the first screenshot taken).
+        x_right: The atlas's right edge (scan lines).
+        y_top: The atlas's top edge (scan lines).
+        y_span: The atlas's height (scan lines: one column's worth of key).
+
+    Returns:
+        Float keys, shape pts.shape[:-1], 0 at the start.
+    """
+    q = np.asarray(pts, float)
+    if kind == "scan lines":
+        col = np.floor((x_right - q[..., 0]) / REPLAY_SCAN_COLUMN)
+        return col * (y_span + 1) + (q[..., 1] - y_top)  # a whole column, then the next
+    d = q - start
+    r = np.hypot(d[..., 0], d[..., 1])
+    if kind == "distance":
+        return r
+    turn = (np.arctan2(d[..., 1], d[..., 0]) % (2 * np.pi)) / (2 * np.pi)  # 0..1 around
+    ring = np.round(r / REPLAY_SPIRAL_PITCH - turn)  # which turn of r = pitch * (ring + turn) the point is on
+    return (ring + turn) * REPLAY_SPIRAL_PITCH
+
+
+def reveal_order(kind: str, times: list[float | None], mids: np.ndarray) -> list[int]:
+    """The order screenshots are revealed in (reveal by screenshots).
+
+    Args:
+        kind: "by time" (when taken), "spiral", "distance" or "scan lines" (see sweep_key; spiral and distance
+            start at the first screenshot taken).
         times: capture_time of each screenshot, in placement order.
         mids: (n, 2) middle of each screenshot.
-        pitch: Atlas units between turns of the spiral.
 
     Returns:
         Screenshot indices in reveal order.
     """
     n = len(times)
-    if kind == "by placement" or n < 2:
+    if n < 2:
         return list(range(n))
     by_time = time_order(times)
-    if kind == "by time":
+    if kind not in ("spiral", "distance", "scan lines"):
         return by_time
-    d = mids - mids[by_time[0]]  # around the first screenshot taken
-    r = np.hypot(d[:, 0], d[:, 1])
-    if kind == "distance":
-        return [int(i) for i in np.lexsort((np.arange(n), r))]
-    turn = (np.arctan2(d[:, 1], d[:, 0]) % (2 * np.pi)) / (2 * np.pi)  # 0..1 around
-    ring = np.round(r / pitch - turn)  # which turn of the spiral r = pitch * (ring + turn) the screenshot is on
-    return [int(i) for i in np.lexsort((np.arange(n), ring + turn))]
+    span = float(mids[:, 1].max() - mids[:, 1].min())
+    key = sweep_key(kind, mids, mids[by_time[0]], mids[:, 0].max(), mids[:, 1].min(), span)
+    return [int(i) for i in np.lexsort((np.arange(n), key))]
+
+
+@dataclass
+class Field:
+    """Reveal by area: the sweep key on a grid over the atlas (smaller = revealed earlier)."""
+
+    grid: np.ndarray  # float32 (h, w) keys
+    origin: tuple[float, float, float]  # (x0, y0, cell size): cell (i, j) is atlas (x0 + j * size, y0 + i * size)
+    top: float  # the largest key on the atlas
+
+    def at(self, pts) -> np.ndarray:
+        """Key at atlas points (nearest cell).
+
+        Args:
+            pts: (n, 2) atlas points.
+
+        Returns:
+            (n,) float keys.
+        """
+        x0, y0, c = self.origin
+        h, w = self.grid.shape
+        q = np.asarray(pts, float).reshape(-1, 2)
+        j = np.clip(((q[:, 0] - x0) / c).astype(int), 0, w - 1)
+        i = np.clip(((q[:, 1] - y0) / c).astype(int), 0, h - 1)
+        return self.grid[i, j].astype(float)
+
+
+def area_field(kind: str, start, bounds: tuple[float, float, float, float]) -> Field:
+    """The sweep of a reveal by area over the whole atlas.
+
+    Args:
+        kind: "spiral", "distance" or "scan lines".
+        start: The start point (the first screenshot taken).
+        bounds: (x0, y0, x1, y1) of the atlas.
+
+    Returns:
+        The Field.
+    """
+    x0, y0, x1, y1 = bounds
+    c = max(x1 - x0, y1 - y0, 1.0) / REPLAY_AREA_RES
+    w, h = max(1, int(np.ceil((x1 - x0) / c)) + 1), max(1, int(np.ceil((y1 - y0) / c)) + 1)
+    xs, ys = np.meshgrid(x0 + np.arange(w) * c, y0 + np.arange(h) * c)
+    key = sweep_key(kind, np.stack([xs, ys], -1), np.asarray(start, float), x1, y0, y1 - y0)
+    return Field(key.astype(np.float32), (x0, y0, c), float(key.max()) or 1.0)
 
 
 @dataclass
@@ -137,28 +211,65 @@ class Plan:
     session_of: list[int]  # per screenshot
     ticks: list[int] = field(default_factory=list)  # steps where a new batch of screenshots starts ("by time")
     step_time: list[float | None] = field(default_factory=list)  # when each step's last screenshot was taken
+    sweep: Field | None = None  # reveal by area: the sweep (step_of then holds fractional steps)
+
+    def steps_at(self, pts) -> np.ndarray:
+        """Reveal by area: the (fractional) step each atlas point is revealed at.
+
+        Args:
+            pts: (n, 2) atlas points.
+
+        Returns:
+            (n,) float steps.
+        """
+        return self.sweep.at(pts) / self.sweep.top * self.n_steps
 
 
-def make_plan(frames: list[dict], footprints: list, kind: str, per_step: int = 1) -> Plan:
+def make_plan(
+    frames: list[dict],
+    footprints: list,
+    kind: str,
+    per_step: int = 1,
+    reveal: str = "screenshots",
+    bounds: tuple[float, float, float, float] | None = None,
+) -> Plan:
     """Work out a replay of the atlas's screenshots.
 
     Args:
         frames: Atlas frames (placement order).
         footprints: Their areas, as the viewer keeps them (same order).
         kind: One of REPLAY_TYPES.
-        per_step: Screenshots revealed per step (at least 1).
+        per_step: Screenshots revealed per step (at least 1; reveal by screenshots).
+        reveal: "screenshots" (whole screenshots in order) or "area" (spiral / distance / scan lines only: a smooth
+            sweep over the ground in REPLAY_AREA_STEPS steps; user: whole screenshots jumped back and forth).
+        bounds: (x0, y0, x1, y1) of the atlas (reveal by area; default: around the screenshots).
 
     Returns:
         The Plan.
     """
     per_step = max(1, int(per_step))
     times = [capture_time(f) for f in frames]
-    order = reveal_order(kind, times, centres(footprints))
+    mids = centres(footprints)
+    if reveal == "area" and kind in ("spiral", "distance", "scan lines") and len(frames) > 1:
+        if bounds is None:
+            allp = np.vstack([np.asarray(p, float) for p, _bb in footprints])
+            bounds = (*allp.min(axis=0), *allp.max(axis=0))
+        sweep = area_field(kind, mids[time_order(times)[0]], bounds)
+        n_steps = REPLAY_AREA_STEPS
+        step_of = sweep.at(mids) / sweep.top * n_steps
+        order = [int(i) for i in np.argsort(step_of, kind="stable")]
+        step_time: list[float | None] = [None] * n_steps
+        for i in order:  # when the newest screenshot revealed by then was taken
+            s = min(n_steps - 1, int(step_of[i]))
+            if times[i] is not None:
+                step_time[s] = times[i] if step_time[s] is None else max(step_time[s], times[i])
+        return Plan(order, step_of, n_steps, times, sessions(times), [], step_time, sweep)
+    order = reveal_order(kind, times, mids)
     step_of = np.zeros(len(frames), int)
     for k, i in enumerate(order):
         step_of[i] = k // per_step
     n_steps = (len(order) + per_step - 1) // per_step
-    step_time: list[float | None] = [None] * n_steps
+    step_time = [None] * n_steps
     for i in order:
         if times[i] is not None:
             s = step_of[i]
@@ -171,6 +282,19 @@ def make_plan(frames: list[dict], footprints: list, kind: str, per_step: int = 1
                 ticks.append(s)
             prev = t if t is not None else prev
     return Plan(order, step_of, n_steps, times, sessions(times), ticks, step_time)
+
+
+def real_span(times: list[float | None]) -> float:
+    """How long taking the screenshots took: first to last, without the pauses between sessions.
+
+    Args:
+        times: capture_time of each screenshot.
+
+    Returns:
+        Seconds (0 when fewer than two are timed).
+    """
+    t = sorted(x for x in times if x is not None)
+    return float(sum(b - a for a, b in zip(t, t[1:], strict=False) if b - a <= REPLAY_SESSION_GAP))
 
 
 def item_steps(lists: list[list[str]], frames: list[dict], step_of: np.ndarray, default: int = 0) -> np.ndarray:

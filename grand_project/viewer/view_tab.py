@@ -12,7 +12,7 @@ from PIL import Image, ImageTk
 
 from grand_project import paths as rc_paths
 
-from .constants import NODE_COL, PATH_MULTI, PATH_SINGLE, STYLE_DEFAULT
+from .constants import COLOUR_BY, COLOUR_SPREADS, NODE_COL, PATH_MULTI, PATH_SINGLE, STYLE_DEFAULT
 from .helpers import bgr_hex, draw_map, draw_paths, hex_bgr, icon_thumb
 from .settings import save_settings
 
@@ -258,13 +258,19 @@ class ViewTabMixin:
         ttk.Separator(vw).pack(fill="x", pady=(10, 4))
         row = ttk.Frame(vw)
         row.pack(fill="x", pady=2)
-        ttk.Label(row, text="Colour screenshots by when taken").pack(side="left")
+        ttk.Label(row, text="Colour by").pack(side="left")
         self._st_age = tk.StringVar(value=st["age_tint"])
-        cb3 = ttk.Combobox(
-            row, textvariable=self._st_age, values=("off", "by session", "oldest to newest"), width=15, state="readonly"
-        )
+        cb3 = ttk.Combobox(row, textvariable=self._st_age, values=COLOUR_BY, width=15, state="readonly")
         cb3.pack(side="left", padx=6)
         cb3.bind("<<ComboboxSelected>>", lambda e: changed(age_tint=self._st_age.get()))
+        row = ttk.Frame(vw)
+        row.pack(fill="x", pady=2)
+        ttk.Label(row, text="colours").pack(side="left")
+        self._st_spread = tk.StringVar(value=st["colour_spread"])
+        cb4 = ttk.Combobox(row, textvariable=self._st_spread, values=list(COLOUR_SPREADS), width=15, state="readonly")
+        cb4.pack(side="left", padx=6)
+        cb4.bind("<<ComboboxSelected>>", lambda e: changed(colour_spread=self._st_spread.get()))
+        ttk.Label(row, text="(oldest to newest, times seen)", foreground="#555").pack(side="left")
 
         # --- pictures
         ttk.Separator(vw).pack(fill="x", pady=(10, 4))
@@ -286,6 +292,7 @@ class ViewTabMixin:
             self._st_size.set(d["map_size"])
             self._st_mstyle.set(d["map_style"])
             self._st_age.set(d["age_tint"])
+            self._st_spread.set(d["colour_spread"])
             self._st_freq.set(d["path_freq"] * 100)
             for k, v in self._st_ov.items():
                 v.set(d[k])

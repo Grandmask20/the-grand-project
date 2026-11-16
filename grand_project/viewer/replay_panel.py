@@ -25,13 +25,17 @@ from PIL import Image
 
 from . import replay as R
 from .constants import (
-    REPLAY_CAMERA_EASE,
+    COLOUR_SPREADS,
+    HEAT_RES,
+    REPLAY_AREA_SOFT,
     REPLAY_CAMERAS,
     REPLAY_DEFAULTS,
     REPLAY_FOLLOW_SPAN,
     REPLAY_GIF_FPS,
     REPLAY_GIF_MAX_FRAMES,
+    REPLAY_REVEALS,
     REPLAY_SESSION_COLS,
+    REPLAY_SMOOTHING,
     REPLAY_SPEEDS,
     REPLAY_TICK_MS,
     REPLAY_TINT_ALPHA,
@@ -68,9 +72,12 @@ class ReplayMixin:
         """The replay settings: REPLAY_DEFAULTS overlaid with the saved ones.
 
         Returns:
-            Dict (type, camera, length, speed, per_step, gif_width).
+            Dict (type, reveal, camera, smoothing, length, speed, per_step, gif_width).
         """
-        return {**REPLAY_DEFAULTS, **self.settings.get("replay", {})}
+        st = {**REPLAY_DEFAULTS, **self.settings.get("replay", {})}
+        if st["type"] not in REPLAY_TYPES:  # "by placement" was folded into "by time" (user)
+            st["type"] = "by time"
+        return st
 
     def _rp_set(self, **kw):
         """Change and save replay settings.
@@ -135,32 +142,42 @@ class ReplayMixin:
         self._rp_line.bind("<Configure>", lambda _e: self._rp_draw_line())
 
         s = self._rp_settings_row = tk.Frame(p, bg=PANEL_BG)  # shown by the gear button
+        rows = [tk.Frame(s, bg=PANEL_BG), tk.Frame(s, bg=PANEL_BG)]
+        for r in rows:
+            r.pack(fill="x", pady=1)
         self._rp_vars = {}
 
-        def labelled(text, widget):
-            """Pack a small label and its control into the settings row."""
-            tk.Label(s, text=text, bg=PANEL_BG, fg=PANEL_DIM, font=font).pack(side="left", padx=(8, 3))
+        def labelled(r, text, widget):
+            """Pack a small label and its control into a settings row."""
+            tk.Label(rows[r], text=text, bg=PANEL_BG, fg=PANEL_DIM, font=font).pack(side="left", padx=(8, 3))
             widget.pack(side="left")
 
-        v = self._rp_vars["length"] = tk.StringVar(value=f"{st['length']:g}")
-        sp = ttk.Spinbox(s, from_=3, to=600, increment=5, width=5, textvariable=v, command=self._rp_read_settings)
-        sp.bind("<FocusOut>", lambda _e: self._rp_read_settings())
-        sp.bind("<Return>", lambda _e: self._rp_read_settings())
-        labelled("length (s)", sp)
-        v = self._rp_vars["speed"] = tk.StringVar(value=f"{st['speed']:g}x")
-        cb = ttk.Combobox(s, textvariable=v, values=[f"{x:g}x" for x in REPLAY_SPEEDS], width=5, state="readonly")
-        cb.bind("<<ComboboxSelected>>", lambda _e: self._rp_read_settings())
-        labelled("speed", cb)
-        v = self._rp_vars["per_step"] = tk.StringVar(value=str(st["per_step"]))
-        sp = ttk.Spinbox(s, from_=1, to=50, width=4, textvariable=v, command=self._rp_read_settings)
-        sp.bind("<FocusOut>", lambda _e: self._rp_read_settings())
-        sp.bind("<Return>", lambda _e: self._rp_read_settings())
-        labelled("screenshots per step", sp)
-        v = self._rp_vars["camera"] = tk.StringVar(value=st["camera"])
-        cb = ttk.Combobox(s, textvariable=v, values=REPLAY_CAMERAS, width=14, state="readonly")
-        cb.bind("<<ComboboxSelected>>", lambda _e: self._rp_read_settings())
-        labelled("camera", cb)
-        b = button(s, "Export GIF…", self._rp_export_gif, width=11)
+        def spin(r, key, text, lo, hi, step):
+            """A number box that stores its value when changed."""
+            v = self._rp_vars[key] = tk.StringVar(value=f"{st[key]:g}")
+            sp = ttk.Spinbox(rows[r], from_=lo, to=hi, increment=step, width=5, textvariable=v)
+            sp.configure(command=self._rp_read_settings)
+            sp.bind("<FocusOut>", lambda _e: self._rp_read_settings())
+            sp.bind("<Return>", lambda _e: self._rp_read_settings())
+            labelled(r, text, sp)
+
+        def choice(r, key, text, values, width, shown=None):
+            """A drop-down that stores its value when changed."""
+            v = self._rp_vars[key] = tk.StringVar(value=shown or st[key])
+            cb = ttk.Combobox(rows[r], textvariable=v, values=values, width=width, state="readonly")
+            cb.bind("<<ComboboxSelected>>", lambda _e: self._rp_read_settings())
+            labelled(r, text, cb)
+            return cb
+
+        spin(0, "length", "length (s)", 3, 600, 5)
+        self._rp_real = tk.StringVar(value="")  # how much faster than it really took (user)
+        tk.Label(rows[0], textvariable=self._rp_real, bg=PANEL_BG, fg=PANEL_FG, font=font).pack(side="left", padx=4)
+        choice(0, "speed", "preview speed", [f"{x:g}x" for x in REPLAY_SPEEDS], 5, f"{st['speed']:g}x")
+        spin(0, "per_step", "screenshots per step", 1, 50, 1)
+        self._rp_reveal_cb = choice(1, "reveal", "reveal by", REPLAY_REVEALS, 11)
+        choice(1, "camera", "camera", REPLAY_CAMERAS, 14)
+        choice(1, "smoothing", "camera smoothing", list(REPLAY_SMOOTHING), 7)
+        b = button(rows[1], "Export GIF\u2026", self._rp_export_gif, width=11)
         b.configure(font=font)
         b.pack(side="right", padx=(10, 2))
 
@@ -210,23 +227,45 @@ class ReplayMixin:
             self._rp_tab.place_configure(y=-self._rp_panel.winfo_height())
 
     def _rp_read_settings(self):
-        """Store the settings row's values (bad numbers fall back to the old ones) and re-plan if needed."""
+        """Store the settings rows' values (bad numbers fall back to the old ones) and re-plan if needed."""
         st = self._rp_settings()
-        try:
-            length = min(600.0, max(3.0, float(self._rp_vars["length"].get())))
-        except ValueError:
-            length = st["length"]
-        try:
-            per_step = min(50, max(1, int(float(self._rp_vars["per_step"].get()))))
-        except ValueError:
-            per_step = st["per_step"]
-        speed = float(self._rp_vars["speed"].get().rstrip("x") or 1)
-        camera = self._rp_vars["camera"].get()
-        self._rp_vars["length"].set(f"{length:g}")
-        self._rp_vars["per_step"].set(str(per_step))
-        self._rp_set(length=length, per_step=per_step, speed=speed, camera=camera)
-        if self.replay_active() and per_step != st["per_step"]:
+        v = self._rp_vars
+
+        def num(key, lo, hi, cast):
+            """A number from a box, kept within lo..hi (the old value if it isn't a number)."""
+            try:
+                return min(hi, max(lo, cast(float(v[key].get()))))
+            except ValueError:
+                return st[key]
+
+        new = {
+            "length": num("length", 3.0, 600.0, float),
+            "per_step": num("per_step", 1, 50, int),
+            "speed": float(v["speed"].get().rstrip("x") or 1),
+            "reveal": v["reveal"].get(),
+            "camera": v["camera"].get(),
+            "smoothing": v["smoothing"].get(),
+        }
+        v["length"].set(f"{new['length']:g}")
+        v["per_step"].set(str(new["per_step"]))
+        self._rp_set(**new)
+        if self.replay_active() and (new["per_step"] != st["per_step"] or new["reveal"] != st["reveal"]):
             self._rp_replan()
+        self._rp_update_real()
+
+    def _rp_update_real(self):
+        """Show how long taking the screenshots really took and how much faster the timelapse is, e.g. "= 1 h 20 min
+        at x240" (user: the length is the timelapse's real length, the speed-up in brackets)."""
+        rp = getattr(self, "rp", None)
+        if rp is None:
+            return
+        real = R.real_span(rp["plan"].times)
+        if real <= 0:
+            self._rp_real.set("")
+            return
+        h, m = divmod(int(real // 60), 60)
+        took = f"{h} h {m} min" if h else (f"{m} min" if m else f"{int(real)} s")
+        self._rp_real.set(f"(= {took}, x{real / max(1.0, self._rp_settings()['length']):.0f})")
 
     # ------------------------------------------------------------------ plan
     def _rp_replan(self):
@@ -242,15 +281,19 @@ class ReplayMixin:
         old = rp.get("plan")
         share = rp["pos"] / old.n_steps if old is not None and old.n_steps else 1.0
         frames = self.atlas.frames
-        plan = R.make_plan(frames, self.footprints, st["type"], st["per_step"])
+        plan = R.make_plan(frames, self.footprints, st["type"], st["per_step"], st["reveal"], self.bounds())
         late = plan.n_steps  # not found: shown with everything at the end
 
         def steps(items, pts):
-            """Steps of map nodes / icons: by their screenshots, else by the areas holding them."""
+            """Steps of map nodes / icons: where the sweep reaches them (by area), else by their screenshots, else by
+            the areas holding them."""
+            pts = np.asarray(pts, float).reshape(-1, 2)
+            if plan.sweep is not None:
+                return plan.steps_at(pts)
             s = R.item_steps([it.get("frames", []) for it in items], frames, plan.step_of, default=-1)
             miss = np.nonzero(s < 0)[0]
             if len(miss):
-                s[miss] = R.point_steps(np.asarray(pts, float)[miss], self.footprints, plan.step_of, default=late)
+                s[miss] = R.point_steps(pts[miss], self.footprints, plan.step_of, default=late)
             return s
 
         V = self.V
@@ -258,9 +301,14 @@ class ReplayMixin:
         rp["node_step"] = steps(V["nodes"], self.node_pts) if V["nodes"] else np.zeros(0, int)
         rp["icon_step"] = steps(V["icons"], [[i["x"], i["y"]] for i in V["icons"]]) if V["icons"] else np.zeros(0, int)
         lm_pts = np.array([[lm["x"], lm["y"]] for lm in V["landmarks"]], float).reshape(-1, 2)
-        rp["lm_step"] = R.point_steps(lm_pts, self.footprints, plan.step_of, default=late)
+        if plan.sweep is not None:
+            rp["lm_step"] = plan.steps_at(lm_pts)
+        else:
+            rp["lm_step"] = R.point_steps(lm_pts, self.footprints, plan.step_of, default=late)
+        self._rp_reveal_cb.configure(state="disabled" if st["type"] == "by time" else "readonly")
         rp["polys"] = np.array([np.asarray(p, float) for p, _bb in self.footprints]).reshape(-1, 4, 2)
         rp["pos"] = share * plan.n_steps
+        self._rp_update_real()
         self._rp_draw_line()
         self._rp_update_ui()
         self.request_redraw()
@@ -297,7 +345,7 @@ class ReplayMixin:
             self._rp_tick()
 
     def _rp_rate(self) -> float:
-        """Steps per second: the whole replay takes `length` seconds at 1x (user: set the length, get the speed).
+        """Steps per second of the preview: the timelapse is `length` seconds long; the preview speed scales it.
 
         Returns:
             Steps per second.
@@ -311,11 +359,12 @@ class ReplayMixin:
         if rp is None or not rp["playing"] or rp["exporting"]:
             return
         now = time.perf_counter()
-        rp["pos"] = min(float(rp["plan"].n_steps), rp["pos"] + (now - rp["last"]) * self._rp_rate())
+        dt = now - rp["last"]
+        rp["pos"] = min(float(rp["plan"].n_steps), rp["pos"] + dt * self._rp_rate())
         rp["last"] = now
         if rp["pos"] >= rp["plan"].n_steps:
             rp["playing"] = False
-        self._rp_camera(REPLAY_CAMERA_EASE)
+        self._rp_camera(self._rp_ease(dt))
         self._rp_update_ui()
         self._redraw()
         if rp["playing"]:
@@ -346,9 +395,24 @@ class ReplayMixin:
             return
         rp["playing"] = False
         pos = rp["pos"]
+        if rp["plan"].sweep is not None:  # by area: steps are tiny; a 40th of the sweep per click
+            self._rp_seek(pos + d * rp["plan"].n_steps / 40)
+            return
         self._rp_seek(math.ceil(pos - 1e-9) - 1 if d < 0 else math.floor(pos + 1e-9) + 1)
 
     # ------------------------------------------------------------------ camera
+    def _rp_ease(self, dt: float) -> float:
+        """Share of the way the camera moves in dt seconds with the smoothing setting (the same at any frame rate).
+
+        Args:
+            dt: Seconds since the last frame.
+
+        Returns:
+            0..1 (1 with smoothing off: the camera is always where it should be).
+        """
+        tau = REPLAY_SMOOTHING.get(self._rp_settings()["smoothing"], 0.12)
+        return 1.0 if tau <= 0 else 1.0 - math.exp(-dt / tau)
+
     def _rp_box(self, which: str):
         """Atlas box around the revealed screenshots ("revealed") or those of the step coming in ("newest").
 
@@ -359,12 +423,18 @@ class ReplayMixin:
             (x0, y0, x1, y1), or None when there are none.
         """
         rp = self.rp
-        s = rp["plan"].step_of
-        cur = max(0, math.ceil(rp["pos"] - 1e-9) - 1)
-        sel = s < max(rp["pos"], 1e-9) if which == "revealed" else s == cur
+        plan = rp["plan"]
+        s = plan.step_of
+        pos = max(rp["pos"], 1e-9)
+        if which == "revealed":
+            sel = s < pos
+        elif plan.sweep is not None:  # by area: the screenshots the sweep reached lately
+            sel = (s < pos) & (s >= pos - 0.05 * plan.n_steps)
+        else:
+            sel = s == max(0, math.ceil(pos - 1e-9) - 1)
         P = rp["polys"][sel] if len(rp["polys"]) else rp["polys"]
-        if not len(P):
-            P = rp["polys"][s == 0]
+        if not len(P):  # nothing yet: the first ones
+            P = rp["polys"][s <= s.min()] if len(s) else P
         if not len(P):
             return None
         return (*P.reshape(-1, 2).min(axis=0), *P.reshape(-1, 2).max(axis=0))
@@ -496,8 +566,17 @@ class ReplayMixin:
         P = rp["polys"]
         if not len(P):
             return img
-        s = rp["plan"].step_of
+        plan = rp["plan"]
+        s = plan.step_of
         pos = rp["pos"]
+        if plan.sweep is not None:  # by area: the sweep's grid on the screen, revealed where it has passed
+            g, (x0, y0, c), top = plan.sweep.grid, plan.sweep.origin, plan.sweep.top
+            A = self._grid_to_screen((x0, y0, c), w, h)
+            key = cv2.warpAffine(g, A, (w, h), flags=cv2.INTER_LINEAR, borderValue=float(top) * 2)
+            u = pos / plan.n_steps * top
+            soft = REPLAY_AREA_SOFT * top
+            m = np.clip((u - key) / soft, 0.0, 1.0)[..., None]
+            return (img * m).astype(np.uint8)
         full = math.floor(pos)
         q = ((P - [self.cx, self.cy]) * self.z + [w / 2, h / 2]).astype(np.int32)
         mask = np.zeros((h, w), np.uint8)
@@ -526,27 +605,53 @@ class ReplayMixin:
         plan = rp["plan"]
         P = rp["polys"]
         cur = math.ceil(rp["pos"] - 1e-9) - 1
-        if len(P) and cur >= 0 and rp["pos"] < plan.n_steps:
+        if len(P) and cur >= 0 and rp["pos"] < plan.n_steps and plan.sweep is None:
             q = ((P[plan.step_of == cur] - [self.cx, self.cy]) * self.z + [w / 2, h / 2]).astype(np.int32)
             cv2.polylines(img, list(q), True, (255, 255, 255), 1, cv2.LINE_AA)
         shots, maps, t = self._rp_counts()
-        sess = next((plan.session_of[i] for i in plan.order if plan.step_of[i] == cur), 0)
+        sess = next((plan.session_of[i] for i in plan.order if int(plan.step_of[i]) == cur), 0)
         col = REPLAY_SESSION_COLS[sess % len(REPLAY_SESSION_COLS)]
         cv2.rectangle(img, (8, 8), (360, 58), (16, 16, 18), -1)
         cv2.circle(img, (22, 24), 6, col, -1, cv2.LINE_AA)
         put_text(img, R.session_label(t) if t is not None else "", (36, 30), (235, 235, 235), 0.55)
         put_text(img, f"screenshots {shots} / {len(plan.order)}   maps {maps}", (16, 50), (200, 200, 200), 0.48)
 
-    def _draw_age_tint(self, img, w, h, mode: str):
-        """Tint each screenshot's area by when it was taken (user / issue #16): by session, or oldest to newest.
+    def _grid_to_screen(self, origin, w: int, h: int) -> np.ndarray:
+        """The affine transform from a grid over the atlas to the screen (for cv2.warpAffine).
 
-        Newer screenshots are drawn over older ones.
+        Args:
+            origin: (x0, y0, cell size) of the grid: cell (i, j) is atlas (x0 + j * size, y0 + i * size).
+            w: Screen width.
+            h: Screen height.
+
+        Returns:
+            2x3 float array.
+        """
+        x0, y0, c = origin
+        z = self.z
+        return np.array([[c * z, 0, (x0 - self.cx) * z + w / 2], [0, c * z, (y0 - self.cy) * z + h / 2]])
+
+    def _spread(self) -> np.ndarray:
+        """The chosen colour spread (View tab) as 256 BGR colours.
+
+        Returns:
+            uint8 array (256, 3).
+        """
+        cmap = COLOUR_SPREADS.get(self.style().get("colour_spread"), cv2.COLORMAP_PLASMA)
+        return cv2.applyColorMap(np.arange(256, dtype=np.uint8).reshape(-1, 1), cmap)[:, 0]
+
+    def _draw_age_tint(self, img, w, h, mode: str):
+        """Colour the map (View tab "Colour by"; issue #16): each screenshot's area by session or oldest to newest,
+        or every spot by how many screenshots saw it ("times seen", a heatmap; user).
+
+        Newer screenshots are drawn over older ones. While replaying only the revealed screenshots count, so the
+        heatmap grows with the replay.
 
         Args:
             img: The map image after the terrain (BGR).
             w: Image width.
             h: Image height.
-            mode: "by session" or "oldest to newest".
+            mode: "by session", "oldest to newest" or "times seen".
 
         Returns:
             The tinted image.
@@ -554,20 +659,160 @@ class ReplayMixin:
         info = self._age_info()
         if info is None:
             return img
+        out = self._draw_heat(img, w, h) if mode == "times seen" else self._draw_age(img, w, h, mode, info)
+        no_ground = (cv2.cvtColor(img, cv2.COLOR_BGR2GRAY) == 0).astype(np.uint8)  # a screenshot's cut-away corners
+        cv2.copyTo(img, no_ground, out)  # only ground is coloured
+        return out
+
+    def _draw_age(self, img, w, h, mode: str, info):
+        """Each screenshot's area by session or oldest to newest (see _draw_age_tint).
+
+        Args:
+            img: The map image after the terrain (BGR).
+            w: Image width.
+            h: Image height.
+            mode: "by session" or "oldest to newest".
+            info: _age_info().
+
+        Returns:
+            The tinted image.
+        """
         order, sess, rank = info
         P = np.array([np.asarray(p, float) for p, _bb in self.footprints]).reshape(-1, 4, 2)
         if not len(P):
             return img
+        shown = self._revealed_frames()
         q = ((P - [self.cx, self.cy]) * self.z + [w / 2, h / 2]).astype(np.int32)
         layer = img.copy()
-        ramp = cv2.applyColorMap(np.arange(256, dtype=np.uint8).reshape(-1, 1), cv2.COLORMAP_PLASMA)[:, 0]
+        ramp = self._spread()
         for i in order:  # oldest first: newer screenshots on top
+            if not shown[i]:
+                continue
             if mode == "by session":
                 col = REPLAY_SESSION_COLS[sess[i] % len(REPLAY_SESSION_COLS)]
             else:
                 col = tuple(int(v) for v in ramp[int(rank[i] * 255)])
-            cv2.fillPoly(layer, [q[i]], col)
+            cv2.fillConvexPoly(layer, q[i], col)
         return cv2.addWeighted(layer, REPLAY_TINT_ALPHA, img, 1 - REPLAY_TINT_ALPHA, 0)
+
+    def _revealed_frames(self) -> np.ndarray:
+        """Which screenshots count for "Colour by": all of them, or while replaying those revealed so far.
+
+        Returns:
+            bool array, one per screenshot.
+        """
+        n = len(self.atlas.frames)
+        rp = getattr(self, "rp", None)
+        if rp is None or len(rp["plan"].step_of) != n:
+            return np.ones(n, bool)
+        return np.asarray(rp["plan"].step_of) < rp["pos"]
+
+    def _heat_grid(self, shown: np.ndarray):
+        """How many of the shown screenshots saw each cell of a grid over the atlas.
+
+        Kept between frames; when more screenshots are shown than last time (a replay playing forward) only the new
+        ones are added.
+
+        Args:
+            shown: bool per screenshot (which count).
+
+        Returns:
+            (counts uint16 (h, w), (x0, y0, cell size)).
+        """
+        key = (id(self.atlas.frames), len(self.atlas.frames), self.bounds())
+        c = getattr(self, "_heat_cache", None)
+        if c is not None and c[0] == key and np.array_equal(c[1], shown):
+            return c[2], c[3]
+        if c is not None and c[0] == key and not (c[1] & ~shown).any():  # only more: add the new ones
+            count, origin = c[2], c[3]
+            add = shown & ~c[1]
+        else:
+            x0, y0, x1, y1 = self.bounds()
+            cell = max(x1 - x0, y1 - y0, 1.0) / HEAT_RES
+            origin = (x0, y0, cell)
+            count = np.zeros((int((y1 - y0) / cell) + 2, int((x1 - x0) / cell) + 2), np.uint16)
+            add = shown
+        x0, y0, cell = origin
+        H, W = count.shape
+        for i in np.nonzero(add)[0]:
+            q = ((np.asarray(self.footprints[i][0], float) - [x0, y0]) / cell).astype(np.int32)
+            a, b = np.maximum(q.min(axis=0), 0), np.minimum(q.max(axis=0) + 1, [W, H])
+            if (b <= a).any():
+                continue
+            sub = np.zeros((b[1] - a[1], b[0] - a[0]), np.uint8)
+            cv2.fillConvexPoly(sub, q - a, 1)  # one area at a time (overlapping polygons in one call cancel)
+            count[a[1] : b[1], a[0] : b[0]] += sub
+        self._heat_cache = (key, shown.copy(), count, origin)
+        return count, origin
+
+    def heat_top(self) -> int:
+        """The most times any spot was seen, over all screenshots (fixed, so replay colours don't shift).
+
+        Returns:
+            The count (at least 1).
+        """
+        count, _o = self._heat_grid(np.ones(len(self.atlas.frames), bool))
+        return max(1, int(count.max()) if count.size else 1)
+
+    def _draw_heat(self, img, w, h):
+        """Times seen: every spot coloured by how many screenshots saw it (the colour spread from 1 to the most).
+
+        Args:
+            img: The map image after the terrain (BGR).
+            w: Image width.
+            h: Image height.
+
+        Returns:
+            The tinted image.
+        """
+        top = self.__dict__.get("_heat_top_cache")
+        if top is None or top[0] != (id(self.atlas.frames), len(self.atlas.frames)):
+            top = self._heat_top_cache = ((id(self.atlas.frames), len(self.atlas.frames)), self.heat_top())
+        count, origin = self._heat_grid(self._revealed_frames())
+        spread = self.style().get("colour_spread")
+        key = (id(count), int(count.sum()), top[1], spread)
+        c = getattr(self, "_heat_col", None)
+        if c is None or c[0] != key:  # the grid coloured once, then only warped each frame (colouring every
+            # screen pixel each frame cost ~70 ms)
+            idx = np.clip((count.astype(np.float32) - 1) / max(1, top[1] - 1) * 255, 0, 255).astype(np.uint8)
+            col = self._spread()[idx]
+            seen = ((count > 0) * 255).astype(np.uint8)
+            c = self._heat_col = (key, col, seen)
+        A = self._grid_to_screen(origin, w, h)
+        col = cv2.warpAffine(c[1], A, (w, h), flags=cv2.INTER_NEAREST, borderValue=0)
+        seen = cv2.warpAffine(c[2], A, (w, h), flags=cv2.INTER_NEAREST, borderValue=0)
+        a = min(0.6, REPLAY_TINT_ALPHA + 0.15)
+        out = cv2.addWeighted(col, a, img, 1 - a, 0)
+        cv2.copyTo(img, cv2.bitwise_not(seen), out)  # not seen: the map as it was
+        return out
+
+    def draw_colour_band(self, img):
+        """The colour band for "Colour by" oldest to newest / times seen, with what its ends mean (bottom left, above
+        the legend; user: the colouring looked arbitrary without one).
+
+        Args:
+            img: The finished map image (BGR, changed in place).
+        """
+        mode = self.style().get("age_tint", "off")
+        if mode not in ("oldest to newest", "times seen") or not self.atlas or not self.atlas.frames:
+            return
+        if mode == "times seen":
+            lo, hi, title = "seen 1x", f"{self.__dict__.get('_heat_top_cache', (0, 1))[1]}x", "times seen"
+        else:
+            cache = getattr(self, "_age_cache", None)
+            times = sorted(t for t in cache[1][3] if t is not None) if cache else []
+            lo = R.session_label(times[0]) if times else "oldest"
+            hi = R.session_label(times[-1]) if times else "newest"
+            title = "when taken"
+        h = img.shape[0]
+        # bottom left above the legend; while replaying (no legend, the panel covers the bottom) under the info box
+        x0, y0, bw = 10, (92 if self.replay_active() else h - 72), 220
+        cv2.rectangle(img, (4, y0 - 20), (x0 + bw + 6, y0 + 30), (20, 20, 20), -1)
+        put_text(img, title, (x0, y0 - 5), (215, 215, 215), 0.42)
+        band = cv2.resize(self._spread().reshape(1, 256, 3), (bw, 10), interpolation=cv2.INTER_LINEAR)
+        img[y0 : y0 + 10, x0 : x0 + bw] = band
+        put_text(img, lo, (x0, y0 + 25), (215, 215, 215), 0.4)
+        put_text(img, hi, (x0 + bw - 8 * len(hi), y0 + 25), (215, 215, 215), 0.4)
 
     def _age_info(self):
         """Time order, session and age rank (0 oldest .. 1 newest) of every screenshot; kept until the atlas changes.
@@ -612,7 +857,8 @@ class ReplayMixin:
     def _rp_export_gif(self):
         """Save the replay as an animated GIF (asks where), rendering it frame by frame without blocking the window.
 
-        Uses the replay's length and speed, REPLAY_GIF_FPS frames a second (at most REPLAY_GIF_MAX_FRAMES), and the
+        Uses the replay's length (the preview speed doesn't apply), REPLAY_GIF_FPS frames a second (at most
+        REPLAY_GIF_MAX_FRAMES), the camera smoothing at the GIF's frame rate, and the
         map view's shape at the GIF width setting. The last frame stays up for 2 s.
         """
         rp = getattr(self, "rp", None)
@@ -632,7 +878,8 @@ class ReplayMixin:
         cw, ch = self.canvas_size()
         W = int(st["gif_width"])
         H = max(2, int(round(W * ch / max(1, cw) / 2)) * 2)
-        n = int(min(REPLAY_GIF_MAX_FRAMES, max(2, round(st["length"] / st["speed"] * REPLAY_GIF_FPS))))
+        n = int(min(REPLAY_GIF_MAX_FRAMES, max(2, round(st["length"] * REPLAY_GIF_FPS))))
+        ease = self._rp_ease(st["length"] / n)
         saved = (self.cx, self.cy, self.z, rp["pos"], rp["playing"])
         rp.update(exporting=True, playing=False)
         frames: list = []
@@ -642,7 +889,7 @@ class ReplayMixin:
             """Render a few frames, then let the window breathe."""
             for k in range(start, min(n, start + 4)):
                 rp["pos"] = rp["plan"].n_steps * k / (n - 1)
-                self._rp_camera(1.0 if k == 0 else REPLAY_CAMERA_EASE, (W, H))
+                self._rp_camera(1.0 if k == 0 else ease, (W, H))
                 self._frame_size = (W, H)
                 try:
                     img = self.render(W, H)

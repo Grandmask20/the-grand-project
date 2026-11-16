@@ -402,6 +402,7 @@ class DrawingMixin:
             if not self.rp["exporting"]:
                 self._draw_progress(img, w, h)
             self._rp_overlay(img, w, h)
+            self.draw_colour_band(img)
             self._fl_mark("rest")
             return img
         if L["Bookmarks"]:
@@ -449,6 +450,7 @@ class DrawingMixin:
             p = self.to_screen([self.item_pos(self.sel)])[0]
             cv2.circle(img, (int(p[0]), int(p[1])), int(max(r, 10) + 10), SELECT_COL, 2, cv2.LINE_AA)
         self._legend(img, L)
+        self.draw_colour_band(img)
         self._fl_mark("rest")
         return img
 
