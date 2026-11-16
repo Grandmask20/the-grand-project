@@ -34,6 +34,7 @@ from .framelog import FrameLogMixin
 from .helpers import LOG
 from .navigation import NavigationMixin
 from .panels import PanelsMixin
+from .replay_panel import ReplayMixin
 from .selection import SelectionMixin
 from .settings import load_settings
 from .terrain import TerrainMixin
@@ -67,6 +68,7 @@ class Viewer(
     DrawingMixin,
     AtlasesTabMixin,
     FrameLogMixin,
+    ReplayMixin,
 ):
     """The atlas viewer window: the map canvas, the side panel tabs and the background worker.
 
@@ -237,6 +239,7 @@ class Viewer(
         self.canvas.grid(row=1, column=0, sticky="nsew")
         self.img_item = self.canvas.create_image(0, 0, anchor="nw")
         self.photo = None
+        self.rp = None  # the replay while its panel is open (replay_panel.py)
 
         side = ttk.Frame(r, width=360, style="Side.TFrame", padding=(6, 4))
         side.grid(row=1, column=1, sticky="ns")
@@ -505,6 +508,8 @@ class Viewer(
             foreground="black",
         )
         self.log_box.pack(fill="both", expand=True)
+
+        self._build_replay_panel()  # the "Timelapse" tab at the bottom of the map (made last: drawn over the map)
 
         c = self.canvas
         c.bind("<Configure>", self.on_configure)

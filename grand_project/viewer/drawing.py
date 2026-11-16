@@ -202,6 +202,12 @@ class DrawingMixin:
                 # dim the ground under the lines; a smooth slope (a step at the overview switch
                 # made the map jump ~20% darker between zoom 0.50 and 0.42)
                 img = cv2.convertScaleAbs(img, alpha=float(np.clip(0.72 + 0.16 * (z - 0.2), 0.72, 0.8)))
+        rp = self.replay_active()
+        if rp and L["Terrain"] and self.pyr:  # replaying: the ground of the revealed screenshots only
+            img = self._rp_mask_ground(img, w, h)
+        ST = self.style()
+        if ST["age_tint"] != "off" and self.atlas.frames:  # colour by when the screenshots were taken (issue #16)
+            img = self._draw_age_tint(img, w, h, ST["age_tint"])
         N = self.V["nodes"]
         sp = self.to_screen(self.node_pts) if len(self.node_pts) else np.zeros((0, 2))
         vis = ((sp[:, 0] > -80) & (sp[:, 0] < w + 80) & (sp[:, 1] > -80) & (sp[:, 1] < h + 80)) if len(sp) else []
@@ -214,6 +220,7 @@ class DrawingMixin:
             for i, (lab, _st) in self.potential.items():
                 if (
                     not vis[i]
+                    or not self._rp_shown("node", i)
                     or self.potential_kind(lab) in self.icon_hidden
                     or (self.near_only() and "city" not in lab.lower())
                 ):
@@ -229,13 +236,13 @@ class DrawingMixin:
             for pt, col in rings:
                 cv2.circle(img, pt, rad, col, 1 if overview else 2, cv2.LINE_AA)
         self._fl_mark("biomes")
-        ST = self.style()
         c_multi = hex_bgr(ST["path_col"], PATH_MULTI)
         c_single = hex_bgr(ST["path_col1"], PATH_SINGLE)
         c_map = hex_bgr(ST["map_col"], None)
         pth = int(ST["path_width"]) or th
-        if L["Paths"] and overview and len(sp):
-            # zoomed out: one batched draw call per colour (14k paths on a large atlas), masks cached
+        if L["Paths"] and (overview or rp) and len(sp):
+            # zoomed out: one batched draw call per colour (14k paths on a large atlas), masks cached; replaying too
+            # (the masks follow the replay; the traced lines would be cut again at every step)
             _k, nm, pm, A, B, strong, abyss, _c = self.shown_masks()
             keep = pm & (vis[A] | vis[B]) if len(A) else pm
             for col, sel in (
@@ -317,7 +324,7 @@ class DrawingMixin:
         self._fl_mark("nodes")
         if L["Icons"] and len(self.icon_pts) and far:
             ip = self.to_screen(self.icon_pts)
-            ck = (frozenset(self.icon_hidden), id(self.V["icons"]), self.near_only())
+            ck = (frozenset(self.icon_hidden), id(self.V["icons"]), self.near_only(), self._rp_key())
             if getattr(self, "_icon_far", (None,))[0] != ck:
                 show = np.array(
                     [self.icon_visible(ic) and ic["name"] != "Unidentified" for ic in self.V["icons"]], bool
@@ -391,6 +398,12 @@ class DrawingMixin:
                 if L["Labels"] and z >= 0.3:
                     put_text(img, self.lm_name(i), (x - int(hw), y - int(top) - 6), col, 0.45 if z < 1 else 0.55)
         self._fl_mark("landmarks")
+        if rp:  # replaying: just the atlas (no bookmarks, Find rings, selection or legend), plus when and how many
+            if not self.rp["exporting"]:
+                self._draw_progress(img, w, h)
+            self._rp_overlay(img, w, h)
+            self._fl_mark("rest")
+            return img
         if L["Bookmarks"]:
             hit_bm = {i for k, i in self.hits if k == "bookmark"}
             for i, b in enumerate(self.atlas.bookmarks):
@@ -458,6 +471,8 @@ class DrawingMixin:
         ]
         if L.get("City & stronghold biomes") and getattr(self, "potential", None):
             items += [(f"near {k}", CITY_COL[k]) for k in CITY_COL]
+        if self.style()["age_tint"] == "by session":  # colour by when taken: when each session started
+            items += self.age_legend()
         x = 10
         width = 24 + sum(22 + len(t) * 8 for t, _ in items)
         cv2.rectangle(img, (4, h - 26), (min(img.shape[1] - 4, width), h - 4), (20, 20, 20), -1)

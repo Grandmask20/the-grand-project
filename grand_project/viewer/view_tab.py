@@ -254,6 +254,18 @@ class ViewTabMixin:
         cb2.bind("<<ComboboxSelected>>", lambda e: changed(map_style=self._st_mstyle.get()))
         ttk.Label(row, text="style").pack(side="left", padx=4)
 
+        # --- screenshots by when they were taken (issue #16; the replay's timeline uses the same session colours)
+        ttk.Separator(vw).pack(fill="x", pady=(10, 4))
+        row = ttk.Frame(vw)
+        row.pack(fill="x", pady=2)
+        ttk.Label(row, text="Colour screenshots by when taken").pack(side="left")
+        self._st_age = tk.StringVar(value=st["age_tint"])
+        cb3 = ttk.Combobox(
+            row, textvariable=self._st_age, values=("off", "by session", "oldest to newest"), width=15, state="readonly"
+        )
+        cb3.pack(side="left", padx=6)
+        cb3.bind("<<ComboboxSelected>>", lambda e: changed(age_tint=self._st_age.get()))
+
         # --- pictures
         ttk.Separator(vw).pack(fill="x", pady=(10, 4))
         ttk.Label(vw, text="Pictures on the map (zoomed in)", font=("TkDefaultFont", 10, "bold")).pack(anchor="w")
@@ -273,6 +285,7 @@ class ViewTabMixin:
             self._st_width.set(d["path_width"])
             self._st_size.set(d["map_size"])
             self._st_mstyle.set(d["map_style"])
+            self._st_age.set(d["age_tint"])
             self._st_freq.set(d["path_freq"] * 100)
             for k, v in self._st_ov.items():
                 v.set(d[k])

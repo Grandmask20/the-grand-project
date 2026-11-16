@@ -239,6 +239,10 @@ class PanelsMixin:
         """
         if icon_label(ic) in self.icon_hidden:
             return False
+        if self.replay_active():  # replaying: not revealed yet
+            i = getattr(self, "_icon_index", {}).get(id(ic))
+            if i is not None and not self._rp_shown("icon", i):
+                return False
         if self.near_only():
             i = getattr(self, "_icon_index", {}).get(id(ic))
             return i is not None and self.icon_near_city(i)

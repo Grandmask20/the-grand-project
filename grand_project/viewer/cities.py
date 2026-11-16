@@ -309,6 +309,8 @@ class CitiesMixin:
         self.refresh_bookmarks()
         self.run_search()
         self.show_info()
+        if self.replay_active():  # screenshots added while the replay panel is open
+            self._rp_replan()
 
     # ------------------------------------------------------------------ locked strongholds
     def add_locks(self):

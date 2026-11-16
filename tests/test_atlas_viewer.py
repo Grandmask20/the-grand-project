@@ -861,6 +861,55 @@ def test_weak_match_preview(viewer, check, monkeypatch):
     )
 
 
+def test_replay_panel(viewer, check, monkeypatch, tmp_path):
+    """Timelapse: the panel opens at the end, reveals step by step, plays, exports a GIF and puts the view back."""
+    from tkinter import filedialog
+
+    from PIL import Image
+
+    app = viewer.app
+    pump = viewer.pump
+    if len(app.atlas.frames) < 3:
+        pytest.skip("needs an atlas of 3+ screenshots")
+    view = (app.cx, app.cy, app.z)
+    app.open_replay()
+    pump(0.3)
+    plan = app.rp["plan"]
+    check("replay: one step per screenshot", plan.n_steps == len(app.atlas.frames), str(plan.n_steps))
+    check("replay: opens at the end (whole atlas)", app.rp["pos"] == plan.n_steps, str(app.rp["pos"]))
+    all_maps = int(app.shown_masks()[1].sum())
+    app._rp_seek(1.0)
+    first = int(app.shown_masks()[1].sum())
+    app._rp_seek(plan.n_steps / 2)
+    half = int(app.shown_masks()[1].sum())
+    check("replay: map nodes appear as their screenshots do", 0 < first < half < all_maps, f"{first} {half} {all_maps}")
+    app._rp_seek(0.0)
+    check("replay: nothing before the first step", int(app.shown_masks()[1].sum()) == 0)
+    img = app.render(*app.canvas_size())
+    check("replay: the ground is hidden before the first step", img.mean() < 25, f"mean {img.mean():.1f}")
+    app._rp_set(length=3.0, speed=1.0)
+    app._rp_toggle_play()
+    pump(1.2)
+    check("replay: plays", 0 < app.rp["pos"] < plan.n_steps, f"{app.rp['pos']:.2f}")
+    app._rp_toggle_play()
+    out = tmp_path / "replay.gif"
+    monkeypatch.setattr(filedialog, "asksaveasfilename", lambda **k: str(out))
+    app._rp_set(length=1.0, gif_width=320)
+    app._rp_export_gif()
+    end = time.time() + 60
+    while time.time() < end and (app.rp["exporting"] or not out.exists() or "saved" not in app.status.get()):
+        pump(0.3)
+    gif = Image.open(out) if out.exists() else None
+    check("replay: GIF exported", gif is not None and gif.size[0] == 320 and gif.n_frames >= 10, app.status.get())
+    app.close_replay()
+    pump(0.2)
+    check("replay: closing puts the view back", (app.cx, app.cy, app.z) == view and app.rp is None)
+    app.set_style(age_tint="by session")
+    img = app.render(*app.canvas_size())
+    check("colour by when taken: drawn with a legend", app.age_legend() and img is not None, str(app.age_legend()))
+    app.set_style(age_tint="off")
+
+
 def test_saved_atlases_tab(viewer, check):
     """Saved atlases: cards, rename, stop tracking, delete (also the open atlas)."""
     app = viewer.app

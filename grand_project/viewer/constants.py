@@ -101,6 +101,7 @@ STYLE_DEFAULT = {
     "path_freq": 0.0,
     "ov_badges": False,
     "ov_towers": False,
+    "age_tint": "off",  # colour screenshots by when they were taken: "off", "by session", "oldest to newest"
 }  # View tab
 
 
@@ -294,3 +295,37 @@ EDIT_SAME = 90.0  # atlas units: a hand edit applies to the landmark this close 
 
 # a little between re-checks)
 EDIT_SPOT = 15.0  # a new edit replaces an older one only at the same spot
+
+
+# --- replay / timelapse (viewer.replay, viewer.replay_panel) and colouring screenshots by when they were taken
+REPLAY_TYPES = ("by time", "by placement", "spiral", "distance")  # the order screenshots are revealed in
+REPLAY_CAMERAS = ("whole atlas", "grow with atlas", "follow newest")  # where the view goes while replaying
+REPLAY_DEFAULTS = {
+    "type": "by time",
+    "camera": "whole atlas",
+    "length": 20.0,  # s: the whole replay at 1x speed (sets the speed: user)
+    "speed": 1.0,
+    "per_step": 1,  # screenshots revealed per step
+    "gif_width": 800,  # px of an exported GIF (its height follows the map view's shape)
+}
+REPLAY_SPEEDS = (0.25, 0.5, 1.0, 2.0, 4.0, 8.0)
+REPLAY_TICK_MS = 40  # playback frame time (25 fps)
+REPLAY_SESSION_GAP = 30 * 60  # s between two screenshots that starts a new session (colours, timeline)
+REPLAY_BATCH_GAP = 60  # s between two screenshots that starts a new batch (a tick on the timeline)
+REPLAY_SPIRAL_PITCH = 900.0  # atlas units between turns of the spiral (about half a screenshot's width)
+REPLAY_FOLLOW_SPAN = 2.5  # "follow newest": the view is this many screenshot widths across
+REPLAY_CAMERA_EASE = 0.15  # each playback frame moves the view this share of the way to where it should be
+REPLAY_GIF_FPS = 15
+REPLAY_GIF_MAX_FRAMES = 450  # 30 s at 15 fps; a longer replay is sampled more sparsely
+REPLAY_TINT_ALPHA = 0.32  # how strongly "Colour by when taken" tints each screenshot's area
+# session colours (BGR), in order; more sessions than colours repeat them
+REPLAY_SESSION_COLS = (
+    (60, 200, 255),
+    (255, 160, 60),
+    (120, 230, 120),
+    (220, 110, 255),
+    (80, 110, 255),
+    (255, 230, 120),
+    (200, 200, 200),
+    (40, 160, 160),
+)
