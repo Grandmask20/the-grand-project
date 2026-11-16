@@ -15,6 +15,7 @@ from __future__ import annotations
 import contextlib
 import shutil
 import threading
+import time
 import tkinter as tk
 from pathlib import Path
 from tkinter import messagebox, ttk
@@ -26,7 +27,7 @@ from PIL import Image, ImageTk
 from grand_project import core
 from grand_project import fileio as atlas_io
 
-from .constants import ATLAS_THUMB, BTN_RIGHT
+from .constants import ATLAS_RETRY_S, ATLAS_THUMB, BTN_RIGHT
 from .folders import same_file
 from .helpers import LOG
 from .settings import save_settings
@@ -115,7 +116,8 @@ class AtlasesTabMixin:
             side="right", padx=3
         )
         self._atl_photos: list = []  # Tk images must be kept referenced
-        self._atl_reading: set[str] = set()
+        self._atl_reading: set[str] = set()  # atlases being read in the background now
+        self._atl_tried: dict[str, float] = {}  # atlas -> when its last background read ended
         self._atl_selected: str | None = None
 
     def refresh_atlas_cards(self):
@@ -137,7 +139,10 @@ class AtlasesTabMixin:
         self._atl_open = open_json
         for a in atlases:
             self._atlas_card(a)
-            if (a.get("numbers") is None or not thumb_file(a["json"]).exists()) and a["json"] not in self._atl_reading:
+            want = a.get("numbers") is None or not thumb_file(a["json"]).exists()
+            last = self._atl_tried.get(a["json"])  # a failed read (or no map image yet) is tried again later
+            due = last is None or time.monotonic() - last > ATLAS_RETRY_S
+            if want and due and a["json"] not in self._atl_reading:
                 self._read_atlas_in_background(a["json"])
 
     def _atlas_card(self, a: dict):
@@ -291,6 +296,9 @@ class AtlasesTabMixin:
             val: (json_path, numbers) as sent by _read_atlas_in_background; numbers is None when the read failed.
         """
         json_path, numbers = val
+        # done (was never cleared, so a failed read stayed at "reading…" for the session: GPT audit)
+        self._atl_reading.discard(json_path)
+        self._atl_tried[json_path] = time.monotonic()
         for a in self.known_atlases():
             if a["json"] == json_path and numbers is not None:
                 a["numbers"] = numbers

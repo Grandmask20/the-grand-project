@@ -294,9 +294,6 @@ class Viewer(
             "<Configure>", lambda _e: self.icon_canvas.configure(scrollregion=self.icon_canvas.bbox("all"))
         )
         self.icon_canvas.configure(yscrollincrement=12)
-        self.icon_canvas.bind("<MouseWheel>", self._scroll_icons)
-        self.icon_canvas.bind("<Button-4>", self._scroll_icons)
-        self.icon_canvas.bind("<Button-5>", self._scroll_icons)
         for seq in ("<MouseWheel>", "<Button-4>", "<Button-5>"):  # any list under the pointer scrolls (panels.py)
             self.root.bind_all(seq, self._wheel_router, add="+")
         self.icon_vars: dict[str, tk.BooleanVar] = {}

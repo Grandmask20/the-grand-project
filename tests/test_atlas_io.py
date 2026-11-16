@@ -30,11 +30,44 @@ def test_atlas_save_roundtrip(tmp_path):
     assert isinstance(core.Atlas.load(p), core.Atlas)
 
 
+def _cache(folder, name, sha, models):
+    """Write a minimal cached detection for one screenshot (no maps) and return its atlas frame entry."""
+    d = {
+        "name": name,
+        "path": f"{name}.png",
+        "sha256": sha,
+        "width": 1920,
+        "height": 1080,
+        "nodes": [],
+        "edges": [],
+        "landmarks": [],
+        "icons": [],
+        "models": models,
+    }
+    (folder / f"{sha[:16]}_{builder.NEW_DETECTOR_ID}.json").write_text(json.dumps(d), encoding="utf-8")
+    return {"name": name, "sha": sha}
+
+
 def test_damaged_detection_cache_is_skipped(tmp_path):
     frames = tmp_path / "atlas_frames"
     frames.mkdir()
-    (frames / "cut.json").write_text("{", encoding="utf-8")
-    assert builder.cached_frames(tmp_path / "atlas.json") == {}
+    placed = {"name": "shot", "sha": "ab" * 32}
+    (frames / f"{'ab' * 8}_{builder.NEW_DETECTOR_ID}.json").write_text("{", encoding="utf-8")
+    assert builder.cached_frames(tmp_path / "atlas.json", [placed]) == {}
+
+
+def test_recheck_reads_only_the_placed_screenshots_caches(tmp_path):
+    """Re-check reads each placed screenshot's own cache, never every file in the folder (GPT audit)."""
+    frames = tmp_path / "atlas_frames"
+    frames.mkdir()
+    stamp = builder.detector_stamp()
+    placed = _cache(frames, "shot", "aa" * 32, stamp)
+    _cache(frames, "shot", "bb" * 32, "old-detector")  # same name: a screenshot no longer in the atlas
+    _cache(frames, "other", "cc" * 32, stamp)  # not placed
+    got = builder.cached_frames(tmp_path / "atlas.json", [placed])
+    assert list(got) == ["shot"] and got["shot"].sha == "aa" * 32
+    old = _cache(frames, "gone", "dd" * 32, "old-detector")  # only an old result (screenshot can't be re-detected)
+    assert "gone" in builder.cached_frames(tmp_path / "atlas.json", [placed, old])
 
 
 def test_unreadable_screenshot_gives_a_clear_error(tmp_path):

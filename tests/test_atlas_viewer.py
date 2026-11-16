@@ -859,6 +859,16 @@ def test_weak_match_preview(viewer, check, monkeypatch):
         and app._answer.get_nowait() is True,
         str(seen),
     )
+    # No: the view goes back to where it was before the preview centred on the screenshot
+    app.cx, app.cy, app.z = app.cx + 5000.0, app.cy + 5000.0, 0.05
+    before = (app.cx, app.cy, app.z)
+    monkeypatch.setattr(messagebox, "askyesno", lambda *a, **k: False)
+    app._handle("ask", ("Add it anyway?", (f0["path"], H0)))
+    check(
+        "weak match answered No: the view is put back",
+        (app.cx, app.cy, app.z) == before and app._answer.get_nowait() is False,
+        f"{before} -> {(app.cx, app.cy, app.z)}",
+    )
 
 
 def test_saved_atlases_tab(viewer, check):

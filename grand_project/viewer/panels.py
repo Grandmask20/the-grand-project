@@ -90,30 +90,7 @@ class PanelsMixin:
                 )
                 name.pack(side="left")
                 name.bind("<Button-1>", lambda _e, lb=lab: self.list_type(lb))
-                for wdg in row.winfo_children() + [row]:
-                    for seq in ("<MouseWheel>", "<Button-4>", "<Button-5>"):
-                        wdg.bind(seq, self._scroll_icons)
         self.icon_canvas.yview_moveto(0)
-
-    def _scroll_icons(self, e):
-        """Scroll the type list, never past its ends (that left smeared copies of the rows on Windows).
-
-        Bound to <MouseWheel>, <Button-4> and <Button-5> on every row of the list.
-
-        Args:
-            e: The Tk event (e.delta, or e.num 4 / 5 on Linux).
-
-        Returns:
-            "break", so Tk does not scroll anything else.
-        """
-        c = self.icon_canvas
-        first, last = c.yview()
-        step = -1 if (e.num == 4 or getattr(e, "delta", 0) > 0) else 1
-        if (step < 0 and first <= 0.0) or (step > 0 and last >= 1.0):
-            return "break"
-        c.yview_scroll(step * 3, "units")
-        c.update_idletasks()
-        return "break"
 
     def _wheel_router(self, e):
         """Scroll the list under the mouse pointer, wherever in it the pointer is.
@@ -134,16 +111,18 @@ class PanelsMixin:
         except (KeyError, tk.TclError):  # a menu or a closed window under the pointer
             return None
         while w is not None:
-            if w is getattr(self, "icon_canvas", None):
-                return self._scroll_icons(e)
-            if w is getattr(self, "atl_canvas", None):
-                return self._scroll_canvas(self.atl_canvas, e)
+            for c in (getattr(self, "icon_canvas", None), getattr(self, "atl_canvas", None)):
+                if c is not None and w is c:
+                    return self._scroll_canvas(c, e)
             w = w.master
         return None
 
     @staticmethod
     def _scroll_canvas(c, e):
-        """Scroll a canvas list by the wheel, never past its ends.
+        """Scroll a canvas list by the wheel, never past its ends (that left smeared copies of rows on Windows).
+
+        The one wheel handler for every list (the type list had its own copy that also repainted at once: user /
+        GPT audit). It repaints at once, so rows made of widgets don't smear while scrolling.
 
         Args:
             c: The tk.Canvas holding the list.
@@ -156,6 +135,7 @@ class PanelsMixin:
         step = -1 if (e.num == 4 or getattr(e, "delta", 0) > 0) else 1
         if not ((step < 0 and first <= 0.0) or (step > 0 and last >= 1.0)):
             c.yview_scroll(step * 3, "units")
+            c.update_idletasks()
         return "break"
 
     def list_type(self, label):

@@ -468,25 +468,37 @@ def recheck(atlas: core.Atlas, new_names: list, log=_log) -> None:
         atlas_finalize.finalize(atlas, log=log)
 
 
-def cached_frames(atlas_path: Path) -> dict:
-    """Read the cached detection of every screenshot of an atlas, by name.
+def cached_frames(atlas_path: Path, frames: list[dict]) -> dict:
+    """Read the cached detection of every screenshot placed in an atlas, by name.
 
-    A cut-off cache is skipped (re-detected when that screenshot is next added).
+    Each placed screenshot's own cache is read (found by the screenshot's hash, as it was saved), never every file
+    in the folder: a glob also picked up caches of screenshots no longer in the atlas, and with two caches of one
+    name the one read last won (GPT audit). A cache from another detector is used only when there is no fresh one
+    (its screenshot can't be detected again: moved or deleted), so its icons aren't lost; cut-off caches are skipped.
 
     Args:
         atlas_path: Path of the atlas .json.
+        frames: The atlas's placed screenshots (Atlas.frames: "name" and "sha").
 
     Returns:
         {screenshot name: Frame}.
     """
+    cache_dir = atlas_path.with_name(atlas_path.stem + "_frames")
     out = {}
-    for cf in atlas_path.with_name(atlas_path.stem + "_frames").glob("*.json"):
+    for f in frames:
+        sha = f.get("sha")
+        if not sha:  # placed before screenshots kept their hash: nothing to find its cache by
+            continue
+        cf = cache_dir / f"{sha[:16]}_{NEW_DETECTOR_ID}.json"
+        if not cf.exists():
+            continue
         data = atlas_io.read_json(cf)
         if data is None:  # cut-off cache: skipped (re-detected when that screenshot is next added)
             _log(f"skipping damaged detection cache {cf.name}")
             continue
-        fr = core.Frame.from_json(data)
-        out[fr.name] = fr
+        if data.get("models") != detector_stamp():
+            _log(f"{f['name']}: only an older detector's result (screenshot can't be re-detected); using it")
+        out[f["name"]] = core.Frame.from_json(data)
     return out
 
 
@@ -503,7 +515,7 @@ def cmd_finalize(args) -> int:
     """
     atlas_path = Path(args.atlas)
     atlas = core.Atlas.load(atlas_path)
-    atlas.rebuild_icons(cached_frames(atlas_path))  # picks up re-detected / taught badges
+    atlas.rebuild_icons(cached_frames(atlas_path, atlas.frames))  # picks up re-detected / taught badges
     atlas_finalize.finalize(atlas)
     atlas.save(atlas_path)
     export(atlas, atlas_path)
