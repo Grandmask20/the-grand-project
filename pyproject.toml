@@ -47,6 +47,17 @@ dev = [
 [tool.uv]
 default-groups = ["dev"]
 
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+# `pytest` alone runs the offline tests and the ones with test data (skipped without it); the window test and
+# the long ones are opt-in: pytest -m gui / pytest -m slow / pytest -m "" for everything
+addopts = '-ra -m "not gui and not slow"'
+markers = [
+    "data: needs the test screenshots (Git LFS or ATLAS_TEST_DATA); skipped without them",
+    "gui: opens a window (needs a desktop)",
+    "slow: takes several minutes",
+]
+
 [tool.ruff]
 target-version = "py311"
 

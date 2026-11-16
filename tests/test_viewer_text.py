@@ -1,7 +1,4 @@
-"""Text drawn on the map: the black outline sits exactly around the coloured text (no doubled black copy).
-
-python -m tests.test_viewer_text
-"""
+"""Text drawn on the map: the black outline sits exactly around the coloured text (no doubled black copy)."""
 
 import numpy as np
 
@@ -21,8 +18,3 @@ def test_outline_follows_the_text():
         black = img.max(axis=2) < 60
         xs_y, xs_b = np.nonzero(yellow.any(axis=0))[0], np.nonzero(black.any(axis=0))[0]
         assert xs_b.min() >= xs_y.min() - 3 and xs_b.max() <= xs_y.max() + 3, (text, xs_y.max(), xs_b.max())
-
-
-if __name__ == "__main__":
-    test_outline_follows_the_text()
-    print("PASS: text outline")

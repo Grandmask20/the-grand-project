@@ -29,7 +29,7 @@ git lfs pull --include="atlas_test_data/**"
 
 1. `make lint` (or `ruff check grand_project tools tests` and `ruff format grand_project tools tests`). CI fails on
    lint or formatting errors.
-2. `make test`, or at least the tests that touch what you changed (`python -m tests.test_x`). CI runs the offline
+2. `make test`, or at least the tests that touch what you changed (`pytest tests/test_x.py`). CI runs the offline
    tests on Windows, macOS and Linux.
 3. If you changed the detector, compare `make evaluate_detector` (`python -m grand_project.detect score`) before
    and after and put both in the pull request.

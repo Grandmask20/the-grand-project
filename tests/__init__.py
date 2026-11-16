@@ -1,1 +1,1 @@
-"""tests (run from the program folder: python -m tests.<name>)"""
+"""tests (run with pytest from the program folder: see tests/conftest.py)"""

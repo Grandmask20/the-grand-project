@@ -71,23 +71,30 @@ def ref(name: str) -> Path:
     return REFERENCES / name
 
 
-def need_test_data() -> None:
-    """Stop if the (not shipped) test screenshots are missing; for tests / tools that need them.
+def test_data_problem() -> str | None:
+    """Why the (not shipped) test screenshots can't be used.
 
-    Explains why (not found, or Git LFS placeholders not downloaded) and exits with code 0; under pytest the
-    file is skipped instead, so the whole run doesn't end.
+    Returns:
+        A sentence saying what is wrong (not found, or Git LFS placeholders not downloaded) and how to get
+        them, or None when they are there.
     """
     shot = next((TEST_DATA / "screenshots").rglob("*.png"), None) if (TEST_DATA / "screenshots").is_dir() else None
     pointer = shot is not None and shot.stat().st_size < 1024 and shot.read_bytes()[:20].startswith(b"version https")
     if shot is None or pointer:
-        why = (
+        return (
             f"test data {'not downloaded (Git LFS placeholders)' if pointer else 'not found'} at {TEST_DATA} "
             '(in the GitHub repo: git lfs pull --include="atlas_test_data/**"; or set ATLAS_TEST_DATA)'
         )
-        if "pytest" in sys.modules:  # under pytest: skip this file, don't end the whole run
-            import pytest
+    return None
 
-            pytest.skip(why, allow_module_level=True)
+
+def need_test_data() -> None:
+    """Stop if the (not shipped) test screenshots are missing; for tools that need them.
+
+    Prints why (test_data_problem) and exits with code 0. Tests use the `data` marker instead (tests/conftest.py).
+    """
+    why = test_data_problem()
+    if why:
         print("SKIP: " + why)
         sys.exit(0)
 
