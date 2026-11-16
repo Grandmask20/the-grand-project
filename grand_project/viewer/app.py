@@ -297,6 +297,8 @@ class Viewer(
         self.icon_canvas.bind("<MouseWheel>", self._scroll_icons)
         self.icon_canvas.bind("<Button-4>", self._scroll_icons)
         self.icon_canvas.bind("<Button-5>", self._scroll_icons)
+        for seq in ("<MouseWheel>", "<Button-4>", "<Button-5>"):  # any list under the pointer scrolls (panels.py)
+            self.root.bind_all(seq, self._wheel_router, add="+")
         self.icon_vars: dict[str, tk.BooleanVar] = {}
         self.icon_hidden: set[str] = set(self.settings.get("icons_hidden", []))
         self._thumb_photos: list = []

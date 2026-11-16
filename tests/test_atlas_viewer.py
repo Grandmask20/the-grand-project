@@ -822,6 +822,45 @@ def test_auto_add_waiting_and_hand_placement(viewer, check):
             )
 
 
+def test_icon_list_wheel(viewer, check):
+    """The wheel scrolls the icon list wherever the pointer is over it (not only on a row's text, user)."""
+    app = viewer.app
+    pump = viewer.pump
+    app.tabs.select(0)
+    pump(0.3)
+    ic = app.icon_canvas
+    if ic.yview()[1] >= 1.0:
+        pytest.skip("the icon list fits without scrolling")
+    ic.yview_moveto(0)
+    pump(0.2)
+    x = ic.winfo_rootx() + ic.winfo_width() - 8  # the right edge: blank space beside the rows
+    y = ic.winfo_rooty() + ic.winfo_height() // 2
+    app._wheel_router(SimpleNamespace(x_root=x, y_root=y, delta=-120, num=0))
+    pump(0.2)
+    check("wheel scrolls the icon list from the blank space beside rows", ic.yview()[0] > 0, str(ic.yview()))
+
+
+def test_weak_match_preview(viewer, check, monkeypatch):
+    """A weak match: while "Check this screenshot" asks, the screenshot is shown where it would go, then cleared."""
+    app = viewer.app
+    f0 = app.atlas.frames[0]
+    H0 = core.screen_to_atlas(np.array(f0["M"], float), app.atlas.frame_R(f0))
+    seen = []
+    monkeypatch.setattr(
+        messagebox, "askyesno", lambda title, msg, **kw: (seen.append((msg, app._weak_preview is not None)), True)[1]
+    )
+    app._handle("ask", ("Add it anyway?", (f0["path"], H0)))
+    check(
+        "weak match: shown on the map while asking, cleared after",
+        seen
+        and seen[0][1]
+        and "shown and outlined" in seen[0][0]
+        and app._weak_preview is None
+        and app._answer.get_nowait() is True,
+        str(seen),
+    )
+
+
 def test_saved_atlases_tab(viewer, check):
     """Saved atlases: cards, rename, stop tracking, delete (also the open atlas)."""
     app = viewer.app

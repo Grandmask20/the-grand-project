@@ -81,7 +81,7 @@ class AutoAddMixin:
         text, t0 = self._progress
         dots = "." * (1 + int(time.time() * 2) % 3)
         line = f"{text.rstrip('.…')}{dots}   {time.time() - t0:.0f}s"
-        tw = cv2.getTextSize(line, cv2.FONT_HERSHEY_SIMPLEX, 0.55, 4)[0][0]
+        tw = cv2.getTextSize(line, cv2.FONT_HERSHEY_SIMPLEX, 0.55, 1)[0][0] + 4  # the text and its outline
         x0 = w - tw - 36
         cv2.rectangle(img, (x0, 10), (w - 12, 44), (25, 25, 25), -1)
         cv2.rectangle(img, (x0, 10), (w - 12, 44), (0, 200, 255), 1)
@@ -786,17 +786,78 @@ class AutoAddMixin:
             out.append(f"the match is weak ({maps}, terrain agreement {reg.ncc:.2f})")
         return out
 
-    def _ask(self, question: str) -> bool:
+    def _ask(self, question: str, preview=None) -> bool:
         """Asks a yes / no question on the window thread and waits for the answer (worker thread).
 
         Args:
             question: The question text.
+            preview: Optional (screenshot path, 3x3 screen px -> atlas transform) of where a screenshot would be
+                added: shown on the map while the question is open (_show_weak_preview).
 
         Returns:
             The answer.
         """
-        self._q.put(("ask", question))
+        self._q.put(("ask", (question, preview)))
         return self._answer.get()
+
+    @staticmethod
+    def _preview_of(frame, reg):
+        """Where a screenshot would go if it were added (for the weak-match preview).
+
+        Args:
+            frame: The screenshot (core.Frame).
+            reg: Its proposed placement (core.Registration).
+
+        Returns:
+            (screenshot path, 3x3 transform from its screen px to atlas units).
+        """
+        return frame.path, core.screen_to_atlas(np.array(reg.M, float), frame.R)
+
+    def _show_weak_preview(self, preview) -> None:
+        """Shows a screenshot where it would be added, see-through and outlined, and centres the view on it.
+
+        Used while "Check this screenshot" asks about a weak match (user: say Yes / No seeing where it goes).
+
+        Args:
+            preview: (screenshot path, 3x3 screen px -> atlas transform), or None for no preview.
+        """
+        self._weak_preview = None
+        if not preview:
+            return
+        path, H = preview
+        img = core.read_screenshot(str(path))
+        if img is None:
+            return
+        small = cv2.resize(img, (img.shape[1] // 2, img.shape[0] // 2), interpolation=cv2.INTER_AREA)
+        H2 = np.asarray(H, float) @ np.diag([2.0, 2.0, 1.0])  # half-size picture px -> atlas
+        self._weak_preview = {"img": small, "H": H2}
+        c = core.persp(H2, [[small.shape[1] / 2, small.shape[0] / 2]])[0]
+        self.center_on(float(c[0]), float(c[1]), min_zoom=0.25)
+        self._redraw()  # now: the question box can hold up the window's own redraws
+
+    def _draw_weak_preview(self, img, w, h) -> None:
+        """Draws the weak-match preview (see _show_weak_preview) into the map image.
+
+        Args:
+            img: The map image being drawn (BGR, changed in place).
+            w: Image width (screen px).
+            h: Image height (screen px).
+        """
+        p = getattr(self, "_weak_preview", None)
+        if not p:
+            return
+        V = np.array([[self.z, 0, -self.cx * self.z + w / 2], [0, self.z, -self.cy * self.z + h / 2], [0, 0, 1]])
+        H = V @ p["H"]
+        sh, sw = p["img"].shape[:2]
+        warped = cv2.warpPerspective(p["img"], H, (w, h), flags=cv2.INTER_LINEAR, borderValue=0)
+        mask = cv2.warpPerspective(np.full((sh, sw), 255, np.uint8), H, (w, h), flags=cv2.INTER_NEAREST) > 0
+        img[mask] = cv2.addWeighted(warped, 0.6, img, 0.4, 0)[mask]
+        corners = core.persp(H, [[0, 0], [sw, 0], [sw, sh], [0, sh]]).astype(np.int32)
+        cv2.polylines(img, [corners], True, (0, 0, 0), 5, cv2.LINE_AA)
+        cv2.polylines(img, [corners], True, (0, 165, 255), 2, cv2.LINE_AA)
+        top = corners[np.argmin(corners[:, 1])]
+        label = "would be added here - answer in the question box"
+        put_text(img, label, (int(top[0]) + 6, int(top[1]) - 8), (0, 165, 255), 0.55)
 
     def _place_one(self, fr):
         """Places a screenshot anywhere in the atlas by its maps (without committing it). Worker thread.
@@ -849,7 +910,7 @@ class AutoAddMixin:
                         f"{name} would be added, but " + "; and ".join(worry) + ".\n\n"
                         "Add it anyway? (No = leave it out; you can add it later with Add screenshots.)"
                     )
-                    if not self._ask(q):
+                    if not self._ask(q, preview=self._preview_of(fr, reg)):
                         self._q.put(("log", f"{name}: left out by you"))
                         continue
                 self.atlas.commit_frame(fr, reg)
@@ -1221,8 +1282,17 @@ class AutoAddMixin:
                 self._set_progress(None)
                 self._busy = False
                 self.btn_add.state(["!disabled"])
-            case "ask":
-                self._answer.put(messagebox.askyesno("Check this screenshot", val))
+            case "ask":  # a question from the worker; for a weak match, the screenshot is shown where it would go
+                question, preview = val if isinstance(val, tuple) else (val, None)
+                self._show_weak_preview(preview)
+                if self._weak_preview:
+                    question += "\n\n(It is shown and outlined on the map.)"
+                try:
+                    answer = messagebox.askyesno("Check this screenshot", question)
+                finally:
+                    self._weak_preview = None
+                    self.request_redraw()
+                self._answer.put(answer)
 
     def _poll_queue(self):
         """Handles background messages every 150 ms (a Tk `after` timer, for the window's lifetime)."""

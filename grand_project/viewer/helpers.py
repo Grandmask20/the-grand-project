@@ -264,8 +264,12 @@ def put_text(img, text, org, col, scale=0.5, thick=1):
         org: Bottom-left (x, y) of the text in px.
         col: BGR text colour.
         scale: OpenCV font scale.
-        thick: Stroke width in px (the outline is 3 px wider).
+        thick: Stroke width in px (the outline is the same stroke, 1 px around it).
     """
     x, y = int(org[0]), int(org[1])
-    cv2.putText(img, text, (x, y), cv2.FONT_HERSHEY_SIMPLEX, scale, (0, 0, 0), thick + 3, cv2.LINE_AA)
+    # the outline is the same text shifted a pixel each way, not one thicker stroke: with OpenCV 5's font a
+    # thicker stroke also spaces the letters wider, so the black copy drifted right of the coloured text and
+    # read as doubled black text (user: progress boxes)
+    for dx, dy in ((-1, -1), (0, -1), (1, -1), (-1, 0), (1, 0), (-1, 1), (0, 1), (1, 1)):
+        cv2.putText(img, text, (x + dx, y + dy), cv2.FONT_HERSHEY_SIMPLEX, scale, (0, 0, 0), thick, cv2.LINE_AA)
     cv2.putText(img, text, (x, y), cv2.FONT_HERSHEY_SIMPLEX, scale, col, thick, cv2.LINE_AA)
