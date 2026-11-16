@@ -1,109 +1,100 @@
 """The atlas folder used as the screenshot folder (user's first choice): the atlas's own files must never be
-taken for screenshots.   python -m tests.test_atlas_folder
+taken for screenshots.
 
 1. 4 consecutive crawl screenshots copied into a folder; atlas.json made in that same folder; added twice
    (the second time nothing may be new: no atlas output counted as a screenshot)
 2. everything the atlas wrote besides atlas.json + its detection cache sits in atlas_files/
 3. an atlas from before v0.88 (outputs next to atlas.json) gets them moved into atlas_files/ and they are
    ignored as screenshots even where they still lie
+4. an image the program wrote, under any name, is never a screenshot (tagged PNG); a plain image still is
 """
 
-import hashlib
 import shutil
-import sys
-import tempfile
-from pathlib import Path
 
-HERE = Path(__file__).resolve().parent
-from grand_project import paths as rc_paths  # noqa: E402
+import cv2
+import numpy as np
+import pytest
 
-rc_paths.need_test_data()
-TD = rc_paths.TEST_DATA
+from grand_project import builder as B
+from grand_project import core
 
-import cv2  # noqa: E402
-import numpy as np  # noqa: E402
-
-from grand_project import builder as B  # noqa: E402
-from grand_project import core  # noqa: E402
-
-ok = True
+pytestmark = pytest.mark.data
 
 
-def check(cond, what):
-    global ok
-    ok &= bool(cond)
-    print(("ok   " if cond else "FAIL ") + what)
+@pytest.fixture
+def folder_atlas(tmp_path, test_data, copy_cache):
+    """Four crawl screenshots in a folder with their saved detections, and the atlas path in that folder.
+
+    Returns:
+        (folder, the 4 screenshot paths in it, atlas.json path, its detection cache folder).
+    """
+    crawl = sorted((test_data / "screenshots" / "crawl").glob("*.png"))[100:104]
+    for p in crawl:
+        shutil.copy2(p, tmp_path / p.name)
+    frames_dir = tmp_path / "atlas_frames"
+    copy_cache(crawl, test_data / "crawl_atlas" / "atlas_frames", frames_dir)
+    return tmp_path, crawl, tmp_path / "atlas.json", frames_dir
 
 
-crawl = sorted((TD / "screenshots" / "crawl").glob("*.png"))[100:104]
-cache = TD / "crawl_atlas" / "atlas_frames"
-work = Path(tempfile.mkdtemp())
-for p in crawl:
-    shutil.copy2(p, work / p.name)
-atlas_path = work / "atlas.json"
-frames_dir = work / "atlas_frames"
-frames_dir.mkdir()
-for p in crawl:  # cached detections: no detector run needed
-    h = hashlib.sha256(p.read_bytes()).hexdigest()[:16]
-    shutil.copy2(cache / f"{h}_detect1.json", frames_dir / f"{h}_detect1.json")
+def test_atlas_outputs_are_never_screenshots(folder_atlas, check):
+    """Building an atlas in its own screenshot folder: only the screenshots count, before and after."""
+    work, crawl, atlas_path, frames_dir = folder_atlas
+    shots = core.screenshots_in(work)
+    check("4 screenshots in the atlas folder", len(shots) == 4, len(shots))
+    at = core.Atlas()
+    frames = [B.extract_frame(p, frames_dir) for p in shots]
+    added, _refused = B.place_frames(at, frames, log=lambda *_: None)
+    at.save(atlas_path)
+    B.export(at, atlas_path)
+    cv2.imencode(".png", np.zeros((3128, 3994, 3), np.uint8))[1].tofile(
+        str(core.atlas_files(atlas_path) / "atlas_terrain.png")
+    )  # what the viewer's map cache writes
+    check("all 4 placed", added == 4, added)
+    top = sorted(p.name for p in work.iterdir() if p.is_file())
+    check(
+        "only the screenshots + atlas.json at the top of the folder",
+        top == sorted([p.name for p in crawl] + ["atlas.json"]),
+        f"{len(top)} files",
+    )
+    check(
+        "exports + map cache in atlas_files/",
+        all(
+            (work / "atlas_files" / n).exists()
+            for n in ("atlas_composite.png", "atlas_network.png", "atlas_terrain.png")
+        ),
+    )
+    again = core.screenshots_in(work)
+    check(
+        "adding the folder again finds only the same 4 screenshots", [p.name for p in again] == [p.name for p in shots]
+    )
 
-shots = core.screenshots_in(work)
-check(len(shots) == 4, f"4 screenshots in the atlas folder ({len(shots)})")
-at = core.Atlas()
-frames = [B.extract_frame(p, frames_dir) for p in shots]
-added, refused = B.place_frames(at, frames, log=lambda *_: None)
-at.save(atlas_path)
-B.export(at, atlas_path)
-cv2.imencode(".png", np.zeros((3128, 3994, 3), np.uint8))[1].tofile(
-    str(core.atlas_files(atlas_path) / "atlas_terrain.png")
-)  # what the viewer's map cache writes
-check(added == 4, f"all 4 placed ({added})")
 
-top = sorted(p.name for p in work.iterdir() if p.is_file())
-check(
-    top == sorted([p.name for p in crawl] + ["atlas.json"]),
-    f"only the screenshots + atlas.json at the top of the folder ({len(top)} files)",
-)
-check(
-    all((work / "atlas_files" / n).exists() for n in ("atlas_composite.png", "atlas_network.png", "atlas_terrain.png")),
-    "exports + map cache in atlas_files/",
-)
-again = core.screenshots_in(work)
-check([p.name for p in again] == [p.name for p in shots], "adding the folder again finds only the same 4 screenshots")
+def test_old_outputs_next_to_atlas_are_moved_and_ignored(tmp_path, test_data, check):
+    """An atlas from before v0.88: its outputs lie next to atlas.json; they are not screenshots and move."""
+    shot = sorted((test_data / "screenshots" / "crawl").glob("*.png"))[100]
+    for n in ("atlas_terrain.png", "atlas_composite.png", "atlas_network.png"):
+        cv2.imencode(".png", np.zeros((8, 8, 3), np.uint8))[1].tofile(str(tmp_path / n))
+    (tmp_path / "atlas_undo").mkdir()
+    shutil.copy2(shot, tmp_path / shot.name)
+    check(
+        "old outputs next to atlas.json are not screenshots",
+        [p.name for p in core.screenshots_in(tmp_path)] == [shot.name],
+    )
+    d = core.atlas_files(tmp_path / "atlas.json")
+    check(
+        "old outputs moved into atlas_files/",
+        sorted(p.name for p in d.iterdir())
+        == ["atlas_composite.png", "atlas_network.png", "atlas_terrain.png", "atlas_undo"],
+    )
+    check("nothing generated left at the top", sorted(p.name for p in tmp_path.iterdir() if p.is_file()) == [shot.name])
 
-# an old atlas: outputs next to atlas.json
-old = Path(tempfile.mkdtemp())
-for n in ("atlas_terrain.png", "atlas_composite.png", "atlas_network.png"):
-    cv2.imencode(".png", np.zeros((8, 8, 3), np.uint8))[1].tofile(str(old / n))
-(old / "atlas_undo").mkdir()
-shutil.copy2(crawl[0], old / crawl[0].name)
-check(
-    [p.name for p in core.screenshots_in(old)] == [crawl[0].name], "old outputs next to atlas.json are not screenshots"
-)
-d = core.atlas_files(old / "atlas.json")
-check(
-    sorted(p.name for p in d.iterdir())
-    == ["atlas_composite.png", "atlas_network.png", "atlas_terrain.png", "atlas_undo"],
-    "old outputs moved into atlas_files/",
-)
-check(sorted(p.name for p in old.iterdir() if p.is_file()) == [crawl[0].name], "nothing generated left at the top")
 
-# an image the program made, under any name, in the screenshot folder (user: an overview image was added and
-# sat in Waiting): tagged, so it is never a screenshot; a plain image of the same size still is
-import numpy as np  # noqa: E402
-
-core.write_png(work / "atlas_network_overview.png", np.full((1080, 1920, 3), 60, np.uint8), "overview")
-(work / "plain_copy.png").write_bytes((work / shots[0].name).read_bytes())
-names = [p.name for p in core.screenshots_in(work)]
-check(
-    "atlas_network_overview.png" not in names and "plain_copy.png" in names,
-    "images the program wrote (any name) are not screenshots",
-)
-
-shutil.rmtree(work, ignore_errors=True)
-shutil.rmtree(old, ignore_errors=True)
-print("PASS: atlas folder = screenshot folder" if ok else "FAILED: atlas folder = screenshot folder")
-if "pytest" in sys.modules:  # under pytest: a failure, not an exit
-    assert ok, "see the FAIL lines above"
-else:
-    sys.exit(0 if ok else 1)
+def test_images_the_program_wrote_are_not_screenshots(folder_atlas):
+    """A tagged PNG under any name is skipped (user: an overview image was added and sat in Waiting)."""
+    work, _crawl, _atlas_path, _frames_dir = folder_atlas
+    core.write_png(work / "atlas_network_overview.png", np.full((1080, 1920, 3), 60, np.uint8), "overview")
+    shots = core.screenshots_in(work)
+    (work / "plain_copy.png").write_bytes(shots[0].read_bytes())
+    names = [p.name for p in core.screenshots_in(work)]
+    assert "atlas_network_overview.png" not in names
+    assert "plain_copy.png" in names

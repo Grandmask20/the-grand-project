@@ -37,7 +37,7 @@ file, terrain, waiting groups `islands.py`, clean map `seams.py`), `detect/` (th
   prefix that says where they belong (`SEAM_...`, `ISLAND_...`, `CITY_BARREL_...`) and a comment saying what the
   number means and, if it was measured or tuned, on what. A constant a test patches is read live through the
   module (`K.HORIZON`, not a copied name).
-- **Imports and running**: always `python -m package.module` (tests: `python -m tests.test_x`, tools:
+- **Imports and running**: always `python -m package.module` (tests: `pytest tests/test_x.py`, tools:
   `python -m tools.x`). No `sys.path` hacks. Subpackage `__init__.py` files re-export names explicitly.
 - **Lint before every commit**: `ruff check grand_project tools tests` and `ruff format grand_project tools tests`
   (line length 120; CI fails on unformatted code). `make lint` runs both.
@@ -54,11 +54,14 @@ file, terrain, waiting groups `islands.py`, clean map `seams.py`), `detect/` (th
 
 ## Tests
 
-Offline tests (CI runs these): `test_atlas_builder test_atlas_io test_model_safety test_atlas_folder
-test_random_sequence test_drop_placement test_false_merge test_detect_pairs`. `test_atlas_viewer` opens a window
-(about a minute) and `test_waiting_islands` takes ~10 minutes. Tests needing the trimmed test data skip without it
-(Git LFS, see README). Detector changes: compare `python -m grand_project.detect score` before and after. When
-piping test output on Windows set `PYTHONIOENCODING=utf-8` (some checks print non-ASCII).
+pytest, from the program folder. `pytest` alone runs the offline tests and the ones that need the test screenshots
+(those skip themselves without the Git LFS data: marker `data`); `pytest -m gui` runs the viewer window test (about
+two minutes), `pytest -m slow` the waiting-islands test (~10 minutes), `pytest -m ""` everything. Randomised tests
+take `--runs N --seed S` and print their seed. Shared fixtures and helpers live in `tests/conftest.py` (test data
+paths, the crawl atlas, `check` for scenario tests that report every failed check, `copy_cache`, `seed` / `rng`);
+use them instead of module-level setup, and `tmp_path` instead of temporary folders made by hand. Detector changes:
+compare `python -m grand_project.detect score` before and after. When piping test output on Windows set
+`PYTHONIOENCODING=utf-8` (some checks print non-ASCII).
 
 ## Git workflow
 

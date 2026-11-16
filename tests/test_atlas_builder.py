@@ -1,15 +1,19 @@
-"""Offline checks for the atlas builder core (no screenshots or detector needed).  python -m tests.test_atlas_builder"""
+"""Offline checks for the atlas builder core (no screenshots or detector needed).  pytest tests/test_atlas_builder.py"""
 
 import json
-import tempfile
 from pathlib import Path
 
 import cv2
 import numpy as np
+import pytest
 
 from grand_project import core as C
 
-C.constants.HORIZON = None  # synthetic crops of one image: flat, no camera tilt
+
+@pytest.fixture(autouse=True)
+def flat_camera(monkeypatch):
+    """Synthetic crops of one image are flat: no camera tilt (HORIZON None) for these tests only."""
+    monkeypatch.setattr(C.constants, "HORIZON", None)
 
 
 def make_world(seed=1, w=1500, h=700, n=110):
@@ -60,71 +64,58 @@ def frame_from(world, pts, x0, x1, name, tmp, jitter=0.6, drop=0.08, ghosts=3, s
     )
 
 
-def test_translation_recovered_and_nodes_merged():
-    with tempfile.TemporaryDirectory() as tmp:
-        world, pts = make_world()
-        a = frame_from(world, pts, 0, 900, "a", tmp, seed=1)
-        b = frame_from(world, pts, 500, 1500, "b", tmp, seed=2)
-        at = C.Atlas()
-        at.add_frame(a)
-        r = at.add_frame(b)
-        assert r.ok, r.reason
-        assert np.allclose(r.M[:, 2], [500, 0], atol=2) and np.allclose(r.M[:, :2], np.eye(2), atol=0.01)
-        both = [n for n in at.nodes if len(set(n["frames"])) == 2]
-        assert len(both) >= 20, len(both)  # nodes in the overlap were merged, not duplicated
-        assert len(at.landmarks) == 2  # the two towers are 500px apart in atlas space
+def test_translation_recovered_and_nodes_merged(tmp_path):
+    world, pts = make_world()
+    a = frame_from(world, pts, 0, 900, "a", tmp_path, seed=1)
+    b = frame_from(world, pts, 500, 1500, "b", tmp_path, seed=2)
+    at = C.Atlas()
+    at.add_frame(a)
+    r = at.add_frame(b)
+    assert r.ok, r.reason
+    assert np.allclose(r.M[:, 2], [500, 0], atol=2) and np.allclose(r.M[:, :2], np.eye(2), atol=0.01)
+    both = [n for n in at.nodes if len(set(n["frames"])) == 2]
+    assert len(both) >= 20, len(both)  # nodes in the overlap were merged, not duplicated
+    assert len(at.landmarks) == 2  # the two towers are 500px apart in atlas space
 
 
-def test_unrelated_screenshot_is_rejected_and_atlas_untouched():
-    with tempfile.TemporaryDirectory() as tmp:
-        w1, p1 = make_world(1)
-        w2, p2 = make_world(2)
-        at = C.Atlas()
-        at.add_frame(frame_from(w1, p1, 0, 900, "a", tmp))
-        before = json.dumps(at.to_json(), sort_keys=True)
-        r = at.add_frame(frame_from(w2, p2, 0, 900, "z", tmp, seed=5))
-        assert not r.ok
-        assert json.dumps(at.to_json(), sort_keys=True) == before
+def test_unrelated_screenshot_is_rejected_and_atlas_untouched(tmp_path):
+    w1, p1 = make_world(1)
+    w2, p2 = make_world(2)
+    at = C.Atlas()
+    at.add_frame(frame_from(w1, p1, 0, 900, "a", tmp_path))
+    before = json.dumps(at.to_json(), sort_keys=True)
+    r = at.add_frame(frame_from(w2, p2, 0, 900, "z", tmp_path, seed=5))
+    assert not r.ok
+    assert json.dumps(at.to_json(), sort_keys=True) == before
 
 
-def test_graph_match_with_wrong_terrain_is_rejected():
+def test_graph_match_with_wrong_terrain_is_rejected(tmp_path):
     """Same node layout but different ground: the pixel check must veto it."""
-    with tempfile.TemporaryDirectory() as tmp:
-        w1, p1 = make_world(1)
-        w2, _ = make_world(7)
-        at = C.Atlas()
-        at.add_frame(frame_from(w1, p1, 0, 900, "a", tmp))
-        r = at.add_frame(frame_from(w2, p1, 500, 1500, "b", tmp, seed=3))
-        assert not r.ok and "terrain" in r.reason, r.reason
+    w1, p1 = make_world(1)
+    w2, _ = make_world(7)
+    at = C.Atlas()
+    at.add_frame(frame_from(w1, p1, 0, 900, "a", tmp_path))
+    r = at.add_frame(frame_from(w2, p1, 500, 1500, "b", tmp_path, seed=3))
+    assert not r.ok and "terrain" in r.reason, r.reason
 
 
-def test_save_load_roundtrip_and_support_counts():
-    with tempfile.TemporaryDirectory() as tmp:
-        world, pts = make_world()
-        at = C.Atlas()
-        at.add_frame(frame_from(world, pts, 0, 900, "a", tmp, seed=1))
-        at.add_frame(frame_from(world, pts, 500, 1500, "b", tmp, seed=2))
-        path = Path(tmp) / "atlas.json"
-        at.save(path)
-        again = C.Atlas.load(path)
-        assert json.dumps(again.to_json(), sort_keys=True) == json.dumps(at.to_json(), sort_keys=True)
-        r = again.add_frame(frame_from(world, pts, 250, 1150, "c", tmp, seed=4))  # merge after reload
-        assert r.ok, r.reason
-        assert max(len(set(n["frames"])) for n in again.nodes) == 3
+def test_save_load_roundtrip_and_support_counts(tmp_path):
+    world, pts = make_world()
+    at = C.Atlas()
+    at.add_frame(frame_from(world, pts, 0, 900, "a", tmp_path, seed=1))
+    at.add_frame(frame_from(world, pts, 500, 1500, "b", tmp_path, seed=2))
+    path = tmp_path / "atlas.json"
+    at.save(path)
+    again = C.Atlas.load(path)
+    assert json.dumps(again.to_json(), sort_keys=True) == json.dumps(at.to_json(), sort_keys=True)
+    r = again.add_frame(frame_from(world, pts, 250, 1150, "c", tmp_path, seed=4))  # merge after reload
+    assert r.ok, r.reason
+    assert max(len(set(n["frames"])) for n in again.nodes) == 3
 
 
-def test_duplicate_screenshot_ignored():
-    with tempfile.TemporaryDirectory() as tmp:
-        world, pts = make_world()
-        f = frame_from(world, pts, 0, 900, "a", tmp)
-        at = C.Atlas()
-        at.add_frame(f)
-        assert not at.add_frame(f).ok and len(at.frames) == 1
-
-
-if __name__ == "__main__":
-    for name, fn in list(globals().items()):
-        if name.startswith("test_"):
-            fn()
-            print("ok  ", name)
-    print("PASS: atlas builder core")
+def test_duplicate_screenshot_ignored(tmp_path):
+    world, pts = make_world()
+    f = frame_from(world, pts, 0, 900, "a", tmp_path)
+    at = C.Atlas()
+    at.add_frame(f)
+    assert not at.add_frame(f).ok and len(at.frames) == 1

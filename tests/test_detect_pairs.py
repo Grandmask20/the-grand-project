@@ -1,7 +1,7 @@
 """Two adjacent screenshots through the new detector (atlas_detect): do maps and paths agree where they
 overlap, and does adding the second shot complete paths the first could only see one end of?
 
-    python -m tests.test_detect_pairs [N] [seed]      N random consecutive pairs from
+    pytest tests/test_detect_pairs.py [--runs N] [--seed S]      N random overlapping pairs from
                                            atlas_test_data/screenshots/crawl (default 4)
 
 Placement: the builder's own placements of the crawl shots (atlas_test_data/crawl_atlas/atlas.json:
@@ -11,30 +11,29 @@ Positions below are in atlas units.
   paths in overlap     paths with both ends seen by both shots: drawn by both?
   seam                 paths only one shot could draw (an end outside the other's view) that the pair
                        now has, i.e. what adding the second shot contributes
-A picture per pair: atlas_test_data/detect_pairs_out/<pair>.png (A paths cyan, B paths magenta, maps white/yellow).
+A picture per pair in the test's temporary folder: <pair>.png (A paths cyan, B paths magenta, maps white/yellow).
 """
 
 from __future__ import annotations
 
 import json
-import random
-import sys
 import time
 from pathlib import Path
 
 import cv2
 import numpy as np
+import pytest
 
-HERE = Path(__file__).resolve().parent
-from grand_project import paths as rc_paths  # noqa: E402
+from grand_project import core
+from grand_project import detect as ad
+from grand_project import paths as rc_paths
 
-rc_paths.need_test_data()
+pytestmark = pytest.mark.data
+
 TD = rc_paths.TEST_DATA
-from grand_project import core  # noqa: E402
-from grand_project import detect as ad  # noqa: E402
-
 CRAWL = TD / "screenshots" / "crawl"
-OUT = TD / "detect_pairs_out"
+MAPS_AGREE_MIN = 0.85  # share of overlap maps both shots found (runs measured 94-97%)
+PATHS_BOTH_MIN = 0.65  # share of overlap paths both shots drew (runs measured 81-87%)
 MATCH = 45.0  # atlas units: the same map seen in both shots (maps on raised ground shift
 # between views - the builder merges up to 52)
 # fortress shots: walls cut every path through them (user), so they are no seam test
@@ -78,7 +77,7 @@ def inside(pts_screen, w, h):
     return ok & ~core.on_hud_mask(p, w, h, pad=EDGE)
 
 
-def run_pair(fa: Path, fb: Path, Fa: dict, Fb: dict) -> dict | None:
+def run_pair(fa: Path, fb: Path, Fa: dict, Fb: dict, out: Path) -> dict | None:
     ia = cv2.imdecode(np.fromfile(str(fa), np.uint8), cv2.IMREAD_COLOR)
     ib = cv2.imdecode(np.fromfile(str(fb), np.uint8), cv2.IMREAD_COLOR)
     h, w = ia.shape[:2]
@@ -136,18 +135,15 @@ def run_pair(fa: Path, fb: Path, Fa: dict, Fb: dict) -> dict | None:
     for P, col in ((Pa, (255, 255, 255)), (Pb, (0, 230, 255))):
         for p in P - (x0, y0):
             cv2.circle(can, (int(p[0]), int(p[1])), 9, col, 1, cv2.LINE_AA)
-    OUT.mkdir(parents=True, exist_ok=True)
-    cv2.imwrite(str(OUT / f"{fa.stem}__{fb.stem}.png"), can)
+    core.write_png(out / f"{fa.stem}__{fb.stem}.png", can, "detect pairs")
     return res
 
 
-def main() -> int:
-    n = int(sys.argv[1]) if len(sys.argv) > 1 else 4
-    seed = int(sys.argv[2]) if len(sys.argv) > 2 else int(time.time()) % 10000
+def test_overlapping_screenshots_agree(rng, runs, seed, tmp_path):
+    """Maps and paths two overlapping screenshots both see are found / drawn by both."""
+    n = runs(4)
     F = frames()
     names = sorted(n_ for n_ in F if n_ not in SKIP)
-    rng = random.Random(seed)
-    print(f"seed {seed}")
     tot: dict = {}
     done = 0
     order = list(range(len(names)))
@@ -161,7 +157,7 @@ def main() -> int:
             continue
         b_ = rng.choice(cands)
         t0 = time.time()
-        r = run_pair(CRAWL / a_, CRAWL / b_, F[a_], F[b_])
+        r = run_pair(CRAWL / a_, CRAWL / b_, F[a_], F[b_], tmp_path)
         if r is None or r["maps_a_in_b"] < 10:
             continue
         done += 1
@@ -171,19 +167,18 @@ def main() -> int:
             f"  {a_[-12:-6]} + {b_[-12:-6]} (overlap {overlap(F[a_], F[b_]):.0%}): maps A found by B "
             f"{r['maps_a_found_by_b']}/{r['maps_a_in_b']}, B by A {r['maps_b_found_by_a']}/{r['maps_b_in_a']} | "
             f"paths both {r['paths_both']}, only A {r['paths_only_a']}, only B {r['paths_only_b']} | seam paths "
-            f"added by B {r['seam_paths_added_by_b']} ({time.time() - t0:.0f} s)",
-            flush=True,
+            f"added by B {r['seam_paths_added_by_b']} ({time.time() - t0:.0f} s)"
         )
-    if tot:
-        pb = tot["paths_both"] + tot["paths_only_a"] + tot["paths_only_b"]
-        print(
-            f"TOTAL maps agree {tot['maps_a_found_by_b'] + tot['maps_b_found_by_a']}/"
-            f"{tot['maps_a_in_b'] + tot['maps_b_in_a']} | paths drawn by both {tot['paths_both']}/{pb} "
-            f"({tot['paths_both'] / max(1, pb):.0%}) | seam paths added {tot['seam_paths_added_by_b']}"
-        )
-        (OUT / "last_run.json").write_text(json.dumps({"seed": seed, "total": tot}), encoding="utf-8")
-    return 0
-
-
-if __name__ == "__main__":
-    raise SystemExit(main())
+    assert tot, "no overlapping pair found"
+    found = tot["maps_a_found_by_b"] + tot["maps_b_found_by_a"]
+    seen = tot["maps_a_in_b"] + tot["maps_b_in_a"]
+    pb = tot["paths_both"] + tot["paths_only_a"] + tot["paths_only_b"]
+    print(
+        f"TOTAL maps agree {found}/{seen} | paths drawn by both {tot['paths_both']}/{pb} "
+        f"({tot['paths_both'] / max(1, pb):.0%}) | seam paths added {tot['seam_paths_added_by_b']}"
+        f"  (pictures: {tmp_path})"
+    )
+    assert found / max(1, seen) >= MAPS_AGREE_MIN, f"maps agree {found}/{seen} (seed {seed})"
+    assert tot["paths_both"] / max(1, pb) >= PATHS_BOTH_MIN, (
+        f"paths drawn by both {tot['paths_both']}/{pb} (seed {seed})"
+    )
