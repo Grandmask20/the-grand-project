@@ -154,7 +154,7 @@ if app.place_types:
     )
 app.query.set("hall")
 pump()
-rows = [w.winfo_children()[-1].cget("text") for w in app.icon_frame.winfo_children() if isinstance(w, V.tk.Frame)]
+rows = list(app.type_rows)
 check(
     "search filters the type list",
     rows and any(r.startswith("Hall") for r in rows) and len(rows) < len(app.icon_types) // 2,

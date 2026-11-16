@@ -11,7 +11,7 @@ from PIL import Image
 from grand_project import logs as atlas_log
 from grand_project import paths as rc_paths
 
-from .constants import ICON_INFO, IS_MAC
+from .constants import ICON_INFO, ICON_ROW_DY, ICON_ROW_STEP, IS_MAC
 
 _BLIT: dict = {}  # picture overlays, by size (blit_rgba)
 _THUMBS: dict = {}  # badge thumbnails (icon_thumb)
@@ -149,6 +149,34 @@ def blit_rgba(img, pil_rgba, x, y, size):
     r_ = rgb[ya - y0 : yb - y0, xa - x0 : xb - x0]
     a_ = al[ya - y0 : yb - y0, xa - x0 : xb - x0]
     img[ya:yb, xa:xb] = (sub * (1 - a_) + r_ * a_).astype(np.uint8)
+
+
+def icon_rows(nodes: list[dict], icons: list[dict], icon_node: dict[int, int]) -> np.ndarray:
+    """Where each icon is drawn: in a row above its map node, by the detector's rule.
+
+    An icon's stored position is the average of where screenshots found it, so it drifts a few units off the
+    row (half were over 6 units off, some 40; user: icons didn't line up like the detection rule). The icons of
+    one map node are put in a row ICON_ROW_DY above it, ICON_ROW_STEP apart, centred on it, in their left-to-right
+    order. Icons without a map node keep their own position.
+
+    Args:
+        nodes: Map node dicts with "x", "y" (atlas units).
+        icons: Icon dicts with "x", "y".
+        icon_node: Icon index -> map node index (cities.icon_maps).
+
+    Returns:
+        (len(icons), 2) float array of positions in atlas units.
+    """
+    pts = np.array([[ic["x"], ic["y"]] for ic in icons], float).reshape(-1, 2)
+    rows: dict[int, list[int]] = {}
+    for i, v in icon_node.items():
+        rows.setdefault(v, []).append(i)
+    for v, members in rows.items():
+        members.sort(key=lambda i: pts[i, 0])
+        n = nodes[v]
+        for k, i in enumerate(members):
+            pts[i] = (n["x"] + (k - (len(members) - 1) / 2) * ICON_ROW_STEP, n["y"] - ICON_ROW_DY)
+    return pts
 
 
 def icon_aliases(raw: str) -> str:

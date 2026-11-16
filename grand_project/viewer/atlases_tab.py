@@ -91,9 +91,7 @@ class AtlasesTabMixin:
         Args:
             parent: The tab's frame to build into.
         """
-        ttk.Label(parent, text="Click an atlas to open it.", foreground="#555", wraplength=330).pack(
-            anchor="w", pady=(0, 4)
-        )
+        self._wrap(parent, text="Click an atlas to open it.", foreground="#555").pack(anchor="w", pady=(0, 4))
         holder = ttk.Frame(parent)
         holder.pack(fill="both", expand=True)
         self.atl_canvas = tk.Canvas(holder, highlightthickness=0, background="white")

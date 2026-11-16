@@ -99,9 +99,19 @@ STYLE_DEFAULT = {
     "map_size": 1.0,
     "map_style": "circles",
     "path_freq": 0.0,
-    "ov_badges": False,
     "ov_towers": False,
 }  # View tab
+
+
+ICON_ROW_DY, ICON_ROW_STEP = 24, 36  # icons are drawn in a row this far above their map node, this far apart,
+# centred on it: the detector's row rule (detect.constants ROW_DY, ROW_STEP), so icons line up like in the game
+
+
+TYPE_ROW_H = 26  # px per row of the type list in Find (its icon pictures are 22 px)
+
+
+SIDE_WIDTH = 400  # side panel width in px at first start (was a fixed 360: cramped, user); the sash changes it
+SIDE_MIN = 330  # ...and the narrowest it can be dragged (the 7 tab headers still fit)
 
 
 IMAGE_EXT = core.IMAGE_EXT
