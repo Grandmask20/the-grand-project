@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import random
 import shutil
 from pathlib import Path
@@ -23,6 +24,7 @@ import numpy as np
 import pytest
 
 from grand_project import paths as rc_paths
+from grand_project.detect.constants import RF_DETR_USE_ENV
 
 
 def pytest_addoption(parser):
@@ -35,6 +37,17 @@ def pytest_addoption(parser):
     g.addoption("--runs", type=int, default=None, help="randomised tests: how many runs (each test has a default)")
     g.addoption("--seed", type=int, default=None, help="randomised tests: the seed (default: a new one, printed)")
     g.addoption("--cached", action="store_true", help="test_waiting_islands: reuse the saved detections (quick)")
+    g.addoption(
+        "--rf-detr",
+        action="store_true",
+        help="use the optional fine-tuned RF-DETR backend (set GRAND_PROJECT_RF_DETR_MODEL if needed)",
+    )
+
+
+def pytest_configure(config):
+    """Enable the optional detector before tests import or call the live pipeline."""
+    if config.getoption("--rf-detr"):
+        os.environ[RF_DETR_USE_ENV] = "1"
 
 
 def pytest_collection_modifyitems(config, items):

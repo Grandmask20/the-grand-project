@@ -9,6 +9,49 @@ from grand_project import paths as rc_paths
 HERE = Path(__file__).resolve().parent
 
 
+# RF-DETR training data settings. Coordinates in detector truth are measured at the detector's 1080p height;
+# the dataset builder scales these boxes back to the source image before Hugging Face stores the image.
+RF_DETR_MODEL_NAME = "Roboflow/rf-detr-small"
+RF_DETR_USE_ENV = "GRAND_PROJECT_USE_RF_DETR"  # set to 1/true/on to select the optional RF-DETR backend
+RF_DETR_MODEL_ENV = "GRAND_PROJECT_RF_DETR_MODEL"  # optional model directory override for program/tests
+RF_DETR_DEVICE_ENV = "GRAND_PROJECT_RF_DETR_DEVICE"  # optional torch device override, e.g. cpu or cuda
+RF_DETR_DEFAULT_MODEL_DIR = rc_paths.ROOT / "runs" / "rf-detr-small" / "best"
+RF_DETR_SCORE_THRESHOLD = 0.35  # confidence: tuned as a safe starting point for the small fine-tuned checkpoint
+RF_DETR_NMS_IOU = 0.50  # overlap: remove duplicate predictions of the same RF-DETR class
+RF_DETR_MAX_TARGETS = 300  # objects/image: RF-DETR Small's default decoder query count; path dashes can exceed it
+RF_DETR_MAP_BOX = 48.0  # px: square around a map node's centre, measured from the 1080p map-base glow
+RF_DETR_ICON_BOX = 34.0  # px: square around an icon centre, inside the standard icon rim
+RF_DETR_LANDMARK_BOX = 80.0  # px: square around a city / hall / deadly-boss map point
+RF_DETR_TOWER_WIDTH = 80.0  # px: tower box width around its map node
+RF_DETR_TOWER_HEIGHT = 220.0  # px: tower box extends upward from its map node to include the spire
+RF_DETR_STRONGHOLD_BOX = 150.0  # px: square around a Breach stronghold structure
+RF_DETR_PATH_PAD = 8.0  # px: padding around a traced path centre line
+RF_DETR_PATH_DASH_BOX = 18.0  # px: square around one path dash for the low-level path detector
+RF_DETR_WALL_MIN_AREA = 12000  # px²: ignore tiny connected components in optional painted wall masks
+RF_DETR_SOFT_FLAGS = frozenset({"ui", "offcenter"})  # ambiguous hand labels are excluded unless requested
+
+# RF-DETR training augmentation. These conservative values are for the 1920x1080 atlas screenshots: horizontal
+# mirroring is valid for the atlas, while crops are kept large enough that sparse landmarks remain visible.
+RF_DETR_AUGMENT_FLIP_PROBABILITY = 0.5  # chance: the paper recommends horizontal flips for target-domain transfer
+RF_DETR_AUGMENT_CROP_PROBABILITY = 0.5  # chance: apply a random crop before the processor's resize/padding
+RF_DETR_AUGMENT_CROP_MIN_SCALE = 0.75  # fraction: smallest crop side, tuned to retain most map nodes in a view
+RF_DETR_AUGMENT_CROP_MIN_VISIBILITY = 0.5  # fraction: keep a clipped box only when at least half remains visible
+RF_DETR_AUGMENT_CROP_ATTEMPTS = 10  # attempts: find a crop retaining at least one labelled object
+
+# Stable classes shared by every generated dataset. Icon names are appended as icon_<slug> classes when naming is
+# enabled; keeping these first means adding a new icon does not renumber the detector's core tasks.
+RF_DETR_CORE_LABELS = (
+    "map_node",
+    "tower",
+    "city",
+    "hall",
+    "deadly_boss_map",
+    "breach_stronghold",
+    "locked_stronghold",
+    "icon",
+)  # sparse objects only: paths and fortress walls are derived by the established detector
+
+
 DETECTOR_ID = "detect1"  # in builder cache file names: results of another detector are never reused
 
 

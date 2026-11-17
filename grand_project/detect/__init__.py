@@ -3,9 +3,9 @@
 Stages, each scored against atlas_test_data/truth/truth.json (not shipped) with atlas_truth.score:
   1. HUD      the game's interface (hud_mask_full.png, drawn by the user) is never a map, badge or landmark
   2. maps     bright-blob candidates -> learned classifier: map (towers included) / not a map
-  3. badges   gold-ring + average-badge spots -> badge classifier -> name from the badge pictures
-              (badge_refs table + the labelled ones kept in the model); rows of up to 5 badges sit 24 px
-              above their map, centred on it (user) -> a badge row with no map found = a hidden map
+  3. icons    gold-ring + average-icon spots -> icon classifier -> name from the icon pictures
+              (badge_refs table + the labelled ones kept in the model); rows of up to 5 icons sit 24 px
+              above their map, centred on it (user) -> an icon row with no map found = a hidden map
   4. landmarks Towers (classifier on found maps: the spire above them); Deadly Map Boss rows -> City (barrel
               / blue or red beam) / Hall (beam on a structure beside it) / deadly boss map; Breach
               strongholds (old purple rule), locked when a hand badge is near or no map is inside
@@ -95,6 +95,29 @@ from .constants import (  # noqa: F401
     PATH_SPACING,
     PATH_START,
     PATH_STEP,
+    RF_DETR_AUGMENT_CROP_ATTEMPTS,
+    RF_DETR_AUGMENT_CROP_MIN_SCALE,
+    RF_DETR_AUGMENT_CROP_MIN_VISIBILITY,
+    RF_DETR_AUGMENT_CROP_PROBABILITY,
+    RF_DETR_AUGMENT_FLIP_PROBABILITY,
+    RF_DETR_CORE_LABELS,
+    RF_DETR_DEFAULT_MODEL_DIR,
+    RF_DETR_DEVICE_ENV,
+    RF_DETR_ICON_BOX,
+    RF_DETR_LANDMARK_BOX,
+    RF_DETR_MAP_BOX,
+    RF_DETR_MODEL_ENV,
+    RF_DETR_MODEL_NAME,
+    RF_DETR_NMS_IOU,
+    RF_DETR_PATH_DASH_BOX,
+    RF_DETR_PATH_PAD,
+    RF_DETR_SCORE_THRESHOLD,
+    RF_DETR_SOFT_FLAGS,
+    RF_DETR_STRONGHOLD_BOX,
+    RF_DETR_TOWER_HEIGHT,
+    RF_DETR_TOWER_WIDTH,
+    RF_DETR_USE_ENV,
+    RF_DETR_WALL_MIN_AREA,
     RIM_R,
     ROW_DY,
     ROW_RESCUE,
@@ -181,7 +204,22 @@ from .paths import (  # noqa: F401
 from .pipeline import (  # noqa: F401
     cmd_run,
     detect,
+    detect_classical,
     find_maps,
+)
+from .rf_detr import (  # noqa: F401
+    Record,
+    augment_detection_example,
+    build_dataset,
+    load_records,
+    processor_transform,
+    split_records,
+)
+from .rf_detr_model import (  # noqa: F401
+    detect_rf_detr,
+    reset_rf_detr_runtime,
+    rf_detr_enabled,
+    rf_detr_model_path,
 )
 from .training import (  # noqa: F401
     _extra_maps,
