@@ -12,7 +12,7 @@ from PIL import Image, ImageTk
 
 from grand_project import paths as rc_paths
 
-from .constants import NODE_COL, PATH_MULTI, PATH_SINGLE, STYLE_DEFAULT
+from .constants import CITY_COL, LANDMARK_COL, NODE_COL, PATH_MULTI, PATH_SINGLE, STYLE_DEFAULT
 from .helpers import bgr_hex, draw_map, draw_paths, hex_bgr, icon_thumb
 from .settings import save_settings
 
@@ -45,10 +45,34 @@ class ViewTabMixin:
 
         Returns:
             Dict with keys such as "path_col", "path_col1", "path_width", "path_style", "path_freq", "map_col",
-            "map_size", "map_style", "ov_badges", "ov_towers".
+            "map_size", "map_style", "ov_towers".
         """
         st = self.settings.setdefault("style", {})
         return {**STYLE_DEFAULT, **st}
+
+    def city_cols(self, st: dict | None = None) -> dict:
+        """Biome colour of each city / stronghold type: the user's colour, else CITY_COL's.
+
+        Args:
+            st: The style (self.style()); None reads it.
+
+        Returns:
+            Type ("Ezomyte", "Vaal", "Faridun", "Breach") -> BGR colour.
+        """
+        st = st if st is not None else self.style()
+        return {k: hex_bgr(st.get(f"city_col_{k}", ""), c) for k, c in CITY_COL.items()}
+
+    def landmark_cols(self, st: dict | None = None) -> dict:
+        """Box colour of each landmark kind: the user's colour, else LANDMARK_COL's.
+
+        Args:
+            st: The style (self.style()); None reads it.
+
+        Returns:
+            Landmark kind ("City", "Hall", "Tower", ...) -> BGR colour.
+        """
+        st = st if st is not None else self.style()
+        return {k: hex_bgr(st.get(f"lm_col_{k}", ""), c) for k, c in LANDMARK_COL.items()}
 
     def set_style(self, **kw):
         """Change style settings, save them and redraw the map.
@@ -145,7 +169,7 @@ class ViewTabMixin:
                 relief="raised",
                 borderwidth=2,
                 cursor="hand2",
-                background=self.style()[key] or bgr_hex(default),
+                background=self.style().get(key) or bgr_hex(default),
             )
             sw.pack(side="left", padx=(0, 4))
             ttk.Label(box, text=text).pack(side="left")
@@ -156,7 +180,7 @@ class ViewTabMixin:
                 Args:
                     _e: The Tk event (unused).
                 """
-                got = colorchooser.askcolor(color=self.style()[key] or bgr_hex(default), title=text)[1]
+                got = colorchooser.askcolor(color=self.style().get(key) or bgr_hex(default), title=text)[1]
                 if got:
                     sw.configure(background=got)
                     changed(**{key: got})
@@ -254,11 +278,23 @@ class ViewTabMixin:
         cb2.bind("<<ComboboxSelected>>", lambda e: changed(map_style=self._st_mstyle.get()))
         ttk.Label(row, text="style").pack(side="left", padx=4)
 
+        # --- more colours (user: city biomes, landmarks)
+        ttk.Separator(vw).pack(fill="x", pady=(10, 4))
+        ttk.Label(vw, text="City biomes and landmarks", font=("TkDefaultFont", 10, "bold")).pack(anchor="w")
+        more = [(f"city_col_{k}", c, f"{k} biome") for k, c in CITY_COL.items()]
+        more += [(f"lm_col_{k}", c, k) for k, c in LANDMARK_COL.items() if k != "Locked stronghold"]
+        grid = ttk.Frame(vw)
+        grid.pack(fill="x", pady=2)
+        for n, (key, default, text) in enumerate(more):
+            cell = ttk.Frame(grid)
+            cell.grid(row=n // 2, column=n % 2, sticky="w", pady=1)
+            sw_list.append(swatch(cell, key, default, text))
+
         # --- pictures
         ttk.Separator(vw).pack(fill="x", pady=(10, 4))
         ttk.Label(vw, text="Pictures on the map (zoomed in)", font=("TkDefaultFont", 10, "bold")).pack(anchor="w")
         self._st_ov = {}
-        for key, text in (("ov_badges", "badge pictures (the icons ticked in Find)"), ("ov_towers", "tower picture")):
+        for key, text in (("ov_towers", "tower picture"),):
             v = self._st_ov[key] = tk.BooleanVar(value=bool(st[key]))
             ttk.Checkbutton(
                 vw, text=text, variable=v, command=lambda k=key: changed(**{k: bool(self._st_ov[k].get())})

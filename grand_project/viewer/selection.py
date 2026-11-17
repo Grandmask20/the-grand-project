@@ -37,6 +37,8 @@ class SelectionMixin:
             p = self.V["paths"][i]
             a, b = self.V["nodes"][p["a"]], self.V["nodes"][p["b"]]
             return (a["x"] + b["x"]) / 2, (a["y"] + b["y"]) / 2
+        if kind == "icon" and i < len(self.icon_pts):  # where it is drawn: in its map node's row
+            return float(self.icon_pts[i][0]), float(self.icon_pts[i][1])
         src = {"node": self.V["nodes"], "landmark": self.V["landmarks"], "icon": self.V["icons"]}.get(kind)
         n = src[i] if src is not None else self.atlas.bookmarks[i]
         return float(n["x"]), float(n["y"])

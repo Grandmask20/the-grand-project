@@ -182,7 +182,7 @@ def test_icon_types_listed_and_searchable(viewer, check):
         )
     app.query.set("hall")
     pump()
-    rows = [w.winfo_children()[-1].cget("text") for w in app.icon_frame.winfo_children() if isinstance(w, V.tk.Frame)]
+    rows = list(app.type_rows)
     check(
         "search filters the type list",
         rows and any(r.startswith("Hall") for r in rows) and len(rows) < len(app.icon_types) // 2,
@@ -859,6 +859,18 @@ def test_weak_match_preview(viewer, check, monkeypatch):
         and app._answer.get_nowait() is True,
         str(seen),
     )
+
+
+def test_type_list_rebuilds_keep_one_set_of_bindings(viewer, check):
+    """Searching rebuilds the type list; its click bindings are made once, not again per rebuild (review)."""
+    app = viewer.app
+    pump = viewer.pump
+    before = len(app.icon_canvas._tclCommands or [])
+    for q in ("ha", "hal", "tow", ""):
+        app.query.set(q)
+        pump(0.1)
+    after = len(app.icon_canvas._tclCommands or [])
+    check("type list: no new callbacks per rebuild", after == before, f"{before} -> {after}")
 
 
 def test_saved_atlases_tab(viewer, check):

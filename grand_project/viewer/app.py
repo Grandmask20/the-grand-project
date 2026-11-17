@@ -25,7 +25,18 @@ from .atlases_tab import AtlasesTabMixin
 from .autoadd import AutoAddMixin
 from .bookmarks import BookmarksMixin
 from .cities import CitiesMixin
-from .constants import BTN_MIDDLE, BTN_RIGHT, IS_MAC, IS_WIN, MOD, MOD_LABEL, MONO_FONT, VERSION
+from .constants import (
+    BTN_MIDDLE,
+    BTN_RIGHT,
+    IS_MAC,
+    IS_WIN,
+    MOD,
+    MOD_LABEL,
+    MONO_FONT,
+    SIDE_MIN,
+    SIDE_WIDTH,
+    VERSION,
+)
 from .debug import DebugMixin
 from .drawing import DrawingMixin
 from .files import FilesMixin
@@ -233,15 +244,23 @@ class Viewer(
         self.btn_lasso = ttk.Button(bar, text="Draw city biome", command=self.start_lasso)
         self.btn_lasso.pack(side="left", padx=(6, 0))
 
-        self.canvas = tk.Canvas(r, bg="#14161a", highlightthickness=0, bd=0, cursor="fleur")
-        self.canvas.grid(row=1, column=0, sticky="nsew")
+        # map | side panel, split by a sash the user can drag (user: the side panel was cramped and fixed). The
+        # sash moves as an outline and the map is redrawn once on release: a live drag redrew the map every pixel
+        self.pane = tk.PanedWindow(
+            r, orient="horizontal", sashwidth=6, sashrelief="raised", opaqueresize=False, bd=0, background=bg
+        )
+        self.pane.grid(row=1, column=0, columnspan=2, sticky="nsew")
+        self.canvas = tk.Canvas(self.pane, bg="#14161a", highlightthickness=0, bd=0, cursor="fleur")
         self.img_item = self.canvas.create_image(0, 0, anchor="nw")
         self.photo = None
 
-        side = ttk.Frame(r, width=360, style="Side.TFrame", padding=(6, 4))
-        side.grid(row=1, column=1, sticky="ns")
-        side.grid_propagate(False)
+        side = ttk.Frame(self.pane, style="Side.TFrame", padding=(6, 4))
         side.pack_propagate(False)
+        self.side = side
+        self.pane.add(self.canvas, minsize=400, stretch="always")
+        self.pane.add(side, minsize=SIDE_MIN, width=int(self.settings.get("side_width", SIDE_WIDTH)), stretch="never")
+        self._wrap_labels: list = []  # labels whose text wraps to the side panel's width
+        side.bind("<Configure>", self._rewrap, add="+")
         self.layer_grid = ttk.Frame(side, padding=(0, 4, 0, 0))
         self.layer_grid.pack(side="bottom", fill="x")
         self.tabs = ttk.Notebook(side)
@@ -288,12 +307,8 @@ class Viewer(
         self.icon_canvas.configure(yscrollcommand=sb.set)
         sb.pack(side="right", fill="y")
         self.icon_canvas.pack(side="left", fill="both", expand=True)
-        self.icon_frame = tk.Frame(self.icon_canvas, background="white")
-        self.icon_canvas.create_window(0, 0, window=self.icon_frame, anchor="nw")
-        self.icon_frame.bind(
-            "<Configure>", lambda _e: self.icon_canvas.configure(scrollregion=self.icon_canvas.bbox("all"))
-        )
         self.icon_canvas.configure(yscrollincrement=12)
+        self._bind_type_list()
         self.icon_canvas.bind("<MouseWheel>", self._scroll_icons)
         self.icon_canvas.bind("<Button-4>", self._scroll_icons)
         self.icon_canvas.bind("<Button-5>", self._scroll_icons)
@@ -356,26 +371,25 @@ class Viewer(
         fil = ttk.Frame(self.tabs, padding=6)
         self.tabs.add(fil, text="Auto-add")
         self.tab_auto = fil
-        ttk.Label(
+        self._wrap(
             fil,
-            wraplength=320,
             justify="left",
             text="Point Steam's screenshot folder at this atlas's folder (Steam > Settings > In Game > "
             "External screenshots folder) and tick the box below: every new screenshot is detected and "
             "added on its own, wherever it fits in the atlas. A rare weak match is shown to you "
-            "before it is added. (Watch folder… watches another folder instead.)\n\n"
+            "before it is added. (Watch another folder… watches a different folder instead.)\n\n"
             "You can also drag a screenshot onto the map to place it by hand.",
-        ).pack(anchor="w")
-        wrow = ttk.Frame(fil)
-        wrow.pack(fill="x", pady=(8, 2))
+        ).pack(anchor="w", fill="x")
         self.watch_var = tk.BooleanVar(value=False)
         ttk.Checkbutton(
-            wrow, text="Add new screenshots automatically", variable=self.watch_var, command=self.toggle_watch
-        ).pack(side="left")
-        ttk.Button(wrow, text="Watch folder…", command=self.ask_watch_folder).pack(side="left", padx=6)
-        ttk.Button(wrow, text="Atlas folder", command=self.use_atlas_folder).pack(side="left")
+            fil, text="Add new screenshots automatically", variable=self.watch_var, command=self.toggle_watch
+        ).pack(anchor="w", pady=(8, 2))
+        wrow = ttk.Frame(fil)  # own row: beside the tick box the second button was cut off (user)
+        wrow.pack(fill="x", pady=(0, 2))
+        ttk.Button(wrow, text="Watch another folder…", command=self.ask_watch_folder).pack(side="left")
+        ttk.Button(wrow, text="Watch the atlas's folder", command=self.use_atlas_folder).pack(side="left", padx=6)
         self.watch_label = tk.StringVar(value="")
-        ttk.Label(fil, textvariable=self.watch_label, foreground="#555", wraplength=320).pack(anchor="w")
+        self._wrap(fil, textvariable=self.watch_label, foreground="#555").pack(anchor="w", fill="x")
 
         ttk.Separator(fil).pack(fill="x", pady=8)
         ttk.Label(
@@ -401,13 +415,12 @@ class Viewer(
             side="left", padx=4
         )
         ttk.Button(qrow2, text="Place by hand…", command=self.place_waiting).pack(side="left")
-        ttk.Label(
+        self._wrap(
             fil,
             text="Waiting screenshots are retried on their own whenever another one is added; "
             "double-click one to retry it now.",
             foreground="#555",
-            wraplength=320,
-        ).pack(anchor="w")
+        ).pack(anchor="w", fill="x")
 
         # --- Bookmarks
         bmf = ttk.Frame(self.tabs, padding=6)
@@ -446,11 +459,10 @@ class Viewer(
         self.bm_tree.bind("<<TreeviewSelect>>", self.on_bm_tree_select)
         self.bm_tree.bind("<Delete>", lambda _e: self.delete_bookmark())
         self._extra_groups: set[str] = set()
-        ttk.Label(
+        self._wrap(
             bmf,
             text="Click an eye to hide or show a group, or one bookmark, on the map.",
             foreground="#555",
-            wraplength=330,
         ).pack(anchor="w", pady=(2, 0))
 
         # --- Saved atlases: every known atlas as a card with its thumbnail and numbers
@@ -462,12 +474,11 @@ class Viewer(
         if rc_paths.DEBUG:
             dbf = ttk.Frame(self.tabs, padding=6)
             self.tabs.add(dbf, text="Debug")
-            ttk.Label(
+            self._wrap(
                 dbf,
                 text="Right-click a map, a path or an empty spot: Debug \u25b8 ...\n"
                 "Marks are drawn in magenta and saved with the atlas.",
                 foreground="#555",
-                wraplength=330,
             ).pack(anchor="w")
             self.dbg_list = tk.Listbox(dbf, height=16, activestyle="none")
             self.dbg_list.pack(fill="both", expand=True, pady=4)
@@ -476,19 +487,18 @@ class Viewer(
             row.pack(fill="x")
             ttk.Button(row, text="Go to", command=self._dbg_goto).pack(side="left")
             ttk.Button(row, text="Delete", command=self._dbg_delete).pack(side="left", padx=4)
-            self.dbg_file_lab = ttk.Label(dbf, text="", foreground="#555", wraplength=330)
+            self.dbg_file_lab = self._wrap(dbf, text="", foreground="#555")
             self.dbg_file_lab.pack(anchor="w", pady=(4, 0))
             ttk.Separator(dbf).pack(fill="x", pady=6)
             self.frame_log_var = tk.BooleanVar(value=False)
             ttk.Checkbutton(
                 dbf, text="Record frame timings", variable=self.frame_log_var, command=self.toggle_frame_log
             ).pack(anchor="w")
-            ttk.Label(
+            self._wrap(
                 dbf,
                 text="Every redraw, stall, wheel / drag and terrain tile, to user_data/frame_log_*.csv; "
                 "untick to stop and see a summary in Log.",
                 foreground="#555",
-                wraplength=330,
             ).pack(anchor="w")
 
         # --- Log

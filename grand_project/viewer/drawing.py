@@ -14,9 +14,7 @@ from grand_project import paths as rc_paths
 from .constants import (
     BG,
     BOOKMARK_COL,
-    CITY_COL,
     HIT_COL,
-    LANDMARK_COL,
     NODE_COL,
     PATH_ABYSS,
     PATH_CELL,
@@ -26,7 +24,7 @@ from .constants import (
     REMOVED_COL,
     SELECT_COL,
 )
-from .helpers import blit_rgba, draw_map, hex_bgr, icon_col, icon_label, icon_thumb, put_text
+from .helpers import BoxGrid, blit_rgba, draw_map, hex_bgr, icon_col, icon_label, icon_thumb, put_text
 
 
 class DrawingMixin:
@@ -207,6 +205,8 @@ class DrawingMixin:
         vis = ((sp[:, 0] > -80) & (sp[:, 0] < w + 80) & (sp[:, 1] > -80) & (sp[:, 1] < h + 80)) if len(sp) else []
         th = 1 if z < 0.7 else 2
         self._fl_mark("terrain")
+        ST = self.style()
+        city_cols = self.city_cols(ST)
         if L["City & stronghold biomes"] and self.potential and len(sp):
             tint = img.copy()
             rad = max(4, int(44 * z))
@@ -219,7 +219,7 @@ class DrawingMixin:
                 ):
                     continue
                 cols = [
-                    CITY_COL.get(part.replace(" city", "").replace(" stronghold", ""), (255, 200, 80))
+                    city_cols.get(part.replace(" city", "").replace(" stronghold", ""), (255, 200, 80))
                     for part in lab.split(" / ")
                 ]
                 pt = (int(sp[i, 0]), int(sp[i, 1]))
@@ -229,7 +229,6 @@ class DrawingMixin:
             for pt, col in rings:
                 cv2.circle(img, pt, rad, col, 1 if overview else 2, cv2.LINE_AA)
         self._fl_mark("biomes")
-        ST = self.style()
         c_multi = hex_bgr(ST["path_col"], PATH_MULTI)
         c_single = hex_bgr(ST["path_col1"], PATH_SINGLE)
         c_map = hex_bgr(ST["map_col"], None)
@@ -335,7 +334,7 @@ class DrawingMixin:
             ip = self.to_screen(self.icon_pts)
             hit_ic = {i for k, i in self.hits if k == "icon"}
             labels = L["Labels"] and z >= 0.8
-            placed: list[tuple[int, int, int, int]] = []  # label boxes, so labels never overlap
+            drawn = []  # (x, y, radius, icon, colour) of the icons drawn, for their names
             for i, ic in enumerate(self.V["icons"]):
                 x, y = int(ip[i, 0]), int(ip[i, 1])
                 if not (-40 < x < w + 200 and -40 < y < h + 40):
@@ -349,23 +348,29 @@ class DrawingMixin:
                 if overview:
                     cv2.circle(img, (x, y), rr, col, -1, cv2.LINE_AA)
                     cv2.circle(img, (x, y), rr, (0, 0, 0), 1, cv2.LINE_AA)
-                elif ST["ov_badges"]:
+                else:  # the icon's picture (user: the old ring style is gone)
                     blit_rgba(img, icon_thumb(ic["name"], 48), x, y, 2.2 * rr)
-                else:
-                    cv2.circle(img, (x, y), rr, col, 2, cv2.LINE_AA)
                 if i in hit_ic:
                     cv2.circle(img, (x, y), rr + 7, HIT_COL, 2, cv2.LINE_AA)
                 if labels:
-                    text = icon_label(ic)
-                    box = (x + rr + 4, y - 8, x + rr + 4 + 8 * len(text), y + 6)
-                    if not any(box[0] < b[2] and b[0] < box[2] and box[1] < b[3] and b[1] < box[3] for b in placed):
-                        placed.append(box)
-                        put_text(img, text, (x + rr + 4, y + 4), col, 0.42)
+                    drawn.append((x, y, rr, ic, col))
+            # names after every icon is drawn, and only where they don't run under another icon (icons in a row
+            # are 36 apart: a name beside each one was cut off by its neighbour)
+            taken = BoxGrid()  # icons and names already there, looked up by area (review)
+            for x, y, rr, _ic, _c in drawn:
+                taken.add((x - rr, y - rr, x + rr, y + rr))
+            for x, y, rr, ic, col in drawn:
+                text = icon_label(ic)
+                box = (x + rr + 4, y - 8, x + rr + 4 + 8 * len(text), y + 6)
+                if not taken.hits(box):
+                    taken.add(box)
+                    put_text(img, text, (x + rr + 4, y + 4), col, 0.42)
         self._fl_mark("icons")
         if L["Landmarks"]:
             hit_lm = {i for k, i in self.hits if k == "landmark"}
             hw, top, bot = self.landmark_box()
             LMS = self.V["landmarks"]
+            lm_cols = self.landmark_cols(ST)
             lp = self.to_screen([[lm["x"], lm["y"]] for lm in LMS]) if LMS else np.zeros((0, 2))
             near = (lp[:, 0] > -80) & (lp[:, 0] < w + 80) & (lp[:, 1] > -80) & (lp[:, 1] < h + 120)
             for i in np.nonzero(near)[0].tolist():  # only those in view are checked (~1000 a frame before)
@@ -373,7 +378,7 @@ class DrawingMixin:
                 if not self.landmark_shown(lm):
                     continue
                 removed = lm["status"].startswith("removed")
-                col = REMOVED_COL if removed else LANDMARK_COL.get(lm["kind"], (200, 200, 200))
+                col = REMOVED_COL if removed else lm_cols.get(lm["kind"], (200, 200, 200))
                 x, y = int(p[0]), int(p[1])
                 if overview:
                     cv2.rectangle(img, (x - int(hw), y - int(top)), (x + int(hw), y + int(bot)), col, -1)
@@ -449,15 +454,16 @@ class DrawingMixin:
         """
         h = img.shape[0]
         L = L or {}
+        ST = self.style()  # the user's colours, so the legend matches the map
         items = [
-            ("map: 2+ shots / icon", NODE_COL["confirmed"]),
+            ("map: 2+ shots / icon", hex_bgr(ST["map_col"], NODE_COL["confirmed"])),
             ("1 shot", NODE_COL["single"]),
-            ("path: confirmed", PATH_MULTI),
-            ("single evidence", PATH_SINGLE),
+            ("path: confirmed", hex_bgr(ST["path_col"], PATH_MULTI)),
+            ("single evidence", hex_bgr(ST["path_col1"], PATH_SINGLE)),
             ("abyss chain", PATH_ABYSS),
         ]
         if L.get("City & stronghold biomes") and getattr(self, "potential", None):
-            items += [(f"near {k}", CITY_COL[k]) for k in CITY_COL]
+            items += [(f"near {k}", c) for k, c in self.city_cols(ST).items()]
         x = 10
         width = 24 + sum(22 + len(t) * 8 for t, _ in items)
         cv2.rectangle(img, (4, h - 26), (min(img.shape[1] - 4, width), h - 4), (20, 20, 20), -1)
