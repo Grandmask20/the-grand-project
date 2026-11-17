@@ -96,6 +96,9 @@ GENERATED_TAG = b"GrandProject"
 
 # images the atlas itself writes (never screenshots): <atlas>_terrain.png, _composite.png, _network.png, ...
 ATLAS_OUTPUTS = ("_terrain.png", "_terrain.npz", "_composite.png", "_network.png", "_coverage.png", "_badges.png")
+# ...and old icon-labelling sheets "<atlas>_badges_<round>.png" written before images were tagged (user: auto-add
+# tried to add six of them in an old crawl atlas folder)
+ATLAS_OLD_SHEETS = r"_badges_(after|check|round\d+)\.png$"  # (only these names: review)
 
 
 ROW_STEP_PX = 36.0  # screen px between neighbouring badges of one row (measured)
