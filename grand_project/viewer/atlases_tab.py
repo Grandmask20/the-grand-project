@@ -27,7 +27,7 @@ from PIL import Image, ImageTk
 from grand_project import core
 from grand_project import fileio as atlas_io
 
-from .constants import ATLAS_RETRY_S, ATLAS_THUMB, BTN_RIGHT
+from .constants import ATLAS_RETRIES, ATLAS_RETRY_S, ATLAS_THUMB, BTN_RIGHT
 from .folders import same_file
 from .helpers import LOG
 from .settings import save_settings
@@ -118,6 +118,7 @@ class AtlasesTabMixin:
         self._atl_photos: list = []  # Tk images must be kept referenced
         self._atl_reading: set[str] = set()  # atlases being read in the background now
         self._atl_tried: dict[str, float] = {}  # atlas -> when its last background read ended
+        self._atl_tries: dict[str, int] = {}  # atlas -> background reads so far this session
         self._atl_selected: str | None = None
 
     def refresh_atlas_cards(self):
@@ -142,6 +143,7 @@ class AtlasesTabMixin:
             want = a.get("numbers") is None or not thumb_file(a["json"]).exists()
             last = self._atl_tried.get(a["json"])  # a failed read (or no map image yet) is tried again later
             due = last is None or time.monotonic() - last > ATLAS_RETRY_S
+            due = due and self._atl_tries.get(a["json"], 0) < ATLAS_RETRIES  # (a big atlas file isn't re-read forever)
             if want and due and a["json"] not in self._atl_reading:
                 self._read_atlas_in_background(a["json"])
 
@@ -299,6 +301,9 @@ class AtlasesTabMixin:
         # done (was never cleared, so a failed read stayed at "reading…" for the session: GPT audit)
         self._atl_reading.discard(json_path)
         self._atl_tried[json_path] = time.monotonic()
+        self._atl_tries[json_path] = self._atl_tries.get(json_path, 0) + 1
+        if numbers is None and self._atl_tries[json_path] < ATLAS_RETRIES:  # failed: try again in a while by itself
+            self.root.after(int(ATLAS_RETRY_S * 1000) + 100, self.refresh_atlas_cards)  # (review)
         for a in self.known_atlases():
             if a["json"] == json_path and numbers is not None:
                 a["numbers"] = numbers

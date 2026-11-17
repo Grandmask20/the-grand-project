@@ -158,6 +158,7 @@ HIRES_TILE_CACHE = 160  # tiles kept (~1 MB each)
 HIRES_MAX_LEVEL = 2.0  # px per atlas unit; zoomed in further, the level-2 tiles are scaled up
 ATLAS_THUMB = (112, 84)  # px: an atlas's thumbnail on its card in the Saved atlases tab
 ATLAS_RETRY_S = 60.0  # s: a card whose numbers / thumbnail could not be read is tried again after this
+ATLAS_RETRIES = 3  # ...at most this many reads per atlas and session
 # frame log (Debug tab / ATLAS_FRAME_LOG=1): a check every FRAME_TICK_MS; later than that by more than
 # FRAME_STALL_MS = the window did not respond (a stall)
 FRAME_TICK_MS = 15

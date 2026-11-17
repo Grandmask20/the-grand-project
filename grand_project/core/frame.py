@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import contextlib
+import re
 import zlib
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -12,7 +13,7 @@ import numpy as np
 
 from . import constants as K
 from .constants import (
-    ATLAS_OUTPUT_PARTS,
+    ATLAS_OLD_SHEETS,
     ATLAS_OUTPUTS,
     GENERATED_TAG,
     HUD_DEPTH,
@@ -229,7 +230,7 @@ def is_atlas_output(name: str) -> bool:
     Returns:
         True for <atlas>_terrain.png, _composite.png, ... and old <atlas>_badges_<round>.png sheets.
     """
-    return name.endswith(ATLAS_OUTPUTS) or any(part in name for part in ATLAS_OUTPUT_PARTS)
+    return name.endswith(ATLAS_OUTPUTS) or re.search(ATLAS_OLD_SHEETS, name) is not None
 
 
 def is_screenshot(p) -> bool:

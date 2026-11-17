@@ -438,7 +438,7 @@ class AutoAddMixin:
                 LOG.exception(f"adding failed ({mode}): {paths}")
                 self._q.put(("log", f"adding failed: {e}"))
                 if mode == "watch":  # the watcher tries these again
-                    self._q.put(("watch_failed", [str(p) for p in paths]))
+                    self._q.put(("watch_failed", (atlas, [str(p) for p in paths])))
                 self._q.put(("done", mode))
             finally:
                 for _ in range(jobs):
@@ -543,7 +543,7 @@ class AutoAddMixin:
                 self._q.put(("log", f"{p.name}: detection failed: {e}"))
                 failed.append(str(p))
         if failed and mode == "watch":  # the watcher tries these again (it had marked them as handed over)
-            self._q.put(("watch_failed", failed))
+            self._q.put(("watch_failed", (self.atlas, failed)))
         self._q.put(("progress", "placing"))
         with self._lock:
             before = len(self.atlas.frames)
@@ -1275,7 +1275,9 @@ class AutoAddMixin:
             case "status":
                 self.status.set(val)
             case "watch_failed":
-                self._watch_failed(val)
+                atlas, paths = val
+                if atlas is self.atlas:  # another atlas opened since: not its screenshots (review)
+                    self._watch_failed(paths)
             case "tile":  # a sharp ground tile is ready
                 self.request_redraw()
             case "atlas_cards":  # a thumbnail was written

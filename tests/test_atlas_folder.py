@@ -108,3 +108,4 @@ def test_old_icon_sheets_are_not_screenshots(tmp_path):
         cv2.imwrite(str(tmp_path / name), img)  # plain cv2: untagged, like the old sheets
     assert [p.name for p in core.screenshots_in(tmp_path)] == ["2694490_20261114092311_1.png"]
     assert core.is_atlas_output("atlas_badges_check.png") and not core.is_atlas_output("2694490_20261114092311_1.png")
+    assert not core.is_atlas_output("screenshot_badges_session.png"), "only the old sheet names (review)"

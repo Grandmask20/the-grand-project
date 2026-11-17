@@ -75,3 +75,13 @@ def test_unreadable_screenshot_gives_a_clear_error(tmp_path):
     shot.write_bytes(b"\x89PNG not finished")
     with pytest.raises(ValueError, match="not a readable image"):
         builder.extract_frame(shot, tmp_path / "cache")
+
+
+def test_screenshot_without_a_saved_hash_finds_its_cache_by_name(tmp_path):
+    """An atlas placed before screenshots kept their hash still gets its icons back on re-check (review)."""
+    frames = tmp_path / "atlas_frames"
+    frames.mkdir()
+    _cache(frames, "old", "ee" * 32, "old-detector")
+    _cache(frames, "old", "ff" * 32, builder.detector_stamp())  # same name, fresh: wins
+    got = builder.cached_frames(tmp_path / "atlas.json", [{"name": "old"}])
+    assert list(got) == ["old"] and got["old"].sha == "ff" * 32

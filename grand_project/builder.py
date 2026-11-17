@@ -492,12 +492,16 @@ def cached_frames(atlas_path: Path, frames: list[dict]) -> dict:
     """
     cache_dir = atlas_path.with_name(atlas_path.stem + "_frames")
     out = {}
+    by_name = None  # name -> cache file, only read if a screenshot has no saved hash (none of 5453 on 34 atlases)
     for f in frames:
         sha = f.get("sha")
-        if not sha:  # placed before screenshots kept their hash: nothing to find its cache by
-            continue
-        cf = cache_dir / f"{sha[:16]}_{NEW_DETECTOR_ID}.json"
-        if not cf.exists():
+        if sha:
+            cf = cache_dir / f"{sha[:16]}_{NEW_DETECTOR_ID}.json"
+        else:  # placed before screenshots kept their hash: its cache by name, so its icons aren't lost (review)
+            if by_name is None:
+                by_name = _caches_by_name(cache_dir)
+            cf = by_name.get(f["name"])
+        if cf is None or not cf.exists():
             continue
         data = atlas_io.read_json(cf)
         if data is None:  # cut-off cache: skipped (re-detected when that screenshot is next added)
@@ -506,6 +510,28 @@ def cached_frames(atlas_path: Path, frames: list[dict]) -> dict:
         if data.get("models") != detector_stamp():
             _log(f"{f['name']}: only an older detector's result (screenshot can't be re-detected); using it")
         out[f["name"]] = core.Frame.from_json(data)
+    return out
+
+
+def _caches_by_name(cache_dir: Path) -> dict:
+    """Every cache file in a folder by the screenshot name inside it (a fresh one wins over an older detector's).
+
+    Args:
+        cache_dir: The atlas's "_frames" folder.
+
+    Returns:
+        {screenshot name: cache file}.
+    """
+    out, fresh = {}, set()
+    for cf in sorted(cache_dir.glob(f"*_{NEW_DETECTOR_ID}.json")):
+        data = atlas_io.read_json(cf)
+        if not data or "name" not in data:
+            continue
+        name, is_fresh = data["name"], data.get("models") == detector_stamp()
+        if name not in out or (is_fresh and name not in fresh):
+            out[name] = cf
+            if is_fresh:
+                fresh.add(name)
     return out
 
 
