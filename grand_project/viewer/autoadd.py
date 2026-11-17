@@ -7,6 +7,7 @@ import os
 import queue
 import threading
 import time
+import tkinter as tk
 from pathlib import Path
 from tkinter import filedialog, messagebox
 
@@ -20,6 +21,7 @@ from grand_project import paths as rc_paths
 from grand_project.core import islands
 
 from .constants import (
+    DETECT_LOG_EVERY,
     PROFILE,
     RECENT_COL,
     RECENT_FADE,
@@ -28,6 +30,7 @@ from .constants import (
     WATCH_ASK,
     WATCH_BATCH,
     WATCH_POLL_MS,
+    WATCH_RETRIES,
     WEAK_INLIERS,
     WEAK_NCC,
 )
@@ -311,6 +314,8 @@ class AutoAddMixin:
             with self._lock:  # the worker is idle; a PNG export may hold it for a moment
                 self.atlas.save(self.path)
         self.settings["geometry"] = self.root.geometry()
+        with contextlib.suppress(tk.TclError, AttributeError):  # the side panel width the user dragged to
+            self.settings["side_width"] = self.side.winfo_width()
         self.settings["layers"] = {k: v.get() for k, v in self.layers.items()}
         self.settings["multi_only"] = self.multi_only.get()
         self.settings["icons_hidden"] = sorted(self.icon_hidden)
@@ -435,6 +440,8 @@ class AutoAddMixin:
             except Exception as e:
                 LOG.exception(f"adding failed ({mode}): {paths}")
                 self._q.put(("log", f"adding failed: {e}"))
+                if mode == "watch":  # the watcher tries these again
+                    self._q.put(("watch_failed", (atlas, [str(p) for p in paths])))
                 self._q.put(("done", mode))
             finally:
                 for _ in range(jobs):
@@ -448,6 +455,25 @@ class AutoAddMixin:
         """
         return self.path.with_name(self.path.stem + "_frames")
 
+    def _counter(self, what: str):
+        """A progress function for detecting many screenshots: "<what> 652 / 1261" in the progress box, and every
+        DETECT_LOG_EVERY in the debug log (user: only the total and the time showed while 1261 were re-detected).
+
+        Args:
+            what: The first words, e.g. "detecting again".
+
+        Returns:
+            Function (done, total), safe to call from the worker thread.
+        """
+
+        def progress(done: int, total: int):
+            """Show how many screenshots are done (worker thread)."""
+            self._q.put(("progress", f"{what} {done} / {total}"))
+            if done % DETECT_LOG_EVERY == 0 or done == total:
+                LOG.info(f"{what}: {done} / {total} screenshots")
+
+        return progress
+
     def _redetect(self, paths: list[Path]):
         """Detects these screenshots again with the current detector (their caches are rewritten). Worker thread.
 
@@ -456,7 +482,9 @@ class AutoAddMixin:
         """
         self.log(f"Re-check: {len(paths)} screenshot(s) were detected by an older detector: detecting them again")
         self._q.put(("progress", f"detecting {len(paths)} screenshots again (newer detector)"))
-        for p, err in builder.detect_uncached(paths, self._cache_dir(), log=lambda t: self._q.put(("log", t))).items():
+        for p, err in builder.detect_uncached(
+            paths, self._cache_dir(), log=lambda t: self._q.put(("log", t)), progress=self._counter("detecting again")
+        ).items():
             LOG.warning(f"{Path(p).name}: detection failed in a worker: {err}")
         for i, p in enumerate(paths, 1):
             self._q.put(("progress", f"detecting again {p.name} ({i}/{len(paths)})"))
@@ -493,16 +521,19 @@ class AutoAddMixin:
                 self._redetect(stale)
             self._q.put(("progress", "re-checking the whole atlas"))
             with self._lock:
-                self.atlas.rebuild_icons(builder.cached_frames(self.path))
+                self.atlas.rebuild_icons(builder.cached_frames(self.path, self.atlas.frames))
                 atlas_finalize.finalize(self.atlas, log=lambda t: self._q.put(("log", t)))
                 self.atlas.save(self.path)
             self._q.put(("placed", ("recheck", 1, [], len(self.atlas.frames))))
             return
         cache_dir = self.path.with_name(self.path.stem + "_frames")
         frames = []
+        failed = []
         if len(paths) > 1:
             self._q.put(("progress", f"detecting {len(paths)} screenshots"))
-            for p, err in builder.detect_uncached(paths, cache_dir, log=lambda t: self._q.put(("log", t))).items():
+            for p, err in builder.detect_uncached(
+                paths, cache_dir, log=lambda t: self._q.put(("log", t)), progress=self._counter("detecting")
+            ).items():
                 LOG.warning(f"{Path(p).name}: detection failed in a worker: {err}")
         for i, p in enumerate(paths, 1):
             self._q.put(("progress", f"detecting {p.name} ({i}/{len(paths)})"))
@@ -513,6 +544,9 @@ class AutoAddMixin:
             except Exception as e:
                 LOG.exception(f"{p.name}: detection failed")
                 self._q.put(("log", f"{p.name}: detection failed: {e}"))
+                failed.append(str(p))
+        if failed and mode == "watch":  # the watcher tries these again (it had marked them as handed over)
+            self._q.put(("watch_failed", (self.atlas, failed)))
         self._q.put(("progress", "placing"))
         with self._lock:
             before = len(self.atlas.frames)
@@ -1082,7 +1116,7 @@ class AutoAddMixin:
             with os.scandir(base) as it:
                 for e in it:
                     name = e.name
-                    if Path(name).suffix.lower() not in core.IMAGE_EXT or name.endswith(core.ATLAS_OUTPUTS):
+                    if Path(name).suffix.lower() not in core.IMAGE_EXT or core.is_atlas_output(name):
                         continue
                     with contextlib.suppress(OSError):
                         if e.is_file():
@@ -1107,7 +1141,7 @@ class AutoAddMixin:
             return
         self.settings["watch_on"] = True
         files = self._watch_files()
-        self._watch_seen = {k: -1 for k in files}  # -1: handled (not watched for changes)
+        self._watch_seen = {k: -1 for k in files}  # -1: handed over to adding (not watched for changes)
         todo = [q for q in self._not_in_atlas(files) if not core.is_generated(q)]  # tagged images never added
         own = Path(self._watch_dir()).resolve() == Path(self.path).resolve().parent
         # a folder that isn't this atlas's own, full of screenshots it doesn't have: likely another atlas's
@@ -1163,6 +1197,25 @@ class AutoAddMixin:
                 out.append((t, p))
         return [p for _t, p in sorted(out)]
 
+    def _watch_failed(self, paths: list[str]):
+        """Let the watcher try screenshots again whose detection failed (window thread).
+
+        The watcher marks a file as handed over when it is queued; a failure used to leave it marked, so a
+        screenshot that was unreadable for a moment was never retried (GPT audit). Each file gets WATCH_RETRIES
+        more tries, picked up by the next polls; after that it is logged and left alone.
+
+        Args:
+            paths: Full paths of the screenshots whose detection failed.
+        """
+        tries = self.__dict__.setdefault("_watch_tries", {})
+        for f in paths:
+            tries[f] = tries.get(f, 0) + 1
+            if tries[f] <= WATCH_RETRIES:
+                getattr(self, "_watch_seen", {}).pop(f, None)  # seen again on the next polls, then queued again
+                self.log(f"auto-add: {Path(f).name} failed; trying again ({tries[f]}/{WATCH_RETRIES})")
+            else:
+                self.log(f"auto-add: {Path(f).name} failed {WATCH_RETRIES + 1} times; left out (add it by hand)")
+
     def _poll_watch(self):
         """Checks the watched folder (every WATCH_POLL_MS, a Tk `after` timer) and adds new screenshots.
 
@@ -1184,7 +1237,7 @@ class AutoAddMixin:
                 continue
             if prev is not None and prev == size and size > 0:  # finished writing: same size twice
                 ready.append(Path(f))
-                self._watch_seen[f] = -1
+                self._watch_seen[f] = -1  # handed over; a failed detection hands it back (_watch_failed)
             else:
                 self._watch_seen[f] = size
         ready = [q for q in ready if not core.is_generated(q)]  # an image the program wrote (tagged): never added
@@ -1218,12 +1271,16 @@ class AutoAddMixin:
         Args:
             kind: The message kind: "status", "tile", "atlas_cards", "atlas_numbers", "progress",
                 "added_names", "undone", "outline", "rebuild_terrain", "terrain_img", "log", "locks", "placed",
-                "done" or "ask".
+                "done", "ask" or "watch_failed".
             val: The message value; its shape depends on the kind.
         """
         match kind:
             case "status":
                 self.status.set(val)
+            case "watch_failed":
+                atlas, paths = val
+                if atlas is self.atlas:  # another atlas opened since: not its screenshots (review)
+                    self._watch_failed(paths)
             case "tile":  # a sharp ground tile is ready
                 self.request_redraw()
             case "atlas_cards":  # a thumbnail was written
@@ -1249,6 +1306,13 @@ class AutoAddMixin:
             case "rebuild_terrain":
                 self.rebuild_terrain()
             case "terrain_img":
+                rp = getattr(self, "rp", None)
+                if rp is not None and rp["exporting"]:  # the GIF keeps one ground throughout (user)
+                    if val[0] == "seams":  # a finished Fix seams: kept and shown when the GIF is done (its files
+                        rp["seams_after"] = val  # are gone by then, so it couldn't be made again: review)
+                    else:  # rebuilt when the GIF is done (each paste meanwhile started from the ground before
+                        rp["terrain_after"] = True  # the last, so applying only the newest would lose some)
+                    return
                 job, canvas, weight, origin, labels = (*val, None)[:5]
                 if job is None or job == "seams" or job == self._terrain_job:
                     self._set_terrain(canvas, weight, origin, labels=labels)
@@ -1284,12 +1348,16 @@ class AutoAddMixin:
                 self.btn_add.state(["!disabled"])
             case "ask":  # a question from the worker; for a weak match, the screenshot is shown where it would go
                 question, preview = val if isinstance(val, tuple) else (val, None)
+                view = (self.cx, self.cy, self.z)  # the preview centres on the screenshot; No puts the view back
                 self._show_weak_preview(preview)
                 if self._weak_preview:
                     question += "\n\n(It is shown and outlined on the map.)"
+                answer = False
                 try:
                     answer = messagebox.askyesno("Check this screenshot", question)
                 finally:
+                    if self._weak_preview is not None and not answer:  # not added: back to where you were
+                        self.cx, self.cy, self.z = view  # (Yes stays, to show where it went: GPT audit)
                     self._weak_preview = None
                     self.request_redraw()
                 self._answer.put(answer)

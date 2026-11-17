@@ -182,7 +182,7 @@ def test_icon_types_listed_and_searchable(viewer, check):
         )
     app.query.set("hall")
     pump()
-    rows = [w.winfo_children()[-1].cget("text") for w in app.icon_frame.winfo_children() if isinstance(w, V.tk.Frame)]
+    rows = list(app.type_rows)
     check(
         "search filters the type list",
         rows and any(r.startswith("Hall") for r in rows) and len(rows) < len(app.icon_types) // 2,
@@ -859,6 +859,153 @@ def test_weak_match_preview(viewer, check, monkeypatch):
         and app._answer.get_nowait() is True,
         str(seen),
     )
+    # No: the view goes back to where it was before the preview centred on the screenshot
+    app.cx, app.cy, app.z = app.cx + 5000.0, app.cy + 5000.0, 0.05
+    before = (app.cx, app.cy, app.z)
+    monkeypatch.setattr(messagebox, "askyesno", lambda *a, **k: False)
+    app._handle("ask", ("Add it anyway?", (f0["path"], H0)))
+    check(
+        "weak match answered No: the view is put back",
+        (app.cx, app.cy, app.z) == before and app._answer.get_nowait() is False,
+        f"{before} -> {(app.cx, app.cy, app.z)}",
+    )
+
+
+def test_type_list_rebuilds_keep_one_set_of_bindings(viewer, check):
+    """Searching rebuilds the type list; its click bindings are made once, not again per rebuild (review)."""
+    app = viewer.app
+    pump = viewer.pump
+    before = len(app.icon_canvas._tclCommands or [])
+    for q in ("ha", "hal", "tow", ""):
+        app.query.set(q)
+        pump(0.1)
+    after = len(app.icon_canvas._tclCommands or [])
+    check("type list: no new callbacks per rebuild", after == before, f"{before} -> {after}")
+
+
+def test_replay_panel(viewer, check, monkeypatch, tmp_path):
+    """Timelapse: the panel opens at the end, reveals step by step, plays, exports a GIF and puts the view back."""
+    from tkinter import filedialog
+
+    from PIL import Image
+
+    app = viewer.app
+    pump = viewer.pump
+    if len(app.atlas.frames) < 3:
+        pytest.skip("needs an atlas of 3+ screenshots")
+    view = (app.cx, app.cy, app.z)
+    app.open_replay()
+    pump(0.3)
+    plan = app.rp["plan"]
+    check("replay: one step per screenshot", plan.n_steps == len(app.atlas.frames), str(plan.n_steps))
+    check("replay: opens at the end (whole atlas)", app.rp["pos"] == plan.n_steps, str(app.rp["pos"]))
+    all_maps = int(app.shown_masks()[1].sum())
+    app._rp_seek(1.0)
+    first = int(app.shown_masks()[1].sum())
+    app._rp_seek(plan.n_steps / 2)
+    half = int(app.shown_masks()[1].sum())
+    check("replay: map nodes appear as their screenshots do", 0 < first < half < all_maps, f"{first} {half} {all_maps}")
+    app._rp_seek(0.0)
+    check("replay: nothing before the first step", int(app.shown_masks()[1].sum()) == 0)
+    img = app.render(*app.canvas_size())
+    check("replay: the ground is hidden before the first step", img.mean() < 25, f"mean {img.mean():.1f}")
+    app._rp_set(length=3.0, speed=1.0)
+    app._rp_toggle_play()
+    pump(1.2)
+    check("replay: plays", 0 < app.rp["pos"] < plan.n_steps, f"{app.rp['pos']:.2f}")
+    app._rp_toggle_play()
+    out = tmp_path / "replay.gif"
+    monkeypatch.setattr(filedialog, "asksaveasfilename", lambda **k: str(out))
+    app._rp_set(length=1.0, gif_width=320)
+    import grand_project.viewer.cities as VCI
+
+    builds = []
+    real_view_model = VCI.view_model
+    monkeypatch.setattr(VCI, "view_model", lambda atlas: (builds.append(1), real_view_model(atlas))[1])
+    app._rp_export_gif()
+    held = app.rp["exporting"]
+    app.rebuild_model()  # e.g. screenshots added mid-export: the rebuild waits until the GIF is done (review)
+    held = held and app.rp.get("rebuild_after", False) and not builds
+    pyr = app.pyr
+    if app._terrain is not None:  # a new map image mid-export (a screenshot pasted in) waits too (user)
+        app._handle("terrain_img", (None, *app._terrain, None))
+        held = held and app.pyr is pyr and app.rp.get("terrain_after", False)
+        names = [f["name"] for f in app.atlas.frames]  # a finished Fix seams mid-export is kept for after (review)
+        own = np.zeros(app._terrain[1].shape, np.int32)  # (one owner everywhere is enough for the check)
+        app._handle("terrain_img", ("seams", *app._terrain, (own, names)))
+        held = held and app.pyr is pyr and app.rp.get("seams_after") is not None
+    where = app.path
+    app.open_atlas(where)  # no atlas switching while the GIF renders
+    held = held and app.rp is not None and "wait until the timelapse GIF" in app.status.get()
+    end = time.time() + 60
+    while time.time() < end and (app.rp["exporting"] or not out.exists() or "saved" not in app.status.get()):
+        pump(0.3)
+    check("replay: during export the model, ground, Fix seams and atlas switches wait", held, str(held))
+    check(
+        "replay: after the export the held-back rebuild ran once, and the clean map was shown",
+        len(builds) == 1 and "seams_after" not in app.rp and "terrain_after" not in app.rp,
+        f"builds {len(builds)}",
+    )
+    check("replay: reveal lists match the model", len(app.rp["node_step"]) == len(app.V["nodes"]))
+    gif = Image.open(out) if out.exists() else None
+    check("replay: GIF exported", gif is not None and gif.size[0] == 320 and gif.n_frames >= 10, app.status.get())
+    if gif is not None:  # lasts the length setting (1 s) plus the 2 s hold on the last frame (review)
+        total = 0
+        for k in range(gif.n_frames):
+            gif.seek(k)
+            total += gif.info.get("duration", 0)
+        check("replay: the GIF lasts its length", 2700 <= total <= 3300, f"{total} ms")
+    app._rp_set(type="spiral", reveal="area")
+    app._rp_replan()
+    app._rp_seek(app.rp["plan"].n_steps / 2)
+    half = int(app.shown_masks()[1].sum())
+    check("replay by area: a smooth sweep", app.rp["plan"].sweep is not None and 0 < half < all_maps, str(half))
+    app.set_style(age_tint="times seen")
+    img = app.render(*app.canvas_size())
+    check("times seen: drawn while replaying", img is not None and app.heat_top() >= 1, str(app.heat_top()))
+    app.set_style(age_tint="off")
+    app._rp_set(type="by time", reveal="screenshots")
+    app.close_replay()
+    pump(0.2)
+    check("replay: closing puts the view back", (app.cx, app.cy, app.z) == view and app.rp is None)
+    other = tmp_path / "other" / "atlas.json"
+    other.parent.mkdir()
+    core.Atlas().save(other)
+    here = app.path
+    app.open_replay()
+    app.open_atlas(other)
+    check("replay: opening another atlas closes the replay", app.rp is None and app.path == other, str(app.path))
+    app.open_atlas(here)
+    pump(1.0)
+    app.set_style(age_tint="by session")
+    img = app.render(*app.canvas_size())
+    check("colour by when taken: drawn with a legend", app.age_legend() and img is not None, str(app.age_legend()))
+    app.set_style(age_tint="off")
+
+
+def test_debug_marks_toggle_and_clear(viewer, check, monkeypatch):
+    """Debug tab (internal only): marks can be hidden on the map and cleared all at once, with a copy kept (user)."""
+    app = viewer.app
+    if not rc_paths.DEBUG or not hasattr(app, "dbg_show"):
+        pytest.skip("debug tools are only in the internal / develop copy")
+    x, y = app.cx, app.cy
+    for k in range(2):
+        app._dbg_add("missing map", "test", "", x + 40 * k, y)
+    check("debug: marks added", len(app._dbg_marks()) >= 2, str(len(app._dbg_marks())))
+    app.dbg_show.set(False)
+    app._dbg_toggle()
+    check("debug: hiding is remembered", app.settings.get("debug_marks_shown") is False)
+    app.dbg_show.set(True)
+    app._dbg_toggle()
+    monkeypatch.setattr(messagebox, "askyesno", lambda *a, **k: True)
+    fp = app._dbg_file()
+    app._dbg_clear_all()
+    copies = list(fp.parent.glob(f"{fp.stem}_cleared_*.json"))
+    check("debug: clear all empties the list and keeps a copy", not app._dbg_marks() and copies, str(copies))
+    app._dbg_add("missing map", "test", "", x, y)
+    app._dbg_clear_all()  # straight after: its copy must not replace the first (review)
+    again = list(fp.parent.glob(f"{fp.stem}_cleared_*.json"))
+    check("debug: a second clear keeps its own copy", len(again) == len(copies) + 1, str(again))
 
 
 def test_saved_atlases_tab(viewer, check):

@@ -159,11 +159,14 @@ class NavigationMixin:
             id(self.V["nodes"]),
             id(self.V["paths"]),
             len(self.icon_vars),
+            self._rp_key(),  # replaying: only what was revealed so far
         )
         c = getattr(self, "_shown_cache", None)
         if c is None or c[0] != key:
             N = self.V["nodes"]
             nm = np.array([self.node_shown(n) for n in N], bool)
+            if self.replay_active() and len(nm):
+                nm &= self.rp["node_step"][: len(nm)] < self.rp["pos"]
             multi = key[0][1]
             P = self.V["paths"]
             if P:
@@ -253,6 +256,8 @@ class NavigationMixin:
         if self.near_only() and lm["kind"] != "City":
             return False
         i = getattr(self, "_lm_index", {}).get(id(lm))
+        if i is not None and not self._rp_shown("landmark", i):  # replaying: not revealed yet
+            return False
         t = getattr(self, "city_type", {}).get(i)
         return not t or f"{t[0]} city" not in self.icon_hidden
 

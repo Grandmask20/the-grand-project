@@ -16,6 +16,7 @@ import hashlib
 import json
 import sys
 import types
+from concurrent.futures import as_completed
 from pathlib import Path
 
 import numpy as np
@@ -200,7 +201,7 @@ def is_cached(image_path: Path, cache_dir: Path) -> bool:
     return _fresh(cache_dir / f"{digest[:16]}_{atlas_detect.DETECTOR_ID}.json") is not None
 
 
-def detect_uncached(paths: list, cache_dir: Path, log=None) -> dict:
+def detect_uncached(paths: list, cache_dir: Path, log=None, progress=None) -> dict:
     """Detect the screenshots not cached yet, several at a time (the viewer's batches).
 
     Afterwards extract_frame reads each from the cache. Does nothing for fewer than 2 screenshots or when
@@ -210,6 +211,8 @@ def detect_uncached(paths: list, cache_dir: Path, log=None) -> dict:
         paths: Screenshot paths.
         cache_dir: Folder of the cached detections.
         log: Optional function taking one line of text.
+        progress: Optional function (done, total) called as each screenshot finishes (user: the progress box
+            showed only the total while 1261 screenshots were re-detected).
 
     Returns:
         {path: error} for failures.
@@ -221,9 +224,13 @@ def detect_uncached(paths: list, cache_dir: Path, log=None) -> dict:
     errors = {}
     try:
         with atlas_io.process_pool(min(DETECT_WORKERS, len(todo))) as ex:
-            for p, err in ex.map(_detect_one, [(str(p), str(cache_dir)) for p in todo]):
+            jobs = [ex.submit(_detect_one, (str(p), str(cache_dir))) for p in todo]
+            for done, job in enumerate(as_completed(jobs), 1):
+                p, err = job.result()
                 if err:
                     errors[p] = err
+                if progress:
+                    progress(done, len(todo))
     except Exception as e:  # no worker processes: one at a time later
         if log:
             log(f"parallel detection failed ({e}); detecting one at a time")
@@ -478,25 +485,63 @@ def recheck(atlas: core.Atlas, new_names: list, log=_log) -> None:
         atlas_finalize.finalize(atlas, log=log)
 
 
-def cached_frames(atlas_path: Path) -> dict:
-    """Read the cached detection of every screenshot of an atlas, by name.
+def cached_frames(atlas_path: Path, frames: list[dict]) -> dict:
+    """Read the cached detection of every screenshot placed in an atlas, by name.
 
-    A cut-off cache is skipped (re-detected when that screenshot is next added).
+    Each placed screenshot's own cache is read (found by the screenshot's hash, as it was saved), never every file
+    in the folder: a glob also picked up caches of screenshots no longer in the atlas, and with two caches of one
+    name the one read last won (GPT audit). A cache from another detector is used only when there is no fresh one
+    (its screenshot can't be detected again: moved or deleted), so its icons aren't lost; cut-off caches are skipped.
 
     Args:
         atlas_path: Path of the atlas .json.
+        frames: The atlas's placed screenshots (Atlas.frames: "name" and "sha").
 
     Returns:
         {screenshot name: Frame}.
     """
+    cache_dir = atlas_path.with_name(atlas_path.stem + "_frames")
     out = {}
-    for cf in atlas_path.with_name(atlas_path.stem + "_frames").glob("*.json"):
+    by_name = None  # name -> cache file, only read if a screenshot has no saved hash (none of 5453 on 34 atlases)
+    for f in frames:
+        sha = f.get("sha")
+        if sha:
+            cf = cache_dir / f"{sha[:16]}_{NEW_DETECTOR_ID}.json"
+        else:  # placed before screenshots kept their hash: its cache by name, so its icons aren't lost (review)
+            if by_name is None:
+                by_name = _caches_by_name(cache_dir)
+            cf = by_name.get(f["name"])
+        if cf is None or not cf.exists():
+            continue
         data = atlas_io.read_json(cf)
         if data is None:  # cut-off cache: skipped (re-detected when that screenshot is next added)
             _log(f"skipping damaged detection cache {cf.name}")
             continue
-        fr = core.Frame.from_json(data)
-        out[fr.name] = fr
+        if data.get("models") != detector_stamp():
+            _log(f"{f['name']}: only an older detector's result (screenshot can't be re-detected); using it")
+        out[f["name"]] = core.Frame.from_json(data)
+    return out
+
+
+def _caches_by_name(cache_dir: Path) -> dict:
+    """Every cache file in a folder by the screenshot name inside it (a fresh one wins over an older detector's).
+
+    Args:
+        cache_dir: The atlas's "_frames" folder.
+
+    Returns:
+        {screenshot name: cache file}.
+    """
+    out, fresh = {}, set()
+    for cf in sorted(cache_dir.glob(f"*_{NEW_DETECTOR_ID}.json")):
+        data = atlas_io.read_json(cf)
+        if not data or "name" not in data:
+            continue
+        name, is_fresh = data["name"], data.get("models") == detector_stamp()
+        if name not in out or (is_fresh and name not in fresh):
+            out[name] = cf
+            if is_fresh:
+                fresh.add(name)
     return out
 
 
@@ -513,7 +558,7 @@ def cmd_finalize(args) -> int:
     """
     atlas_path = Path(args.atlas)
     atlas = core.Atlas.load(atlas_path)
-    atlas.rebuild_icons(cached_frames(atlas_path))  # picks up re-detected / taught badges
+    atlas.rebuild_icons(cached_frames(atlas_path, atlas.frames))  # picks up re-detected / taught badges
     atlas_finalize.finalize(atlas)
     atlas.save(atlas_path)
     export(atlas, atlas_path)

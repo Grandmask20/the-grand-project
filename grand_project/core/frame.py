@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import contextlib
+import re
 import zlib
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -11,7 +12,16 @@ import cv2
 import numpy as np
 
 from . import constants as K
-from .constants import ATLAS_OUTPUTS, GENERATED_TAG, HUD_DEPTH, HUD_MASK_FILE, ICON_BASE_DY, IMAGE_EXT, ROW_STEP_PX
+from .constants import (
+    ATLAS_OLD_SHEETS,
+    ATLAS_OUTPUTS,
+    GENERATED_TAG,
+    HUD_DEPTH,
+    HUD_MASK_FILE,
+    ICON_BASE_DY,
+    IMAGE_EXT,
+    ROW_STEP_PX,
+)
 from .geometry import persp, rectifier
 
 
@@ -211,6 +221,18 @@ def is_generated(p) -> bool:
     return head[:8] == b"\x89PNG\r\n\x1a\n" and b"tEXt" + GENERATED_TAG + b"\0" in head
 
 
+def is_atlas_output(name: str) -> bool:
+    """Tell whether a file name is one of the images an atlas writes (by name; newer ones are also tagged).
+
+    Args:
+        name: The file name.
+
+    Returns:
+        True for <atlas>_terrain.png, _composite.png, ... and old <atlas>_badges_<round>.png sheets.
+    """
+    return name.endswith(ATLAS_OUTPUTS) or re.search(ATLAS_OLD_SHEETS, name) is not None
+
+
 def is_screenshot(p) -> bool:
     """Tell whether an image file can be a screenshot.
 
@@ -226,7 +248,7 @@ def is_screenshot(p) -> bool:
     p = Path(p)
     if p.suffix.lower() not in IMAGE_EXT or not p.is_file():
         return False
-    if any(p.name.endswith(o) for o in ATLAS_OUTPUTS):
+    if is_atlas_output(p.name):
         return False
     if p.parent.name.endswith(("_files", "_frames", "_undo")):
         return False
