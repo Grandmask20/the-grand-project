@@ -7,6 +7,7 @@ import os
 import queue
 import threading
 import time
+import tkinter as tk
 from pathlib import Path
 from tkinter import filedialog, messagebox
 
@@ -313,6 +314,8 @@ class AutoAddMixin:
             with self._lock:  # the worker is idle; a PNG export may hold it for a moment
                 self.atlas.save(self.path)
         self.settings["geometry"] = self.root.geometry()
+        with contextlib.suppress(tk.TclError, AttributeError):  # the side panel width the user dragged to
+            self.settings["side_width"] = self.side.winfo_width()
         self.settings["layers"] = {k: v.get() for k, v in self.layers.items()}
         self.settings["multi_only"] = self.multi_only.get()
         self.settings["icons_hidden"] = sorted(self.icon_hidden)
