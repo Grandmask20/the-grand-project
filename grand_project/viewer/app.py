@@ -308,6 +308,7 @@ class Viewer(
         sb.pack(side="right", fill="y")
         self.icon_canvas.pack(side="left", fill="both", expand=True)
         self.icon_canvas.configure(yscrollincrement=12)
+        self._bind_type_list()
         self.icon_canvas.bind("<MouseWheel>", self._scroll_icons)
         self.icon_canvas.bind("<Button-4>", self._scroll_icons)
         self.icon_canvas.bind("<Button-5>", self._scroll_icons)

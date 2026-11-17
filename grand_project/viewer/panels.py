@@ -121,14 +121,19 @@ class PanelsMixin:
                     54, mid, text=f"{lab}  ({counts.get(lab, 0)})", anchor="w", fill="black", tags=(tag, "name")
                 )
                 y += TYPE_ROW_H
+        c.configure(scrollregion=(0, 0, 1, y + 4))
+        self._paint_ticks()
+        c.yview_moveto(0)
+
+    def _bind_type_list(self):
+        """Bind clicks on the type list's rows, once (the bindings belong to the tags, so they outlast every rebuild
+        of the rows; binding them at each rebuild piled up callbacks: review)."""
+        c = self.icon_canvas
         c.tag_bind("tick", "<Button-1>", self._on_type_tick)
         c.tag_bind("mark", "<Button-1>", self._on_type_tick)
         c.tag_bind("name", "<Button-1>", self._on_type_name)
         c.tag_bind("name", "<Enter>", lambda _e: c.configure(cursor="hand2"))
         c.tag_bind("name", "<Leave>", lambda _e: c.configure(cursor=""))
-        c.configure(scrollregion=(0, 0, 1, y + 4))
-        self._paint_ticks()
-        c.yview_moveto(0)
 
     def _type_row_at(self, e) -> str | None:
         """The type label of the list row that was clicked.

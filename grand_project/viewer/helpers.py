@@ -11,7 +11,7 @@ from PIL import Image
 from grand_project import logs as atlas_log
 from grand_project import paths as rc_paths
 
-from .constants import ICON_INFO, ICON_ROW_DY, ICON_ROW_STEP, IS_MAC
+from .constants import ICON_INFO, ICON_ROW_DY, ICON_ROW_STEP, IS_MAC, LABEL_GRID_PX
 
 _BLIT: dict = {}  # picture overlays, by size (blit_rgba)
 _THUMBS: dict = {}  # badge thumbnails (icon_thumb)
@@ -149,6 +149,47 @@ def blit_rgba(img, pil_rgba, x, y, size):
     r_ = rgb[ya - y0 : yb - y0, xa - x0 : xb - x0]
     a_ = al[ya - y0 : yb - y0, xa - x0 : xb - x0]
     img[ya:yb, xa:xb] = (sub * (1 - a_) + r_ * a_).astype(np.uint8)
+
+
+class BoxGrid:
+    """Screen boxes kept in a coarse grid, so "does this box overlap one already there?" only looks nearby.
+
+    Used for icon names: each name is checked against the icons and names around it, not all of them.
+    """
+
+    def __init__(self):
+        self.cells: dict[tuple[int, int], list] = {}
+
+    def _keys(self, box):
+        """The grid cells a box touches."""
+        c = LABEL_GRID_PX
+        for i in range(int(box[0]) // c, int(box[2]) // c + 1):
+            for j in range(int(box[1]) // c, int(box[3]) // c + 1):
+                yield i, j
+
+    def add(self, box):
+        """Keep a box (x0, y0, x1, y1).
+
+        Args:
+            box: (x0, y0, x1, y1) in screen px.
+        """
+        for k in self._keys(box):
+            self.cells.setdefault(k, []).append(box)
+
+    def hits(self, box) -> bool:
+        """Whether a box overlaps one kept.
+
+        Args:
+            box: (x0, y0, x1, y1) in screen px.
+
+        Returns:
+            True when it overlaps.
+        """
+        for k in self._keys(box):
+            for b in self.cells.get(k, ()):
+                if box[0] < b[2] and b[0] < box[2] and box[1] < b[3] and b[1] < box[3]:
+                    return True
+        return False
 
 
 def icon_rows(nodes: list[dict], icons: list[dict], icon_node: dict[int, int]) -> np.ndarray:

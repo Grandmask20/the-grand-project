@@ -304,3 +304,6 @@ EDIT_SAME = 90.0  # atlas units: a hand edit applies to the landmark this close 
 
 # a little between re-checks)
 EDIT_SPOT = 15.0  # a new edit replaces an older one only at the same spot
+
+
+LABEL_GRID_PX = 64  # icon names: screen boxes are looked up in a grid of cells this big (helpers.BoxGrid)

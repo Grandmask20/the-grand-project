@@ -24,7 +24,7 @@ from .constants import (
     REMOVED_COL,
     SELECT_COL,
 )
-from .helpers import blit_rgba, draw_map, hex_bgr, icon_col, icon_label, icon_thumb, put_text
+from .helpers import BoxGrid, blit_rgba, draw_map, hex_bgr, icon_col, icon_label, icon_thumb, put_text
 
 
 class DrawingMixin:
@@ -334,7 +334,6 @@ class DrawingMixin:
             ip = self.to_screen(self.icon_pts)
             hit_ic = {i for k, i in self.hits if k == "icon"}
             labels = L["Labels"] and z >= 0.8
-            placed: list[tuple[int, int, int, int]] = []  # label boxes, so labels never overlap
             drawn = []  # (x, y, radius, icon, colour) of the icons drawn, for their names
             for i, ic in enumerate(self.V["icons"]):
                 x, y = int(ip[i, 0]), int(ip[i, 1])
@@ -357,14 +356,14 @@ class DrawingMixin:
                     drawn.append((x, y, rr, ic, col))
             # names after every icon is drawn, and only where they don't run under another icon (icons in a row
             # are 36 apart: a name beside each one was cut off by its neighbour)
-            icon_boxes = [(x - rr, y - rr, x + rr, y + rr) for x, y, rr, _ic, _c in drawn]
+            taken = BoxGrid()  # icons and names already there, looked up by area (review)
+            for x, y, rr, _ic, _c in drawn:
+                taken.add((x - rr, y - rr, x + rr, y + rr))
             for x, y, rr, ic, col in drawn:
                 text = icon_label(ic)
                 box = (x + rr + 4, y - 8, x + rr + 4 + 8 * len(text), y + 6)
-                if not any(
-                    box[0] < b[2] and b[0] < box[2] and box[1] < b[3] and b[1] < box[3] for b in placed + icon_boxes
-                ):
-                    placed.append(box)
+                if not taken.hits(box):
+                    taken.add(box)
                     put_text(img, text, (x + rr + 4, y + 4), col, 0.42)
         self._fl_mark("icons")
         if L["Landmarks"]:

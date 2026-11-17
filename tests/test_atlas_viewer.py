@@ -861,6 +861,18 @@ def test_weak_match_preview(viewer, check, monkeypatch):
     )
 
 
+def test_type_list_rebuilds_keep_one_set_of_bindings(viewer, check):
+    """Searching rebuilds the type list; its click bindings are made once, not again per rebuild (review)."""
+    app = viewer.app
+    pump = viewer.pump
+    before = len(app.icon_canvas._tclCommands or [])
+    for q in ("ha", "hal", "tow", ""):
+        app.query.set(q)
+        pump(0.1)
+    after = len(app.icon_canvas._tclCommands or [])
+    check("type list: no new callbacks per rebuild", after == before, f"{before} -> {after}")
+
+
 def test_saved_atlases_tab(viewer, check):
     """Saved atlases: cards, rename, stop tracking, delete (also the open atlas)."""
     app = viewer.app
