@@ -1002,6 +1002,10 @@ def test_debug_marks_toggle_and_clear(viewer, check, monkeypatch):
     app._dbg_clear_all()
     copies = list(fp.parent.glob(f"{fp.stem}_cleared_*.json"))
     check("debug: clear all empties the list and keeps a copy", not app._dbg_marks() and copies, str(copies))
+    app._dbg_add("missing map", "test", "", x, y)
+    app._dbg_clear_all()  # straight after: its copy must not replace the first (review)
+    again = list(fp.parent.glob(f"{fp.stem}_cleared_*.json"))
+    check("debug: a second clear keeps its own copy", len(again) == len(copies) + 1, str(again))
 
 
 def test_saved_atlases_tab(viewer, check):

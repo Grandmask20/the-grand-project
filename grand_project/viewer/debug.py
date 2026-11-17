@@ -116,8 +116,13 @@ class DebugMixin:
             f"A copy is kept as {fp.stem}_cleared_<time>.json in {fp.parent.name}.",
         ):
             return
-        backup = fp.with_name(f"{fp.stem}_cleared_{time.strftime('%Y%m%d_%H%M%S')}.json")
-        backup.write_text(json.dumps(marks, indent=1), encoding="utf-8")
+        stamp = time.strftime("%Y%m%d_%H%M%S")
+        backup = fp.with_name(f"{fp.stem}_cleared_{stamp}.json")
+        n = 1
+        while backup.exists():  # two clears in one second: never over an earlier copy (review)
+            n += 1
+            backup = fp.with_name(f"{fp.stem}_cleared_{stamp}_{n}.json")
+        backup.write_text(json.dumps(marks, indent=1), encoding="utf-8")  # (marks are cleared only after this)
         marks.clear()
         self._dbg_save()
         LOG.info(f"debug marks cleared ({backup.name} keeps a copy)")
