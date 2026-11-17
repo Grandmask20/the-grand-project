@@ -1,4 +1,4 @@
-# The Grand Project — v1.07
+# The Grand Project — v1.16
 
 Builds one big map of your Path of Exile 2 atlas from your screenshots. Named after the in-game tablet, *The Grand Project*. It finds maps, paths, icons, towers and cities, and lets you search and bookmark them.
 
@@ -22,7 +22,7 @@ On first start the viewer opens the empty atlas **`atlases/default`**.
 
 ## Before you start: Steam screenshots
 
-**Play at 1920×1080 (1080p).** The detector was trained only on 1080p screenshots, and map, badge and tower sizes are measured in 1080p pixels. Screenshots at other resolutions (1440p, 4K, ultrawide) are not scaled and will not be recognised. If your monitor is larger, set the game to 1920×1080 (windowed or fullscreen) while taking atlas screenshots.
+**Resolution:** the detector was trained on 1080p screenshots. 1440p and 4K screenshots are scaled down to 1080p and work too (4K files are about 4 times larger). Keep the game's **render resolution at 100%**: lower settings blur the maps and paths, and fewer of them are found.
 
 Use Steam's screenshot key (**F12** by default); it's the fastest and most reliable way.
 
@@ -93,17 +93,20 @@ A screenshot that overlaps nothing yet goes to **Waiting** (Auto-add tab). Waiti
   - remove an atlas from the list
   - add new screenshots from an atlas's folder
 
+  The **Saved atlases tab** shows every atlas as a card with a thumbnail of its map and its numbers of maps, icons and screenshots. Click a card to open it; right-click (or **Rename…**) to rename it. **Refresh** re-checks the whole open atlas. **Delete…** asks whether to *stop tracking* the atlas (its files stay) or *delete the whole atlas and its data* (its `atlas.json`, `atlas_frames/` and `atlas_files/`; your screenshots are never deleted).
+
   Each atlas lives in its own folder: `atlas.json`, plus `atlas_frames/` (detections) and `atlas_files/` (map image, exports, undo). The screenshots can sit in that same folder; the atlas never takes its own files for screenshots. Keep new ones in `atlases/`.
 - **File menu:**
   - *New atlas*, *Open atlas*, *Save* (Ctrl+S; adding screenshots also saves).
   - *Re-check whole atlas* runs the full clean-up pass again (a few minutes on a big atlas).
+  - *Fix seams (clean map)* rebuilds the map image with care: each map node comes whole from one screenshot with its icons, seams stay off paths and away from screenshot edges, and lit copies win over fogged ones. It takes several minutes on a big atlas and runs in the background.
   - *Export map PNGs*.
 
 ## 5. Other things
 
 - **Log tab:** what the program did and any problems. The full log is `user_data/atlas_debug.log`.
 - **Settings** (last atlas, window, watched folder) are in `user_data/viewer_settings.json`. Delete that file to start fresh on the default atlas.
-- **Detector database:** `references/atlas_references.sqlite3`. It holds only the trained detector models and the icon (badge) reference pictures, with no data from anyone's atlas. *File → Detector database…* picks another one. The models are stored as skops archives, and the program only trusts the scikit-learn / numpy classes a trained model is made of. Still, only use detector databases from people you trust.
+- **Detector database:** `references/atlas_references.sqlite3`. It holds only the trained detector models and the icon (badge) reference pictures, with no data from anyone's atlas. Another one can be used by setting `DATABASE` in `local_paths.json`. The models are stored as skops archives, and the program only trusts the scikit-learn / numpy classes a trained model is made of. Still, only use detector databases from people you trust.
 
 ---
 
@@ -112,7 +115,7 @@ A screenshot that overlaps nothing yet goes to **Waiting** (Auto-add tab). Waiti
 | Folder | What is in it |
 |---|---|
 | `atlases/` | Your atlases. `default/` opens on first start. |
-| `program/` | The program. `atlas_viewer.py` is the window and `atlas_detect.py` the screenshot detector. `atlas_builder*.py` and `atlas_finalize.py` place screenshots and clean up the atlas. All folder locations are in `rc_paths.py`. |
+| `grand_project/` | The program, a Python package (see *Code layout* below). |
 | `references/` | Every file the program reads: the database copy, HUD mask, icons and tower / city templates. |
 | `tools/` | Helpers for improving the detector (mark checks, icon teaching, badge sheets, coverage). |
 | `tests/` | Regression tests. Their screenshots and hand-made truth are not included (see below). |
@@ -121,21 +124,7 @@ A screenshot that overlaps nothing yet goes to **Waiting** (Auto-add tab). Waiti
 
 ## For developers
 
-**Test data.** The GitHub repository has a trimmed test set in `atlas_test_data/` (about 500 MB: 20 hand-labelled screenshots with their truth, 115 crawl screenshots and two finished test atlases). It is stored with Git LFS and is **not** downloaded by a normal clone or by *Download ZIP*, so players only get the program. To get it:
-
-```bash
-git lfs install
-git lfs pull --include="atlas_test_data/**"
-```
-
-The tests look for the data in `ATLAS_TEST_DATA` (environment variable) if set, then `atlas_test_data/` inside this folder, then `atlas_test_data` next to it. Without it, the tests that need it skip (under pytest they are reported as skipped). `test_atlas_builder.py` and `test_model_safety.py` need no data. Retraining the detector needs more data than the trimmed set (tower shots, painted walls), which is not included.
-
-Run these from the folder named:
-
-- `program/`: `py atlas_detect.py score` scores the detector on the 10 hand-labelled screenshots. `py atlas_detect.py train` retrains it into the database. Both need the test data.
-- `program/`: `py atlas_builder.py add --atlas X.json --image FOLDER` builds an atlas without the window.
-- `tools/`: `py atlas_marks.py` checks the detector against all hand-drawn mark layers and true paths.
-- `tests/`: double-click `Run all tests.bat`, or run any `test_*.py` on its own. `test_atlas_viewer.py` opens a window for about 20 s.
+This is the player release. The code with its tests, tools, test data and debug tools is on the [`develop` branch](https://github.com/Grandmask20/the-grand-project/tree/develop).
 
 ## License and credits
 
