@@ -19,7 +19,7 @@ from grand_project import finalize as atlas_finalize
 from grand_project import paths as rc_paths
 
 from .constants import EDIT_SPOT, LANDMARK_KINDS, POTENTIAL_TYPES, TERRAIN_PIXELS, VERSION
-from .helpers import LOG, icon_label
+from .helpers import LOG, icon_label, icon_rows
 from .model import view_model
 
 
@@ -517,6 +517,7 @@ class CitiesMixin:
                 self._ground_for = self._terrain
             ground = self._ground
         self.icon_node = atlas_cities.icon_maps(self.V["nodes"], self.V["icons"])
+        self.icon_pts = icon_rows(self.V["nodes"], self.V["icons"], self.icon_node)
         live = [L[i] for i in alive if i not in getattr(self, "locked_ids", ())] + [
             L[i] for i in getattr(self, "locked_ids", ())
         ]

@@ -99,11 +99,21 @@ STYLE_DEFAULT = {
     "map_size": 1.0,
     "map_style": "circles",
     "path_freq": 0.0,
-    "ov_badges": False,
     "ov_towers": False,
     "age_tint": "off",  # View tab "Colour by": one of COLOUR_BY
     "colour_spread": "plasma",  # ...its colours for oldest to newest / times seen: one of COLOUR_SPREADS
 }  # View tab
+
+
+ICON_ROW_DY, ICON_ROW_STEP = 24, 36  # icons are drawn in a row this far above their map node, this far apart,
+# centred on it: the detector's row rule (detect.constants ROW_DY, ROW_STEP), so icons line up like in the game
+
+
+TYPE_ROW_H = 26  # px per row of the type list in Find (its icon pictures are 22 px)
+
+
+SIDE_WIDTH = 400  # side panel width in px at first start (was a fixed 360: cramped, user); the sash changes it
+SIDE_MIN = 330  # ...and the narrowest it can be dragged (the 7 tab headers still fit)
 
 
 IMAGE_EXT = core.IMAGE_EXT
@@ -114,6 +124,8 @@ WATCH_BATCH = 24  # auto-add: screenshots waiting in the queue are added togethe
 
 WATCH_ASK = 50  # a hand-picked folder (not the atlas's own) with more screenshots the atlas lacks: ask first
 WATCH_POLL_MS = 2000  # how often the watched folder is checked
+DETECT_LOG_EVERY = 50  # detecting many screenshots: a progress line in the debug log every this many
+WATCH_RETRIES = 2  # a watched screenshot whose detection failed is tried this many more times
 
 
 TERRAIN_PIXELS = 40_000_000  # stitched map size limit
@@ -157,6 +169,8 @@ HIRES_TILE = 512  # px per side of one tile
 HIRES_TILE_CACHE = 160  # tiles kept (~1 MB each)
 HIRES_MAX_LEVEL = 2.0  # px per atlas unit; zoomed in further, the level-2 tiles are scaled up
 ATLAS_THUMB = (112, 84)  # px: an atlas's thumbnail on its card in the Saved atlases tab
+ATLAS_RETRY_S = 60.0  # s: a card whose numbers / thumbnail could not be read is tried again after this
+ATLAS_RETRIES = 3  # ...at most this many reads per atlas and session
 # frame log (Debug tab / ATLAS_FRAME_LOG=1): a check every FRAME_TICK_MS; later than that by more than
 # FRAME_STALL_MS = the window did not respond (a stall)
 FRAME_TICK_MS = 15
@@ -347,3 +361,6 @@ REPLAY_SESSION_COLS = (
     (200, 200, 200),
     (40, 160, 160),
 )
+
+
+LABEL_GRID_PX = 64  # icon names: screen boxes are looked up in a grid of cells this big (helpers.BoxGrid)

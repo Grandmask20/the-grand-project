@@ -182,7 +182,7 @@ def test_icon_types_listed_and_searchable(viewer, check):
         )
     app.query.set("hall")
     pump()
-    rows = [w.winfo_children()[-1].cget("text") for w in app.icon_frame.winfo_children() if isinstance(w, V.tk.Frame)]
+    rows = list(app.type_rows)
     check(
         "search filters the type list",
         rows and any(r.startswith("Hall") for r in rows) and len(rows) < len(app.icon_types) // 2,
@@ -859,6 +859,28 @@ def test_weak_match_preview(viewer, check, monkeypatch):
         and app._answer.get_nowait() is True,
         str(seen),
     )
+    # No: the view goes back to where it was before the preview centred on the screenshot
+    app.cx, app.cy, app.z = app.cx + 5000.0, app.cy + 5000.0, 0.05
+    before = (app.cx, app.cy, app.z)
+    monkeypatch.setattr(messagebox, "askyesno", lambda *a, **k: False)
+    app._handle("ask", ("Add it anyway?", (f0["path"], H0)))
+    check(
+        "weak match answered No: the view is put back",
+        (app.cx, app.cy, app.z) == before and app._answer.get_nowait() is False,
+        f"{before} -> {(app.cx, app.cy, app.z)}",
+    )
+
+
+def test_type_list_rebuilds_keep_one_set_of_bindings(viewer, check):
+    """Searching rebuilds the type list; its click bindings are made once, not again per rebuild (review)."""
+    app = viewer.app
+    pump = viewer.pump
+    before = len(app.icon_canvas._tclCommands or [])
+    for q in ("ha", "hal", "tow", ""):
+        app.query.set(q)
+        pump(0.1)
+    after = len(app.icon_canvas._tclCommands or [])
+    check("type list: no new callbacks per rebuild", after == before, f"{before} -> {after}")
 
 
 def test_replay_panel(viewer, check, monkeypatch, tmp_path):

@@ -2,16 +2,56 @@
 
 from __future__ import annotations
 
+import contextlib
 import tkinter as tk
+from tkinter import ttk
 
 from PIL import ImageTk
 
-from .constants import PLACE_ICON, POTENTIAL_TYPES
+from .constants import PLACE_ICON, POTENTIAL_TYPES, TYPE_ROW_H
 from .helpers import icon_aliases, icon_label, icon_thumb
 
 
 class PanelsMixin:
     """Viewer mixin for the type list in Find (places and map icons, with show-on-map ticks) and the icon filter."""
+
+    # ------------------------------------------------------------------ side panel text
+    def _wrap(self, parent, **kw):
+        """A label whose text wraps to the side panel's width (it follows the panel when its sash is dragged).
+
+        Args:
+            parent: The widget to put the label in.
+            **kw: ttk.Label options (text, textvariable, foreground, justify, ...).
+
+        Returns:
+            The ttk.Label (not yet packed).
+        """
+        lab = ttk.Label(parent, wraplength=self._wrap_width(), **kw)
+        self._wrap_labels.append(lab)
+        return lab
+
+    def _wrap_width(self) -> int:
+        """Text width for the side panel's labels: the panel's width less its tab and frame padding.
+
+        Returns:
+            Width in px (the panel's starting width before it is shown).
+        """
+        w = self.side.winfo_width() if self.side.winfo_ismapped() else int(self.settings.get("side_width", 400))
+        return max(200, w - 44)
+
+    def _rewrap(self, _e=None):
+        """Re-wrap the side panel's labels to its new width. Bound to <Configure> on the side panel.
+
+        Args:
+            _e: The Tk event (unused).
+        """
+        w = self._wrap_width()
+        if w == getattr(self, "_wrapped_at", None):
+            return
+        self._wrapped_at = w
+        for lab in self._wrap_labels:
+            with contextlib.suppress(tk.TclError):
+                lab.configure(wraplength=w)
 
     # ------------------------------------------------------------------ icon filter
     def rebuild_icon_filter(self, counts: dict[str, int] | None = None):
@@ -39,20 +79,22 @@ class PanelsMixin:
         q = self.query.get().strip().lower() if hasattr(self, "query") else ""
         key = (q, near, tuple(sorted(counts.items())), tuple(self.place_types), tuple(self.icon_types))
         if key == getattr(self, "_type_list_key", None):
-            return  # nothing changed: keep the widgets
+            return  # nothing changed: keep the list
         self._type_list_key = key
-        for w in self.icon_frame.winfo_children():
-            w.destroy()
+        # drawn as items on the one canvas, not 4 widgets per row: on Windows each widget is its own window and
+        # all of them repaint at every step of a window resize (~190 here made resizing lag and smear, user)
+        c = self.icon_canvas
+        c.delete("all")
         self._thumb_photos = []
+        self.type_rows = []  # the labels listed, top to bottom (tests read it)
         photos = self.__dict__.setdefault("_photo_cache", {})
         kept = {lab: self.icon_vars[lab].get() for lab in self.icon_vars}
         self.icon_vars = {}
         raw_of = {}
         for ic in self.V["icons"]:
             raw_of.setdefault(icon_label(ic), ic["name"])
-        sections = [("Places", self.place_types), ("Map icons", self.icon_types)]
-        r = 0
-        for title, labels in sections:
+        y = 4
+        for title, labels in (("Places", self.place_types), ("Map icons", self.icon_types)):
             labels = [lab for lab in labels if lab in counts]
             shown = [
                 lab for lab in labels if not q or q in lab.lower() or (lab in raw_of and q in icon_aliases(raw_of[lab]))
@@ -61,59 +103,79 @@ class PanelsMixin:
                 self.icon_vars[lab] = tk.BooleanVar(value=kept.get(lab, lab not in self.icon_hidden))
             if not shown:
                 continue
-            hd = tk.Label(
-                self.icon_frame, text=title, background="white", foreground="#666", font=("TkDefaultFont", 8, "bold")
-            )
-            hd.grid(row=r, column=0, sticky="w", padx=4, pady=(4, 0))
-            r += 1
+            c.create_text(6, y, text=title, anchor="nw", fill="#666", font=("TkDefaultFont", 8, "bold"))
+            y += 18
             for lab in shown:
                 raw = PLACE_ICON.get(lab) if title == "Places" else raw_of.get(lab, "")
-                row = tk.Frame(self.icon_frame, background="white")
-                row.grid(row=r, column=0, sticky="w")
-                r += 1
-                tk.Checkbutton(
-                    row,
-                    variable=self.icon_vars[lab],
-                    background="white",
-                    activebackground="white",
-                    foreground="black",
-                    selectcolor="white",
-                    command=self.on_icon_filter,
-                ).pack(side="left")
+                tag = f"row{len(self.type_rows)}"
+                self.type_rows.append(lab)
+                mid = y + TYPE_ROW_H // 2
+                c.create_rectangle(8, mid - 6, 20, mid + 6, outline="#555", fill="white", tags=(tag, "tick"))
+                c.create_text(14, mid, text="", fill="black", font=("TkDefaultFont", 9, "bold"), tags=(tag, "mark"))
                 photo = photos.get(raw or "Unidentified")
                 if photo is None:
                     photo = photos[raw or "Unidentified"] = ImageTk.PhotoImage(icon_thumb(raw or "Unidentified"))
                 self._thumb_photos.append(photo)
-                tk.Label(row, image=photo, background="white").pack(side="left", padx=(0, 4))
-                name = tk.Label(
-                    row, text=f"{lab}  ({counts.get(lab, 0)})", background="white", foreground="black", cursor="hand2"
+                c.create_image(38, mid, image=photo, tags=(tag, "tick"))
+                c.create_text(
+                    54, mid, text=f"{lab}  ({counts.get(lab, 0)})", anchor="w", fill="black", tags=(tag, "name")
                 )
-                name.pack(side="left")
-                name.bind("<Button-1>", lambda _e, lb=lab: self.list_type(lb))
-                for wdg in row.winfo_children() + [row]:
-                    for seq in ("<MouseWheel>", "<Button-4>", "<Button-5>"):
-                        wdg.bind(seq, self._scroll_icons)
-        self.icon_canvas.yview_moveto(0)
+                y += TYPE_ROW_H
+        c.configure(scrollregion=(0, 0, 1, y + 4))
+        self._paint_ticks()
+        c.yview_moveto(0)
 
-    def _scroll_icons(self, e):
-        """Scroll the type list, never past its ends (that left smeared copies of the rows on Windows).
+    def _bind_type_list(self):
+        """Bind clicks on the type list's rows, once (the bindings belong to the tags, so they outlast every rebuild
+        of the rows; binding them at each rebuild piled up callbacks: review)."""
+        c = self.icon_canvas
+        c.tag_bind("tick", "<Button-1>", self._on_type_tick)
+        c.tag_bind("mark", "<Button-1>", self._on_type_tick)
+        c.tag_bind("name", "<Button-1>", self._on_type_name)
+        c.tag_bind("name", "<Enter>", lambda _e: c.configure(cursor="hand2"))
+        c.tag_bind("name", "<Leave>", lambda _e: c.configure(cursor=""))
 
-        Bound to <MouseWheel>, <Button-4> and <Button-5> on every row of the list.
+    def _type_row_at(self, e) -> str | None:
+        """The type label of the list row that was clicked.
 
         Args:
-            e: The Tk event (e.delta, or e.num 4 / 5 on Linux).
+            e: The Tk event on the list canvas.
 
         Returns:
-            "break", so Tk does not scroll anything else.
+            The label, or None when the click was not on a row.
         """
+        for tag in self.icon_canvas.gettags("current"):
+            if tag.startswith("row"):
+                return self.type_rows[int(tag[3:])]
+        return None
+
+    def _on_type_tick(self, e):
+        """Flip a type's show-on-map tick. Bound to clicks on a row's tick box and picture.
+
+        Args:
+            e: The Tk event.
+        """
+        lab = self._type_row_at(e)
+        if lab in self.icon_vars:
+            self.icon_vars[lab].set(not self.icon_vars[lab].get())
+            self.on_icon_filter()
+
+    def _on_type_name(self, e):
+        """List every map / place of a type. Bound to clicks on a row's name.
+
+        Args:
+            e: The Tk event.
+        """
+        lab = self._type_row_at(e)
+        if lab is not None:
+            self.list_type(lab)
+
+    def _paint_ticks(self):
+        """Draw each listed row's tick mark from its tick (after any change to the ticks)."""
         c = self.icon_canvas
-        first, last = c.yview()
-        step = -1 if (e.num == 4 or getattr(e, "delta", 0) > 0) else 1
-        if (step < 0 and first <= 0.0) or (step > 0 and last >= 1.0):
-            return "break"
-        c.yview_scroll(step * 3, "units")
-        c.update_idletasks()
-        return "break"
+        for n, lab in enumerate(getattr(self, "type_rows", [])):
+            v = self.icon_vars.get(lab)
+            c.itemconfigure(f"row{n}&&mark", text="✓" if v is not None and v.get() else "")
 
     def _wheel_router(self, e):
         """Scroll the list under the mouse pointer, wherever in it the pointer is.
@@ -134,16 +196,18 @@ class PanelsMixin:
         except (KeyError, tk.TclError):  # a menu or a closed window under the pointer
             return None
         while w is not None:
-            if w is getattr(self, "icon_canvas", None):
-                return self._scroll_icons(e)
-            if w is getattr(self, "atl_canvas", None):
-                return self._scroll_canvas(self.atl_canvas, e)
+            for c in (getattr(self, "icon_canvas", None), getattr(self, "atl_canvas", None)):
+                if c is not None and w is c:
+                    return self._scroll_canvas(c, e)
             w = w.master
         return None
 
     @staticmethod
     def _scroll_canvas(c, e):
-        """Scroll a canvas list by the wheel, never past its ends.
+        """Scroll a canvas list by the wheel, never past its ends (that left smeared copies of rows on Windows).
+
+        The one wheel handler for every list (the type list had its own copy that also repainted at once: user /
+        GPT audit). It repaints at once, so rows made of widgets don't smear while scrolling.
 
         Args:
             c: The tk.Canvas holding the list.
@@ -156,6 +220,7 @@ class PanelsMixin:
         step = -1 if (e.num == 4 or getattr(e, "delta", 0) > 0) else 1
         if not ((step < 0 and first <= 0.0) or (step > 0 and last >= 1.0)):
             c.yview_scroll(step * 3, "units")
+            c.update_idletasks()
         return "break"
 
     def list_type(self, label):
@@ -195,6 +260,7 @@ class PanelsMixin:
     def on_icon_filter(self):
         """Store which types are unticked (hidden on the map) and redraw. Called by each tick in the type list."""
         self.icon_hidden = {lab for lab, v in self.icon_vars.items() if not v.get()}
+        self._paint_ticks()
         self.request_redraw()
 
     def set_all_icons(self, on: bool):

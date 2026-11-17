@@ -98,3 +98,14 @@ def test_images_the_program_wrote_are_not_screenshots(folder_atlas):
     names = [p.name for p in core.screenshots_in(work)]
     assert "atlas_network_overview.png" not in names
     assert "plain_copy.png" in names
+
+
+def test_old_icon_sheets_are_not_screenshots(tmp_path):
+    """Old untagged icon-labelling sheets (<atlas>_badges_<round>.png) are skipped by name (user: auto-add tried
+    to add six of them in an old crawl atlas folder)."""
+    img = np.full((1080, 1920, 3), 60, np.uint8)
+    for name in ("atlas_badges_round3.png", "atlas_badges_after.png", "2694490_20261114092311_1.png"):
+        cv2.imwrite(str(tmp_path / name), img)  # plain cv2: untagged, like the old sheets
+    assert [p.name for p in core.screenshots_in(tmp_path)] == ["2694490_20261114092311_1.png"]
+    assert core.is_atlas_output("atlas_badges_check.png") and not core.is_atlas_output("2694490_20261114092311_1.png")
+    assert not core.is_atlas_output("screenshot_badges_session.png"), "only the old sheet names (review)"

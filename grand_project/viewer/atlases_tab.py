@@ -15,6 +15,7 @@ from __future__ import annotations
 import contextlib
 import shutil
 import threading
+import time
 import tkinter as tk
 from pathlib import Path
 from tkinter import messagebox, ttk
@@ -26,7 +27,7 @@ from PIL import Image, ImageTk
 from grand_project import core
 from grand_project import fileio as atlas_io
 
-from .constants import ATLAS_THUMB, BTN_RIGHT
+from .constants import ATLAS_RETRIES, ATLAS_RETRY_S, ATLAS_THUMB, BTN_RIGHT
 from .folders import same_file
 from .helpers import LOG
 from .settings import save_settings
@@ -91,9 +92,7 @@ class AtlasesTabMixin:
         Args:
             parent: The tab's frame to build into.
         """
-        ttk.Label(parent, text="Click an atlas to open it.", foreground="#555", wraplength=330).pack(
-            anchor="w", pady=(0, 4)
-        )
+        self._wrap(parent, text="Click an atlas to open it.", foreground="#555").pack(anchor="w", pady=(0, 4))
         holder = ttk.Frame(parent)
         holder.pack(fill="both", expand=True)
         self.atl_canvas = tk.Canvas(holder, highlightthickness=0, background="white")
@@ -115,7 +114,9 @@ class AtlasesTabMixin:
             side="right", padx=3
         )
         self._atl_photos: list = []  # Tk images must be kept referenced
-        self._atl_reading: set[str] = set()
+        self._atl_reading: set[str] = set()  # atlases being read in the background now
+        self._atl_tried: dict[str, float] = {}  # atlas -> when its last background read ended
+        self._atl_tries: dict[str, int] = {}  # atlas -> background reads so far this session
         self._atl_selected: str | None = None
 
     def refresh_atlas_cards(self):
@@ -137,7 +138,11 @@ class AtlasesTabMixin:
         self._atl_open = open_json
         for a in atlases:
             self._atlas_card(a)
-            if (a.get("numbers") is None or not thumb_file(a["json"]).exists()) and a["json"] not in self._atl_reading:
+            want = a.get("numbers") is None or not thumb_file(a["json"]).exists()
+            last = self._atl_tried.get(a["json"])  # a failed read (or no map image yet) is tried again later
+            due = last is None or time.monotonic() - last > ATLAS_RETRY_S
+            due = due and self._atl_tries.get(a["json"], 0) < ATLAS_RETRIES  # (a big atlas file isn't re-read forever)
+            if want and due and a["json"] not in self._atl_reading:
                 self._read_atlas_in_background(a["json"])
 
     def _atlas_card(self, a: dict):
@@ -291,6 +296,12 @@ class AtlasesTabMixin:
             val: (json_path, numbers) as sent by _read_atlas_in_background; numbers is None when the read failed.
         """
         json_path, numbers = val
+        # done (was never cleared, so a failed read stayed at "reading…" for the session: GPT audit)
+        self._atl_reading.discard(json_path)
+        self._atl_tried[json_path] = time.monotonic()
+        self._atl_tries[json_path] = self._atl_tries.get(json_path, 0) + 1
+        if numbers is None and self._atl_tries[json_path] < ATLAS_RETRIES:  # failed: try again in a while by itself
+            self.root.after(int(ATLAS_RETRY_S * 1000) + 100, self.refresh_atlas_cards)  # (review)
         for a in self.known_atlases():
             if a["json"] == json_path and numbers is not None:
                 a["numbers"] = numbers
