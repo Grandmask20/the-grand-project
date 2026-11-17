@@ -176,6 +176,12 @@ class CitiesMixin:
         Args:
             p: The atlas file.
         """
+        rp = getattr(self, "rp", None)
+        if rp is not None and rp["exporting"]:  # the GIF is drawn from this atlas (user: no overlapping surprises)
+            self.status.set("wait until the timelapse GIF is done before opening another atlas")
+            return
+        if rp is not None and (self.path is None or Path(p).resolve() != Path(self.path).resolve()):
+            self.close_replay()  # its view and plan belong to the atlas that was open
         try:
             atlas = core.Atlas.load(p)
         except Exception as e:

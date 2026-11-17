@@ -921,6 +921,13 @@ def test_replay_panel(viewer, check, monkeypatch, tmp_path):
     held = app.rp["exporting"]
     app.rebuild_model()  # e.g. screenshots added mid-export: the rebuild waits until the GIF is done (review)
     held = held and app.rp.get("rebuild_after", False)
+    pyr = app.pyr
+    if app._terrain is not None:  # a new map image mid-export (a screenshot pasted in) waits too (user)
+        app._handle("terrain_img", (None, *app._terrain, None))
+        held = held and app.pyr is pyr and app.rp.get("terrain_after", False)
+    where = app.path
+    app.open_atlas(where)  # no atlas switching while the GIF renders
+    held = held and app.rp is not None and "wait until the timelapse GIF" in app.status.get()
     end = time.time() + 60
     while time.time() < end and (app.rp["exporting"] or not out.exists() or "saved" not in app.status.get()):
         pump(0.3)
@@ -950,6 +957,15 @@ def test_replay_panel(viewer, check, monkeypatch, tmp_path):
     app.close_replay()
     pump(0.2)
     check("replay: closing puts the view back", (app.cx, app.cy, app.z) == view and app.rp is None)
+    other = tmp_path / "other" / "atlas.json"
+    other.parent.mkdir()
+    core.Atlas().save(other)
+    here = app.path
+    app.open_replay()
+    app.open_atlas(other)
+    check("replay: opening another atlas closes the replay", app.rp is None and app.path == other, str(app.path))
+    app.open_atlas(here)
+    pump(1.0)
     app.set_style(age_tint="by session")
     img = app.render(*app.canvas_size())
     check("colour by when taken: drawn with a legend", app.age_legend() and img is not None, str(app.age_legend()))

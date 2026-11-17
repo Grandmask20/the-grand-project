@@ -187,7 +187,8 @@ class DrawingMixin:
             sl = s0 / (2**lvl)
             a = z / sl
             A = np.array([[a, 0, (x0 - self.cx) * z + w / 2], [0, a, (y0 - self.cy) * z + h / 2]])
-            sharp = self.hires_wanted()
+            exporting = getattr(self, "rp", None) is not None and self.rp["exporting"]
+            sharp = self.hires_wanted() and not exporting  # a GIF: the one map image throughout (no tiles popping in)
             if not (sharp and self.tiles_cover_view(w, h)):  # tiles without holes everywhere: nothing shows through
                 cv2.warpAffine(
                     self.pyr[lvl], A, (w, h), dst=img, flags=cv2.INTER_LINEAR, borderMode=cv2.BORDER_TRANSPARENT
