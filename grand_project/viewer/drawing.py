@@ -187,7 +187,8 @@ class DrawingMixin:
             sl = s0 / (2**lvl)
             a = z / sl
             A = np.array([[a, 0, (x0 - self.cx) * z + w / 2], [0, a, (y0 - self.cy) * z + h / 2]])
-            sharp = self.hires_wanted()
+            exporting = getattr(self, "rp", None) is not None and self.rp["exporting"]
+            sharp = self.hires_wanted() and not exporting  # a GIF: the one map image throughout (no tiles popping in)
             if not (sharp and self.tiles_cover_view(w, h)):  # tiles without holes everywhere: nothing shows through
                 cv2.warpAffine(
                     self.pyr[lvl], A, (w, h), dst=img, flags=cv2.INTER_LINEAR, borderMode=cv2.BORDER_TRANSPARENT
@@ -200,12 +201,17 @@ class DrawingMixin:
                 # dim the ground under the lines; a smooth slope (a step at the overview switch
                 # made the map jump ~20% darker between zoom 0.50 and 0.42)
                 img = cv2.convertScaleAbs(img, alpha=float(np.clip(0.72 + 0.16 * (z - 0.2), 0.72, 0.8)))
+        rp = self.replay_active()
+        if rp and L["Terrain"] and self.pyr:  # replaying: the ground of the revealed screenshots only
+            img = self._rp_mask_ground(img, w, h)
+        ST = self.style()
+        if ST["age_tint"] != "off" and self.atlas.frames:  # colour by when the screenshots were taken (issue #16)
+            img = self._draw_age_tint(img, w, h, ST["age_tint"])
         N = self.V["nodes"]
         sp = self.to_screen(self.node_pts) if len(self.node_pts) else np.zeros((0, 2))
         vis = ((sp[:, 0] > -80) & (sp[:, 0] < w + 80) & (sp[:, 1] > -80) & (sp[:, 1] < h + 80)) if len(sp) else []
         th = 1 if z < 0.7 else 2
         self._fl_mark("terrain")
-        ST = self.style()
         city_cols = self.city_cols(ST)
         if L["City & stronghold biomes"] and self.potential and len(sp):
             tint = img.copy()
@@ -214,6 +220,7 @@ class DrawingMixin:
             for i, (lab, _st) in self.potential.items():
                 if (
                     not vis[i]
+                    or not self._rp_shown("node", i)
                     or self.potential_kind(lab) in self.icon_hidden
                     or (self.near_only() and "city" not in lab.lower())
                 ):
@@ -233,8 +240,9 @@ class DrawingMixin:
         c_single = hex_bgr(ST["path_col1"], PATH_SINGLE)
         c_map = hex_bgr(ST["map_col"], None)
         pth = int(ST["path_width"]) or th
-        if L["Paths"] and overview and len(sp):
-            # zoomed out: one batched draw call per colour (14k paths on a large atlas), masks cached
+        if L["Paths"] and (overview or rp) and len(sp):
+            # zoomed out: one batched draw call per colour (14k paths on a large atlas), masks cached; replaying too
+            # (the masks follow the replay; the traced lines would be cut again at every step)
             _k, nm, pm, A, B, strong, abyss, _c = self.shown_masks()
             keep = pm & (vis[A] | vis[B]) if len(A) else pm
             for col, sel in (
@@ -267,7 +275,8 @@ class DrawingMixin:
                 cv2.polylines(img, [line.astype(np.int32)], False, SELECT_COL, pth + 3, cv2.LINE_AA)
         self._fl_mark("paths")
         r = self.node_radius()
-        hit_nodes = {i for k, i in self.hits if k == "node"}
+        hits = () if self.replay_active() else self.hits  # replaying: no Find rings (review)
+        hit_nodes = {i for k, i in hits if k == "node"}
         far = z < self.FAR_ZOOM
         if L["Nodes"] and len(sp) and far:
             _k, nm, _pm, _A, _B, _s, _a, ncol = self.shown_masks()
@@ -316,7 +325,7 @@ class DrawingMixin:
         self._fl_mark("nodes")
         if L["Icons"] and len(self.icon_pts) and far:
             ip = self.to_screen(self.icon_pts)
-            ck = (frozenset(self.icon_hidden), id(self.V["icons"]), self.near_only())
+            ck = (frozenset(self.icon_hidden), id(self.V["icons"]), self.near_only(), self._rp_key())
             if getattr(self, "_icon_far", (None,))[0] != ck:
                 show = np.array(
                     [self.icon_visible(ic) and ic["name"] != "Unidentified" for ic in self.V["icons"]], bool
@@ -332,7 +341,7 @@ class DrawingMixin:
                     img[Y[sel] + dy, X[sel] + dx] = icol[sel]
         elif L["Icons"] and len(self.icon_pts):
             ip = self.to_screen(self.icon_pts)
-            hit_ic = {i for k, i in self.hits if k == "icon"}
+            hit_ic = {i for k, i in hits if k == "icon"}
             labels = L["Labels"] and z >= 0.8
             drawn = []  # (x, y, radius, icon, colour) of the icons drawn, for their names
             for i, ic in enumerate(self.V["icons"]):
@@ -367,7 +376,7 @@ class DrawingMixin:
                     put_text(img, text, (x + rr + 4, y + 4), col, 0.42)
         self._fl_mark("icons")
         if L["Landmarks"]:
-            hit_lm = {i for k, i in self.hits if k == "landmark"}
+            hit_lm = {i for k, i in hits if k == "landmark"}
             hw, top, bot = self.landmark_box()
             LMS = self.V["landmarks"]
             lm_cols = self.landmark_cols(ST)
@@ -396,6 +405,13 @@ class DrawingMixin:
                 if L["Labels"] and z >= 0.3:
                     put_text(img, self.lm_name(i), (x - int(hw), y - int(top) - 6), col, 0.45 if z < 1 else 0.55)
         self._fl_mark("landmarks")
+        if rp:  # replaying: just the atlas (no bookmarks, Find rings, selection or legend), plus when and how many
+            if not self.rp["exporting"]:
+                self._draw_progress(img, w, h)
+            self._rp_overlay(img, w, h)
+            self.draw_colour_band(img)
+            self._fl_mark("rest")
+            return img
         if L["Bookmarks"]:
             hit_bm = {i for k, i in self.hits if k == "bookmark"}
             for i, b in enumerate(self.atlas.bookmarks):
@@ -441,6 +457,7 @@ class DrawingMixin:
             p = self.to_screen([self.item_pos(self.sel)])[0]
             cv2.circle(img, (int(p[0]), int(p[1])), int(max(r, 10) + 10), SELECT_COL, 2, cv2.LINE_AA)
         self._legend(img, L)
+        self.draw_colour_band(img)
         self._fl_mark("rest")
         return img
 
@@ -464,6 +481,8 @@ class DrawingMixin:
         ]
         if L.get("City & stronghold biomes") and getattr(self, "potential", None):
             items += [(f"near {k}", c) for k, c in self.city_cols(ST).items()]
+        if self.style()["age_tint"] == "by session":  # colour by when taken: when each session started
+            items += self.age_legend()
         x = 10
         width = 24 + sum(22 + len(t) * 8 for t, _ in items)
         cv2.rectangle(img, (4, h - 26), (min(img.shape[1] - 4, width), h - 4), (20, 20, 20), -1)

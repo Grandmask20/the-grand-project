@@ -45,6 +45,7 @@ from .framelog import FrameLogMixin
 from .helpers import LOG
 from .navigation import NavigationMixin
 from .panels import PanelsMixin
+from .replay_panel import ReplayMixin
 from .selection import SelectionMixin
 from .settings import load_settings
 from .terrain import TerrainMixin
@@ -78,6 +79,7 @@ class Viewer(
     DrawingMixin,
     AtlasesTabMixin,
     FrameLogMixin,
+    ReplayMixin,
 ):
     """The atlas viewer window: the map canvas, the side panel tabs and the background worker.
 
@@ -253,6 +255,7 @@ class Viewer(
         self.canvas = tk.Canvas(self.pane, bg="#14161a", highlightthickness=0, bd=0, cursor="fleur")
         self.img_item = self.canvas.create_image(0, 0, anchor="nw")
         self.photo = None
+        self.rp = None  # the replay while its panel is open (replay_panel.py)
 
         side = ttk.Frame(self.pane, style="Side.TFrame", padding=(6, 4))
         side.pack_propagate(False)
@@ -484,6 +487,11 @@ class Viewer(
             row.pack(fill="x")
             ttk.Button(row, text="Go to", command=self._dbg_goto).pack(side="left")
             ttk.Button(row, text="Delete", command=self._dbg_delete).pack(side="left", padx=4)
+            ttk.Button(row, text="Clear all…", command=self._dbg_clear_all).pack(side="left")
+            self.dbg_show = tk.BooleanVar(value=self.settings.get("debug_marks_shown", True))
+            ttk.Checkbutton(row, text="Show on the map", variable=self.dbg_show, command=self._dbg_toggle).pack(
+                side="right"
+            )
             self.dbg_file_lab = self._wrap(dbf, text="", foreground="#555")
             self.dbg_file_lab.pack(anchor="w", pady=(4, 0))
             ttk.Separator(dbf).pack(fill="x", pady=6)
@@ -512,6 +520,8 @@ class Viewer(
             foreground="black",
         )
         self.log_box.pack(fill="both", expand=True)
+
+        self._build_replay_panel()  # the "Timelapse" tab at the bottom of the map (made last: drawn over the map)
 
         c = self.canvas
         c.bind("<Configure>", self.on_configure)

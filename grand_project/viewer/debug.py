@@ -7,6 +7,7 @@ import math
 import time
 import tkinter as tk
 from pathlib import Path
+from tkinter import messagebox
 
 import cv2
 import numpy as np
@@ -14,7 +15,8 @@ import numpy as np
 from grand_project import core
 
 from .constants import PATH_ABYSS, PATH_CELL, VERSION
-from .helpers import draw_paths, put_text
+from .helpers import LOG, draw_paths, put_text
+from .settings import save_settings
 
 
 class DebugMixin:
@@ -96,6 +98,41 @@ class DebugMixin:
         if sel:
             del self._dbg_marks()[sel[0]]
             self._dbg_save()
+
+    def _dbg_clear_all(self):
+        """Delete every debug mark of the open atlas, after asking (the "Clear all…" button; user).
+
+        The marks are copied to debug_marks_cleared_<time>.json next to the marks file first, so they can be read
+        back if needed.
+        """
+        marks = self._dbg_marks()
+        fp = self._dbg_file()
+        if not marks or fp is None:
+            self.status.set("no debug marks to clear")
+            return
+        if not messagebox.askyesno(
+            "Clear all debug marks",
+            f"Delete all {len(marks)} debug marks of this atlas?\n\n"
+            f"A copy is kept as {fp.stem}_cleared_<time>.json in {fp.parent.name}.",
+        ):
+            return
+        stamp = time.strftime("%Y%m%d_%H%M%S")
+        backup = fp.with_name(f"{fp.stem}_cleared_{stamp}.json")
+        n = 1
+        while backup.exists():  # two clears in one second: never over an earlier copy (review)
+            n += 1
+            backup = fp.with_name(f"{fp.stem}_cleared_{stamp}_{n}.json")
+        backup.write_text(json.dumps(marks, indent=1), encoding="utf-8")  # (marks are cleared only after this)
+        marks.clear()
+        self._dbg_save()
+        LOG.info(f"debug marks cleared ({backup.name} keeps a copy)")
+        self.status.set(f"debug marks cleared (copy: {backup.name})")
+
+    def _dbg_toggle(self):
+        """Show or hide the debug marks on the map (the "Show on the map" tick; user) and remember it."""
+        self.settings["debug_marks_shown"] = bool(self.dbg_show.get())
+        save_settings(self.settings)
+        self.request_redraw()
 
     def _dbg_shots(self, x, y, k=5) -> list[str]:
         """The screenshots that show an atlas point best (nearest their centre).
@@ -245,6 +282,8 @@ class DebugMixin:
         Args:
             img: BGR uint8 frame to draw into.
         """
+        if hasattr(self, "dbg_show") and not self.dbg_show.get():  # hidden (Debug tab tick)
+            return
         col = (255, 0, 255)
         for k, mk in enumerate(self._dbg_marks(), 1):
             p = self.to_screen([[mk["x"], mk["y"]]])[0]

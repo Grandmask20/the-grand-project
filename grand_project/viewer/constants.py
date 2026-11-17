@@ -100,6 +100,8 @@ STYLE_DEFAULT = {
     "map_style": "circles",
     "path_freq": 0.0,
     "ov_towers": False,
+    "age_tint": "off",  # View tab "Colour by": one of COLOUR_BY
+    "colour_spread": "plasma",  # ...its colours for oldest to newest / times seen: one of COLOUR_SPREADS
 }  # View tab
 
 
@@ -308,6 +310,57 @@ EDIT_SAME = 90.0  # atlas units: a hand edit applies to the landmark this close 
 
 # a little between re-checks)
 EDIT_SPOT = 15.0  # a new edit replaces an older one only at the same spot
+
+
+# --- replay / timelapse (viewer.replay, viewer.replay_panel) and colouring screenshots by when they were taken
+REPLAY_TYPES = ("by time", "spiral", "distance", "scan lines")  # the order things are revealed in
+# (by placement was dropped: by time covers it, user). Scan lines: columns from the right, each top to bottom.
+REPLAY_REVEALS = ("screenshots", "area")  # spiral / distance / scan lines: whole screenshots, or a smooth sweep
+REPLAY_CAMERAS = ("whole atlas", "grow with atlas", "follow newest")  # where the view goes while replaying
+REPLAY_SMOOTHING = {"off": 0.0, "light": 0.12, "medium": 0.35, "heavy": 0.9}  # s: camera easing time constant
+REPLAY_DEFAULTS = {
+    "type": "by time",
+    "reveal": "screenshots",
+    "camera": "whole atlas",
+    "smoothing": "light",
+    "length": 20.0,  # s: how long the timelapse is (the GIF; the preview at 1x)
+    "speed": 1.0,  # preview speed only (user)
+    "per_step": 1,  # screenshots revealed per step
+    "gif_width": 800,  # px of an exported GIF (its height follows the map view's shape)
+}
+REPLAY_SPEEDS = (0.25, 0.5, 1.0, 2.0, 4.0, 8.0)
+REPLAY_TICK_MS = 40  # playback frame time (25 fps)
+REPLAY_SESSION_GAP = 30 * 60  # s between two screenshots that starts a new session (colours, timeline)
+REPLAY_BATCH_GAP = 60  # s between two screenshots that starts a new batch (a tick on the timeline)
+REPLAY_SPIRAL_PITCH = 900.0  # atlas units between turns of the spiral (about half a screenshot's width)
+REPLAY_SCAN_COLUMN = 1920.0  # atlas units: width of a scan-line column (one screenshot)
+REPLAY_AREA_STEPS = 400  # reveal by area: the sweep is split into this many steps (timeline resolution)
+REPLAY_AREA_RES = 1024  # reveal by area: the sweep field is worked out on a grid this many cells on its long side
+REPLAY_AREA_SOFT = 0.02  # reveal by area: the sweep's edge fades over this share of the whole sweep
+REPLAY_FOLLOW_SPAN = 2.5  # "follow newest": the view is this many screenshot widths across
+REPLAY_GIF_FPS = 15
+REPLAY_GIF_MAX_FRAMES = 450  # 30 s at 15 fps; a longer replay is sampled more sparsely
+REPLAY_TINT_ALPHA = 0.32  # how strongly "Colour by" tints the map
+COLOUR_BY = ("off", "by session", "oldest to newest", "times seen")  # View tab "Colour by" (times seen = heatmap)
+COLOUR_SPREADS = {  # View tab colour spread for oldest-to-newest and times seen: name -> OpenCV colour map
+    "plasma": 15,  # cv2.COLORMAP_PLASMA
+    "heat (inferno)": 14,  # cv2.COLORMAP_INFERNO
+    "viridis": 16,  # cv2.COLORMAP_VIRIDIS
+    "turbo": 20,  # cv2.COLORMAP_TURBO
+    "cool to warm": 2,  # cv2.COLORMAP_JET
+}
+HEAT_RES = 1024  # times seen: counted on a grid this many cells on the atlas's long side
+# session colours (BGR), in order; more sessions than colours repeat them
+REPLAY_SESSION_COLS = (
+    (60, 200, 255),
+    (255, 160, 60),
+    (120, 230, 120),
+    (220, 110, 255),
+    (80, 110, 255),
+    (255, 230, 120),
+    (200, 200, 200),
+    (40, 160, 160),
+)
 
 
 LABEL_GRID_PX = 64  # icon names: screen boxes are looked up in a grid of cells this big (helpers.BoxGrid)

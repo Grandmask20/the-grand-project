@@ -176,6 +176,12 @@ class CitiesMixin:
         Args:
             p: The atlas file.
         """
+        rp = getattr(self, "rp", None)
+        if rp is not None and rp["exporting"]:  # the GIF is drawn from this atlas (user: no overlapping surprises)
+            self.status.set("wait until the timelapse GIF is done before opening another atlas")
+            return
+        if rp is not None and (self.path is None or Path(p).resolve() != Path(self.path).resolve()):
+            self.close_replay()  # its view and plan belong to the atlas that was open
         try:
             atlas = core.Atlas.load(p)
         except Exception as e:
@@ -268,8 +274,13 @@ class CitiesMixin:
         That is: map node and icon positions, icon types and their counts, locked strongholds, the atlas
         numbers, landmark and icon indexes, city types and biomes, the place types for the Find tab,
         screenshot footprints, sharp terrain tiles (cleared), bookmarks, the search results and the selected
-        info.
+        info. While a timelapse GIF is being rendered the rebuild waits until it is done (the replay's reveal lists
+        must match the model it draws: review).
         """
+        rp = getattr(self, "rp", None)
+        if rp is not None and rp.get("exporting"):
+            rp["rebuild_after"] = True
+            return
         self.V = view_model(self.atlas) if self.atlas else self.V
         self.node_pts = np.array([[n["x"], n["y"]] for n in self.V["nodes"]], float).reshape(-1, 2)
         self.icon_pts = np.array([[i["x"], i["y"]] for i in self.V["icons"]], float).reshape(-1, 2)
@@ -309,6 +320,8 @@ class CitiesMixin:
         self.refresh_bookmarks()
         self.run_search()
         self.show_info()
+        if self.replay_active():  # screenshots added while the replay panel is open
+            self._rp_replan()
 
     # ------------------------------------------------------------------ locked strongholds
     def add_locks(self):
