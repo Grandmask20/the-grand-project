@@ -299,9 +299,6 @@ class ReplayMixin:
         rp = getattr(self, "rp", None)
         if rp is None or not self.atlas:
             return
-        if rp["exporting"]:  # screenshots added meanwhile: after the GIF, so it is one replay throughout (review)
-            rp["replan_after"] = True
-            return
         st = self._rp_settings()
         old = rp.get("plan")
         share = rp["pos"] / old.n_steps if old is not None and old.n_steps else 1.0
@@ -952,7 +949,22 @@ class ReplayMixin:
         LOG.info(f"replay: exporting {n} frames at {W}x{H} to {out}")
 
         def chunk(start=0):
-            """Render a few frames, then let the window breathe."""
+            """Render a few frames, then let the window breathe (a failure ends the export cleanly)."""
+            try:
+                render_some(start)
+            except Exception as e:
+                LOG.exception("GIF export failed while rendering")
+                frames.clear()
+                finish(f"could not make the GIF: {e}")
+                return
+            self._rp_info.set(f"exporting GIF: frame {len(frames)} / {n}")
+            if len(frames) < n:
+                self.root.after(1, chunk, len(frames))
+            else:
+                finish()
+
+        def render_some(start):
+            """Render up to four frames from frame `start`."""
             for k in range(start, min(n, start + 4)):
                 rp["pos"] = rp["plan"].n_steps * k / (n - 1)
                 self._rp_camera(1.0 if k == 0 else ease, (W, H))
@@ -963,20 +975,19 @@ class ReplayMixin:
                     self._frame_size = None
                 pic = Image.fromarray(cv2.cvtColor(img, cv2.COLOR_BGR2RGB))
                 frames.append(pic.quantize(256, method=Image.Quantize.FASTOCTREE))
-            self._rp_info.set(f"exporting GIF: frame {len(frames)} / {n}")
-            if len(frames) < n:
-                self.root.after(1, chunk, len(frames))
-            else:
-                finish()
 
-        def finish():
-            """Put the view back and write the file on a background thread."""
+        def finish(error: str | None = None):
+            """Put the view back, catch up on a map rebuild held back meanwhile, and write the file on a background
+            thread (nothing is written after an error)."""
             self.cx, self.cy, self.z, rp["pos"], _playing = saved
             rp["exporting"] = False
-            if rp.pop("replan_after", False):
-                self._rp_replan()
+            if rp.pop("rebuild_after", False):  # screenshots were added meanwhile (rebuild_model re-plans)
+                self.rebuild_model()
             self._rp_update_ui()
             self.request_redraw()
+            if error:
+                self.status.set(error)
+                return
             ms = max(20, round(st["length"] * 1000 / len(frames)))  # the GIF lasts `length` (plus the end hold)
 
             def write():

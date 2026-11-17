@@ -918,9 +918,17 @@ def test_replay_panel(viewer, check, monkeypatch, tmp_path):
     monkeypatch.setattr(filedialog, "asksaveasfilename", lambda **k: str(out))
     app._rp_set(length=1.0, gif_width=320)
     app._rp_export_gif()
+    held = app.rp["exporting"]
+    app.rebuild_model()  # e.g. screenshots added mid-export: the rebuild waits until the GIF is done (review)
+    held = held and app.rp.get("rebuild_after", False)
     end = time.time() + 60
     while time.time() < end and (app.rp["exporting"] or not out.exists() or "saved" not in app.status.get()):
         pump(0.3)
+    check(
+        "replay: a rebuild during export waits, then catches up",
+        held and not app.rp["exporting"] and len(app.rp["node_step"]) == len(app.V["nodes"]),
+        str(held),
+    )
     gif = Image.open(out) if out.exists() else None
     check("replay: GIF exported", gif is not None and gif.size[0] == 320 and gif.n_frames >= 10, app.status.get())
     if gif is not None:  # lasts the length setting (1 s) plus the 2 s hold on the last frame (review)

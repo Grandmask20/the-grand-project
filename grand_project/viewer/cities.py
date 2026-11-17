@@ -268,8 +268,13 @@ class CitiesMixin:
         That is: map node and icon positions, icon types and their counts, locked strongholds, the atlas
         numbers, landmark and icon indexes, city types and biomes, the place types for the Find tab,
         screenshot footprints, sharp terrain tiles (cleared), bookmarks, the search results and the selected
-        info.
+        info. While a timelapse GIF is being rendered the rebuild waits until it is done (the replay's reveal lists
+        must match the model it draws: review).
         """
+        rp = getattr(self, "rp", None)
+        if rp is not None and rp.get("exporting"):
+            rp["rebuild_after"] = True
+            return
         self.V = view_model(self.atlas) if self.atlas else self.V
         self.node_pts = np.array([[n["x"], n["y"]] for n in self.V["nodes"]], float).reshape(-1, 2)
         self.icon_pts = np.array([[i["x"], i["y"]] for i in self.V["icons"]], float).reshape(-1, 2)
