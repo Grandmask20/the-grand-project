@@ -34,9 +34,11 @@ from .constants import (
     REPLAY_GIF_FPS,
     REPLAY_GIF_MAX_FRAMES,
     REPLAY_REVEALS,
+    REPLAY_SCAN_COLUMN,
     REPLAY_SESSION_COLS,
     REPLAY_SMOOTHING,
     REPLAY_SPEEDS,
+    REPLAY_SPIRAL_PITCH,
     REPLAY_TICK_MS,
     REPLAY_TINT_ALPHA,
     REPLAY_TYPES,
@@ -130,7 +132,7 @@ class ReplayMixin:
         self._rp_type = tk.StringVar(value=st["type"])
         cb = ttk.Combobox(row, textvariable=self._rp_type, values=REPLAY_TYPES, width=12, state="readonly")
         cb.pack(side="right", padx=(4, 10))
-        cb.bind("<<ComboboxSelected>>", lambda _e: (self._rp_set(type=self._rp_type.get()), self._rp_replan()))
+        cb.bind("<<ComboboxSelected>>", lambda _e: self._rp_changed(type=self._rp_type.get()))
         tk.Label(row, text="replay type", bg=PANEL_BG, fg=PANEL_DIM, font=font).pack(side="right")
         self._rp_info = tk.StringVar(value="")
         tk.Label(row, textvariable=self._rp_info, bg=PANEL_BG, fg=PANEL_FG, font=font).pack(side="left", padx=12)
@@ -248,10 +250,22 @@ class ReplayMixin:
         }
         v["length"].set(f"{new['length']:g}")
         v["per_step"].set(str(new["per_step"]))
-        self._rp_set(**new)
-        if self.replay_active() and (new["per_step"] != st["per_step"] or new["reveal"] != st["reveal"]):
-            self._rp_replan()
-        self._rp_update_real()
+        if any(new[k] != st[k] for k in new):
+            self._rp_changed(**new)
+
+    def _rp_changed(self, **kw):
+        """A replay setting changed: store it, work the replay out again and start it over, paused at the start
+        (user: a change while playing leaked into the new replay, and its time with it).
+
+        Args:
+            **kw: The changed settings.
+        """
+        self._rp_set(**kw)
+        if not self.replay_active():
+            return
+        self._rp_replan()
+        self.rp["playing"] = False
+        self._rp_seek(0.0)
 
     def _rp_update_real(self):
         """Show how long taking the screenshots really took and how much faster the timelapse is, e.g. "= 1 h 20 min
@@ -439,6 +453,34 @@ class ReplayMixin:
             return None
         return (*P.reshape(-1, 2).min(axis=0), *P.reshape(-1, 2).max(axis=0))
 
+    def _rp_grow_box(self):
+        """What "grow with atlas" fits: by time, the revealed screenshots; spiral / distance, a square around where they
+        start, as far out as revealed (spiral: only once a turn is complete, user: following the arm made the
+        view jerk); scan lines, the columns done so far. Always within the atlas.
+
+        Returns:
+            (x0, y0, x1, y1), or None.
+        """
+        rp = self.rp
+        plan = rp["plan"]
+        if plan.frame is None or plan.step_key is None or not plan.n_steps:
+            return self._rp_box("revealed")
+        start, x_right, y_top, span = plan.frame
+        k = int(np.clip(math.ceil(rp["pos"] - 1e-9) - 1, 0, plan.n_steps - 1))
+        key = float(plan.step_key[k])
+        if plan.kind == "scan lines":
+            col = math.floor(key / (span + 1))
+            box = (x_right - (col + 1) * REPLAY_SCAN_COLUMN, y_top, x_right, y_top + span)
+        else:
+            r = key
+            if plan.kind == "spiral":  # out to the end of the turn under way
+                r = (math.floor(key / REPLAY_SPIRAL_PITCH) + 1) * REPLAY_SPIRAL_PITCH
+            r = max(r, 960.0)  # at least about a screenshot around the start
+            box = (start[0] - r, start[1] - r, start[0] + r, start[1] + r)
+        a = self.bounds()
+        box = (max(box[0], a[0]), max(box[1], a[1]), min(box[2], a[2]), min(box[3], a[3]))
+        return box if box[2] > box[0] and box[3] > box[1] else self._rp_box("revealed")
+
     def _rp_camera(self, ease: float, size: tuple[int, int] | None = None):
         """Move the view toward where the camera setting wants it.
 
@@ -458,7 +500,7 @@ class ReplayMixin:
             tx, ty = (box[0] + box[2]) / 2, (box[1] + box[3]) / 2
             tz = w / (REPLAY_FOLLOW_SPAN * 1920.0)
         else:
-            box = self._rp_box("revealed") if cam == "grow with atlas" else self.bounds()
+            box = self._rp_grow_box() if cam == "grow with atlas" else self.bounds()
             if box is None:
                 return
             x0, y0, x1, y1 = box

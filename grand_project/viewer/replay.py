@@ -212,6 +212,11 @@ class Plan:
     ticks: list[int] = field(default_factory=list)  # steps where a new batch of screenshots starts ("by time")
     step_time: list[float | None] = field(default_factory=list)  # when each step's last screenshot was taken
     sweep: Field | None = None  # reveal by area: the sweep (step_of then holds fractional steps)
+    kind: str = "by time"
+    # spiral / distance / scan lines: (start point, right edge, top edge, height) of the sweep (sweep_key's frame)
+    # and each step's sweep key (the farthest revealed by the end of the step): the grow camera follows them
+    frame: tuple | None = None
+    step_key: np.ndarray | None = None
 
     def steps_at(self, pts) -> np.ndarray:
         """Reveal by area: the (fractional) step each atlas point is revealed at.
@@ -254,7 +259,8 @@ def make_plan(
         if bounds is None:
             allp = np.vstack([np.asarray(p, float) for p, _bb in footprints])
             bounds = (*allp.min(axis=0), *allp.max(axis=0))
-        sweep = area_field(kind, mids[time_order(times)[0]], bounds)
+        start = mids[time_order(times)[0]]
+        sweep = area_field(kind, start, bounds)
         n_steps = REPLAY_AREA_STEPS
         step_of = sweep.at(mids) / sweep.top * n_steps
         order = [int(i) for i in np.argsort(step_of, kind="stable")]
@@ -263,12 +269,22 @@ def make_plan(
             s = min(n_steps - 1, int(step_of[i]))
             if times[i] is not None:
                 step_time[s] = times[i] if step_time[s] is None else max(step_time[s], times[i])
-        return Plan(order, step_of, n_steps, times, sessions(times), [], step_time, sweep)
+        frame = (start, bounds[2], bounds[1], bounds[3] - bounds[1])
+        step_key = np.linspace(0, sweep.top, n_steps + 1)[1:]
+        return Plan(order, step_of, n_steps, times, sessions(times), [], step_time, sweep, kind, frame, step_key)
     order = reveal_order(kind, times, mids)
     step_of = np.zeros(len(frames), int)
     for k, i in enumerate(order):
         step_of[i] = k // per_step
     n_steps = (len(order) + per_step - 1) // per_step
+    frame = step_key = None
+    if kind in ("spiral", "distance", "scan lines") and len(frames) > 1:
+        frame = (mids[time_order(times)[0]], mids[:, 0].max(), mids[:, 1].min(), mids[:, 1].max() - mids[:, 1].min())
+        keys = sweep_key(kind, mids, *frame)
+        step_key = np.zeros(n_steps)
+        for i in order:
+            step_key[step_of[i]] = max(step_key[step_of[i]], keys[i])
+        step_key = np.maximum.accumulate(step_key)
     step_time = [None] * n_steps
     for i in order:
         if times[i] is not None:
@@ -281,7 +297,7 @@ def make_plan(
             if t is not None and (prev is None or t - prev > REPLAY_BATCH_GAP):
                 ticks.append(s)
             prev = t if t is not None else prev
-    return Plan(order, step_of, n_steps, times, sessions(times), ticks, step_time)
+    return Plan(order, step_of, n_steps, times, sessions(times), ticks, step_time, None, kind, frame, step_key)
 
 
 def real_span(times: list[float | None]) -> float:

@@ -479,6 +479,11 @@ class Viewer(
             row.pack(fill="x")
             ttk.Button(row, text="Go to", command=self._dbg_goto).pack(side="left")
             ttk.Button(row, text="Delete", command=self._dbg_delete).pack(side="left", padx=4)
+            ttk.Button(row, text="Clear all…", command=self._dbg_clear_all).pack(side="left")
+            self.dbg_show = tk.BooleanVar(value=self.settings.get("debug_marks_shown", True))
+            ttk.Checkbutton(row, text="Show on the map", variable=self.dbg_show, command=self._dbg_toggle).pack(
+                side="right"
+            )
             self.dbg_file_lab = ttk.Label(dbf, text="", foreground="#555", wraplength=330)
             self.dbg_file_lab.pack(anchor="w", pady=(4, 0))
             ttk.Separator(dbf).pack(fill="x", pady=6)

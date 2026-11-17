@@ -920,6 +920,27 @@ def test_replay_panel(viewer, check, monkeypatch, tmp_path):
     app.set_style(age_tint="off")
 
 
+def test_debug_marks_toggle_and_clear(viewer, check, monkeypatch):
+    """Debug tab (internal only): marks can be hidden on the map and cleared all at once, with a copy kept (user)."""
+    app = viewer.app
+    if not rc_paths.DEBUG or not hasattr(app, "dbg_show"):
+        pytest.skip("debug tools are only in the internal / develop copy")
+    x, y = app.cx, app.cy
+    for k in range(2):
+        app._dbg_add("missing map", "test", "", x + 40 * k, y)
+    check("debug: marks added", len(app._dbg_marks()) >= 2, str(len(app._dbg_marks())))
+    app.dbg_show.set(False)
+    app._dbg_toggle()
+    check("debug: hiding is remembered", app.settings.get("debug_marks_shown") is False)
+    app.dbg_show.set(True)
+    app._dbg_toggle()
+    monkeypatch.setattr(messagebox, "askyesno", lambda *a, **k: True)
+    fp = app._dbg_file()
+    app._dbg_clear_all()
+    copies = list(fp.parent.glob(f"{fp.stem}_cleared_*.json"))
+    check("debug: clear all empties the list and keeps a copy", not app._dbg_marks() and copies, str(copies))
+
+
 def test_saved_atlases_tab(viewer, check):
     """Saved atlases: cards, rename, stop tracking, delete (also the open atlas)."""
     app = viewer.app
