@@ -46,11 +46,12 @@ ORDER = [
 
 
 def _import():
-    """Import the program from the current folder (a checkout of the repo) when it isn't installed."""
-    try:
-        import grand_project  # noqa: F401
-    except ImportError:
-        sys.path.insert(0, os.getcwd())
+    """Import the program from this checkout, ahead of any installed copy (review: an installed, older copy would
+    have been scored instead): the repo this folder sits in (atlas_test_data/res_atlases), else the current folder.
+    """
+    repo = HERE.parents[1]
+    root = repo if (repo / "grand_project").is_dir() else Path(os.getcwd())
+    sys.path.insert(0, str(root))
     from grand_project import core
     from grand_project.viewer.model import view_model
 
@@ -73,8 +74,10 @@ def rebuild(folder: Path) -> None:
             shutil.copy2(s, work / s.name)
         cmd = [sys.executable, "-m", "grand_project.builder", "add", "--atlas", str(work / "atlas.json"), "--image"]
         subprocess.run(cmd + [str(work / s.name) for s in shots], check=True, capture_output=True)
-        for sub in ("atlas.json",):
-            shutil.copy2(work / sub, folder / sub)
+        d = json.loads((work / "atlas.json").read_text(encoding="utf-8"))
+        for f in d["frames"]:  # bare names (the screenshots sit next to the atlas), not the temp folder's paths
+            f["path"] = Path(f["path"]).name
+        (folder / "atlas.json").write_text(json.dumps(d, indent=1), encoding="utf-8")
         for d in ("atlas_frames", "atlas_files"):
             if (folder / d).exists():
                 shutil.rmtree(folder / d)
@@ -195,8 +198,8 @@ def main() -> int:
         print(f"{name:<14} {r['screenshots']:<14} {r['maps']:>5} {r['paths']:>6} {r['icons']:>6}  {lm}{delta}")
     print()
     for name, r in res.items():
-        if "vs 4K 100%" in r:
-            c = r["vs 4K 100%"]
+        c = r.get("vs 4K 100%")
+        if c:  # (empty when either atlas has no map nodes)
             print(f"{name:<14} vs 4K 100%:  maps {c['maps']} | icons {c['icons']} | paths {c['paths']}")
     if args.save:
         out = {n: {k: v for k, v in r.items() if k != "_pts"} for n, r in res.items()}
