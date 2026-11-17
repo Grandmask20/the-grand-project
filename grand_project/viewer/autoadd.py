@@ -1307,9 +1307,12 @@ class AutoAddMixin:
                 self.rebuild_terrain()
             case "terrain_img":
                 rp = getattr(self, "rp", None)
-                if rp is not None and rp["exporting"]:  # the GIF keeps one ground throughout (user); it is
-                    rp["terrain_after"] = True  # rebuilt when the GIF is done (each paste meanwhile started from
-                    return  # the ground before the last, so applying only the newest would lose some)
+                if rp is not None and rp["exporting"]:  # the GIF keeps one ground throughout (user)
+                    if val[0] == "seams":  # a finished Fix seams: kept and shown when the GIF is done (its files
+                        rp["seams_after"] = val  # are gone by then, so it couldn't be made again: review)
+                    else:  # rebuilt when the GIF is done (each paste meanwhile started from the ground before
+                        rp["terrain_after"] = True  # the last, so applying only the newest would lose some)
+                    return
                 job, canvas, weight, origin, labels = (*val, None)[:5]
                 if job is None or job == "seams" or job == self._terrain_job:
                     self._set_terrain(canvas, weight, origin, labels=labels)

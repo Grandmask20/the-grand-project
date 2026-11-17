@@ -917,25 +917,36 @@ def test_replay_panel(viewer, check, monkeypatch, tmp_path):
     out = tmp_path / "replay.gif"
     monkeypatch.setattr(filedialog, "asksaveasfilename", lambda **k: str(out))
     app._rp_set(length=1.0, gif_width=320)
+    import grand_project.viewer.cities as VCI
+
+    builds = []
+    real_view_model = VCI.view_model
+    monkeypatch.setattr(VCI, "view_model", lambda atlas: (builds.append(1), real_view_model(atlas))[1])
     app._rp_export_gif()
     held = app.rp["exporting"]
     app.rebuild_model()  # e.g. screenshots added mid-export: the rebuild waits until the GIF is done (review)
-    held = held and app.rp.get("rebuild_after", False)
+    held = held and app.rp.get("rebuild_after", False) and not builds
     pyr = app.pyr
     if app._terrain is not None:  # a new map image mid-export (a screenshot pasted in) waits too (user)
         app._handle("terrain_img", (None, *app._terrain, None))
         held = held and app.pyr is pyr and app.rp.get("terrain_after", False)
+        names = [f["name"] for f in app.atlas.frames]  # a finished Fix seams mid-export is kept for after (review)
+        own = np.zeros(app._terrain[1].shape, np.int32)  # (one owner everywhere is enough for the check)
+        app._handle("terrain_img", ("seams", *app._terrain, (own, names)))
+        held = held and app.pyr is pyr and app.rp.get("seams_after") is not None
     where = app.path
     app.open_atlas(where)  # no atlas switching while the GIF renders
     held = held and app.rp is not None and "wait until the timelapse GIF" in app.status.get()
     end = time.time() + 60
     while time.time() < end and (app.rp["exporting"] or not out.exists() or "saved" not in app.status.get()):
         pump(0.3)
+    check("replay: during export the model, ground, Fix seams and atlas switches wait", held, str(held))
     check(
-        "replay: a rebuild during export waits, then catches up",
-        held and not app.rp["exporting"] and len(app.rp["node_step"]) == len(app.V["nodes"]),
-        str(held),
+        "replay: after the export the held-back rebuild ran once, and the clean map was shown",
+        len(builds) == 1 and "seams_after" not in app.rp and "terrain_after" not in app.rp,
+        f"builds {len(builds)}",
     )
+    check("replay: reveal lists match the model", len(app.rp["node_step"]) == len(app.V["nodes"]))
     gif = Image.open(out) if out.exists() else None
     check("replay: GIF exported", gif is not None and gif.size[0] == 320 and gif.n_frames >= 10, app.status.get())
     if gif is not None:  # lasts the length setting (1 s) plus the 2 s hold on the last frame (review)

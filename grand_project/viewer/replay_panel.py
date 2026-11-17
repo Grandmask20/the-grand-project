@@ -981,7 +981,10 @@ class ReplayMixin:
             thread (nothing is written after an error)."""
             self.cx, self.cy, self.z, rp["pos"], _playing = saved
             rp["exporting"] = False
-            if rp.pop("terrain_after", False):  # the ground changed meanwhile: rebuilt with every screenshot
+            seams, dirty = rp.pop("seams_after", None), rp.pop("terrain_after", False)
+            if seams is not None:  # Fix seams finished meanwhile: its clean map (screenshots added since are
+                self._handle("terrain_img", seams)  # pasted on top by _seams_ready)
+            elif dirty:  # the ground changed meanwhile: rebuilt with every screenshot
                 self.rebuild_terrain()
             if rp.pop("rebuild_after", False):  # screenshots were added meanwhile (rebuild_model re-plans)
                 self.rebuild_model()
