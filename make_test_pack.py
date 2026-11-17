@@ -2,11 +2,14 @@
 
     py make_test_pack.py              # -> ../1.0/atlas_test_data
     py make_test_pack.py --to NAME    # -> ../NAME/atlas_test_data
+    py make_test_pack.py --to internal --res   # only (re)build res_atlases/ from ../atlas-tests, nothing else
 
 From the full private set (../atlas_test_data) it takes only what the tests and the detector score need:
 - the 10 + 10 hand-labelled screenshots and their truth (truth/, truth_ocean/)
 - the first CRAWL_SHOTS crawl screenshots plus the small test atlas's own 5
 - the crawl atlas and the small atlas with the cached detections of those screenshots
+- the resolution atlases (../atlas-tests: the same 3 screenshots at 8 resolution / render-scale settings, their
+  atlases, score_atlases.py and its baseline), for steady detector numbers
 
 Every saved path is rewritten to a relative one, so it works on any computer and contains no user name.
 """
@@ -19,6 +22,7 @@ from pathlib import Path
 HERE = Path(__file__).resolve().parent
 
 SRC = HERE.parent / "atlas_test_data"
+RES_SRC = HERE.parent / "atlas-tests"  # the resolution atlases (score_atlases.py)
 TARGET = HERE.parent / (sys.argv[sys.argv.index("--to") + 1] if "--to" in sys.argv else "1.0") / "atlas_test_data"
 CRAWL_SHOTS = 110  # test_atlas_folder uses crawl #100-#103; the viewer test needs a long run
 TRUTH_FILES = ("truth.json", "truth_key.json", "labels.txt")  # (extra_maps.json: training only, its shots not here)
@@ -34,6 +38,7 @@ A small part of the author's own test set, so the tests and `atlas_detect.py sco
 | `screenshots/ocean/`, `truth_ocean/` | 10 hand-labelled ocean (Expedition) screenshots |
 | `screenshots/crawl/` | the first {crawl} screenshots of a crawl across the atlas, plus the small atlas's 5 |
 | `crawl_atlas/`, `small_atlas/` | finished atlases of those screenshots, with their cached detections |
+| `res_atlases/` | 3 screenshots at 8 resolution / render scales, as atlases; `score_atlases.py` + baseline |
 
 It is stored with Git LFS and is NOT downloaded by a normal clone (see `.lfsconfig`). To get it:
 
@@ -78,7 +83,55 @@ def copy_detections(src_dir: Path, out_dir: Path, shas: set[str]) -> int:
     return n
 
 
+def res_atlases() -> None:
+    """Copy the resolution atlases into TARGET/res_atlases: screenshots, atlas.json and cached detections (their
+    paths made bare file names: the screenshots sit next to the atlas), score_atlases.py, its baseline and README.
+    The map pictures in atlas_files/ are left out (the viewer makes them again)."""
+    if not RES_SRC.exists():
+        raise SystemExit(f"resolution atlases not found at {RES_SRC}")
+    out = TARGET / "res_atlases"
+    if out.exists():
+        shutil.rmtree(out)
+    out.mkdir(parents=True)
+    for name in ("README.md", "score_atlases.py"):
+        shutil.copy2(RES_SRC / name, out / name)
+    for f in RES_SRC.glob("baseline_*.json"):
+        shutil.copy2(f, out / f.name)
+    for a in sorted(RES_SRC.glob("res_*/atlas.json")):
+        src, dst = a.parent, out / a.parent.name
+        (dst / "atlas_frames").mkdir(parents=True)
+        for shot in src.glob("*.png"):
+            if shot.name[:1].isdigit():  # the screenshots (Steam names), not the map pictures
+                shutil.copy2(shot, dst / shot.name)
+        d = json.loads(a.read_text(encoding="utf-8"))
+        for f in d["frames"]:
+            f["path"] = Path(f["path"]).name
+        (dst / "atlas.json").write_text(json.dumps(d, indent=1), encoding="utf-8")
+        n = copy_detections(src / "atlas_frames", dst / "atlas_frames", {f["sha"] for f in d["frames"]})
+        print(f"{dst.name}: {len(d['frames'])} screenshots, {n} cached detections")
+
+
+def check_pack() -> None:
+    """Fail when a text file in the pack still holds an absolute path (a user name); print the pack's size."""
+    bad = [
+        str(p.relative_to(TARGET))
+        for p in TARGET.rglob("*")
+        if p.suffix in (".json", ".txt", ".md")
+        and any(s in p.read_text(encoding="utf-8", errors="ignore") for s in ("C:\\\\Users", "C:/Users", "/home/"))
+    ]
+    size = sum(p.stat().st_size for p in TARGET.rglob("*") if p.is_file())
+    print(f"test pack: {sum(1 for _ in TARGET.rglob('*.png'))} pictures, {size / 1e6:.0f} MB -> {TARGET}")
+    if bad:
+        raise SystemExit(f"absolute paths left in: {bad[:5]}")
+
+
 def main() -> None:
+    if "--res" in sys.argv:  # only the resolution atlases (the rest of the pack stays as it is)
+        res_atlases()
+        readme = TARGET / "README.md"
+        readme.write_text(README.format(crawl=CRAWL_SHOTS), encoding="utf-8")
+        check_pack()
+        return
     if not SRC.exists():
         raise SystemExit(f"full test data not found at {SRC}")
     if TARGET.exists():
@@ -117,18 +170,9 @@ def main() -> None:
         shas = {f["sha"] for f in d["frames"] if Path(f["path"]).name in keep}
         n = copy_detections(SRC / a / "atlas_frames", TARGET / a / "atlas_frames", shas)
         print(f"{a}: {len(d['frames'])} frames, {n} cached detections")
+    res_atlases()
     (TARGET / "README.md").write_text(README.format(crawl=CRAWL_SHOTS), encoding="utf-8")
-    # nothing personal left?
-    bad = [
-        str(p.relative_to(TARGET))
-        for p in TARGET.rglob("*")
-        if p.suffix in (".json", ".txt", ".md")
-        and any(s in p.read_text(encoding="utf-8", errors="ignore") for s in ("C:\\\\Users", "C:/Users", "/home/"))
-    ]
-    size = sum(p.stat().st_size for p in TARGET.rglob("*") if p.is_file())
-    print(f"test pack: {sum(1 for _ in TARGET.rglob('*.png'))} pictures, {size / 1e6:.0f} MB -> {TARGET}")
-    if bad:
-        raise SystemExit(f"absolute paths left in: {bad[:5]}")
+    check_pack()  # nothing personal left?
 
 
 if __name__ == "__main__":
