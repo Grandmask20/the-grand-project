@@ -134,6 +134,31 @@ def numbers(folder: Path, core, view_model) -> dict:
     }
 
 
+def best_pairs(a, b) -> dict[int, int]:
+    """The largest one-to-one matching of points a to points b within MATCH, closest overall among those.
+
+    (A nearest-first pass could miss a pair: two points wanting the same reference point, one of which also had
+    another in reach; and its result depended on the order of the points: review.)
+
+    Args:
+        a: (n, 2) points.
+        b: (m, 2) points.
+
+    Returns:
+        {index in a: index in b}.
+    """
+    import numpy as np
+    from scipy.optimize import linear_sum_assignment
+
+    a, b = np.asarray(a, float).reshape(-1, 2), np.asarray(b, float).reshape(-1, 2)
+    if not len(a) or not len(b):
+        return {}
+    d = np.hypot(*(a[:, None, :] - b[None, :, :]).transpose(2, 0, 1))
+    big = 1e6  # more than any sum of in-reach distances: as many pairs as possible first, then the closest
+    rows, cols = linear_sum_assignment(np.where(d <= MATCH, d, big))
+    return {int(i): int(j) for i, j in zip(rows, cols, strict=True) if d[i, j] <= MATCH}
+
+
 def compare_to_reference(cur: dict, ref: dict) -> dict:
     """Match this atlas's maps, icons and paths to the reference's (after the median shift between them)."""
     import numpy as np
@@ -146,22 +171,14 @@ def compare_to_reference(cur: dict, ref: dict) -> dict:
     near = d < 60
     shift = np.median(b[k[near]] - a[near], axis=0) if near.any() else np.zeros(2)
     a2 = a + shift
-    d, k = cKDTree(b).query(a2)
-    pairs = {}  # this atlas's map -> reference map, one to one, nearest first
-    for i in np.argsort(d):
-        if d[i] <= MATCH and int(k[i]) not in pairs.values():
-            pairs[int(i)] = int(k[i])
+    pairs = best_pairs(a2, b)  # this atlas's map -> reference map, one to one
     ia = [[x + shift[0], y + shift[1], n] for x, y, n in cur["_pts"]["icons"]]
     ib = ref["_pts"]["icons"]
-    used, icon_hits = set(), 0
-    for x, y, n in ia:
-        close = [
-            j for j, (u, v, m) in enumerate(ib) if m == n and j not in used and (u - x) ** 2 + (v - y) ** 2 <= MATCH**2
-        ]
-        best = min(close, key=lambda j: (ib[j][0] - x) ** 2 + (ib[j][1] - y) ** 2, default=None)
-        if best is not None:
-            used.add(best)
-            icon_hits += 1
+    icon_hits = 0
+    for name in {n for _x, _y, n in ia}:  # icons pair up only with icons of the same name
+        mine = [(x, y) for x, y, n in ia if n == name]
+        theirs = [(u, v) for u, v, m in ib if m == name]
+        icon_hits += len(best_pairs(mine, theirs))
     # paths: the same two maps (each matched to a reference map)
     ref_paths = {frozenset(p) for p in ref["_pts"]["paths"]}
     path_hits = sum(
