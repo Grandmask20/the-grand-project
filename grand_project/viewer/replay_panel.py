@@ -211,6 +211,7 @@ class ReplayMixin:
         rp = getattr(self, "rp", None)
         if rp is None or rp["exporting"]:
             return
+        self._rp_stop_timer()
         self.rp = None
         self._rp_panel.place_forget()
         self._rp_tab.configure(text="▲  Timelapse")
@@ -260,6 +261,13 @@ class ReplayMixin:
         Args:
             **kw: The changed settings.
         """
+        if self.replay_active() and self.rp["exporting"]:  # not while a GIF is being made (review)
+            self.status.set("wait until the GIF export is done")
+            st = self._rp_settings()
+            self._rp_type.set(st["type"])
+            for k, v in self._rp_vars.items():
+                v.set(f"{st[k]:g}x" if k == "speed" else (f"{st[k]:g}" if k == "length" else str(st[k])))
+            return
         self._rp_set(**kw)
         if not self.replay_active():
             return
@@ -291,12 +299,15 @@ class ReplayMixin:
         rp = getattr(self, "rp", None)
         if rp is None or not self.atlas:
             return
+        if rp["exporting"]:  # screenshots added meanwhile: after the GIF, so it is one replay throughout (review)
+            rp["replan_after"] = True
+            return
         st = self._rp_settings()
         old = rp.get("plan")
         share = rp["pos"] / old.n_steps if old is not None and old.n_steps else 1.0
         frames = self.atlas.frames
         plan = R.make_plan(frames, self.footprints, st["type"], st["per_step"], st["reveal"], self.bounds())
-        late = plan.n_steps  # not found: shown with everything at the end
+        late = max(0, plan.n_steps - 1)  # not found: shown with the last step (n_steps was never reached: review)
 
         def steps(items, pts):
             """Steps of map nodes / icons: where the sweep reaches them (by area), else by their screenshots, else by
@@ -354,9 +365,17 @@ class ReplayMixin:
             self._rp_camera(1.0)
         rp["playing"] = not rp["playing"]
         rp["last"] = time.perf_counter()
+        self._rp_stop_timer()
         self._rp_update_ui()
         if rp["playing"]:
             self._rp_tick()
+
+    def _rp_stop_timer(self):
+        """Cancel the pending playback frame, so pausing and playing again never runs two timer chains (review)."""
+        rp = getattr(self, "rp", None)
+        job = rp.pop("timer", None) if rp is not None else None
+        if job is not None:
+            self.root.after_cancel(job)
 
     def _rp_rate(self) -> float:
         """Steps per second of the preview: the timelapse is `length` seconds long; the preview speed scales it.
@@ -370,7 +389,10 @@ class ReplayMixin:
     def _rp_tick(self):
         """One playback frame (a Tk `after` timer while playing): move on, move the camera, redraw."""
         rp = getattr(self, "rp", None)
-        if rp is None or not rp["playing"] or rp["exporting"]:
+        if rp is None:
+            return
+        rp.pop("timer", None)  # (this one has fired)
+        if not rp["playing"] or rp["exporting"]:
             return
         now = time.perf_counter()
         dt = now - rp["last"]
@@ -382,7 +404,7 @@ class ReplayMixin:
         self._rp_update_ui()
         self._redraw()
         if rp["playing"]:
-            self.root.after(REPLAY_TICK_MS, self._rp_tick)
+            rp["timer"] = self.root.after(REPLAY_TICK_MS, self._rp_tick)
 
     def _rp_seek(self, pos: float):
         """Jump to a place in the replay (the camera jumps too).
@@ -393,6 +415,8 @@ class ReplayMixin:
         rp = getattr(self, "rp", None)
         if rp is None or rp["exporting"]:
             return
+        if not rp["playing"]:
+            self._rp_stop_timer()
         rp["pos"] = float(min(max(pos, 0.0), rp["plan"].n_steps))
         self._rp_camera(1.0)
         self._rp_update_ui()
@@ -949,9 +973,11 @@ class ReplayMixin:
             """Put the view back and write the file on a background thread."""
             self.cx, self.cy, self.z, rp["pos"], _playing = saved
             rp["exporting"] = False
+            if rp.pop("replan_after", False):
+                self._rp_replan()
             self._rp_update_ui()
             self.request_redraw()
-            ms = int(1000 / REPLAY_GIF_FPS)
+            ms = max(20, round(st["length"] * 1000 / len(frames)))  # the GIF lasts `length` (plus the end hold)
 
             def write():
                 """Write the GIF (background thread)."""

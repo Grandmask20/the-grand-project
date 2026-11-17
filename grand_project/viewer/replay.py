@@ -129,7 +129,9 @@ def sweep_key(kind: str, pts: np.ndarray, start: np.ndarray, x_right: float, y_t
     if kind == "distance":
         return r
     turn = (np.arctan2(d[..., 1], d[..., 0]) % (2 * np.pi)) / (2 * np.pi)  # 0..1 around
-    ring = np.round(r / REPLAY_SPIRAL_PITCH - turn)  # which turn of r = pitch * (ring + turn) the point is on
+    # which turn of r = pitch * (ring + turn) the point is on; never before the first, so nothing comes before the
+    # start (a point just "behind" it got a negative key: review)
+    ring = np.maximum(np.round(r / REPLAY_SPIRAL_PITCH - turn), 0)
     return (ring + turn) * REPLAY_SPIRAL_PITCH
 
 

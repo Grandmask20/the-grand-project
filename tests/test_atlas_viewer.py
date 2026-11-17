@@ -923,6 +923,12 @@ def test_replay_panel(viewer, check, monkeypatch, tmp_path):
         pump(0.3)
     gif = Image.open(out) if out.exists() else None
     check("replay: GIF exported", gif is not None and gif.size[0] == 320 and gif.n_frames >= 10, app.status.get())
+    if gif is not None:  # lasts the length setting (1 s) plus the 2 s hold on the last frame (review)
+        total = 0
+        for k in range(gif.n_frames):
+            gif.seek(k)
+            total += gif.info.get("duration", 0)
+        check("replay: the GIF lasts its length", 2700 <= total <= 3300, f"{total} ms")
     app._rp_set(type="spiral", reveal="area")
     app._rp_replan()
     app._rp_seek(app.rp["plan"].n_steps / 2)

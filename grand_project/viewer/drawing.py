@@ -274,7 +274,8 @@ class DrawingMixin:
                 cv2.polylines(img, [line.astype(np.int32)], False, SELECT_COL, pth + 3, cv2.LINE_AA)
         self._fl_mark("paths")
         r = self.node_radius()
-        hit_nodes = {i for k, i in self.hits if k == "node"}
+        hits = () if self.replay_active() else self.hits  # replaying: no Find rings (review)
+        hit_nodes = {i for k, i in hits if k == "node"}
         far = z < self.FAR_ZOOM
         if L["Nodes"] and len(sp) and far:
             _k, nm, _pm, _A, _B, _s, _a, ncol = self.shown_masks()
@@ -339,7 +340,7 @@ class DrawingMixin:
                     img[Y[sel] + dy, X[sel] + dx] = icol[sel]
         elif L["Icons"] and len(self.icon_pts):
             ip = self.to_screen(self.icon_pts)
-            hit_ic = {i for k, i in self.hits if k == "icon"}
+            hit_ic = {i for k, i in hits if k == "icon"}
             labels = L["Labels"] and z >= 0.8
             drawn = []  # (x, y, radius, icon, colour) of the icons drawn, for their names
             for i, ic in enumerate(self.V["icons"]):
@@ -374,7 +375,7 @@ class DrawingMixin:
                     put_text(img, text, (x + rr + 4, y + 4), col, 0.42)
         self._fl_mark("icons")
         if L["Landmarks"]:
-            hit_lm = {i for k, i in self.hits if k == "landmark"}
+            hit_lm = {i for k, i in hits if k == "landmark"}
             hw, top, bot = self.landmark_box()
             LMS = self.V["landmarks"]
             lm_cols = self.landmark_cols(ST)

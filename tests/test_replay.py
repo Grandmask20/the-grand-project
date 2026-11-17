@@ -100,3 +100,13 @@ def test_real_span_leaves_out_pauses():
     stamps = ("20261115100000", "20261115100500", "20261115150000")  # 5 min, then a 5 h pause
     times = [t({"name": f"2694490_{s}_1", "path": "/x"}) for s in stamps]
     assert R.real_span(times) == 300
+
+
+def test_spiral_never_reveals_before_its_start():
+    """A screenshot just "behind" the first one (by angle) still comes after it (review: its key was negative)."""
+    p = R.REPLAY_SPIRAL_PITCH
+    names = ["2694490_20261115100000_1", "2694490_20261115100100_1"]
+    fr, fp = zip(*[_frame(n, 0.0, y) for n, y in zip(names, (0.0, -p / 10), strict=True)], strict=True)
+    assert R.make_plan(list(fr), list(fp), "spiral").order == [0, 1]
+    plan = R.make_plan(list(fr), list(fp), "spiral", reveal="area")
+    assert plan.sweep.grid.min() >= 0 and (plan.step_of >= 0).all()
