@@ -4,6 +4,7 @@ import type { Meta } from "@/domain/app/Meta";
 import { useSettings } from "@/hooks/app/UseSettings";
 import { landmarkColours } from "@/logic/Colours";
 import { type PlacedLabel, placeLabels } from "@/logic/Labels";
+import { useAppStore } from "@/store/AppStore";
 
 const ICON_LABEL_ZOOM_PX = 18; // icon names show once an icon is this many px across on screen
 
@@ -44,6 +45,9 @@ export function MapLabels({ map, meta }: { map: MapLibreMap; meta: Meta }) {
 				if (f.geometry.type !== "Point") continue;
 				const layer = f.layer.id;
 				const p = f.properties ?? {};
+				// while replaying, items are only see-through until revealed: their names wait too
+				const rp = useAppStore.getState().replay;
+				if (rp && typeof p.step === "number" && p.step >= rp.pos) continue;
 				const key = `${layer}:${p.id ?? p.label ?? f.id}`;
 				if (seen.has(key)) continue;
 				seen.add(key);

@@ -378,15 +378,16 @@ function setFilter(map: MapLibreMap, id: string, filter: FilterSpecification | n
 }
 
 /**
- * A map node's radius as the old window drew it: zoomed out (under 0.45 px per unit) 3 px dots whatever the size
+ * A map node's radius as the old window drew it: zoomed out (under 0.45 px per unit) small dots whatever the size
  * setting (a big size made the far view one blob: user), then 8 px per screen px per unit times the size, up to 13.
  */
 export function nodeRadius(geo: Geo, size: number): ExpressionSpecification {
 	const z = zoomAt(geo, 0.45);
 	const r = Math.max(2, 0.45 * 8) * size;
 	const zCap = zoomAt(geo, 13 / 8);
-	if (zCap <= z + 0.02) return ["step", ["zoom"], 1.5, z, 13 * size];
-	return ["interpolate", ["exponential", 2], ["zoom"], z, 1.5, z + 0.01, r, zCap, 13 * size];
+	// the dots: 2.2 px radius (1.5 with soft edges looked like 1 px and vanished into the ground: user)
+	if (zCap <= z + 0.02) return ["step", ["zoom"], 2.2, z, 13 * size];
+	return ["interpolate", ["exponential", 2], ["zoom"], z, 2.2, z + 0.01, Math.max(r, 2.2), zCap, 13 * size];
 }
 
 /** Apply the settings to the map's layers (visibility, colours, sizes, filters). */
@@ -513,14 +514,24 @@ export function applyLook(map: MapLibreMap, geo: Geo, meta: Meta, look: Look): v
 	// Find: a type highlighted
 	setFilter(map, "highlight", look.highlight ? ["in", `|${look.highlight}|`, ["get", "icons"]] : NONE);
 
-	// the replay: only what was revealed so far
-	const step: FilterSpecification | null =
-		look.replayPos === null ? null : ["<", ["coalesce", ["get", "step"], 0], look.replayPos];
-	for (const id of STEPPED) {
-		// the tower pictures keep their own "only Towers" filter (CodeRabbit: other landmarks got tower pictures)
-		const own: FilterSpecification | null = id === "towers" ? ["==", ["get", "kind"], "Tower"] : null;
-		setFilter(map, id, own && step ? ["all", own, step] : (own ?? step));
-	}
+	// the replay: only what was revealed so far. Opacity by each item's step, not a filter: a filter makes MapLibre
+	// rebuild its tiles, so map nodes trailed the fog by a second or two and kept appearing after a pause (user).
+	// The 3D models can't take a per-item opacity, so they keep the filter (they're only drawn tilted).
+	const pos = look.replayPos;
+	const shown = (on: number): ExpressionSpecification | number =>
+		pos === null ? on : ["case", ["<", ["coalesce", ["get", "step"], 0], pos], on, 0];
+	setPaint(map, "maps", "circle-opacity", shown(1));
+	setPaint(map, "maps", "circle-stroke-opacity", shown(1));
+	setPaint(map, "maps-square", "icon-opacity", shown(1));
+	setPaint(map, "maps-icon", "icon-opacity", shown(1));
+	setPaint(map, "paths", "line-opacity", shown(0.9));
+	setPaint(map, "icons", "icon-opacity", shown(1));
+	setPaint(map, "landmarks", "circle-stroke-opacity", shown(1));
+	setPaint(map, "towers", "icon-opacity", shown(1));
+	const step: FilterSpecification | null = pos === null ? null : ["<", ["coalesce", ["get", "step"], 0], pos];
+	setFilter(map, "solids", step);
+	// the tower pictures only on Towers, always (CodeRabbit: the replay filter replaced it)
+	setFilter(map, "towers", ["==", ["get", "kind"], "Tower"]);
 	// bookmarks are not part of how the atlas was made: hidden while replaying (user: they showed from the start)
 	if (look.replayPos !== null) visible(map, "bookmarks", false);
 }

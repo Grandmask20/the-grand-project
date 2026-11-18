@@ -34,6 +34,7 @@ export class ReplayExporter {
 	private readonly muxer: Muxer<ArrayBufferTarget> | null;
 	private readonly encoder: VideoEncoder | null;
 	private frames = 0;
+	private elapsed = 0; // ms of the file so far (a GIF's frame times are whole 10 ms: carried over so the total is right)
 	private error: unknown = null;
 
 	constructor(
@@ -110,7 +111,9 @@ export class ReplayExporter {
 			if (!ctx) return;
 			const { data } = ctx.getImageData(0, 0, this.width, this.height);
 			const palette = quantize(data, 256);
-			this.gif.writeFrame(applyPalette(data, palette), this.width, this.height, { palette, delay: Math.round(ms) });
+			const delay = Math.round((this.elapsed + ms) / 10) * 10 - Math.round(this.elapsed / 10) * 10;
+			this.elapsed += ms;
+			this.gif.writeFrame(applyPalette(data, palette), this.width, this.height, { palette, delay });
 		} else if (this.encoder) {
 			const us = Math.round(1e6 / this.fps);
 			const copies = Math.max(1, Math.round(ms / (1000 / this.fps)));
@@ -144,15 +147,21 @@ export class ReplayExporter {
 	}
 }
 
-/** Wait until the map has drawn everything for its current view (or `ms` passes). */
-export function mapIdle(map: MapLibreMap, ms = 4000): Promise<void> {
+/**
+ * Wait until the map's tiles for its current view are in (or `ms` passes). Not the map's "idle" event: the replay's
+ * fog picture is redrawn every frame, so the map is never idle and each frame waited the whole timeout.
+ */
+export function mapIdle(map: MapLibreMap, ms = 3000): Promise<void> {
 	return new Promise((resolve) => {
-		const t = setTimeout(resolve, ms);
-		map.once("idle", () => {
-			clearTimeout(t);
-			resolve();
-		});
+		const t0 = performance.now();
+		const check = () => {
+			// the ground and the map's data: other sources (the fog picture) never count as loaded while animating
+			const done = ["terrain", "atlas"].every((id) => !map.getSource(id) || map.isSourceLoaded(id));
+			if (done || performance.now() - t0 > ms) resolve();
+			else setTimeout(check, 30);
+		};
 		map.triggerRepaint();
+		setTimeout(check, 30);
 	});
 }
 
