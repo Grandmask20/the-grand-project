@@ -11,7 +11,7 @@ import { useFrames } from "@/hooks/replay/UseFrames";
 import { cityColours, landmarkColours, styleColour } from "@/logic/Colours";
 import { useAppStore } from "@/store/AppStore";
 import { ColourSwatch } from "./ColourSwatch";
-import { MapPreview, Path3DPreview, PathPreview } from "./StylePreview";
+import { IconPreview, MapPreview, Path3DPreview, PathPreview } from "./StylePreview";
 
 /** View: what the map shows and how (background, layers, paths, maps, colours, "Colour by"). */
 export function ViewTab() {
@@ -20,6 +20,8 @@ export function ViewTab() {
 	const update = useUpdateSettings();
 	const tint = settings?.style.age_tint ?? "off";
 	const tilted = useAppStore((s) => (s.camera?.pitch ?? 0) > 1);
+	const iconStyle =
+		settings?.style.icon_style === "poe2db art" ? "game art" : String(settings?.style.icon_style ?? "game art");
 	const [page, setPage] = useState<"2d" | "3d">(() => (tilted ? "3d" : "2d"));
 	const frames = useFrames(tint !== "off");
 	if (!meta || !settings) return null;
@@ -225,10 +227,12 @@ export function ViewTab() {
 			</Section>
 
 			<Section title="Icons">
+				<IconPreview style={iconStyle} size={Number(st.icon_size) || 1} />
 				{choice(
 					"style",
-					String(st.icon_style ?? "game art"),
-					["game art", "poe2db art", "from screenshots", "flat colour", "outline"],
+					iconStyle,
+					// (poe2db's art is the game's own: one choice)
+					["game art", "from screenshots", "flat colour", "outline"],
 					(v) => set({ icon_style: v }),
 				)}
 				{slider("size", "icon_size", 0.5, 2.5, 0.1, 1, times)}

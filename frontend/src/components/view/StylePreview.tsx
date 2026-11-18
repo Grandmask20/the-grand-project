@@ -1,6 +1,8 @@
 import nodePicture from "@/assets/map_node_icon.webp";
 import type { Meta } from "@/domain/app/Meta";
 import type { Style } from "@/domain/app/Style";
+import { useAppClient } from "@/hooks/app/UseAppClient";
+import { useTypes } from "@/hooks/find/UseTypes";
 import { styleColour } from "@/logic/Colours";
 
 /** The live preview strips the old window had above the path and map styles (user: they were missing). */
@@ -142,5 +144,26 @@ export function Path3DPreview({ st, meta }: { st: Style; meta: Meta }) {
 				);
 			})}
 		</svg>
+	);
+}
+
+/** The icon style's preview (user): a few of this atlas's icon types in the chosen style and size. */
+export function IconPreview({ style, size }: { style: string; size: number }) {
+	const app = useAppClient();
+	const types = useTypes();
+	const icons = (types.data?.sections.find((s) => s.title === "Map icons")?.rows ?? [])
+		.filter((r) => r.icon && r.icon !== "Unidentified")
+		.slice(0, 6)
+		.map((r) => r.icon as string);
+	const px = Math.round(26 * size);
+	return (
+		<div
+			className="flex h-11 w-full items-center justify-center gap-2 overflow-hidden rounded border bg-black"
+			aria-label="Icon style preview"
+		>
+			{icons.map((n) => (
+				<img key={n} src={app.spriteUrl(n, style)} alt={n} title={n} width={px} height={px} />
+			))}
+		</div>
 	);
 }
