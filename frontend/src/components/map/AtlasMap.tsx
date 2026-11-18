@@ -19,6 +19,9 @@ import { MapTiles, vectorVersion } from "./MapTiles";
 import { PlayerMarker } from "./PlayerMarker";
 import { ReplayLayers } from "./ReplayLayers";
 
+/** The furthest latitude Web Mercator can show (MapLibre rejects bounds beyond ±90). */
+const MERCATOR_LAT = 85.0511;
+
 interface Props {
 	info: MapInfo;
 	meta: Meta;
@@ -48,9 +51,11 @@ export function AtlasMap({ info, meta }: Props) {
 			bearing: cam?.bearing ?? 0,
 			pitch: cam?.pitch ?? 0,
 			fitBoundsOptions: { padding: 30 },
+			// latitudes clamped to Web Mercator's limit: padding a big grid's bounds went past ±90 and MapLibre threw,
+			// leaving a blank page (CodeRabbit)
 			maxBounds: [
-				[w - padX, s - padY],
-				[e + padX, n + padY],
+				[w - padX, Math.max(s - padY, -MERCATOR_LAT)],
+				[e + padX, Math.min(n + padY, MERCATOR_LAT)],
 			],
 			maxZoom: info.maxzoom,
 			maxPitch: 75,
@@ -84,7 +89,9 @@ export function AtlasMap({ info, meta }: Props) {
 
 	return (
 		<div className="relative h-full w-full" data-testid="atlas-map">
-			<div ref={box} className="absolute inset-0" />
+			{/* h-full, not absolute inset-0: MapLibre's stylesheet makes its container position: relative, which
+			    turned the absolute box 0 px tall (a black map) */}
+			<div ref={box} className="h-full w-full" />
 			{map && (
 				<>
 					<MapTiles map={map} />

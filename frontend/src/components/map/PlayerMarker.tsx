@@ -22,6 +22,11 @@ export function PlayerMarker({ map, geo }: { map: MapLibreMap; geo: Geo }) {
 		marker.current.setLngLat(geo.toLngLat(player.x, player.y)).addTo(map);
 	}, [map, geo, player]);
 
-	useEffect(() => () => marker.current?.remove(), []);
+	useEffect(
+		() => () => {
+			marker.current?.remove();
+		},
+		[],
+	);
 	return null;
 }

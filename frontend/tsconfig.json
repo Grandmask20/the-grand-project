@@ -14,7 +14,7 @@
 		"skipLibCheck": true,
 		"noEmit": true,
 		"paths": { "@/*": ["./src/*"] },
-		"types": ["vite/client", "node"]
+		"types": ["vite/client", "node", "geojson"]
 	},
 	"include": ["src", "vite.config.ts", "vitest.config.ts"]
 }
