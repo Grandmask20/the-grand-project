@@ -131,8 +131,7 @@ export function MapInteraction({ map, geo, meta }: { map: MapLibreMap; geo: Geo;
 	// --- drags: the lasso, the ghost
 	useEffect(() => {
 		const dragging = mode.kind === "lasso" || mode.kind === "ghost";
-		if (dragging) map.dragPan.disable();
-		else map.dragPan.enable();
+		void dragging; // panning is AtlasMap's own drag (it stays off in these modes)
 		map.getCanvas().style.cursor =
 			mode.kind === "lasso" ? "crosshair" : mode.kind === "ghost" ? "move" : mode.kind === "normal" ? "" : "copy";
 

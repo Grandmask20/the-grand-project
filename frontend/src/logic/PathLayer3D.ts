@@ -12,6 +12,7 @@ export interface Path3D {
 	step: number;
 }
 
+const FAR = 2.2; // paths are drawn out to this many times the view centre's distance from the camera
 const LIFT = 3; // atlas units above the ground: clear of the ground picture, under the map node pillars' caps
 
 const VS = `
@@ -23,13 +24,15 @@ uniform mat4 u_m;
 uniform float u_k;
 uniform vec2 u_view;
 uniform float u_width;
+uniform float u_far; // clip w beyond which paths aren't drawn
 varying float v_dist;
 varying float v_step;
 varying vec3 v_col;
 void main() {
 	vec4 ca = u_m * vec4(a_a, ${LIFT.toFixed(1)} * u_k, 1.0);
 	vec4 cb = u_m * vec4(a_b, ${LIFT.toFixed(1)} * u_k, 1.0);
-	if (ca.w <= 0.0) { gl_Position = vec4(2.0, 2.0, 2.0, 1.0); return; } // behind the camera
+	// behind the camera, or far off (far paths were a tangle of lines: user)
+	if (ca.w <= 0.0 || ca.w > u_far) { gl_Position = vec4(2.0, 2.0, 2.0, 1.0); return; }
 	vec2 pa = ca.xy / ca.w * u_view * 0.5;
 	vec2 pb = (cb.w > 0.0 ? cb.xy / cb.w : ca.xy / ca.w + (ca.xy / ca.w - cb.xy / cb.w)) * u_view * 0.5;
 	vec2 d = pb - pa;
@@ -157,6 +160,9 @@ export class PathLayer3D implements CustomLayerInterface {
 		const ratio = gl.drawingBufferWidth / this.map.getCanvas().clientWidth;
 		gl.uniform1f(gl.getUniformLocation(p, "u_width"), this.width * ratio);
 		gl.uniform1f(gl.getUniformLocation(p, "u_pos"), this.pos);
+		const c = MercatorCoordinate.fromLngLat(this.map.getCenter());
+		const M = options.defaultProjectionData.mainMatrix as Float32Array;
+		gl.uniform1f(gl.getUniformLocation(p, "u_far"), FAR * (M[3] * c.x + M[7] * c.y + M[15]));
 		gl.uniform2f(gl.getUniformLocation(p, "u_dash"), this.dash[0], this.dash[1]);
 		gl.bindBuffer(gl.ARRAY_BUFFER, this.buf);
 		const names: [string, number, number][] = [

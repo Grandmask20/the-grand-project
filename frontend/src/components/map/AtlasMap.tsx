@@ -80,6 +80,34 @@ export function AtlasMap({ info, meta }: Props) {
 			if (cx !== x || cy !== y) m.setCenter(geo.toLngLat(cx, cy));
 		};
 		m.on("drag", limit);
+		m.on("move", limit);
+		// panning: the mouse's movement in px moves the map at the scale of the view's centre. MapLibre's own drag
+		// keeps the grabbed ground point under the mouse, which near the horizon moved further and further with
+		// every px (user: it sped up endlessly)
+		m.dragPan.disable();
+		const canvas = m.getCanvasContainer();
+		let last: [number, number] | null = null;
+		const down = (e: MouseEvent) => {
+			const kind = useAppStore.getState().mode.kind;
+			if (e.button !== 0 || e.ctrlKey || kind === "lasso" || kind === "ghost") return;
+			last = [e.clientX, e.clientY];
+		};
+		const move = (e: MouseEvent) => {
+			if (!last || !(e.buttons & 1)) {
+				last = null;
+				return;
+			}
+			const dx = e.clientX - last[0];
+			const dy = e.clientY - last[1];
+			last = [e.clientX, e.clientY];
+			if (dx || dy) m.panBy([-dx, -dy], { animate: false });
+		};
+		const up = () => {
+			last = null;
+		};
+		canvas.addEventListener("mousedown", down);
+		window.addEventListener("mousemove", move);
+		window.addEventListener("mouseup", up);
 		m.on("moveend", limit);
 		// after the map is removed (another atlas opened) its layers and sources are simply gone: the parts of the page
 		// that tidy up after it (the replay's fog) asked a removed map and threw, which blanked the page (user)
@@ -112,6 +140,9 @@ export function AtlasMap({ info, meta }: Props) {
 			setStoreMap(m);
 		});
 		return () => {
+			canvas.removeEventListener("mousedown", down);
+			window.removeEventListener("mousemove", move);
+			window.removeEventListener("mouseup", up);
 			setStoreMap(null);
 			setMap(null);
 			m.remove();
