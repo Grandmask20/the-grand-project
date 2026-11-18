@@ -398,6 +398,9 @@ export function nodeRadius(geo: Geo, size: number): ExpressionSpecification {
 	return ["interpolate", ["exponential", 2], ["zoom"], z, 2.2, z + 0.01, Math.max(r, 2.2), zCap, 13 * size];
 }
 
+/** The beams' colours in the 3D models (webmap.solids: the hall's beam, the tower's beacon). */
+const BEAM_COLOURS = ["#ff8c1a", "#9fe8ff"];
+
 /** Icons in a row: their place (-2 .. 2 in halves). Model heights: 0 .. 440 atlas units in steps of 10. */
 const ICON_SLOTS = ["-2", "-1.5", "-1", "-0.5", "0", "0.5", "1", "1.5", "2"];
 const ICON_LIFTS = Array.from({ length: 45 }, (_, k) => k * 10);
@@ -565,7 +568,15 @@ export function applyLook(map: MapLibreMap, geo: Geo, meta: Meta, look: Look): v
 	// the page fell seconds behind and kept going after a pause (user). The 3D models stand above the fog, so they
 	// keep a filter by step (only while tilted).
 	const pos = look.replayPos;
-	setFilter(map, "solids", pos === null || !look.tilted ? null : ["<", ["coalesce", ["get", "step"], 0], pos]);
+	const beams: FilterSpecification | null =
+		st.d3_beams === false ? ["!", ["in", ["get", "colour"], ["literal", BEAM_COLOURS]]] : null;
+	const reveal: FilterSpecification | null =
+		pos === null || !look.tilted ? null : ["<", ["coalesce", ["get", "step"], 0], pos];
+	setFilter(map, "solids", beams && reveal ? ["all", beams, reveal] : (beams ?? reveal));
+	// models' heights by the 3D view setting
+	const hk = Number(st.d3_model_height) || 1;
+	setPaint(map, "solids", "fill-extrusion-height", ["*", ["get", "height"], hk]);
+	setPaint(map, "solids", "fill-extrusion-base", ["*", ["get", "base"], hk]);
 	// the tower pictures only on Towers, always (CodeRabbit: the replay filter replaced it)
 	setFilter(map, "towers", ["==", ["get", "kind"], "Tower"]);
 	// bookmarks are not part of how the atlas was made: hidden while replaying (user: they showed from the start)

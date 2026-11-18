@@ -6,6 +6,7 @@ import { useAppClient } from "@/hooks/app/UseAppClient";
 import { useSettings } from "@/hooks/app/UseSettings";
 import { styleColour } from "@/logic/Colours";
 import type { Geo } from "@/logic/Geo";
+import { GroundFade } from "@/logic/GroundFade";
 import { type Icon3D, IconLayer3D } from "@/logic/IconLayer3D";
 import { type Path3D, PathLayer3D } from "@/logic/PathLayer3D";
 import { useAppStore } from "@/store/AppStore";
@@ -27,6 +28,17 @@ export function Icons3D({ map, geo, info, meta }: { map: MapLibreMap; geo: Geo; 
 	const weak = st ? styleColour(st, "path_col1", meta.colours.path_single) : meta.colours.path_single;
 	const pathStyle = st?.path_style ?? "solid";
 	const pathWidth = Number(st?.path_width) || 3;
+
+	// the ground fading into black far off (View: 3D view settings, Ground)
+	const groundFar = tilted ? Number(st?.d3_ground_far) || 0 : 0;
+	useEffect(() => {
+		if (!groundFar) return;
+		const fade = new GroundFade(groundFar);
+		map.addLayer(fade, "solids");
+		return () => {
+			if (map.getLayer(fade.id)) map.removeLayer(fade.id);
+		};
+	}, [map, groundFar]);
 
 	// the paths, as ribbons of one width on screen (PathLayer3D)
 	useEffect(() => {
@@ -122,6 +134,8 @@ export function Icons3D({ map, geo, info, meta }: { map: MapLibreMap; geo: Geo; 
 		if (pathLayer.current) pathLayer.current.pos = replayPos ?? 1e9;
 		l.selected = selIcon;
 		l.far = Number(st?.d3_icon_far) || 2.6;
+		l.sizeScale = Number(st?.d3_icon_size) || 1;
+		l.liftScale = Number(st?.d3_model_height) || 1;
 		const pl = pathLayer.current;
 		if (pl) {
 			pl.lift = Number(st?.d3_path_lift) || 0;

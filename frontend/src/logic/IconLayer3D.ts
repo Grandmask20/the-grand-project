@@ -219,6 +219,9 @@ export class IconLayer3D implements CustomLayerInterface {
 	selected = -1;
 	/** Icons are drawn out to this many times the view centre's distance (View tab). */
 	far = 2.6;
+	/** Icons' size in 3D, and the models' height scale (View tab). */
+	sizeScale = 1;
+	liftScale = 1;
 	private pickReq: { x: number; y: number; done: (id: number | null) => void } | null = null;
 
 	/**
@@ -297,12 +300,12 @@ export class IconLayer3D implements CustomLayerInterface {
 			options.defaultProjectionData.mainMatrix as Float32Array,
 		);
 		gl.uniform1f(gl.getUniformLocation(p, "u_k"), this.k);
-		gl.uniform1f(gl.getUniformLocation(p, "u_models"), this.models ? 1 : 0);
+		gl.uniform1f(gl.getUniformLocation(p, "u_models"), this.models ? this.liftScale : 0);
 		gl.uniform1f(gl.getUniformLocation(p, "u_pos"), this.pos);
 		gl.uniform2f(gl.getUniformLocation(p, "u_view"), gl.drawingBufferWidth, gl.drawingBufferHeight);
 		const size = this.centreSize(options.defaultProjectionData.mainMatrix as Float32Array, gl);
 		this.last = { M: Float32Array.from(options.defaultProjectionData.mainMatrix as Float32Array), size };
-		gl.uniform1f(gl.getUniformLocation(p, "u_size"), size);
+		gl.uniform1f(gl.getUniformLocation(p, "u_size"), size * this.sizeScale);
 		gl.uniform1f(gl.getUniformLocation(p, "u_far"), this.far * this.centreW());
 		gl.activeTexture(gl.TEXTURE0);
 		gl.bindTexture(gl.TEXTURE_2D, this.tex);

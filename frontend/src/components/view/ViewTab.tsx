@@ -1,3 +1,4 @@
+import { useState } from "react";
 import { Section } from "@/components/common/Section";
 import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
@@ -19,6 +20,7 @@ export function ViewTab() {
 	const update = useUpdateSettings();
 	const tint = settings?.style.age_tint ?? "off";
 	const tilted = useAppStore((s) => (s.camera?.pitch ?? 0) > 1);
+	const [page, setPage] = useState<"2d" | "3d">(() => (tilted ? "3d" : "2d"));
 	const frames = useFrames(tint !== "off");
 	if (!meta || !settings) return null;
 	const st = settings.style;
@@ -43,8 +45,102 @@ export function ViewTab() {
 		</div>
 	);
 
+	const slider = (
+		label: string,
+		key: string,
+		lo: number,
+		hi: number,
+		stepv: number,
+		dflt: number,
+		fmt: (v: number) => string,
+	) => {
+		const v = Number(st[key] ?? dflt);
+		return (
+			<div key={key} className="flex items-center gap-2">
+				<span className="w-24 text-xs text-muted-foreground">{label}</span>
+				<Slider
+					min={lo}
+					max={hi}
+					step={stepv}
+					value={[v]}
+					onValueChange={([x]) => set({ [key]: x })}
+					className="w-36"
+					aria-label={label}
+				/>
+				<span className="w-12 text-xs">{fmt(v)}</span>
+			</div>
+		);
+	};
+	const times = (v: number) => `${v.toFixed(1)}x`;
+
+	// two pages (user: the 3D view's settings mixed in with the flat map's): the flat map's, and what only the
+	// tilted 3D view uses
+	const tabs = (
+		<div className="flex gap-1.5" role="tablist" aria-label="View settings">
+			{(["2d", "3d"] as const).map((k) => (
+				<Button
+					key={k}
+					size="xs"
+					role="tab"
+					aria-selected={page === k}
+					variant={page === k ? "default" : "outline"}
+					onClick={() => setPage(k)}
+				>
+					{k === "2d" ? "Map settings" : "3D view settings"}
+				</Button>
+			))}
+		</div>
+	);
+
+	if (page === "3d")
+		return (
+			<div className="flex flex-col gap-5">
+				{tabs}
+				{!tilted && (
+					<p className="text-xs text-gold">These apply in the 3D view (the 3D button, or right-drag to tilt).</p>
+				)}
+				<Section title="Paths">
+					<Path3DPreview st={st} meta={meta} />
+					{slider("height", "d3_path_lift", 0, 30, 1, 3, (v) => `${v}`)}
+					{slider("reach", "d3_path_far", 1, 6, 0.1, 2.2, times)}
+					{slider("far thickness", "d3_path_taper", 0.1, 1, 0.05, 0.35, (v) => `${Math.round(v * 100)}%`)}
+					{slider("dashes to line", "d3_solid_px", 0, 30, 1, 9, (v) => `${v} px`)}
+				</Section>
+				<Section title="Icons">
+					{slider("reach", "d3_icon_far", 1, 8, 0.1, 2.6, times)}
+					{slider("size", "d3_icon_size", 0.5, 2.5, 0.1, 1, times)}
+				</Section>
+				<Section title="Ground">
+					{slider("fades out at", "d3_ground_far", 0, 6, 0.1, 0, (v) => (v ? times(v) : "never"))}
+				</Section>
+				<Section title="3D models">
+					{slider("height", "d3_model_height", 0.2, 3, 0.1, 1, times)}
+					<Label className="font-normal">
+						<input
+							type="checkbox"
+							checked={st.d3_beams !== false}
+							onChange={(e) => set({ d3_beams: e.target.checked })}
+						/>
+						beams over halls and towers
+					</Label>
+				</Section>
+				<p className="text-xs text-muted-foreground">
+					Reach and fade: in times the distance from the camera to the middle of the view.
+				</p>
+				<Button
+					size="sm"
+					variant="outline"
+					className="self-start"
+					onClick={() => update.mutate({ style: { reset: true } })}
+				>
+					Reset styles
+				</Button>
+			</div>
+		);
+
 	return (
 		<div className="flex flex-col gap-5">
+			{tabs}
 			<Section title="Background">
 				<div className="flex gap-1.5" role="radiogroup" aria-label="Background">
 					{(["picture", "vector", "none"] as Background[]).map((b) => (
@@ -81,41 +177,6 @@ export function ViewTab() {
 					Drag the panel's edge to resize it (double-click: back to normal).
 				</p>
 			</Section>
-
-			{tilted && (
-				<Section title="3D view">
-					<Path3DPreview st={st} meta={meta} />
-					{(
-						[
-							["path height", "d3_path_lift", 0, 30, 1, 3, (v: number) => `${v}`],
-							["path reach", "d3_path_far", 1, 6, 0.1, 2.2, (v: number) => `${v.toFixed(1)}x`],
-							["far thickness", "d3_path_taper", 0.1, 1, 0.05, 0.35, (v: number) => `${Math.round(v * 100)}%`],
-							["dashes to line", "d3_solid_px", 0, 30, 1, 9, (v: number) => `${v} px`],
-							["icon reach", "d3_icon_far", 1, 8, 0.1, 2.6, (v: number) => `${v.toFixed(1)}x`],
-						] as [string, string, number, number, number, number, (v: number) => string][]
-					).map(([label, key, lo, hi, stepv, dflt, fmt]) => {
-						const v = Number(st[key] ?? dflt);
-						return (
-							<div key={key} className="flex items-center gap-2">
-								<span className="w-24 text-xs text-muted-foreground">{label}</span>
-								<Slider
-									min={lo}
-									max={hi}
-									step={stepv}
-									value={[v]}
-									onValueChange={([x]) => set({ [key]: x })}
-									className="w-36"
-									aria-label={label}
-								/>
-								<span className="w-12 text-xs">{fmt(v)}</span>
-							</div>
-						);
-					})}
-					<p className="text-xs text-muted-foreground">
-						Reach: how far paths and icons are drawn, in times the distance to the middle of the view.
-					</p>
-				</Section>
-			)}
 
 			<Section title="Paths">
 				<PathPreview st={st} meta={meta} />

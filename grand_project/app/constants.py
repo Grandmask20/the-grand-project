@@ -89,6 +89,10 @@ STYLE_DEFAULT = {
     "d3_path_taper": 0.35,
     "d3_solid_px": 9.0,
     "d3_icon_far": 2.6,
+    "d3_icon_size": 1.0,  # icons' size in 3D (times their size on the ground)
+    "d3_ground_far": 0.0,  # the ground fades into black from this many times the centre's distance (0: never)
+    "d3_model_height": 1.0,  # 3D models' heights times this
+    "d3_beams": True,  # the beams over halls and towers
 }  # View tab
 
 
