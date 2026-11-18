@@ -35,6 +35,7 @@ export function MapInteraction({ map, geo, meta }: { map: MapLibreMap; geo: Geo;
 	const debug = !!useAppState().data?.debug;
 	const graph = useRouteGraph(mode.kind === "player");
 	const [menu, setMenu] = useState<{ x: number; y: number; at: Point; hit: ItemInfo | null } | null>(null);
+	const lassoSeq = useRef(0);
 	const [lasso, setLasso] = useState<{ polygon: Point[]; x: number; y: number; maps: number } | null>(null);
 	const drawing = useRef<Point[] | null>(null);
 	const drag = useRef<{ start: Point; centre: Point } | null>(null);
@@ -228,8 +229,10 @@ export function MapInteraction({ map, geo, meta }: { map: MapLibreMap; geo: Geo;
 				setMode({ kind: "normal" });
 				return;
 			}
+			const mine = ++lassoSeq.current;
 			try {
 				const { maps } = await app.lassoCount(polygon);
+				if (mine !== lassoSeq.current) return; // another lasso was drawn meanwhile (CodeRabbit)
 				if (!maps) {
 					showError("No maps inside the lasso.");
 					setData(map, "lasso", EMPTY);
@@ -258,6 +261,8 @@ export function MapInteraction({ map, geo, meta }: { map: MapLibreMap; geo: Geo;
 			if (t && (t.tagName === "INPUT" || t.tagName === "TEXTAREA" || t.isContentEditable)) return;
 			if (e.key === "Escape" && mode.kind !== "normal") {
 				drawing.current = null;
+				drag.current = null; // a ghost drag ends too (it moved the next ghost: CodeRabbit)
+				lassoSeq.current++;
 				setData(map, "lasso", EMPTY);
 				setLasso(null);
 				setMode({ kind: "normal" });

@@ -36,9 +36,11 @@ export function BookmarkDialog() {
 	const save = async () => {
 		if (!name.trim()) return setError("A bookmark needs a name.");
 		try {
+			const mine = edit;
 			if (edit.id === null) await app.addBookmark({ x: edit.x, y: edit.y, name, group, note });
 			else await app.editBookmark(edit.id, { name, group, note });
-			close(null);
+			// closed only if this is still the bookmark being edited (cancelled and another opened meanwhile: kept)
+			if (useAppStore.getState().bookmarkEdit === mine) close(null);
 		} catch (e) {
 			if (e instanceof Error && /already a bookmark/.test(e.message)) setError(e.message);
 			else showError(e);

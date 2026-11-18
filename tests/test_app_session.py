@@ -26,13 +26,14 @@ def session():
     s.shutdown()
 
 
-def points(s: AtlasSession, layer: str) -> dict:
-    """Every point feature of a vector tile layer at zmax: {id: (atlas x, atlas y, props)}."""
+def points(s: AtlasSession, layer: str, replay: bool = False) -> dict:
+    """Every point feature of a vector tile layer at zmax: {id: (atlas x, atlas y, props)} (replay: the timelapse
+    tab's tiles)."""
     g = s.grid
     out = {}
     for tx in range(2**g.zmax):
         for ty in range(2**g.zmax):
-            for _g, pts, props, fid in read_tile(s.vector_tile(g.zmax, tx, ty)).get(layer, []):
+            for _g, pts, props, fid in read_tile(s.vector_tile(g.zmax, tx, ty, replay)).get(layer, []):
                 if len(pts) != 1:
                     continue
                 (_c, x, y) = pts[0]
@@ -128,10 +129,16 @@ def test_bookmarks(session, tmp_path):
     session.move_bookmarks([0], "Boss")
     groups = {g["name"]: [b["name"] for b in g["items"]] for g in session.bookmarks_payload()["groups"]}
     assert groups == {"Boss": ["big boss", "farm <here>"]}
+    fv = session.filter_version
+
+    def drawn():  # what the page draws (it draws the bookmarks itself; the tiles don't hold them)
+        return [b["name"] for g in session.bookmarks_payload()["groups"] for b in g["items"] if b["shown"]]
+
     session.toggle_group("Boss")
-    assert not points(session, "bookmarks")  # a hidden group isn't drawn
+    assert drawn() == []  # a hidden group isn't drawn
     session.toggle_bookmark(0)  # shows the group again with only this one
-    assert [p["name"] for *_xy, p in points(session, "bookmarks").values()] == ["farm <here>"]
+    assert drawn() == ["farm <here>"]
+    assert session.filter_version == fv and not points(session, "bookmarks")  # the tiles weren't made again
     assert session.delete_bookmarks([0, 1]) == ["big boss", "farm <here>"]
     assert core.Atlas.load(path).bookmarks == []  # saved
 
@@ -178,7 +185,8 @@ def test_replay_and_colour_by(session, tmp_path):
         plan["n_steps"] == 4 and plan["step_of"] == [0, 1, 2, 3] and plan["ticks"] == [0, 2, 3]
     )  # a minute apart: one batch
     assert plan["step_session"] == [0, 0, 1, 1] and plan["real"] == "3 min"
-    steps = {fid: p["step"] for fid, (*_xy, p) in points(session, "maps").items()}
+    steps = {fid: p["step"] for fid, (*_xy, p) in points(session, "maps", replay=True).items()}
+    assert all("step" not in p for *_xy, p in points(session, "maps").values())  # other tabs: the plain tiles
     assert set(steps.values()) <= {0, 1, 2, 3} and len(steps) == 15
     fog = session.replay_fog()["field"]
     cells = np.frombuffer(base64.b64decode(fog["data"]), "<u2").reshape(fog["h"], fog["w"])
@@ -190,7 +198,7 @@ def test_replay_and_colour_by(session, tmp_path):
     png, box = session.heat_png(upto=2)
     assert png[:4] == b"\x89PNG" and box[0] <= 480 and box[2] >= 1440
     session.replay_close()
-    assert all("step" not in p for *_xy, p in points(session, "maps").values())
+    assert all("step" not in p for *_xy, p in points(session, "maps", replay=True).values())  # closed: none
 
 
 def test_debug_marks(session, tmp_path):

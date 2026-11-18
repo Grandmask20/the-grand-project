@@ -12,6 +12,7 @@ export function SourcesDialog() {
 	const close = useAppStore((s) => s.showSources);
 	const sources = useSources(spot);
 	const [k, setK] = useState(0);
+	// biome-ignore lint/correctness/useExhaustiveDependencies: back to the first screenshot for another spot
 	useEffect(() => setK(0), [spot]);
 
 	if (!spot) return null;
@@ -26,6 +27,11 @@ export function SourcesDialog() {
 					</DialogTitle>
 				</DialogHeader>
 				{sources.isSuccess && !list.length && <p className="text-muted-foreground">No screenshot covers that spot.</p>}
+				{sources.isError && (
+					<p className="text-destructive">
+						The screenshots could not be listed: {sources.error instanceof Error ? sources.error.message : "error"}
+					</p>
+				)}
 				{list.length > 0 && (
 					<div className="flex min-h-0 flex-1 gap-3">
 						<ul className="w-48 shrink-0 overflow-y-auto rounded border text-sm">

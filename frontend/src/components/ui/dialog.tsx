@@ -42,6 +42,18 @@ function DialogContent({
   overlay = true,
   ...props
 }: React.ComponentProps<typeof DialogPrimitive.Content> & { showCloseButton?: boolean; overlay?: boolean }) {
+  // the control that had the focus when it opened gets it back on close (the store-opened dialogs have no trigger
+  // for Radix to return it to: CodeRabbit)
+  const opener = React.useRef<Element | null>(typeof document === "undefined" ? null : document.activeElement)
+  const { onCloseAutoFocus } = props
+  const closeFocus = (e: Event) => {
+    onCloseAutoFocus?.(e)
+    const el = opener.current
+    if (!e.defaultPrevented && el instanceof HTMLElement && el.isConnected) {
+      e.preventDefault()
+      el.focus()
+    }
+  }
   return (
     <DialogPortal data-slot="dialog-portal">
       {overlay && <DialogOverlay />}
@@ -52,6 +64,7 @@ function DialogContent({
           className
         )}
         {...props}
+        onCloseAutoFocus={closeFocus}
       >
         {children}
         {showCloseButton && (

@@ -11,21 +11,20 @@ export function useAtlasActions() {
 	const app = useAppClient();
 	const queryClient = useQueryClient();
 	const state = useAppState().data;
-	const store = useAppStore;
 	const atlasFolder = state?.atlas ? state.atlas.path.replace(/[\\/][^\\/]*$/, "") : "";
 
-	const fail = useCallback((e: unknown) => store.getState().showError(e), [store]);
+	const fail = useCallback((e: unknown) => useAppStore.getState().showError(e), []);
 	const refreshAll = useCallback(() => queryClient.invalidateQueries(), [queryClient]);
 
 	const afterOpen = useCallback(() => {
-		const s = store.getState();
+		const s = useAppStore.getState();
 		s.select(null);
 		s.setResults([], "");
 		s.setRoute(null);
 		s.setCamera(null);
 		s.setGoto(null);
 		void refreshAll();
-	}, [store, refreshAll]);
+	}, [refreshAll]);
 
 	const openAtlas = useCallback(
 		(path: string) => app.openAtlas(path).then(afterOpen).catch(fail),
@@ -34,25 +33,25 @@ export function useAtlasActions() {
 
 	const askOpenAtlas = useCallback(
 		() =>
-			store.getState().pickFiles({
+			useAppStore.getState().pickFiles({
 				title: "Open an atlas (its .json file)",
 				folders: false,
 				start: atlasFolder,
 				onPick: ([p]) => p && void openAtlas(p),
 			}),
-		[store, atlasFolder, openAtlas],
+		[atlasFolder, openAtlas],
 	);
 
 	const askNewAtlas = useCallback(
 		() =>
-			store.getState().pickFiles({
+			useAppStore.getState().pickFiles({
 				title: "New atlas: pick its folder and name",
 				folders: true,
 				save: "atlas.json",
 				start: atlasFolder,
 				onPick: ([p]) => p && void app.newAtlas(p).then(afterOpen).catch(fail),
 			}),
-		[store, app, atlasFolder, afterOpen, fail],
+		[app, atlasFolder, afterOpen, fail],
 	);
 
 	const addScreenshots = useCallback(
@@ -71,7 +70,7 @@ export function useAtlasActions() {
 			try {
 				const r = await app.openFolder(folder);
 				if ("create" in r) {
-					store.getState().askConfirm({
+					useAppStore.getState().askConfirm({
 						title: "New atlas",
 						text: `No atlas in this folder yet. Build one from its ${plural(r.create, "screenshot")}? It is saved as atlas.json in the folder.`,
 						yes: "Build it",
@@ -81,7 +80,7 @@ export function useAtlasActions() {
 				}
 				afterOpen();
 				if (r.new.length)
-					store.getState().askConfirm({
+					useAppStore.getState().askConfirm({
 						title: "Atlas folder",
 						text: `${plural(r.new.length, "screenshot")} in this folder are not in the atlas yet. Add them now?`,
 						yes: "Add them",
@@ -91,30 +90,30 @@ export function useAtlasActions() {
 				fail(e);
 			}
 		},
-		[app, store, afterOpen, addScreenshots, fail],
+		[app, afterOpen, addScreenshots, fail],
 	);
 
 	const askOpenFolder = useCallback(
 		() =>
-			store.getState().pickFiles({
+			useAppStore.getState().pickFiles({
 				title: "Atlas folder (its screenshots, and atlas.json if it has one)",
 				folders: true,
 				start: atlasFolder,
 				onPick: ([p]) => p && void openFolder(p),
 			}),
-		[store, atlasFolder, openFolder],
+		[atlasFolder, openFolder],
 	);
 
 	const askAddScreenshots = useCallback(
 		() =>
-			store.getState().pickFiles({
+			useAppStore.getState().pickFiles({
 				title: "Add atlas screenshots",
 				folders: false,
 				multiple: true,
 				start: atlasFolder,
 				onPick: (paths) => void addScreenshots(paths),
 			}),
-		[store, atlasFolder, addScreenshots],
+		[atlasFolder, addScreenshots],
 	);
 
 	/** Show a screenshot see-through in the middle of the map, to drag roughly where it belongs. */
@@ -122,7 +121,7 @@ export function useAtlasActions() {
 		async (path: string) => {
 			try {
 				const ghost = await app.ghost(path);
-				const s = store.getState();
+				const s = useAppStore.getState();
 				const cam = s.camera;
 				s.setMode({ kind: "ghost", ghost, centre: cam ? [cam.x, cam.y] : [0, 0] });
 				s.showError(null);
@@ -139,18 +138,18 @@ export function useAtlasActions() {
 				fail(e);
 			}
 		},
-		[app, store, queryClient, fail],
+		[app, queryClient, fail],
 	);
 
 	const askPlaceByHand = useCallback(
 		() =>
-			store.getState().pickFiles({
+			useAppStore.getState().pickFiles({
 				title: "Screenshot to place by hand",
 				folders: false,
 				start: state?.watch.folder || atlasFolder,
 				onPick: ([p]) => p && void startGhost(p),
 			}),
-		[store, state?.watch.folder, atlasFolder, startGhost],
+		[state?.watch.folder, atlasFolder, startGhost],
 	);
 
 	/** Files dropped on the page: copied into the atlas's folder; one is placed by hand, several added. */

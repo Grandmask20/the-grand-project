@@ -24,6 +24,7 @@ export function MapLook({ map, geo, meta }: { map: MapLibreMap; geo: Geo; meta: 
 		};
 	}, [map]);
 
+	// biome-ignore lint/correctness/useExhaustiveDependencies: lookTick: applied again when a layer was added late
 	useEffect(() => {
 		if (!settings) return;
 		const tint = settings.style.age_tint;

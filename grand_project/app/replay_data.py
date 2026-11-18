@@ -219,15 +219,19 @@ class ReplayMixin:
             raise ValueError("no screenshots to replay")
         self._replay_on = True
         self._replan()
+        p = self._plan
+        st = self.replay_settings()
+        self.events.log(f"timelapse: {p.n_steps} steps ({st['type']}, {st['per_step']} per step, reveal by "
+                        f"{st['reveal']}) over {len(self.atlas.frames)} screenshots")  # fmt: skip
         return self.replay_payload()
 
     def replay_close(self) -> None:
-        """Close the replay (the map shows everything again)."""
+        """Close the replay (the map shows everything again: the tab goes back to the plain tiles)."""
         if getattr(self, "_replay_on", False):
             self._replay_on = False
             self._plan = None
             self._replay_steps = None
-            self.filters_changed()
+            self._vector_steps = None
 
     def set_replay_settings(self, changes: dict) -> dict:
         """Change replay settings; the plan is worked out again when it depends on them.
@@ -279,7 +283,8 @@ class ReplayMixin:
         }  # fmt: skip
         self._plan = plan
         self._fog = None
-        self.filters_changed()
+        # the timelapse tab's tiles carry this token (other tabs' plain tiles aren't made again: user)
+        self.replay_token = getattr(self, "replay_token", 0) + 1
 
     def replay_steps(self) -> dict | None:
         """Return each item's step while the replay is open (the vector tiles carry them).
@@ -326,6 +331,7 @@ class ReplayMixin:
             took = f"{h} h {m} min" if h else (f"{m} min" if m else f"{int(real)} s")
         return {
             "settings": st,
+            "token": getattr(self, "replay_token", 0),
             "n_steps": n,
             "kind": plan.kind,
             "area": plan.sweep is not None,

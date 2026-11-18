@@ -1,5 +1,5 @@
 import { useQueryClient } from "@tanstack/react-query";
-import { BookmarkPlusIcon, ClapperboardIcon, LassoIcon, MenuIcon, Undo2Icon } from "lucide-react";
+import { ClapperboardIcon, LassoIcon, MenuIcon, Undo2Icon } from "lucide-react";
 import { AppQueryKeys } from "@/api/AppQueryKeys";
 import tablet from "@/assets/tablet.png";
 import { Button } from "@/components/ui/button";
@@ -19,7 +19,7 @@ import { useAtlasActions } from "@/hooks/atlas/UseAtlasActions";
 import { useAtlases } from "@/hooks/atlas/UseAtlases";
 import { useAppStoreCalm } from "@/store/AppStore";
 
-/** The File and Atlas menus, and the buttons used most (undo, bookmark, city biome lasso, replay). */
+/** The File and Atlas menus, and the buttons used most (undo, city biome lasso, replay). */
 export function TopBar() {
 	const app = useAppClient();
 	const queryClient = useQueryClient();
@@ -165,16 +165,6 @@ export function TopBar() {
 			<Button size="sm" variant="ghost" disabled={!state?.undo.length || busy} onClick={undo} title="Undo last add">
 				<Undo2Icon />
 				Undo
-			</Button>
-			<Button
-				size="sm"
-				variant={s.mode.kind === "bookmark" ? "default" : "ghost"}
-				disabled={!open}
-				onClick={() => s.setMode(s.mode.kind === "bookmark" ? { kind: "normal" } : { kind: "bookmark" })}
-				title="Add a bookmark: click on the map"
-			>
-				<BookmarkPlusIcon />
-				Bookmark
 			</Button>
 			<Button
 				size="sm"

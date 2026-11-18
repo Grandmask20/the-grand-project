@@ -91,6 +91,7 @@ class AtlasSession(
         self._replay_on = False
         self._plan = None
         self._replay_steps = None
+        self.replay_token = 0  # bumped with every timelapse plan: the timelapse tab's vector tile URLs carry it
         self._init_mapimage()
         self._init_adding(start=worker)
         self._init_watch()
@@ -141,6 +142,14 @@ class AtlasSession(
         if "style" in changes and changes["style"].get("reset"):
             s["style"] = {}
         self.save_settings()
+        # what Find and the map show (not how they look): logged (user: the log said little)
+        words = {"multi_only": "only what 2+ screenshots show", "only_icon_maps": "only maps with a ticked icon",
+                 "near_only": "only potential city maps"}  # fmt: skip
+        for k, label in words.items():
+            if k in changes:
+                self.events.log(f"Find: {label} {'on' if s[k] else 'off'}")
+        if "hidden_types" in changes:
+            self.events.log(f"Find: {len(s['icon_hidden'])} type(s) hidden")
         if self._flags() != before:  # what the tiles hold changed (not only how the page draws it)
             self.filters_changed()
         return self.ui_settings()

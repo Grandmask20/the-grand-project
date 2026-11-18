@@ -13,6 +13,7 @@ export function useEventStream(): boolean {
 	useEffect(() => {
 		if (typeof EventSource === "undefined") return;
 		const handle = createEventHandler(queryClient);
+		let opened = false;
 		const stop = connectEvents(
 			app.eventsUrl(),
 			(kind, data) => {
@@ -21,7 +22,10 @@ export function useEventStream(): boolean {
 			},
 			() => {
 				setConnected(true);
-				void queryClient.invalidateQueries({ queryKey: AppQueryKeys.state }); // missed events while away
+				// after a reconnect, everything events refresh: what changed while away isn't sent again (CodeRabbit)
+				if (opened) void queryClient.invalidateQueries();
+				else void queryClient.invalidateQueries({ queryKey: AppQueryKeys.state });
+				opened = true;
 			},
 		);
 		return stop;

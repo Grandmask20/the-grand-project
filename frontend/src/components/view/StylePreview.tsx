@@ -160,6 +160,7 @@ export function IconPreview({ style, size }: { style: string; size: number }) {
 		<div
 			className="flex w-full items-center justify-center gap-2 overflow-hidden rounded border bg-black"
 			style={{ height: Math.max(44, px + 12) }}
+			role="img"
 			aria-label="Icon style preview"
 		>
 			{icons.map((n) => (

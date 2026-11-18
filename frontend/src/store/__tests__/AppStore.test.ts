@@ -51,4 +51,14 @@ describe("useAppStore", () => {
 		]);
 		expect(t.tab).toBe("bookmarks"); // the tab stays
 	});
+
+	it("drops a click's selection when something newer was selected meanwhile (CodeRabbit)", async () => {
+		const s = useAppStore.getState();
+		let answerA: (v: never) => void = () => undefined;
+		const a = s.selectLoaded(new Promise((r) => (answerA = r)));
+		await s.selectLoaded(Promise.resolve({ kind: "node", id: 2 } as never)); // B, clicked after A, comes first
+		answerA({ kind: "node", id: 1 } as never);
+		await a;
+		expect(useAppStore.getState().selected).toMatchObject({ id: 2 });
+	});
 });

@@ -27,7 +27,10 @@ export function QuestionDialog() {
 		queryClient.setQueryData<AppState>(AppQueryKeys.state, (s) =>
 			s ? { ...s, questions: s.questions.filter((x) => x.id !== q.id) } : s,
 		);
-		void app.answer(q.id, yes).catch(showError);
+		void app.answer(q.id, yes).catch((e) => {
+			showError(e);
+			void queryClient.invalidateQueries({ queryKey: AppQueryKeys.state }); // still open: shown again
+		});
 	};
 
 	return (

@@ -29,6 +29,7 @@ export const GEOJSON_SOURCES = [
 	"lasso",
 	"outline",
 	"ghost-line",
+	"bookmarks",
 ] as const;
 export type GeoJsonSourceId = (typeof GEOJSON_SOURCES)[number];
 
@@ -85,7 +86,9 @@ export function baseStyle(
 		layers: [
 			{ id: "background", type: "background", paint: { "background-color": "#000000" } },
 			{ id: "land", type: "fill", source: "atlas", "source-layer": "land", paint: { "fill-color": meta.colours.land } },
-			{ id: "terrain", type: "raster", source: "terrain", paint: { "raster-fade-duration": 100 } },
+			// no fade-in: the map nodes and paths over it appear at once, and a fading ground showed them over black first
+			// (user: zooming far out, the blobs came before the ground)
+			{ id: "terrain", type: "raster", source: "terrain", paint: { "raster-fade-duration": 0 } },
 			{
 				id: "tint",
 				type: "fill",
@@ -259,10 +262,11 @@ export function baseStyle(
 				},
 			},
 			{
+				// from the page's bookmark list (MapBookmarks): hiding a group or a bookmark is instant, the vector tiles
+				// (every map node and path) aren't made again for it (user: toggling a group was slow on rc1)
 				id: "bookmarks",
 				type: "circle",
-				source: "atlas",
-				"source-layer": "bookmarks",
+				source: "bookmarks",
 				paint: {
 					"circle-radius": ["interpolate", ["linear"], ["zoom"], zoomAt(geo, 0.05), 3, zoomAt(geo, 2), 9],
 					"circle-color": meta.colours.bookmark,

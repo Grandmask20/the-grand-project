@@ -64,7 +64,8 @@ export class RouteGraph {
 				return path.reverse();
 			}
 			for (const v of this.adj.get(u) ?? []) {
-				const nc = c + 1 + 1e-6 * this.dist(u, v);
+				// a map run outweighs any distance (1e-6 x distance could pass a whole map on a big atlas: CodeRabbit)
+				const nc = c + ROUTE_HOP + this.dist(u, v);
 				if (nc < (cost.get(v) ?? Number.POSITIVE_INFINITY)) {
 					cost.set(v, nc);
 					prev.set(v, u);
@@ -138,3 +139,6 @@ class MinHeap {
 		return top;
 	}
 }
+
+/** One map run's cost: more than any route's whole distance in atlas units, so distance only breaks ties. */
+const ROUTE_HOP = 1e12;

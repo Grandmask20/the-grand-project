@@ -19,6 +19,7 @@ import subprocess
 import sys
 import tempfile
 import threading
+import time
 from pathlib import Path
 
 import cv2
@@ -156,9 +157,11 @@ class MapImageMixin:
         def work():
             """Build the map image and show it (background thread)."""
             try:
+                t0 = time.monotonic()
                 canvas, origin, weight = atlas.composite(max_pixels=TERRAIN_PIXELS, with_weight=True)
-                if job == self._terrain_job:
-                    self.set_terrain(canvas, weight, origin, gen=gen)
+                if job == self._terrain_job and self.set_terrain(canvas, weight, origin, gen=gen):
+                    h, w = canvas.shape[:2]
+                    self.events.log(f"map image built in {time.monotonic() - t0:.1f} s ({w} x {h} px)")
             except Exception as e:
                 LOG.exception("map image could not be built")
                 self.events.log(f"map image could not be built: {e}")
@@ -234,6 +237,23 @@ class MapImageMixin:
         self.events.publish("terrain", self.terrain_version)
         return True
 
+    def _labels_key(self) -> str:
+        """Return a short fingerprint of the clean map's ownership map (which screenshot shows each spot).
+
+        Fix seams again after adding screenshots can give the same screenshots other spots: tiles built from the old
+        clean map were served for the new one (CodeRabbit).
+
+        Returns:
+            8 hex digits.
+        """
+        import hashlib
+
+        labels, names = self.labels
+        h = hashlib.blake2b(digest_size=4)
+        h.update(np.ascontiguousarray(labels[::4, ::4]).tobytes())
+        h.update("|".join(names).encode())
+        return h.hexdigest()
+
     def _sharp_folder(self) -> Path | None:
         """Return the folder sharp tiles of the current screenshots are kept in (older ones are removed).
 
@@ -243,7 +263,7 @@ class MapImageMixin:
         if not self.path or not self.atlas:
             return None
         base = core.atlas_files(self.path) / (self.path.stem + "_sharp")
-        key = self.atlas.terrain_key()[:16] + ("c" if self.labels is not None else "")
+        key = self.atlas.terrain_key()[:16] + (f"c{self._labels_key()}" if self.labels is not None else "")
         if base.exists():
             for d in base.iterdir():  # tiles of other screenshots / placements: never shown again
                 if d.is_dir() and d.name != key:
@@ -384,8 +404,8 @@ class MapImageMixin:
                 text=True,
                 creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0) if os.name == "nt" else 0,
             )
-        self._seams_proc, self._seams_stopped = proc, False
-        gen = self.generation
+        self._seams_proc, self._seams_stopped, self._seams_busy = proc, False, True
+        gen, t0 = self.generation, time.monotonic()
         self.events.set_progress("fixing seams: building the clean map...")
         self.events.log("Fix seams: building the clean map in the background")
         self.events.publish("seams", True)
@@ -403,10 +423,10 @@ class MapImageMixin:
                         origin = tuple(float(v) for v in r["origin"])
                         names = [str(n) for n in r["names"]]
                     if self.set_terrain(canvas, weight, origin, labels=(labels, names), gen=gen):
-                        self.events.log("Fix seams: clean map ready")
+                        self.events.log(f"Fix seams: clean map ready ({time.monotonic() - t0:.0f} s)")
                         self._seams_ready(names)
                 elif self._seams_stopped:
-                    pass  # stopped: dropped quietly
+                    self.events.log("Fix seams: stopped (its clean map was left out)")
                 elif proc.returncode != 0:
                     text = err.read_text(encoding="utf-8", errors="replace").strip().splitlines()
                     LOG.error("clean map could not be built: %s", " | ".join(text[-30:]))
@@ -414,7 +434,7 @@ class MapImageMixin:
             finally:
                 shutil.rmtree(tmp, ignore_errors=True)
                 if self._seams_proc is proc:  # (a newer Fix seams may have started meanwhile: CodeRabbit)
-                    self._seams_proc = None
+                    self._seams_proc, self._seams_busy = None, False
                 self.events.set_progress(None)
                 self.events.publish("seams", False)
 
@@ -427,7 +447,8 @@ class MapImageMixin:
             True while its process runs.
         """
         p = self._seams_proc
-        return p is not None and p.poll() is None
+        # also while its watcher still applies the result after the process ended (CodeRabbit)
+        return p is not None and (p.poll() is None or getattr(self, "_seams_busy", False))
 
     def stop_seams(self) -> None:
         """Stop a running Fix seams (its result is then dropped quietly)."""
@@ -477,6 +498,7 @@ class MapImageMixin:
         """
         self.filter_version += 1
         self._vector = None
+        self._vector_steps = None
         if publish:
             self.events.publish("filters", self.filter_version)
 
@@ -652,21 +674,29 @@ class MapImageMixin:
         self._tiles.put(key, data or b"")
         return data
 
-    def vector_tile(self, z: int, x: int, y: int) -> bytes:
+    def vector_tile(self, z: int, x: int, y: int, replay: bool = False) -> bytes:
         """Return a vector tile (MVT) of what the filters show.
 
         Args:
             z: Tile level.
             x: Tile column.
             y: Tile row.
+            replay: Asked by the page tab playing the timelapse: its items carry their reveal step (while one is
+                open). Every other tab gets the plain tiles (user: opening the timelapse in one tab changed them all,
+                and a reload left the steps on).
 
         Returns:
             The tile's bytes (b"" when empty).
         """
-        tiler = self._vector_tiler()
+        steps = replay and self.replay_steps() is not None
+        tiler = self._vector_tiler(steps)
         if tiler is None:
             return b""
-        key = ("v", self.model_version, self.filter_version, self.terrain_version, z, x, y)
+        made = self._vector_steps if steps else self._vector
+        if made is None or made[1] is not tiler:  # replaced meanwhile (a filter changed): made, not kept
+            return tiler.tile(z, x, y)
+        # kept under the versions of the tiler that made it: read again, they may name a newer one (CodeRabbit)
+        key = ("v", *made[0], z, x, y)
         hit = self._tiles.get(key)
         if hit is not None:
             return hit
@@ -674,35 +704,40 @@ class MapImageMixin:
         self._tiles.put(key, data)
         return data
 
-    def _vector_tiler(self) -> VectorTiler | None:
+    def _vector_tiler(self, steps: bool = False) -> VectorTiler | None:
         """Return the vector tiler of the current model, filters and map image (made on first use).
+
+        Args:
+            steps: The timelapse's tiler (items carry their reveal step), kept beside the plain one.
 
         Returns:
             The tiler, or None without a map image.
         """
-        key = (self.model_version, self.filter_version, self.terrain_version)
-        v = self._vector
+        key = (self.model_version, self.filter_version, self.terrain_version, self.replay_token if steps else 0)
+        slot = "_vector_steps" if steps else "_vector"
+        v = getattr(self, slot, None)
         if v is not None and v[0] == key:
             return v[1]
         with self._vector_lock:
-            v = self._vector
+            v = getattr(self, slot, None)
             if v is not None and v[0] == key:
                 return v[1]
             if self.grid is None:
                 return None
             with self._lock:
-                layers = self.vector_layers(self.grid)
+                layers = self.vector_layers(self.grid, steps)
             g = self.grid
             dense = max(0, g.zmax - 4)  # icons, models and labels are not drawn zoomed far out
             tiler = VectorTiler(layers, g, min_zoom={"icons": dense, "icon_rows": dense, "solids": dense})
-            self._vector = (key, tiler)
+            setattr(self, slot, (key, tiler))
             return tiler
 
-    def vector_layers(self, grid: Grid) -> dict[str, list[dict]]:
+    def vector_layers(self, grid: Grid, steps: bool = False) -> dict[str, list[dict]]:
         """Build the vector tile features of what the filters show (world px at zmax).
 
         Args:
             grid: The map image's grid.
+            steps: Give items their timelapse reveal step (while one is open).
 
         Returns:
             Layer name -> features: land, biomes, paths, removed, maps, icons, landmarks, bookmarks, solids.
@@ -712,7 +747,7 @@ class MapImageMixin:
         W = grid.world_px
         node_ok = [self.node_shown(n, fl) for n in nodes]
         potential = D.get("potential", {})
-        rs = self.replay_steps()  # while the replay is open: the step each item appears at (the page filters)
+        rs = self.replay_steps() if steps else None  # the step each item appears at (the page filters)
 
         def step(kind: str, i: int) -> dict:
             """Return {"step": s} for an item while replaying, else {}."""
@@ -827,11 +862,7 @@ class MapImageMixin:
                     },
                 }
             )
-        for i, bm in enumerate(self.atlas.bookmarks if self.atlas else []):
-            if self.bookmark_shown(bm):
-                L["bookmarks"].append(
-                    {"kind": "point", "pts": [W(bm["x"], bm["y"])], "id": i, "props": {"id": i, "name": bm["name"]}}
-                )
+        # (bookmarks: drawn by the page from its bookmark list, so hiding one doesn't make every tile again)
         # the vector ground: land where screenshots show it, biome areas from the biomes and the influence icons
         for poly in self._land():
             L["land"].append({"kind": "polygon", "rings": [[W(x, y) for x, y in r] for r in poly], "props": {}})
@@ -872,6 +903,7 @@ class MapImageMixin:
         """
         V, D = self.V, self.D
         nodes = V["nodes"]
+        fl = self._flags()
         shapes = []
         for i, nd in enumerate(nodes):
             if not node_ok[i]:
@@ -884,6 +916,8 @@ class MapImageMixin:
         for k, lm in enumerate(V["landmarks"]):
             if str(lm.get("status", "")).startswith("removed"):
                 continue
+            if not self.landmark_shown(k, fl):  # hidden type (e.g. Tower): no model either (CodeRabbit)
+                continue
             if lm["kind"] == "Tower":
                 towers.append((lm["x"], lm["y"]))
             shapes += [
@@ -893,6 +927,7 @@ class MapImageMixin:
         for i, nd in enumerate(nodes):  # map nodes marked as towers with no Tower landmark: a tower too
             if (
                 node_ok[i]
+                and "Tower" not in fl["hidden"]  # (hiding towers hid the landmark, then this one showed)
                 and nd.get("tower")
                 and all(math.hypot(nd["x"] - tx, nd["y"] - ty) > WEBMAP_TOWER_SAME for tx, ty in towers)
             ):

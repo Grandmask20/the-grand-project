@@ -345,7 +345,7 @@ class Handler(BaseHTTPRequestHandler):
         try:
             self.wfile.write(b"retry: 1500\n\n")
             self.wfile.flush()
-            while not self.server.stopping:  # type: ignore[attr-defined]
+            while not self.server.stopping and not getattr(lq, "dropped", False):  # type: ignore[attr-defined]
                 try:
                     ev = lq.get(timeout=SSE_PING_S)
                 except queue.Empty:
@@ -495,8 +495,10 @@ class Handler(BaseHTTPRequestHandler):
         data = self.rfile.read(n)
         self._read_body = True
         dest = self.S.path.parent / name
-        if dest.exists() and dest.read_bytes() != data:
-            dest = dest.with_name(f"{dest.stem}_{int(time.time())}{dest.suffix}")
+        stem, k = dest.stem, 0
+        while dest.exists() and dest.read_bytes() != data:  # another picture by that name: a free name (CodeRabbit)
+            k += 1
+            dest = dest.with_name(f"{stem}_{int(time.time())}{f'_{k}' if k > 1 else ''}{dest.suffix}")
         if not dest.exists():
             dest.write_bytes(data)
         self._json({"path": str(dest)})
@@ -582,7 +584,8 @@ class Handler(BaseHTTPRequestHandler):
     @route("GET", r"/api/tiles/vector/(?P<z>\d+)/(?P<x>\d+)/(?P<y>\d+)\.pbf")
     def get_vector_tile(self, q, z, x, y) -> None:
         """A vector tile."""
-        self._bytes(self.S.vector_tile(int(z), int(x), int(y)), "application/x-protobuf")
+        replay = bool(q.get("r", [""])[0])  # the tab playing the timelapse
+        self._bytes(self.S.vector_tile(int(z), int(x), int(y), replay), "application/x-protobuf")
 
     @route("GET", r"/api/icons/(?P<name>[^/]+)\.png")
     def get_icon(self, q, name) -> None:

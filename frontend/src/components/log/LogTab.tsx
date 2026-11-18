@@ -14,6 +14,7 @@ export function LogTab() {
 	const recording = useAppStore((s) => s.frameLog);
 	const setFrameLog = useAppStore((s) => s.setFrameLog);
 
+	// biome-ignore lint/correctness/useExhaustiveDependencies: scrolls down with every new line
 	useEffect(() => {
 		end.current?.scrollIntoView({ block: "end" });
 	}, [log.length]);

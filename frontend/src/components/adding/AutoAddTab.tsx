@@ -18,11 +18,13 @@ export function AutoAddTab() {
 	const state = useAppState().data;
 	const actions = useAtlasActions();
 	const s = useAppStoreCalm();
-	const [waitPick, setWaitPick] = useState<number | null>(null);
+	// the picked waiting screenshot by its file: a list position pointed at another one once the list changed
+	const [waitPath, setWaitPath] = useState<string | null>(null);
 	if (!state) return null;
 	const fail = (e: unknown) => s.showError(e);
 	const refresh = () => queryClient.invalidateQueries({ queryKey: AppQueryKeys.state });
 	const w = state.watch;
+	const waitPick = waitPath === null ? -1 : state.waiting.findIndex((x) => x.path === waitPath);
 
 	return (
 		<div className="flex flex-col gap-5">
@@ -116,7 +118,7 @@ export function AutoAddTab() {
 									<button
 										type="button"
 										className={`w-full truncate px-2 py-0.5 text-left hover:bg-accent ${waitPick === k ? "bg-accent" : ""}`}
-										onClick={() => setWaitPick(k)}
+										onClick={() => setWaitPath(wt.path)}
 									>
 										{wt.name}{" "}
 										<span className="text-muted-foreground">
@@ -130,8 +132,8 @@ export function AutoAddTab() {
 							<Button
 								size="xs"
 								variant="outline"
-								disabled={waitPick === null}
-								onClick={() => void app.retryWaiting(waitPick === null ? null : [waitPick]).catch(fail)}
+								disabled={waitPick < 0}
+								onClick={() => void app.retryWaiting([waitPick]).catch(fail)}
 							>
 								Retry
 							</Button>
@@ -141,13 +143,13 @@ export function AutoAddTab() {
 							<Button
 								size="xs"
 								variant="outline"
-								disabled={waitPick === null}
+								disabled={waitPick < 0}
 								onClick={() =>
-									waitPick !== null &&
+									waitPick >= 0 &&
 									void app
 										.takeWaiting(waitPick)
 										.then(({ path }) => {
-											setWaitPick(null);
+											setWaitPath(null);
 											return actions.startGhost(path);
 										})
 										.catch(fail)

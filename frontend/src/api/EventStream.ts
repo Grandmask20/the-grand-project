@@ -66,6 +66,7 @@ export function createEventHandler(queryClient: QueryClient) {
 				patch((s) => ({ ...s, status: String(data ?? "") }));
 				break;
 			case "question":
+				void queryClient.cancelQueries({ queryKey: AppQueryKeys.state }); // an older snapshot lacks it (CodeRabbit)
 				patch((s) => ({
 					...s,
 					questions: [...s.questions.filter((q) => q.id !== (data as Question).id), data as Question],

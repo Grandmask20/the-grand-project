@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { type KeyboardEvent, useState } from "react";
 import { Section } from "@/components/common/Section";
 import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
@@ -14,6 +14,19 @@ import { ColourSwatch } from "./ColourSwatch";
 import { IconPreview, MapPreview, Path3DPreview, PathPreview } from "./StylePreview";
 
 /** View: what the map shows and how (background, layers, paths, maps, colours, "Colour by"). */
+/** Arrow keys in a radio group pick the next / previous choice and move the focus to it (CodeRabbit). */
+function radioKeys(e: KeyboardEvent<HTMLDivElement>) {
+	const step = { ArrowRight: 1, ArrowDown: 1, ArrowLeft: -1, ArrowUp: -1 }[e.key];
+	if (!step) return;
+	const radios = [...e.currentTarget.querySelectorAll<HTMLButtonElement>('[role="radio"]')];
+	const at = radios.indexOf(document.activeElement as HTMLButtonElement);
+	const next = radios[(Math.max(at, 0) + step + radios.length) % radios.length];
+	if (!next) return;
+	e.preventDefault();
+	next.focus();
+	next.click();
+}
+
 export function ViewTab() {
 	const meta = useMeta().data;
 	const settings = useSettings();
@@ -23,6 +36,17 @@ export function ViewTab() {
 	const iconStyle =
 		settings?.style.icon_style === "poe2db art" ? "game art" : String(settings?.style.icon_style ?? "game art");
 	const [page, setPage] = useState<"2d" | "3d">(() => (tilted ? "3d" : "2d"));
+	// view settings stay as they are while the timelapse is open (user: changing them while playing or recording
+	// changed the replay under it); Colour by stays usable until recording
+	const replay = useAppStore((s) => (s.replay ? (s.replay.recording ? "recording" : "open") : null));
+	const lock = replay !== null;
+	const lockNote = lock && (
+		<p className="text-xs text-gold">
+			{replay === "recording"
+				? "View settings are locked while the timelapse records."
+				: "View settings are locked while the timelapse is open (Colour by still works); close it to change them."}
+		</p>
+	);
 	const frames = useFrames(tint !== "off");
 	if (!meta || !settings) return null;
 	const st = settings.style;
@@ -98,24 +122,25 @@ export function ViewTab() {
 		return (
 			<div className="flex flex-col gap-5">
 				{tabs}
+				{lockNote}
 				{!tilted && (
 					<p className="text-xs text-gold">These apply in the 3D view (the 3D button, or right-drag to tilt).</p>
 				)}
-				<Section title="Paths">
+				<Section title="Paths" locked={lock}>
 					<Path3DPreview st={st} meta={meta} />
 					{slider("height", "d3_path_lift", 0, 30, 1, 3, (v) => `${v}`)}
 					{slider("reach", "d3_path_far", 1, 6, 0.1, 2.6, times)}
 					{slider("far thickness", "d3_path_taper", 0.1, 1, 0.05, 0.2, (v) => `${Math.round(v * 100)}%`)}
 					{slider("dashes to line", "d3_solid_px", 0, 30, 1, 8, (v) => `${v} px`)}
 				</Section>
-				<Section title="Icons">
+				<Section title="Icons" locked={lock}>
 					{slider("reach", "d3_icon_far", 1, 8, 0.1, 2.5, times)}
 					{slider("size", "d3_icon_size", 0.5, 2.5, 0.1, 1.5, times)}
 				</Section>
-				<Section title="Ground">
+				<Section title="Ground" locked={lock}>
 					{slider("fades out at", "d3_ground_far", 0, 6, 0.1, 2.4, (v) => (v ? times(v) : "never"))}
 				</Section>
-				<Section title="3D models">
+				<Section title="3D models" locked={lock}>
 					{slider("reach", "d3_model_far", 1, 8, 0.1, 2.4, times)}
 					{slider("size", "d3_model_size", 0.3, 3, 0.1, 1, times)}
 					{slider("height", "d3_model_height", 0.2, 3, 0.1, 0.8, times)}
@@ -135,6 +160,7 @@ export function ViewTab() {
 					size="sm"
 					variant="outline"
 					className="self-start"
+					disabled={lock}
 					onClick={() => update.mutate({ style: { reset: true } })}
 				>
 					Reset styles
@@ -145,8 +171,9 @@ export function ViewTab() {
 	return (
 		<div className="flex flex-col gap-5">
 			{tabs}
-			<Section title="Background">
-				<div className="flex gap-1.5" role="radiogroup" aria-label="Background">
+			{lockNote}
+			<Section title="Background" locked={lock}>
+				<div className="flex gap-1.5" role="radiogroup" aria-label="Background" onKeyDown={radioKeys}>
 					{(["picture", "vector", "none"] as Background[]).map((b) => (
 						<Button
 							key={b}
@@ -163,7 +190,7 @@ export function ViewTab() {
 			</Section>
 
 			<Section title="Side panel">
-				<div className="flex gap-1.5" role="radiogroup" aria-label="Side panel">
+				<div className="flex gap-1.5" role="radiogroup" aria-label="Side panel" onKeyDown={radioKeys}>
 					{(["left", "right"] as const).map((side) => (
 						<Button
 							key={side}
@@ -182,7 +209,7 @@ export function ViewTab() {
 				</p>
 			</Section>
 
-			<Section title="Paths">
+			<Section title="Paths" locked={lock}>
 				<PathPreview st={st} meta={meta} />
 				<div className="flex flex-wrap items-center gap-3">
 					<ColourSwatch
@@ -226,7 +253,7 @@ export function ViewTab() {
 				<p className="text-xs text-muted-foreground">of the screenshots that show both maps</p>
 			</Section>
 
-			<Section title="Icons">
+			<Section title="Icons" locked={lock}>
 				<IconPreview style={iconStyle} size={Number(st.icon_size) || 1} />
 				{choice(
 					"style",
@@ -238,7 +265,7 @@ export function ViewTab() {
 				{slider("size", "icon_size", 0.5, 2.5, 0.1, 1, times)}
 			</Section>
 
-			<Section title="Maps">
+			<Section title="Maps" locked={lock}>
 				<MapPreview st={st} meta={meta} />
 				<ColourSwatch
 					label="colour"
@@ -268,7 +295,7 @@ export function ViewTab() {
 				</div>
 			</Section>
 
-			<Section title="City biomes and landmarks">
+			<Section title="City biomes and landmarks" locked={lock}>
 				<div className="grid grid-cols-2 gap-2">
 					{Object.entries(cityColours(meta, st)).map(([k, c]) => (
 						<ColourSwatch key={k} label={`${k} biome`} value={c} onChange={(v) => set({ [`city_col_${k}`]: v })} />
@@ -281,7 +308,7 @@ export function ViewTab() {
 				</div>
 			</Section>
 
-			<Section title="Colour by">
+			<Section title="Colour by" locked={replay === "recording"}>
 				{choice("colour by", tint, meta.colour_by, (v) => set({ age_tint: v }))}
 				{choice("colours", st.colour_spread, meta.colour_spreads, (v) => set({ colour_spread: v }))}
 				<p className="text-xs text-muted-foreground">colours: for oldest to newest and times seen</p>
@@ -311,7 +338,7 @@ export function ViewTab() {
 				)}
 			</Section>
 
-			<Section title="Pictures on the map (zoomed in)">
+			<Section title="Pictures on the map (zoomed in)" locked={lock}>
 				<Label className="font-normal">
 					<input type="checkbox" checked={!!st.ov_towers} onChange={(e) => set({ ov_towers: e.target.checked })} />
 					tower picture
@@ -322,6 +349,7 @@ export function ViewTab() {
 				size="sm"
 				variant="outline"
 				className="self-start"
+				disabled={lock}
 				onClick={() => update.mutate({ style: { reset: true } })}
 			>
 				Reset styles

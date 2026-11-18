@@ -75,7 +75,8 @@ export function cameraTarget(meta: Meta, plan: ReplayPlan, frames: Frames, pos: 
 		const newest = plan.area
 			? (i: number) => s[i] < p && s[i] >= p - 0.05 * plan.n_steps
 			: (i: number) => s[i] === Math.max(0, Math.ceil(p - 1e-9) - 1);
-		const b = boxOf(frames, newest) ?? boxOf(frames, (i) => s[i] <= Math.min(...s));
+		const first = s.length ? Math.min(...s) : 0; // (once, not per screenshot: CodeRabbit)
+		const b = boxOf(frames, newest) ?? boxOf(frames, (i) => s[i] <= first);
 		if (!b) return null;
 		const cx = (b[0] + b[2]) / 2;
 		const cy = (b[1] + b[3]) / 2;

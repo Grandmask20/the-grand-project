@@ -10,6 +10,7 @@ import { useAppStore } from "@/store/AppStore";
 import { ButtonControl } from "./ButtonControl";
 import { FrameRecorder } from "./FrameRecorder";
 import { Icons3D } from "./Icons3D";
+import { MapBookmarks } from "./MapBookmarks";
 import { MapCamera } from "./MapCamera";
 import { MapIcons } from "./MapIcons";
 import { MapImages } from "./MapImages";
@@ -56,10 +57,18 @@ export function AtlasMap({ info, meta }: Props) {
 			pitch: cam?.pitch ?? 0,
 			fitBoundsOptions: { padding: 30 },
 			maxZoom: info.maxzoom,
+			// every zoom level's tiles kept (MapLibre keeps 5): zoomed in deep, the zoomed-out ground was dropped and
+			// zooming out showed the map nodes over black until it loaded again (user)
+			maxTileCacheZoomLevels: info.zdeep + 1,
 			maxPitch: 75,
 			renderWorldCopies: false,
 			attributionControl: false,
 			doubleClickZoom: false,
+			// right-drag turns by sideways movement everywhere: MapLibre's default turns by the angle around the view's
+			// centre once the mouse is 100 px above or below it and flips direction across it, so turning jumped and
+			// reversed near the middle (user: too sensitive at some points, as if it turned a full circle). Passed on to
+			// its rotate handler; not in MapOptions' type
+			...({ aroundCenter: false } as object),
 		});
 		// pan freely, well past the atlas (user: the old window let you pan off it); a center more than an atlas-width
 		// past an edge eases back. MapLibre's maxBounds kept the view in a corner beside the atlas instead (user):
@@ -72,12 +81,22 @@ export function AtlasMap({ info, meta }: Props) {
 		const ay1 = ay0 + info.grid.height / info.grid.scale;
 		const mx = (ax1 - ax0) * 0.5;
 		const my = (ay1 - ay0) * 0.5;
+		// once per move: setCenter fires another move, and where MapLibre's own limits (its world's latitudes) keep
+		// the centre a hair off ours, the two corrected each other forever (a jump far out: stack overflow)
+		let limiting = false;
 		const limit = () => {
+			if (limiting) return;
 			const c = m.getCenter();
 			const [x, y] = geo.toAtlas(c.lng, c.lat);
 			const cx = Math.min(Math.max(x, ax0 - mx), ax1 + mx);
 			const cy = Math.min(Math.max(y, ay0 - my), ay1 + my);
-			if (cx !== x || cy !== y) m.setCenter(geo.toLngLat(cx, cy));
+			if (Math.abs(cx - x) + Math.abs(cy - y) < 1e-3) return;
+			limiting = true;
+			try {
+				m.setCenter(geo.toLngLat(cx, cy));
+			} finally {
+				limiting = false;
+			}
 		};
 		m.on("drag", limit);
 		m.on("move", limit);
@@ -157,6 +176,7 @@ export function AtlasMap({ info, meta }: Props) {
 			{map && (
 				<>
 					<MapTiles map={map} />
+					<MapBookmarks map={map} geo={geo} />
 					<MapLook map={map} geo={geo} meta={meta} />
 					<MapIcons map={map} geo={geo} info={info} />
 					<Icons3D map={map} geo={geo} info={info} meta={meta} />

@@ -10,9 +10,9 @@ export function baseName(path: string): string {
 
 /** Seconds as "1:05" / "12 s". */
 export function duration(s: number): string {
-	if (s < 60) return `${Math.round(s)} s`;
-	const m = Math.floor(s / 60);
-	return `${m}:${String(Math.round(s % 60)).padStart(2, "0")}`;
+	const t = Math.round(s); // rounded first: 119.6 s is 2:00, not 1:60 (CodeRabbit)
+	if (t < 60) return `${t} s`;
+	return `${Math.floor(t / 60)}:${String(t % 60).padStart(2, "0")}`;
 }
 
 /** Bytes as "1.2 MB". */

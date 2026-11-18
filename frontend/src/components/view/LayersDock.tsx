@@ -18,6 +18,7 @@ export function LayersDock() {
 	const settings = useSettings();
 	const update = useUpdateSettings();
 	const tilted = useAppStore((s) => (s.camera?.pitch ?? 0) > 1);
+	const recording = useAppStore((s) => !!s.replay?.recording); // the layers stay as recorded
 	// folded by default, and remembered across reloads (user)
 	const open = !!settings?.ui.layers_open;
 	const setOpen = (v: boolean) => update.mutate({ ui: { layers_open: v } });
@@ -57,6 +58,7 @@ export function LayersDock() {
 									key={key}
 									type="button"
 									aria-pressed={on}
+									disabled={recording}
 									onClick={() => update.mutate({ layers: { [key]: !on } })}
 									className={cn(
 										"truncate rounded-md border px-1.5 py-1 text-xs",

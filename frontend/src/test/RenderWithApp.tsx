@@ -24,8 +24,11 @@ export function renderWithApp(ui: ReactNode, routes: Record<string, unknown> = {
 	const queryClient = new QueryClient({
 		defaultOptions: { queries: { retry: false, staleTime: Number.POSITIVE_INFINITY }, mutations: { retry: false } },
 	});
-	queryClient.setQueryData(AppQueryKeys.state, structuredClone(state));
-	queryClient.setQueryData(AppQueryKeys.meta, structuredClone(meta));
+	// the state / meta a test gives (a value, not a function) are the starting ones too (CodeRabbit)
+	const start = (key: string, fallback: unknown) =>
+		key in routes && typeof routes[key] !== "function" ? routes[key] : fallback;
+	queryClient.setQueryData(AppQueryKeys.state, structuredClone(start("GET /api/state", state)));
+	queryClient.setQueryData(AppQueryKeys.meta, structuredClone(start("GET /api/meta", meta)));
 	const user = userEvent.setup();
 	const view = render(
 		<QueryClientProvider client={queryClient}>

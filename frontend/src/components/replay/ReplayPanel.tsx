@@ -57,6 +57,7 @@ export function ReplayPanel({ meta }: { meta: Meta }) {
 	const [exportInfo, setExportInfo] = useState("");
 
 	// playback: move on, move the camera
+	// biome-ignore lint/correctness/useExhaustiveDependencies: restarted only when play starts / stops
 	useEffect(() => {
 		if (!replay?.playing || !map || !geo || !frames.data) return;
 		let raf = 0;
@@ -76,7 +77,6 @@ export function ReplayPanel({ meta }: { meta: Meta }) {
 		};
 		raf = requestAnimationFrame(loop);
 		return () => cancelAnimationFrame(raf);
-		// biome-ignore lint/correctness/useExhaustiveDependencies: restarted only when play starts / stops
 	}, [replay?.playing, map, geo, frames.data]);
 
 	if (!replay) return null;
@@ -210,7 +210,7 @@ export function ReplayPanel({ meta }: { meta: Meta }) {
 	};
 
 	const sel = (label: string, key: keyof ReplaySettings, values: string[], disabled = false) => (
-		<label className="flex items-center gap-1.5 text-xs">
+		<div className="flex items-center gap-1.5 text-xs">
 			<span className="text-muted-foreground">{label}</span>
 			<Select
 				value={String(st[key])}
@@ -228,11 +228,11 @@ export function ReplayPanel({ meta }: { meta: Meta }) {
 					))}
 				</SelectContent>
 			</Select>
-		</label>
+		</div>
 	);
 
 	const num = (label: string, key: "length" | "per_step", lo: number, hi: number) => (
-		<label className="flex items-center gap-1.5 text-xs">
+		<div className="flex items-center gap-1.5 text-xs">
 			<span className="text-muted-foreground">{label}</span>
 			<Input
 				aria-label={label}
@@ -248,7 +248,7 @@ export function ReplayPanel({ meta }: { meta: Meta }) {
 					if (v !== st[key]) void change({ [key]: key === "per_step" ? Math.round(v) : v });
 				}}
 			/>
-		</label>
+		</div>
 	);
 
 	return (
@@ -335,9 +335,13 @@ export function ReplayPanel({ meta }: { meta: Meta }) {
 				{sel("smoothing", "smoothing", Object.keys(meta.replay.smoothing))}
 				{num("length (s)", "length", 3, 600)}
 				{num("per step", "per_step", 1, 50)}
-				<label className="flex items-center gap-1.5 text-xs">
+				<div className="flex items-center gap-1.5 text-xs">
 					<span className="text-muted-foreground">speed</span>
-					<Select value={String(st.speed)} onValueChange={(v) => void change({ speed: Number(v) })}>
+					<Select
+						value={String(st.speed)}
+						onValueChange={(v) => void change({ speed: Number(v) })}
+						disabled={replay.recording} // as every other setting here (CodeRabbit)
+					>
 						<SelectTrigger size="sm" aria-label="speed">
 							<SelectValue />
 						</SelectTrigger>
@@ -349,7 +353,7 @@ export function ReplayPanel({ meta }: { meta: Meta }) {
 							))}
 						</SelectContent>
 					</Select>
-				</label>
+				</div>
 				{plan.real && (
 					<span className="text-xs text-muted-foreground">
 						(= {plan.real}, x{Math.round(plan.real_seconds / Math.max(1, st.length))})

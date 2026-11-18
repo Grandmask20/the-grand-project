@@ -63,4 +63,25 @@ describe("RouteGraph", () => {
 	it("finds the closest map", () => {
 		expect(graph.nearest(190, 90)).toBe(6);
 	});
+
+	it("takes fewer maps over a shorter distance, on a big atlas too (CodeRabbit)", () => {
+		// A to T: two maps through far-away B, or three through nearby C and D
+		const g = new RouteGraph({
+			nodes: [
+				{ id: 0, x: 0, y: 0, icons: [], status: "confirmed" },
+				{ id: 1, x: 600000, y: 0, icons: [], status: "confirmed" },
+				{ id: 2, x: 0, y: 100, icons: [], status: "confirmed" },
+				{ id: 3, x: 0, y: 30, icons: [], status: "confirmed" },
+				{ id: 4, x: 0, y: 60, icons: [], status: "confirmed" },
+			],
+			edges: [
+				{ a: 0, b: 1 },
+				{ a: 1, b: 2 },
+				{ a: 0, b: 3 },
+				{ a: 3, b: 4 },
+				{ a: 4, b: 2 },
+			],
+		});
+		expect(g.shortest(0, (u) => u === 2)).toEqual([0, 1, 2]);
+	});
 });

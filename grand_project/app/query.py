@@ -358,7 +358,8 @@ class QueryMixin:
         rows = []
         for (kind, i), label in zip(hits, labels, strict=True):
             v = self.item_node(kind, i)
-            if near and not self.near_city_text(v):
+            city = kind == "landmark" and "city" in str(self.V["landmarks"][i].get("kind", "")).lower()
+            if near and not city and not self.near_city_text(v):
                 continue
             t = nc.get(v)
             if t and kind == "icon":
@@ -393,7 +394,7 @@ class QueryMixin:
         for i, lm in enumerate(self.V["landmarks"]):
             if q in self.landmark_name(i).lower() and not lm["status"].startswith("removed"):
                 hits.append(("landmark", i))
-                labels.append(f"{self.landmark_name(i)}  (seen {lm['n']}x)")
+                labels.append(f"{self.landmark_name(i)}  (seen {lm.get('n', 1)}x)")  # (one added by hand has no count)
         for i, ic in enumerate(self.V["icons"]):
             nice = icon_label(ic)
             if q in nice.lower() or q in icon_aliases(ic["name"]):

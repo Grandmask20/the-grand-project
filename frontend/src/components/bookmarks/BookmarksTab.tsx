@@ -183,7 +183,7 @@ export function BookmarksTab() {
 										onClick={async () => {
 											s.flyTo(b.x, b.y, 1);
 											try {
-												s.select(await app.getInfo("bookmark", b.id));
+												await s.selectLoaded(app.getInfo("bookmark", b.id));
 											} catch (e) {
 												fail(e);
 											}

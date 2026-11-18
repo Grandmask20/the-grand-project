@@ -254,7 +254,12 @@ class WatchMixin:
         if ready:
             ready.sort(key=lambda q: q.stat().st_mtime)
             self.events.log(f"auto-add: {len(ready)} new screenshot(s): {', '.join(q.name for q in ready)}")
-            self.add_screenshots(ready, mode="watch", gen=gen)
+            try:
+                self.add_screenshots(ready, mode="watch", gen=gen)
+            except Exception:
+                for q in ready:  # not queued: seen again on the next polls (CodeRabbit)
+                    self._watch_seen.pop(str(q), None)
+                raise
         return ready
 
     def _watch_failed(self, paths: list[str]) -> None:

@@ -34,11 +34,10 @@ class BookmarksMixin:
     """AtlasSession mixin: bookmarks (see the module docstring)."""
 
     def _bookmarks_changed(self) -> None:
-        """Save the atlas and tell the page (the map's bookmark layer is made again)."""
+        """Save the atlas and tell the page (it draws the bookmarks itself: the map's tiles stay as they are)."""
         if self.atlas is not None and self.path is not None:
             with self._lock:
                 self.atlas.save(self.path)
-        self.filters_changed()
         self.events.publish("bookmarks", None)
 
     def _bookmark(self, i: int) -> dict:
@@ -173,22 +172,24 @@ class BookmarksMixin:
             raise ValueError("open an atlas first")
         if not name.strip():
             raise ValueError("a bookmark needs a name")
-        if self.bookmark_at(x, y) is not None:
-            return -1
-        self.atlas.bookmarks.append(
-            {
-                "name": name.strip(),
-                "group": group.strip() or "Other",
-                "note": note,
-                "x": float(x),
-                "y": float(y),
-                "created": time.strftime("%Y-%m-%d %H:%M"),
-            }
-        )
+        with self._lock:  # the spot check and the append together (CodeRabbit)
+            if self.bookmark_at(x, y) is not None:
+                return -1
+            self.atlas.bookmarks.append(
+                {
+                    "name": name.strip(),
+                    "group": group.strip() or "Other",
+                    "note": note,
+                    "x": float(x),
+                    "y": float(y),
+                    "created": time.strftime("%Y-%m-%d %H:%M"),
+                }
+            )
+            i = len(self.atlas.bookmarks) - 1
         if not quiet:
             self._bookmarks_changed()
             self.events.log(f"bookmarked {name}")
-        return len(self.atlas.bookmarks) - 1
+        return i
 
     def bookmark_items(self, items: list[tuple[str, int]], group: str) -> tuple[int, int]:
         """Bookmark many map nodes / icons / landmarks into one group (Find > Bookmark all).
@@ -306,8 +307,7 @@ class BookmarksMixin:
         cur.symmetric_difference_update({g})
         hg[key] = sorted(cur)
         self.save_settings()
-        self.filters_changed()
-        self.events.publish("bookmarks", None)
+        self.events.publish("bookmarks", None)  # (drawn by the page: no tiles made again, user: it was slow)
 
     def toggle_bookmark(self, i: int) -> None:
         """Hide one bookmark on the map, or show it again; in a hidden group, the group is shown and only this

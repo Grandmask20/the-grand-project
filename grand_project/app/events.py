@@ -51,7 +51,8 @@ class Events:
             for q in list(self._listeners):
                 try:
                     q.put_nowait(ev)
-                except queue.Full:  # a stuck browser tab: dropped, it reloads the state when it reconnects
+                except queue.Full:  # a stuck browser tab: dropped; its stream ends, the page reconnects
+                    q.dropped = True  # type: ignore[attr-defined]
                     self._listeners.remove(q)
 
     @property

@@ -62,6 +62,8 @@ export interface AppStoreState {
 	setTab: (tab: string) => void;
 	selected: ItemInfo | null;
 	select: (info: ItemInfo | null) => void;
+	/** Select what a click loads, unless something else was selected (or clicked) meanwhile (CodeRabbit). */
+	selectLoaded: (load: Promise<ItemInfo>) => Promise<void>;
 	results: ResultRow[];
 	resultsTitle: string;
 	setResults: (rows: ResultRow[], title: string) => void;
@@ -108,6 +110,9 @@ export interface AppStoreState {
 	resetAtlas: () => void;
 }
 
+/** Counts selections: a click's answer that comes back after a newer selection is dropped. */
+let selectSeq = 0;
+
 export const useAppStore = create<AppStoreState>()((set) => ({
 	map: null,
 	setMap: (map) => set({ map }),
@@ -116,7 +121,15 @@ export const useAppStore = create<AppStoreState>()((set) => ({
 	tab: "find",
 	setTab: (tab) => set({ tab }),
 	selected: null,
-	select: (selected) => set({ selected }),
+	select: (selected) => {
+		selectSeq++;
+		set({ selected });
+	},
+	selectLoaded: async (load) => {
+		const mine = ++selectSeq;
+		const info = await load;
+		if (mine === selectSeq) set({ selected: info });
+	},
 	results: [],
 	resultsTitle: "",
 	setResults: (results, resultsTitle) => set({ results, resultsTitle }),

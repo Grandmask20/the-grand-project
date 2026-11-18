@@ -293,6 +293,8 @@ def test_jobs_queued_for_a_are_skipped_once_b_is_open(session, two, monkeypatch)
     assert wait_until(lambda: not session.working())
     assert ran == [(b, "recheck_all")]
     assert any("skipped a job queued for another atlas" in line for line in session.events.log_lines)
+    # what ran is logged with its time and the atlas's counts (user: the log said little)
+    assert any("Re-check took" in line and "maps " in line for line in session.events.log_lines)
 
 
 def test_auto_add_follows_the_atlas(session, two, monkeypatch):

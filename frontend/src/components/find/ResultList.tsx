@@ -13,9 +13,9 @@ export function ResultList() {
 	const title = useAppStore((s) => s.resultsTitle);
 	const query = useAppStore((s) => s.query);
 	const flyTo = useAppStore((s) => s.flyTo);
-	const select = useAppStore((s) => s.select);
 	const ask = useAppStore((s) => s.ask);
 	const showError = useAppStore((s) => s.showError);
+	const selectLoaded = useAppStore((s) => s.selectLoaded);
 	const items = results.filter((r) => r.kind !== "bookmark");
 
 	// a new list (a type clicked, a search): the panel scrolls down to show it (user)
@@ -65,7 +65,7 @@ export function ResultList() {
 								onClick={async () => {
 									flyTo(r.x, r.y, 1);
 									try {
-										select(await app.getInfo(r.kind, r.id));
+										await selectLoaded(app.getInfo(r.kind, r.id));
 									} catch (e) {
 										showError(e);
 									}

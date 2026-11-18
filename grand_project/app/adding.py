@@ -247,9 +247,15 @@ class AddingMixin:
         """
         if not self._pending_watch:
             raise ValueError("nothing is waiting")
-        idx = None if indices is None else [k for k in indices if 0 <= k < len(self._pending_watch)]
-        self._queue_job([], ("retry", idx))
-        n = len(idx) if idx is not None else len(self._pending_watch)
+        # the screenshots themselves, picked now: a list position could point at another one by the time the job
+        # runs (one placed or taken meanwhile: CodeRabbit)
+        picked = (
+            None
+            if indices is None
+            else [str(self._pending_watch[k].path) for k in indices if 0 <= k < len(self._pending_watch)]
+        )
+        self._queue_job([], ("retry", picked))
+        n = len(picked) if picked is not None else len(self._pending_watch)
         self.events.set_status(f"retrying {n} waiting screenshot(s)")
         return n
 
@@ -401,6 +407,38 @@ class AddingMixin:
         return self.events.ask(question, preview=preview)
 
     # ------------------------------------------------------------------ the worker
+    def _tally(self) -> dict[str, int]:
+        """Count what the atlas shows (for the log's before / after of a job).
+
+        Returns:
+            {"maps", "paths", "icons", "landmarks"} (removed ones left out).
+        """
+        V = self.V
+        return {
+            "maps": sum(1 for n in V["nodes"] if n.get("status") != "removed"),
+            "paths": len(V["paths"]),
+            "icons": len(V["icons"]),
+            "landmarks": sum(1 for lm in V["landmarks"] if not str(lm.get("status", "")).startswith("removed")),
+        }
+
+    def _log_job(self, mode, paths: list, before: dict[str, int], took: float) -> None:
+        """Log what a job did: how long it took and how the atlas changed (user: the log said little).
+
+        Args:
+            mode: The job kind.
+            paths: Its screenshots.
+            before: _tally() before it ran.
+            took: Seconds.
+        """
+        after = self._tally()
+        changes = [
+            f"{k} {after[k]}" + (f" ({after[k] - before[k]:+d})" if after[k] != before[k] else "") for k in after
+        ]
+        name = mode[0] if isinstance(mode, tuple) else mode
+        what = {"manual": "adding", "watch": "auto-add", "undo": "undo", "recheck_all": "Re-check",
+                "drop": "placing by hand", "retry": "retry"}.get(name, str(name))  # fmt: skip
+        self.events.log(f"{what} took {took:.1f} s: " + ", ".join(changes))
+
     def _worker(self) -> None:
         """Run queued jobs one at a time, forever (auto-add jobs that arrived meanwhile run as one batch)."""
         while True:
@@ -420,7 +458,15 @@ class AddingMixin:
                 if not current:
                     self.events.log(f"skipped a job queued for another atlas ({mode})")
                 else:
+                    if paths:
+                        name = mode[0] if isinstance(mode, tuple) else mode
+                        what = {"manual": "adding", "watch": "auto-add", "drop": "placing by hand"}.get(name, name)
+                        names = ", ".join(Path(p).name for p in paths[:3])
+                        more = f" and {len(paths) - 3} more" if len(paths) > 3 else ""
+                        self.events.log(f"{what}: {len(paths)} screenshot(s) ({names}{more})")
+                    before, t0 = self._tally(), time.monotonic()
                     self.run_job(paths, mode)
+                    self._log_job(mode, paths, before, time.monotonic() - t0)
             except Exception as e:
                 LOG.exception(f"adding failed ({mode}): {paths}")
                 self.events.log(f"adding failed: {e}")
@@ -512,9 +558,9 @@ class AddingMixin:
             before = len(self.atlas.frames)
             snapshot = self._snapshot()
             if retry:
-                idx = mode[1]
-                aside = [f for k, f in enumerate(self._pending_watch) if idx is not None and k not in idx]
-                self._pending_watch = [f for k, f in enumerate(self._pending_watch) if idx is None or k in idx]
+                picked = None if mode[1] is None else set(mode[1])
+                aside = [f for f in self._pending_watch if picked is not None and str(f.path) not in picked]
+                self._pending_watch = [f for f in self._pending_watch if picked is None or str(f.path) in picked]
                 added, _ = self._place_watched([])
                 self._pending_watch += aside
                 refused = [Path(f.path).name for f in self._pending_watch]
@@ -660,10 +706,11 @@ class AddingMixin:
 
     def _run_undo(self) -> None:
         """Put the atlas back to its snapshot from before the last add, keeping the bookmarks."""
-        entry = self._undo.pop()
+        entry = self._undo[-1]
         self.events.set_progress("undoing the last add")
         with self._lock:
-            old = core.Atlas.load(entry["file"])
+            old = core.Atlas.load(entry["file"])  # (raises: the entry stays, Undo can be tried again: CodeRabbit)
+            self._undo.pop()
             keep_bookmarks = self.atlas.bookmarks
             for attr in ("nodes", "edges", "landmarks", "frames", "icons", "final"):
                 setattr(self.atlas, attr, getattr(old, attr))

@@ -3,6 +3,8 @@ import type { ReplaySettings } from "@/domain/app/Meta";
 /** The timelapse worked out by the app (POST /api/replay/open). */
 export interface ReplayPlan {
 	settings: ReplaySettings;
+	/** This plan's tiles: the tab playing it asks for vector tiles with ?r=token (the items carry their steps). */
+	token?: number;
 	n_steps: number;
 	kind: string;
 	area: boolean;

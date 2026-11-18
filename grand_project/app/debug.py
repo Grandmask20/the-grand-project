@@ -64,6 +64,30 @@ class DebugMixin:
             self._dbg_cache = (key, marks)
         return self._dbg_cache[1]
 
+    def _dbg_next(self, value: int | None = None) -> int:
+        """Read (or raise) the next free D number, kept beside the marks file: deleting the newest mark or clearing
+        them all doesn't hand its number out again (CodeRabbit).
+
+        Args:
+            value: The new next number (kept only when higher).
+
+        Returns:
+            The next free number (1 with none kept).
+        """
+        fp = self._dbg_file()
+        if fp is None:
+            return 1
+        side = fp.with_name(fp.stem + "_next.txt")
+        try:
+            cur = int(side.read_text(encoding="utf-8").strip())
+        except (OSError, ValueError):
+            cur = 1
+        if value is not None and value > cur:
+            side.parent.mkdir(parents=True, exist_ok=True)
+            side.write_text(str(value), encoding="utf-8")
+            cur = value
+        return cur
+
     def _dbg_save(self) -> None:
         """Write the debug marks and tell the page."""
         fp = self._dbg_file()
@@ -147,7 +171,8 @@ class DebugMixin:
         mk["x"], mk["y"] = round(float(x), 1), round(float(y), 1)
         mk["screenshots"] = [f["name"] for f, _x, _y in self.frames_at(mk["x"], mk["y"])[:5]]
         marks = self.debug_marks()
-        mk["id"] = max([m.get("id", k + 1) for k, m in enumerate(marks)] + [0]) + 1  # never reused
+        mk["id"] = max([m.get("id", k + 1) for k, m in enumerate(marks)] + [self._dbg_next() - 1]) + 1  # never reused
+        self._dbg_next(mk["id"] + 1)
         marks.append(mk)
         self._dbg_save()
         self.events.set_status(f"debug mark saved: {kind} ({reason})")
@@ -172,6 +197,7 @@ class DebugMixin:
         marks, fp = self.debug_marks(), self._dbg_file()
         if not marks or fp is None:
             return ""
+        self._dbg_next(max(m.get("id", 0) for m in marks) + 1)  # the cleared numbers stay used
         stamp = time.strftime("%Y%m%d_%H%M%S")
         backup = fp.with_name(f"{fp.stem}_cleared_{stamp}.json")
         n = 1

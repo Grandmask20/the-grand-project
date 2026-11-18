@@ -15,6 +15,12 @@ export function SelectedBox() {
 	const showSources = useAppStore((s) => s.showSources);
 	const askConfirm = useAppStore((s) => s.askConfirm);
 	const showError = useAppStore((s) => s.showError);
+	// after a deletion: the selection is cleared only if it is still the deleted item (another one may have been
+	// selected while it was deleted: CodeRabbit)
+	const clearIf = (gone: { kind: string; id: number }) => {
+		const now = useAppStore.getState().selected;
+		if (now && now.kind === gone.kind && now.id === gone.id) select(null);
+	};
 	const flyTo = useAppStore((s) => s.flyTo);
 	const routes = useRoutes();
 	// kept fresh: the model changes under it (an add, an edit)
@@ -102,7 +108,7 @@ export function SelectedBox() {
 									onYes: () =>
 										void app
 											.deleteBookmarks([info.id])
-											.then(() => select(null))
+											.then(() => clearIf(info))
 											.catch(showError),
 								})
 							}
@@ -123,7 +129,7 @@ export function SelectedBox() {
 									onYes: () =>
 										void app
 											.setLandmark(info.x, info.y, "")
-											.then(() => select(null))
+											.then(() => clearIf(info))
 											.catch(showError),
 								})
 							}

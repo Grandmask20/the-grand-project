@@ -71,7 +71,8 @@ export function createAppClient(http: Http) {
 		// the map
 		getMap: () => http.get<MapInfo | null>("/api/map"),
 		terrainTiles: (v: string) => `${absolute(http.url("/api/tiles/terrain/"))}{z}/{x}/{y}.jpg?v=${v}`,
-		vectorTiles: (v: string) => `${absolute(http.url("/api/tiles/vector/"))}{z}/{x}/{y}.pbf?v=${v}`,
+		vectorTiles: (v: string, replay?: number) =>
+			`${absolute(http.url("/api/tiles/vector/"))}{z}/{x}/{y}.pbf?v=${v}${replay ? `&r=${replay}` : ""}`,
 		iconUrl: (name: string, size = 32) => http.url(`/api/icons/${encodeURIComponent(name)}.png`, { size }),
 		// v: the pictures changed (the browser keeps them a year): bumped when they change
 		spriteUrl: (name: string, style = "game art") =>

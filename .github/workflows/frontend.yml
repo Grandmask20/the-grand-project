@@ -16,8 +16,8 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 22
-      # no lock file is committed yet: npm install resolves the versions in package.json
-      - run: npm install --no-audit --no-fund
+      # the committed lock file: every run builds with the same versions (CodeRabbit)
+      - run: npm ci --no-audit --no-fund
       - name: biome
         run: npm run lint
       - name: types

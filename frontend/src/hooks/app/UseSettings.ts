@@ -27,7 +27,12 @@ export function useUpdateSettings() {
 	const showError = useAppStore((s) => s.showError);
 	return useMutation({
 		mutationFn: (change: SettingsChange) => app.updateSettings(change),
-		onMutate: (change) => {
+		// one at a time, in order: a slider drag or quick checkbox clicks sent several, and an earlier answer
+		// arriving last put the old value back (CodeRabbit)
+		scope: { id: "settings" },
+		onMutate: async (change) => {
+			// a state fetch already on its way holds the old settings: dropped, not applied after this (CodeRabbit)
+			await queryClient.cancelQueries({ queryKey: AppQueryKeys.state });
 			queryClient.setQueryData<AppState>(AppQueryKeys.state, (s) =>
 				s ? { ...s, settings: merge(s.settings, change) } : s,
 			);

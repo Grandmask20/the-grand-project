@@ -171,6 +171,11 @@ def list_dir(path: str | None, files: bool = True) -> dict:
     }
 
 
+# the known atlases are changed by one caller at a time (the background card reader raced remember_atlas:
+# CodeRabbit)
+ATLAS_LIST_LOCK = threading.RLock()
+
+
 class LibraryMixin:
     """AtlasSession mixin: saved atlases and folders (see the module docstring)."""
 
@@ -180,12 +185,13 @@ class LibraryMixin:
         Returns:
             [{"name", "json", "numbers"?}] (the list kept in the settings).
         """
-        L = [a for a in self.settings.get("atlases", []) if Path(a["json"]).exists()]
-        for extra in (self.path, self.settings.get("last_atlas")):
-            if extra and Path(extra).exists() and not any(same_file(a["json"], extra) for a in L):
-                L.append({"name": Path(extra).parent.name, "json": str(Path(extra).resolve())})
-        self.settings["atlases"] = L
-        return L
+        with ATLAS_LIST_LOCK:
+            L = [a for a in self.settings.get("atlases", []) if Path(a["json"]).exists()]
+            for extra in (self.path, self.settings.get("last_atlas")):
+                if extra and Path(extra).exists() and not any(same_file(a["json"], extra) for a in L):
+                    L.append({"name": Path(extra).parent.name, "json": str(Path(extra).resolve())})
+            self.settings["atlases"] = L
+            return L
 
     def remember_atlas(self, json_path, name: str | None = None) -> None:
         """Add an atlas to the known atlases (with the open atlas's numbers) and save the settings.
@@ -194,16 +200,17 @@ class LibraryMixin:
             json_path: The atlas file.
             name: Its name in the list (default: its folder's name).
         """
-        L = self.known_atlases()
-        entry = next((a for a in L if same_file(a["json"], json_path)), None)
-        if entry is None:
-            entry = {"name": name or Path(json_path).parent.name, "json": str(Path(json_path).resolve())}
-            L.append(entry)
-        if self.atlas is not None and self.path is not None and same_file(json_path, self.path):
-            entry["numbers"] = atlas_numbers(
-                {"final": self.atlas.final, "icons": self.atlas.icons, "frames": self.atlas.frames}
-            )
-        self.save_settings()
+        with ATLAS_LIST_LOCK:
+            L = self.known_atlases()
+            entry = next((a for a in L if same_file(a["json"], json_path)), None)
+            if entry is None:
+                entry = {"name": name or Path(json_path).parent.name, "json": str(Path(json_path).resolve())}
+                L.append(entry)
+            if self.atlas is not None and self.path is not None and same_file(json_path, self.path):
+                entry["numbers"] = atlas_numbers(
+                    {"final": self.atlas.final, "icons": self.atlas.icons, "frames": self.atlas.frames}
+                )
+            self.save_settings()
         self.events.publish("atlases", None)
 
     def atlases_payload(self) -> list[dict]:
@@ -252,10 +259,12 @@ class LibraryMixin:
                         core.write_png(tf, make_thumb(canvas), "thumbnail")
             except Exception:
                 LOG.warning(f"could not read atlas {jp} for its card", exc_info=True)
-            for a in self.known_atlases():
-                if a["json"] == jp:
-                    a["numbers"] = numbers or {"maps": 0, "icons": 0, "shots": 0}
-        self.save_settings()
+            with ATLAS_LIST_LOCK:
+                for a in self.known_atlases():
+                    if a["json"] == jp:
+                        a["numbers"] = numbers or {"maps": 0, "icons": 0, "shots": 0}
+        with ATLAS_LIST_LOCK:
+            self.save_settings()
         self.events.publish("atlases", None)
 
     def write_thumb(self, json_path, canvas: np.ndarray) -> None:
