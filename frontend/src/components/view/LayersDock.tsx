@@ -1,5 +1,4 @@
 import { ChevronDownIcon, ChevronUpIcon } from "lucide-react";
-import { useState } from "react";
 import { useMeta } from "@/hooks/app/UseMeta";
 import { useSettings, useUpdateSettings } from "@/hooks/app/UseSettings";
 import { cityColours, styleColour } from "@/logic/Colours";
@@ -19,7 +18,9 @@ export function LayersDock() {
 	const settings = useSettings();
 	const update = useUpdateSettings();
 	const tilted = useAppStore((s) => (s.camera?.pitch ?? 0) > 1);
-	const [open, setOpen] = useState(true);
+	// folded by default, and remembered across reloads (user)
+	const open = !!settings?.ui.layers_open;
+	const setOpen = (v: boolean) => update.mutate({ ui: { layers_open: v } });
 	if (!settings || !meta) return null;
 	const layers = settings.layers ?? {};
 	const st = settings.style;
