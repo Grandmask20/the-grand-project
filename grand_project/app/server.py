@@ -20,6 +20,7 @@ import socket
 import sys
 import threading
 import time
+import urllib.request
 import webbrowser
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -30,7 +31,7 @@ from grand_project import logs as atlas_log
 from grand_project import paths as rc_paths
 from grand_project.webmap.constants import WEBMAP_ICON_SPRITE
 
-from .constants import APP_HOST, APP_PORT, APP_PORT_TRIES, UPLOAD_MAX, VERSION
+from .constants import APP_HELLO_WAIT, APP_HOST, APP_PORT, APP_PORT_TRIES, HELLO_APP, UPLOAD_MAX, VERSION
 from .debug import DEBUG_REASONS
 from .events import StaleAtlas, sse
 from .icons import icon_png
@@ -368,6 +369,11 @@ class Handler(BaseHTTPRequestHandler):
         """Answer a question."""
         ok = self.S.events.answer(int(qid), bool(self._body().get("yes")))
         self._json({"ok": ok})
+
+    @route("GET", "/api/hello")
+    def get_hello(self, q) -> None:
+        """Which program answers here (a second start finds the copy already running: running_app)."""
+        self._json({"app": HELLO_APP, "version": VERSION, "root": str(rc_paths.ROOT.resolve())})
 
     @route("GET", "/api/meta")
     def get_meta(self, q) -> None:
@@ -972,6 +978,33 @@ class AppServer(ThreadingHTTPServer):
             self.shutdown()
 
 
+def running_app(port: int, host: str = APP_HOST, root: Path | None = None) -> str | None:
+    """Find this program's own copy already running on one of the ports it would take.
+
+    Starting it again (a double-click on the launcher, which shows no window on Windows) started a second copy on
+    the next port, both writing the same atlas. A copy of the program in another folder doesn't count.
+
+    Args:
+        port: The first port the app would take (APP_PORT_TRIES from there are looked at).
+        host: The address it listens on.
+        root: The program folder a running copy must be in (default: this one's).
+
+    Returns:
+        The running copy's URL, or None.
+    """
+    want = str((root or rc_paths.ROOT).resolve())
+    for p in range(port, port + APP_PORT_TRIES):
+        url = f"http://{host}:{p}/"
+        try:
+            with urllib.request.urlopen(url + "api/hello", timeout=APP_HELLO_WAIT) as r:
+                hello = json.loads(r.read())
+        except (OSError, ValueError):
+            continue  # nothing there (refused at once), or something else
+        if isinstance(hello, dict) and hello.get("app") == HELLO_APP and hello.get("root") == want:
+            return url
+    return None
+
+
 def _say(text: str) -> None:
     """Print a line when there is a console (pythonw, the Windows launcher, has none).
 
@@ -1024,6 +1057,12 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--port", type=int, default=APP_PORT, help=f"first port to try (default {APP_PORT}; 0: any)")
     ap.add_argument("--no-browser", action="store_true", help="don't open the browser")
     args = ap.parse_args(argv)
+    running = running_app(args.port) if args.port else None
+    if running:  # already running: its page, not a second copy writing the same atlas (user)
+        _say(f"The Grand Project is already running: {running}")
+        if not args.no_browser:
+            webbrowser.open(running)
+        return 0
     session = AtlasSession()
     open_first_atlas(session, args.atlas)
     try:

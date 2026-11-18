@@ -148,3 +148,14 @@ def test_the_page_is_served_and_routes_itself(app, tmp_path, monkeypatch):
     st, h, _b = call(srv, "/assets/a.js")
     assert st == 200 and "immutable" in h["Cache-Control"]
     assert call(srv, "/../../etc/passwd")[2] == b"<html>app</html>"  # never outside the page's folder
+
+
+def test_a_second_start_opens_the_running_app(app, monkeypatch, tmp_path):
+    srv, _pts = app
+    port = srv.server_address[1]
+    opened = []
+    monkeypatch.setattr(S.webbrowser, "open", lambda url: opened.append(url))
+    monkeypatch.setattr(S, "AtlasSession", lambda: pytest.fail("a second copy was started"))
+    assert S.running_app(port) == srv.url
+    assert S.main(["--port", str(port)]) == 0 and opened == [srv.url]  # its page, not a second copy
+    assert S.running_app(port, root=tmp_path) is None  # a copy of the program in another folder: not this one

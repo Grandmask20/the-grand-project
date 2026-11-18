@@ -3,6 +3,7 @@
     py make_release.py            build into ../1.0 on a new branch release/v<version> from origin/main,
                                   commit and push it; then open a pull request into main (main is protected)
     py make_release.py --check    only list what the release would contain
+    py make_release.py --notes    only print the release notes (also written next to ../1.0 on a release)
     py make_release.py --db       first refresh references/atlas_references.sqlite3 from the private database
                                   (keeps only badge_refs + detector_models: nothing from anyone's atlas)
 
@@ -104,6 +105,28 @@ def player_readme() -> str:
     return s
 
 
+def release_notes() -> str:
+    """The GitHub release's notes: how to install and start it on each system, every time (manny: tell newcomers
+    which script to run on Windows vs macOS / Linux), then a place for what's new.
+
+    The install and start part is the README's "Run it" section (without "Get it": they are on the download page),
+    so the notes and the README never disagree.
+    """
+    s = (HERE / "README.md").read_text(encoding="utf-8").replace("\r\n", "\n")
+    a = s.find("## Run it\n")
+    b = s.find("\n---\n", a)
+    run = s[a + len("## Run it\n") : b].strip() if a != -1 and b > a else ""
+    g, h = run.find("### Get it"), run.find("### First time")
+    if g != -1 and h > g:
+        run = run[:g] + run[h:]
+    return (
+        f"Program version v{version()}. Download **Source code (zip)** below and unzip it into a folder you can "
+        "write to.\n\n"
+        f"## How to install and start\n\n{run.replace('### ', '#### ')}\n\n"
+        "## What's new\n\n- (write the highlights here)\n"
+    )
+
+
 def refresh_db() -> None:
     sys.path.insert(0, str(HERE))
     from grand_project import paths
@@ -162,6 +185,9 @@ def build() -> list[str]:
 
 
 def main() -> int:
+    if "--notes" in sys.argv:
+        print(release_notes())
+        return 0
     if "--db" in sys.argv:
         refresh_db()
     if "--check" not in sys.argv:
@@ -210,7 +236,10 @@ def main() -> int:
         f"Release v{v}\n\nPlayer build from develop ({git('rev-parse', '--short', 'HEAD', cwd=HERE)}).",
     )
     git("push", "-q", "-u", "origin", branch, "--force")
+    notes = TARGET.parent / f"release_notes_v{v}.md"
+    notes.write_text(release_notes(), encoding="utf-8")
     print(f"pushed {branch}: open the pull request into main at\n  {REPO}/compare/main...{branch}?expand=1")
+    print(f"release notes (paste into the GitHub release, then add what's new): {notes}")
     print("after merging it:  git -C ../1.0 checkout main && git -C ../1.0 pull")
     return 0
 
