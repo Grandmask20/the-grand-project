@@ -114,6 +114,8 @@ export function ViewTab() {
 					{slider("fades out at", "d3_ground_far", 0, 6, 0.1, 0, (v) => (v ? times(v) : "never"))}
 				</Section>
 				<Section title="3D models">
+					{slider("reach", "d3_model_far", 1, 8, 0.1, 3, times)}
+					{slider("size", "d3_model_size", 0.3, 3, 0.1, 1, times)}
 					{slider("height", "d3_model_height", 0.2, 3, 0.1, 1, times)}
 					<Label className="font-normal">
 						<input

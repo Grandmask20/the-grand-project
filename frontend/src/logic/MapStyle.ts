@@ -549,7 +549,7 @@ export function applyLook(map: MapLibreMap, geo: Geo, meta: Meta, look: Look): v
 	visible(map, "towers", !!st.ov_towers && on("Landmarks"));
 
 	// 3D models while tilted; icons above them then
-	visible(map, "solids", look.tilted && on("3D models"));
+	visible(map, "solids", false); // the 3D models are drawn by ModelLayer3D (its data still comes from this layer's tiles)
 	// icons: on the ground when flat, standing in rows above their map nodes when tilted
 	visible(map, "icons", on("Icons") && !look.tilted);
 	visible(map, "icons-3d", false); // the 3D view's icons are drawn by IconLayer3D

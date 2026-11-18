@@ -91,7 +91,9 @@ STYLE_DEFAULT = {
     "d3_icon_far": 2.6,
     "d3_icon_size": 1.0,  # icons' size in 3D (times their size on the ground)
     "d3_ground_far": 0.0,  # the ground fades into black from this many times the centre's distance (0: never)
-    "d3_model_height": 1.0,  # 3D models' heights times this
+    "d3_model_size": 1.0,  # 3D models' size (width and height) times this
+    "d3_model_height": 1.0,  # ...and their height times this again
+    "d3_model_far": 3.0,  # 3D models are drawn out to this many times the centre's distance
     "d3_beams": True,  # the beams over halls and towers
 }  # View tab
 

@@ -850,7 +850,7 @@ class MapImageMixin:
                 continue
             icons = sorted(set(nd.get("icons") or []))
             colour = bgr_hex(icon_col(icons[0])) if icons else "#9aa0a8"
-            shapes += map_pillar(nd["x"], nd["y"], icons, colour, i)
+            shapes += [dict(sh, anchor=(nd["x"], nd["y"])) for sh in map_pillar(nd["x"], nd["y"], icons, colour, i)]
         towers = []
         ct, locked = D.get("city_type", {}), D.get("locked", set())
         for k, lm in enumerate(V["landmarks"]):
@@ -858,14 +858,17 @@ class MapImageMixin:
                 continue
             if lm["kind"] == "Tower":
                 towers.append((lm["x"], lm["y"]))
-            shapes += structure(lm["kind"], lm["x"], lm["y"], ct.get(k, ("", ""))[0], k in locked)
+            shapes += [
+                dict(sh, anchor=(lm["x"], lm["y"]))
+                for sh in structure(lm["kind"], lm["x"], lm["y"], ct.get(k, ("", ""))[0], k in locked)
+            ]
         for i, nd in enumerate(nodes):  # map nodes marked as towers with no Tower landmark: a tower too
             if (
                 node_ok[i]
                 and nd.get("tower")
                 and all(math.hypot(nd["x"] - tx, nd["y"] - ty) > WEBMAP_TOWER_SAME for tx, ty in towers)
             ):
-                shapes += structure("Tower", nd["x"], nd["y"])
+                shapes += [dict(sh, anchor=(nd["x"], nd["y"])) for sh in structure("Tower", nd["x"], nd["y"])]
         out = []
         for sh in shapes:
             lat = math.radians(grid.lnglat(*sh["rings"][0][0])[1])
@@ -877,6 +880,9 @@ class MapImageMixin:
             }
             if "node" in sh:
                 props["node"] = sh["node"]
+            # the structure's centre (atlas units): the page's own 3D layer sizes a model around it
+            ax, ay = sh.get("anchor", sh["rings"][0][0])
+            props["ax"], props["ay"] = round(float(ax), 1), round(float(ay), 1)
             out.append(
                 {"kind": "polygon", "rings": [[grid.world_px(x, y) for x, y in r] for r in sh["rings"]], "props": props}
             )
