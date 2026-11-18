@@ -46,26 +46,38 @@ ANNOTATOR_MANIFEST_FORMAT = "the-grand-project-rf-detr-manifest"
 
 # ---- detector worker processes ---------------------------------------------------------------------------------
 
-ANNOTATOR_DEFAULT_WORKERS = 4
-"""Concurrent detector processes: balances CPU use against each process's full-resolution image memory."""
-
-ANNOTATOR_MAX_WORKERS = 8
-"""Most detector processes the sidebar offers (a 4K screenshot needs about 1 GB per process)."""
-
 ANNOTATOR_WORKER_MODULE = "tools.detection_dataset_annotator.worker"
 """Python module launched (``python -m``, from the project folder) as an isolated detector worker process."""
 
 ANNOTATOR_OPENCV_THREADS_ENV = "GRAND_PROJECT_ANNOTATOR_OPENCV_THREADS"
 """OpenCV thread limit per worker, so the workers together do not oversubscribe the CPU."""
 
-ANNOTATOR_WORKER_POLL_S = 0.25
-"""Seconds between checks of the worker output queue while detection runs."""
+ANNOTATOR_THREAD_ENV_VARS = ("OMP_NUM_THREADS", "OPENBLAS_NUM_THREADS", "MKL_NUM_THREADS")
+"""OpenMP / BLAS thread limits set for each worker before it imports scikit-learn and NumPy. The map and tower
+models are HistGradientBoostingClassifiers whose predict starts one OpenMP thread per CPU in every worker: uncapped,
+4 workers ran 4.2x slower (9.2 s instead of 2.2 s per screenshot, 22-thread Ryzen 9 7900X, roa-atlas)."""
+
+ANNOTATOR_WORKER_RESERVED_CPUS = 2
+"""CPUs the default worker count leaves for the Streamlit server and the browser."""
+
+ANNOTATOR_WORKER_MEMORY_GB = 1.5
+"""Memory budgeted per worker for the default count: one worker peaked at 1.29 GB on a 1080p roa-atlas screenshot."""
+
+ANNOTATOR_WORKER_FALLBACK = 8
+"""Default worker cap where the total memory cannot be read (``os.sysconf`` is missing on Windows)."""
+
+ANNOTATOR_WORKER_IN_FLIGHT = 2
+"""Requests written ahead to each worker, so it starts its next screenshot while the annotator handles an answer
+(progress, saving the state) instead of waiting for it."""
+
+ANNOTATOR_WORKER_LINE_LIMIT = 16 * 1024 * 1024
+"""Longest worker answer line in bytes (asyncio's default 64 KiB is too short for a screenshot with every path)."""
 
 ANNOTATOR_WORKER_EXIT_S = 10.0
 """Seconds a worker may take to exit after its input closes before it is terminated."""
 
-ANNOTATOR_SAVE_EVERY = 10
-"""Finished screenshots between saves of the review state during a detection run."""
+ANNOTATOR_SAVE_EVERY_S = 30.0
+"""Seconds between saves of the review state during a detection run (a full state is ~40 MB of JSON, ~2 s)."""
 
 # ---- labels ----------------------------------------------------------------------------------------------------
 

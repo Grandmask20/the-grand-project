@@ -171,3 +171,20 @@ def test_icons_over_fogged_map_nodes(test_data: Path) -> None:
         assert near("icon", x, y, 4), (x, y)
     for x, y in ((404, 571), (296, 659)):  # the fogged map nodes' glow, measured on the screenshot
         assert near("map_node", x, y, 10, source="icon_row"), (x, y)
+
+
+@pytest.mark.data
+def test_the_annotator_shares_one_map_finder_run(test_data: Path) -> None:
+    """``run_classical_detector`` hands its ``find_maps`` run to the detector instead of running it twice: the
+    detector's result and the faint map nodes must be what two separate runs give."""
+    from grand_project import core
+    from grand_project.detect.models import _models
+    from grand_project.detect.pipeline import detect_classical, ensure_models, find_maps
+
+    image = core.read_screenshot(_shot(test_data, "2694490_20261114092839_1.png"))
+    ensure_models()
+    found = find_maps(image, _models["maps"])
+
+    assert detect_classical(image, found_maps=found) == detect_classical(image)
+    _maps, pts, prob = find_maps(image, _models["maps"])
+    np.testing.assert_array_equal(icon_proposals.map_spots(found[1], found[2]), icon_proposals.map_spots(pts, prob))

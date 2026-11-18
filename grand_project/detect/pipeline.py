@@ -39,24 +39,34 @@ def find_maps(img: np.ndarray, model) -> tuple[list[dict], np.ndarray, np.ndarra
     return _nms(pts, prob), pts, prob[:, MAP]
 
 
-def _detect_classical(img: np.ndarray) -> dict:
-    """Run the existing classical detector for one screenshot.
+def ensure_models() -> None:
+    """Load the classical detector's models into ``_models`` once.
 
-    This runs map nodes, icons, landmarks, map nodes found from paths, the Expedition rules, ship markers and paths.
-
-    Args:
-        img: BGR screenshot (1080p).
-
-    Returns:
-        Dict with "width", "height" (px), "nodes", "landmarks", "icons" and "edges" (paths) lists.
-
+    Raises:
+        RuntimeError: A model is not in the DB yet.
     """
     for k in ("maps", "badges", "towers"):
         if k not in _models:
             _models[k] = load_model(k)
             if _models[k] is None:
                 raise RuntimeError(f"no {k} model in the DB yet: run  python -m grand_project.detect train")
-    nodes, mp, mprob = find_maps(img, _models["maps"])
+
+
+def _detect_classical(img: np.ndarray, found_maps: tuple[list[dict], np.ndarray, np.ndarray] | None = None) -> dict:
+    """Run the existing classical detector for one screenshot.
+
+    This runs map nodes, icons, landmarks, map nodes found from paths, the Expedition rules, ship markers and paths.
+
+    Args:
+        img: BGR screenshot (1080p).
+        found_maps: ``find_maps(img, _models["maps"])`` when the caller has it already (see detect_classical).
+
+    Returns:
+        Dict with "width", "height" (px), "nodes", "landmarks", "icons" and "edges" (paths) lists.
+
+    """
+    ensure_models()
+    nodes, mp, mprob = found_maps if found_maps is not None else find_maps(img, _models["maps"])
     icons, more = find_badges(img, _models["badges"], nodes, mp, mprob)
     lms, nodes = find_landmarks(img, _models["towers"], nodes + more, icons)
     landmark_points = [(item["x"], item["y"]) for item in lms]
@@ -81,13 +91,18 @@ def _detect_classical(img: np.ndarray) -> dict:
     }
 
 
-def detect_classical(img: np.ndarray) -> dict:
+def detect_classical(img: np.ndarray, *, found_maps: tuple[list[dict], np.ndarray, np.ndarray] | None = None) -> dict:
     """Run the established classical detector explicitly.
 
     The public entry point is useful for benchmark tools that need to compare both detector backends in the same
     process.  Normal application code should keep using :func:`detect`, which selects the configured backend.
+
+    Args:
+        img: BGR screenshot (1080p).
+        found_maps: The result of ``find_maps(img, _models["maps"])`` (after ``ensure_models()``) for callers that
+            use the map candidates too (the dataset annotator), so the map finder (~1.7 s) runs only once.
     """
-    return _detect_classical(img)
+    return _detect_classical(img, found_maps)
 
 
 def detect(img: np.ndarray) -> dict:

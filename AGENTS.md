@@ -58,9 +58,12 @@ file, terrain, waiting groups `islands.py`, clean map `seams.py`), `detect/` (th
 pytest, from the program folder. `pytest` alone runs the offline tests and the ones that need the test screenshots
 (those skip themselves without the Git LFS data: marker `data`); `pytest -m gui` runs the viewer window test (about
 two minutes), `pytest -m slow` the waiting-islands test (~10 minutes), `pytest -m ""` everything. Randomised tests
-take `--runs N --seed S` and print their seed. Shared fixtures and helpers live in `tests/conftest.py` (test data
-paths, the crawl atlas, `check` for scenario tests that report every failed check, `copy_cache`, `seed` / `rng`);
-use them instead of module-level setup, and `tmp_path` instead of temporary folders made by hand. Detector changes:
+take `--runs N --seed S` and print their seed. Related tests are grouped in subpackages named after what they test
+(`tests/detection_dataset_annotator/` for `tools/detection_dataset_annotator/`, `tests/rf_detr/`; run one with
+`pytest tests/rf_detr`); setup only one group shares goes in that subpackage's `conftest.py`. Shared fixtures and
+helpers live in `tests/conftest.py` (test data paths, the crawl atlas, `check` for scenario tests that report every
+failed check, `copy_cache`, `seed` / `rng`); use them instead of module-level setup, and `tmp_path` instead of
+temporary folders made by hand. Detector changes:
 compare `python -m grand_project.detect score` before and after. When piping test output on Windows set
 `PYTHONIOENCODING=utf-8` (some checks print non-ASCII).
 

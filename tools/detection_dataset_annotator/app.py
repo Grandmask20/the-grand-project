@@ -9,6 +9,7 @@ Streamlit runs this file as a script, not as part of its package, so it imports 
 from __future__ import annotations
 
 import copy
+import time
 from dataclasses import dataclass
 from functools import partial
 from pathlib import Path
@@ -28,7 +29,7 @@ from tools.detection_dataset_annotator.boxes import (
 )
 from tools.detection_dataset_annotator.component import annotate
 from tools.detection_dataset_annotator.export import export_dataset
-from tools.detection_dataset_annotator.pool import detect_pending
+from tools.detection_dataset_annotator.pool import cpu_count, default_workers, detect_pending
 from tools.detection_dataset_annotator.state import (
     DetectionOptions,
     discover_images,
@@ -241,9 +242,10 @@ def _sidebar() -> Settings:
         max_workers = st.number_input(
             "Concurrent detector workers",
             min_value=1,
-            max_value=K.ANNOTATOR_MAX_WORKERS,
-            value=K.ANNOTATOR_DEFAULT_WORKERS,
-            help="More workers finish large queues faster but use more memory, especially for 4K screenshots.",
+            max_value=cpu_count(),
+            value=min(default_workers(), cpu_count()),
+            help="One detector process per worker; each needs about 1.3 GB of memory. The default uses every CPU "
+            "but two, as far as the memory allows.",
         )
         st.divider()
         hide_reviewed = st.checkbox("Hide reviewed screenshots", value=True, key=K.ANNOTATOR_SESSION_HIDE_REVIEWED)
@@ -264,13 +266,17 @@ def _run_detection(
     """Detect screenshots with progress, save the state, and rerun the page to show the results."""
     progress_bar = st.progress(0.0) if keys is None or len(keys) > 1 else None
     status = st.empty()
+    last_save = time.monotonic()
 
     def progress(done: int, total: int, path: str) -> None:
+        nonlocal last_save
         if progress_bar is not None:
             progress_bar.progress(done / max(1, total), text=f"{done:,}/{total:,} complete")
         status.caption(f"Finished {Path(path).name}")
-        if done % K.ANNOTATOR_SAVE_EVERY == 0 or done == total:
+        # By time, not by count: with many workers a save every few screenshots would take most of the time.
+        if time.monotonic() - last_save >= K.ANNOTATOR_SAVE_EVERY_S:
             save_state(settings.state_path, state)
+            last_save = time.monotonic()
 
     with st.spinner("Running the classical detector…"):
         completed, errors = detect_pending(

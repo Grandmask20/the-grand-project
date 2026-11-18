@@ -60,6 +60,7 @@ from .frame import (  # noqa: F401
     png_bytes,
     read_screenshot,
     row_bases,
+    scale_screenshot,
     screenshots_in,
     write_png,
 )

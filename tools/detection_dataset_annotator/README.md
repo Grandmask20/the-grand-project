@@ -91,9 +91,14 @@ changes labels, not icon finding, so processed screenshots must be rerun to appl
 
 Optional derived labels have independent toggles: paths (including their dashes) are grouped as `path`, and fortress
 walls use `fortress_wall`. They are optional because production inference currently derives them with the classical
-tracer and wall mask. Detection uses four concurrent processes by default (adjustable in the sidebar), divides
-OpenCV's CPU threads between them, saves progress every ten images, and updates the progress indicator as each
-screenshot finishes. “Rerun detection” replaces one screenshot's boxes; “Rerun all screenshots” requires confirmation
+tracer and wall mask.
+
+Detection runs in worker processes, by default one per CPU but two, as far as the memory allows (each worker needs
+about 1.3 GB; adjustable in the sidebar). Each worker gets its share of the CPU's threads for OpenCV, OpenMP and
+BLAS: left uncapped, every worker's map and tower models start one OpenMP thread per CPU, and four workers ran 4.2×
+slower. Each worker is kept two screenshots ahead, the review state is saved every 30 seconds, and the progress
+indicator updates as each screenshot finishes. On a 22-thread Ryzen 9 7900X, 1,265 screenshots take about half an
+hour. “Rerun detection” replaces one screenshot's boxes; “Rerun all screenshots” requires confirmation
 because successful reruns replace annotations and clear review flags. A failed rerun keeps its previous detections and
 review flag.
 
@@ -106,10 +111,10 @@ review flag.
 | `state.py` | screenshot discovery, `review_state.json`, detection options, labels, the review queue |
 | `detection.py` | the classical detector's points and paths as boxes in source-image pixels |
 | `icon_proposals.py` | the extra icons and hidden map nodes (above) |
-| `pool.py`, `worker.py` | detection in worker processes (`python -m tools.detection_dataset_annotator.worker`) |
+| `pool.py`, `worker.py` | detection in worker processes, driven by asyncio (`python -m tools.detection_dataset_annotator.worker`) |
 | `boxes.py` | the editor's boxes mapped back to saved annotations by stable id |
 | `export.py` | COCO and manifest export |
 | `constants.py` | every threshold and setting (`ANNOTATOR_...`) |
 
-Tests: `pytest tests/test_dataset_annotator.py tests/test_dataset_annotator_icons.py
-tests/test_dataset_annotator_worker.py`.
+Tests: `pytest tests/detection_dataset_annotator` (the worker pool's tests run against a stand-in worker,
+`tests/detection_dataset_annotator/fake_worker.py`).

@@ -37,12 +37,11 @@ def decode_image(path: Path) -> np.ndarray | None:
 
 
 def _read_images(path: Path) -> tuple[np.ndarray, np.ndarray] | None:
-    """The original screenshot and the detector's 1080p copy of it."""
+    """The original screenshot and the detector's 1080p copy of it (decoded once)."""
     raw = decode_image(path)
-    detector = core.read_screenshot(path)
-    if raw is None or detector is None:
+    if raw is None:
         return None
-    return raw, detector
+    return raw, core.scale_screenshot(raw)
 
 
 def _clip(left: float, top: float, right: float, bottom: float, width: int, height: int) -> Box | None:
@@ -167,7 +166,7 @@ def run_classical_detector(path: Path, options: DetectionOptions = DEFAULT_OPTIO
     """
     # Imported here: they load the detector models, which only the worker processes need.
     from grand_project.detect.models import _models
-    from grand_project.detect.pipeline import detect_classical
+    from grand_project.detect.pipeline import detect_classical, ensure_models, find_maps
 
     from .icon_proposals import hidden_nodes, map_spots, propose_icons
 
@@ -175,11 +174,15 @@ def run_classical_detector(path: Path, options: DetectionOptions = DEFAULT_OPTIO
     if loaded is None:
         raise ValueError(f"Could not read image: {path}")
     raw_image, detector_image = loaded
-    detection = detect_classical(detector_image)
+    # The map finder runs once here and is handed to the detector: its candidates also give the faint map nodes.
+    ensure_models()
+    found_maps = find_maps(detector_image, _models["maps"])
+    detection = detect_classical(detector_image, found_maps=found_maps)
     # The classical finder misses most of the larger silver-rimmed icons (res atlases) and the fogged map nodes
     # under icons: add the rim candidates whose picture matches a stored icon, then a map node under every icon row
-    # without one (``_models`` holds the models detect_classical loaded).
-    spots = map_spots(detector_image, _models["maps"])
+    # without one.
+    _maps, candidates, probabilities = found_maps
+    spots = map_spots(candidates, probabilities)
     detection["icons"] = detection["icons"] + propose_icons(detector_image, detection, _models["badges"], spots)
     detection["nodes"] = detection["nodes"] + hidden_nodes(detector_image, detection, detection["icons"], spots)
     wall_mask = None

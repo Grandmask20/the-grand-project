@@ -5,6 +5,10 @@
     pytest -m slow                           the long ones (waiting islands, ~10 min)
     pytest -m ""                             everything
     pytest tests/test_drop_placement.py --runs 20 --seed 123      randomised tests: more runs / a fixed seed
+    pytest tests/detection_dataset_annotator one group: the dataset annotator (tests/rf_detr: the RF-DETR detector)
+
+Related tests are grouped in subpackages (``tests/detection_dataset_annotator``, ``tests/rf_detr``); a subpackage's
+own ``conftest.py`` holds the setup only its tests share, and every fixture here applies to them too.
 
 Markers (declared in pyproject.toml): `data` tests are skipped when the test screenshots are not there (Git LFS:
 git lfs pull --include="atlas_test_data/**", or set ATLAS_TEST_DATA).

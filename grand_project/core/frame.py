@@ -128,7 +128,19 @@ def read_screenshot(path) -> np.ndarray | None:
         BGR image, or None when it can't be read.
     """
     img = cv2.imdecode(np.fromfile(str(path), np.uint8), cv2.IMREAD_COLOR)
-    if img is None or img.shape[0] == K.SCREEN_HEIGHT:
+    return None if img is None else scale_screenshot(img)
+
+
+def scale_screenshot(img: np.ndarray) -> np.ndarray:
+    """A decoded screenshot as the detector sees it (see read_screenshot), for callers that keep the original too.
+
+    Args:
+        img: BGR image at its original size.
+
+    Returns:
+        The image scaled to SCREEN_HEIGHT px tall, or ``img`` itself when it is 1080p already or a crop.
+    """
+    if img.shape[0] == K.SCREEN_HEIGHT:
         return img
     if img.shape[0] < 720 or not 1.5 <= img.shape[1] / img.shape[0] <= 2.5:
         return img

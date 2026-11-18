@@ -90,23 +90,17 @@ def name_icons(img: np.ndarray, pts: np.ndarray, names: list[str], features: np.
     return results
 
 
-def map_spots(img: np.ndarray, maps_model: Any) -> np.ndarray:
+def map_spots(pts: np.ndarray, prob: np.ndarray) -> np.ndarray:
     """Faint map nodes: map candidates the map classifier gave at least ``ANNOTATOR_SPOT_MIN``.
 
-    The classical detector computes these inside ``detect_classical`` without returning them, so they are worked
-    out again here with the same function and model (``pipeline.find_maps``).
-
     Args:
-        img: BGR screenshot (1080p).
-        maps_model: The trained "maps" classifier.
+        pts: (n, 2) map candidates x, y in detector px (``pipeline.find_maps``, the run the detector was given).
+        prob: (n,) map probability of each candidate.
 
     Returns:
-        (n, 2) float array of x, y in detector px.
+        (k, 2) float array of x, y in detector px.
     """
-    from grand_project.detect.pipeline import find_maps
-
-    _maps, pts, prob = find_maps(img, maps_model)
-    return pts[prob >= K.ANNOTATOR_SPOT_MIN].astype(float).reshape(-1, 2)
+    return np.asarray(pts)[np.asarray(prob) >= K.ANNOTATOR_SPOT_MIN].astype(float).reshape(-1, 2)
 
 
 def _in_row(pts: np.ndarray, anchors: np.ndarray, nodes: np.ndarray) -> np.ndarray:

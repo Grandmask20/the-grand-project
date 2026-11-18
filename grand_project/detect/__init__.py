@@ -205,6 +205,7 @@ from .pipeline import (  # noqa: F401
     cmd_run,
     detect,
     detect_classical,
+    ensure_models,
     find_maps,
 )
 from .rf_detr import (  # noqa: F401
