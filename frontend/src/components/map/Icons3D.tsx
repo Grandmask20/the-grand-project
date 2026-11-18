@@ -49,7 +49,8 @@ export function Icons3D({ map, geo, info, meta }: { map: MapLibreMap; geo: Geo; 
 				const step = typeof p.step === "number" ? p.step : -1;
 				const g = f.geometry;
 				const lines = g.type === "LineString" ? [g.coordinates] : g.type === "MultiLineString" ? g.coordinates : [];
-				for (const pts of lines) out.push({ pts: pts as [number, number][], colour, step });
+				const id = Number(p.id);
+				for (const pts of lines) out.push({ id, pts: pts as [number, number][], colour, step });
 			}
 			l.setPaths(out);
 		};

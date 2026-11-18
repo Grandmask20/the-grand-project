@@ -11,6 +11,7 @@ import { useRouteGraph } from "@/hooks/map/UseGraph";
 import type { Geo, Point } from "@/logic/Geo";
 import type { IconLayer3D } from "@/logic/IconLayer3D";
 import { EMPTY, setData } from "@/logic/MapStyle";
+import type { PathLayer3D } from "@/logic/PathLayer3D";
 import { useAppStore } from "@/store/AppStore";
 import { BiomeMenu } from "./BiomeMenu";
 import { MapMenu } from "./MapMenu";
@@ -73,6 +74,9 @@ export function MapInteraction({ map, geo, meta }: { map: MapLibreMap; geo: Geo;
 				const layer = map.getLayer("icons-3d-gl") as unknown as { implementation?: IconLayer3D } | undefined;
 				const id = layer?.implementation ? await layer.implementation.pickAt(e.point.x, e.point.y) : null;
 				if (id !== null) return app.getInfo("icon", id);
+				const paths = map.getLayer("paths-3d-gl") as unknown as { implementation?: PathLayer3D } | undefined;
+				const pid = paths?.implementation ? await paths.implementation.pickAt(e.point.x, e.point.y) : null;
+				if (pid !== null) return app.getInfo("path", pid);
 			}
 			return pick(clickAt(e));
 		},

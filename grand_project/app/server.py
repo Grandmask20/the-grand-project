@@ -872,6 +872,9 @@ class AppServer(ThreadingHTTPServer):
 
     daemon_threads = True
     allow_reuse_address = False
+    # connections waiting to be taken: a page reload asks for dozens of tiles at once, and with the default 5 the rest
+    # were refused ("the app isn't running" until the next reload: user)
+    request_queue_size = 256
 
     def __init__(self, session: AtlasSession, host: str = APP_HOST, port: int = APP_PORT):
         """Bind to the first free port from `port` (APP_PORT_TRIES tries; port 0: any free one).

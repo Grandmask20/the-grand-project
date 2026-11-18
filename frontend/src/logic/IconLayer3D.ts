@@ -19,6 +19,7 @@ export interface Icon3D {
 	step: number;
 }
 
+const ICON_FAR = 2.6; // icons are drawn out to this many times the view centre's distance
 const CELL = 64; // px per picture in the texture
 const COLS = 32;
 const HALF = 13; // atlas units: half an icon (an icon is 26 units across)
@@ -36,6 +37,7 @@ uniform float u_models;
 uniform vec2 u_view;
 uniform float u_size;
 uniform float u_sel;
+uniform float u_far; // clip w beyond which icons aren't drawn (a render distance: user)
 varying vec2 v_uv;
 varying vec2 v_local;
 varying float v_id;
@@ -44,6 +46,7 @@ varying float v_step;
 void main() {
 	vec3 p = vec3(a_xy, (${BASE.toFixed(1)} + a_info.y * u_models) * u_k);
 	vec4 c0 = u_m * vec4(p, 1.0);
+	if (c0.w > u_far) { gl_Position = vec4(2.0, 2.0, 2.0, 1.0); return; }
 	// screen px of half an icon at this distance: in perspective sizes go as 1 / w, so the size at the view's centre
 	// (u_size, with its w) scaled by w (measuring along one map direction changed as the map turned: user)
 	float hs = u_size / c0.w;
@@ -299,6 +302,7 @@ export class IconLayer3D implements CustomLayerInterface {
 		const size = this.centreSize(options.defaultProjectionData.mainMatrix as Float32Array, gl);
 		this.last = { M: Float32Array.from(options.defaultProjectionData.mainMatrix as Float32Array), size };
 		gl.uniform1f(gl.getUniformLocation(p, "u_size"), size);
+		gl.uniform1f(gl.getUniformLocation(p, "u_far"), ICON_FAR * this.centreW());
 		gl.activeTexture(gl.TEXTURE0);
 		gl.bindTexture(gl.TEXTURE_2D, this.tex);
 		gl.uniform1i(gl.getUniformLocation(p, "u_tex"), 0);
@@ -365,6 +369,15 @@ export class IconLayer3D implements CustomLayerInterface {
 		const id = px[0] + px[1] * 256 + px[2] * 65536 - 1;
 		req.done(id >= 0 ? id : null);
 		map.triggerRepaint(); // the pixel used for the answer is drawn again
+	}
+
+	/** The view centre's clip w (its distance from the camera, in the projection's terms). */
+	private centreW(): number {
+		const map = this.map;
+		const L = this.last;
+		if (!map || !L) return 1e9;
+		const c = MercatorCoordinate.fromLngLat(map.getCenter());
+		return L.M[3] * c.x + L.M[7] * c.y + L.M[15];
 	}
 
 	/** Half an icon in drawing px at the view's centre, times the centre's clip w (see the vertex shader). */
