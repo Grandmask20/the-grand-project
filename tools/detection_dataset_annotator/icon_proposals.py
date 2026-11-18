@@ -1,13 +1,13 @@
-"""Extra icon proposals for the dataset bootstrap: rim first, then the picture inside it.
+"""Extra icon proposals for the dataset annotator: rim first, then the picture inside it.
 
 The classical finder (``detect.badges.find_badges``) decides "is this an icon?" with a frozen classifier trained on
 the crawl screenshots' small gold-rimmed icons. On the res atlases most icons are larger with a silver
 rim: they are still rim candidates, and naming matches them to a stored icon picture almost exactly, but the
-classifier rejects them, so the annotation tool showed few or no icons there.
+classifier rejects them, so the annotator showed few or no icons there.
 
 For a dataset that a reviewer corrects, missing an icon costs more than proposing a wrong one, so this module
 proposes an icon at every rim candidate that both sits where icons sit (in a row just above a map node) and closely
-matches a stored icon picture. It only adds bootstrap boxes; the program's own icon finder is unchanged (user's
+matches a stored icon picture. It only adds annotator boxes; the program's own icon finder is unchanged (user's
 rule: teaching icons must never change what is found).
 """
 
@@ -17,26 +17,12 @@ from typing import Any
 
 import cv2
 import numpy as np
-from constants import (
-    BOOTSTRAP_HIDDEN_MIN_PAIRS,
-    BOOTSTRAP_HIDDEN_SNAP,
-    BOOTSTRAP_ICON_BATCH,
-    BOOTSTRAP_ICON_CENTRED,
-    BOOTSTRAP_ICON_MATCH,
-    BOOTSTRAP_ICON_MATCH_FAINT,
-    BOOTSTRAP_ICON_MATCH_SURE,
-    BOOTSTRAP_ICON_NMS,
-    BOOTSTRAP_ICON_NODE_CLEAR,
-    BOOTSTRAP_ICON_ROW_DX,
-    BOOTSTRAP_ICON_ROW_DY,
-    BOOTSTRAP_ICON_ROW_GAP,
-    BOOTSTRAP_ICON_ROW_HEIGHT,
-    BOOTSTRAP_SPOT_MIN,
-)
 
 from grand_project import core, icon_refs
 from grand_project.detect import badges
-from grand_project.detect import constants as detector_constants
+from grand_project.detect import constants as detect_constants
+
+from . import constants as K
 
 _HALF = icon_refs.SIZE // 2
 _MASK_Y, _MASK_X = (np.nonzero(icon_refs._MASK)[0] - _HALF), (np.nonzero(icon_refs._MASK)[1] - _HALF)
@@ -83,8 +69,8 @@ def name_icons(img: np.ndarray, pts: np.ndarray, names: list[str], features: np.
         return results
     blurred = cv2.GaussianBlur(img, (0, 0), 1.5)
     colours = icon_refs.refs().colours
-    for start in range(0, len(order), BOOTSTRAP_ICON_BATCH):
-        chunk = order[start : start + BOOTSTRAP_ICON_BATCH]
+    for start in range(0, len(order), K.ANNOTATOR_ICON_BATCH):
+        chunk = order[start : start + K.ANNOTATOR_ICON_BATCH]
         ys = pts[chunk, 1][:, None, None] + _SHIFTS[None, :, 0, None] + _MASK_Y[None, None, :]
         xs = pts[chunk, 0][:, None, None] + _SHIFTS[None, :, 1, None] + _MASK_X[None, None, :]
         vectors = blurred[ys, xs].astype(np.float32)  # (points, shifts, pixels, 3)
@@ -105,7 +91,7 @@ def name_icons(img: np.ndarray, pts: np.ndarray, names: list[str], features: np.
 
 
 def map_spots(img: np.ndarray, maps_model: Any) -> np.ndarray:
-    """Faint map nodes: map candidates the map classifier gave at least ``BOOTSTRAP_SPOT_MIN``.
+    """Faint map nodes: map candidates the map classifier gave at least ``ANNOTATOR_SPOT_MIN``.
 
     The classical detector computes these inside ``detect_classical`` without returning them, so they are worked
     out again here with the same function and model (``pipeline.find_maps``).
@@ -120,7 +106,7 @@ def map_spots(img: np.ndarray, maps_model: Any) -> np.ndarray:
     from grand_project.detect.pipeline import find_maps
 
     _maps, pts, prob = find_maps(img, maps_model)
-    return pts[prob >= BOOTSTRAP_SPOT_MIN].astype(float).reshape(-1, 2)
+    return pts[prob >= K.ANNOTATOR_SPOT_MIN].astype(float).reshape(-1, 2)
 
 
 def _in_row(pts: np.ndarray, anchors: np.ndarray, nodes: np.ndarray) -> np.ndarray:
@@ -138,11 +124,11 @@ def _in_row(pts: np.ndarray, anchors: np.ndarray, nodes: np.ndarray) -> np.ndarr
         return np.zeros(len(pts), dtype=bool)
     dx = pts[:, None, 0] - anchors[None, :, 0]
     dy = anchors[None, :, 1] - pts[:, None, 1]
-    above = (dy >= BOOTSTRAP_ICON_ROW_DY[0]) & (dy <= BOOTSTRAP_ICON_ROW_DY[1])
-    in_row = (above & (np.abs(dx) <= BOOTSTRAP_ICON_ROW_DX)).any(axis=1)
+    above = (dy >= K.ANNOTATOR_ICON_ROW_DY[0]) & (dy <= K.ANNOTATOR_ICON_ROW_DY[1])
+    in_row = (above & (np.abs(dx) <= K.ANNOTATOR_ICON_ROW_DX)).any(axis=1)
     if len(nodes):
         distance = np.hypot(pts[:, None, 0] - nodes[None, :, 0], pts[:, None, 1] - nodes[None, :, 1]).min(axis=1)
-        in_row &= distance > BOOTSTRAP_ICON_NODE_CLEAR
+        in_row &= distance > K.ANNOTATOR_ICON_NODE_CLEAR
     return in_row
 
 
@@ -153,9 +139,9 @@ def _centred(x: float, y: float, anchors: np.ndarray) -> bool:
     dy = anchors[:, 1] - y
     return bool(
         (
-            (np.abs(anchors[:, 0] - x) <= BOOTSTRAP_ICON_CENTRED)
-            & (dy >= BOOTSTRAP_ICON_ROW_DY[0])
-            & (dy <= BOOTSTRAP_ICON_ROW_DY[1])
+            (np.abs(anchors[:, 0] - x) <= K.ANNOTATOR_ICON_CENTRED)
+            & (dy >= K.ANNOTATOR_ICON_ROW_DY[0])
+            & (dy <= K.ANNOTATOR_ICON_ROW_DY[1])
         ).any()
     )
 
@@ -164,15 +150,15 @@ def _stands_on(x: float, y: float, dist: float, nodes: np.ndarray, spots: np.nda
     """Whether a weak match at x, y (or a pair's middle) stands centred on a map node.
 
     A faint map node is weaker evidence than a found one, so leaning on it takes a closer match
-    (``BOOTSTRAP_ICON_MATCH_FAINT``).
+    (``ANNOTATOR_ICON_MATCH_FAINT``).
     """
-    return _centred(x, y, nodes) or (dist <= BOOTSTRAP_ICON_MATCH_FAINT and _centred(x, y, spots))
+    return _centred(x, y, nodes) or (dist <= K.ANNOTATOR_ICON_MATCH_FAINT and _centred(x, y, spots))
 
 
 def _row_neighbours(ax: float, ay: float, bx: float, by: float) -> bool:
     """Whether two icons are side by side in one row."""
-    low, high = BOOTSTRAP_ICON_ROW_GAP
-    return abs(ay - by) <= BOOTSTRAP_ICON_ROW_HEIGHT and low <= abs(ax - bx) <= high
+    low, high = K.ANNOTATOR_ICON_ROW_GAP
+    return abs(ay - by) <= K.ANNOTATOR_ICON_ROW_HEIGHT and low <= abs(ax - bx) <= high
 
 
 def _points(items: list[dict[str, Any]]) -> np.ndarray:
@@ -184,7 +170,7 @@ def propose_icons(
 ) -> list[dict[str, Any]]:
     """Icons the classical finder missed: rim candidates in an icon row whose picture matches a stored icon.
 
-    A close match (``BOOTSTRAP_ICON_MATCH_SURE``) is enough on its own. A weaker one must also be centred over a
+    A close match (``ANNOTATOR_ICON_MATCH_SURE``) is enough on its own. A weaker one must also be centred over a
     map node, be the row neighbour of a found icon, or form a pair with another weak match whose middle is centred
     over a map node (a row of two stands centred on its map node); leaning on a faint map node takes a closer match.
 
@@ -209,11 +195,11 @@ def propose_icons(
     names, features = picture_book(book)
     matches = []
     for (name, dist), (x, y) in zip(name_icons(img, pts, names, features), pts, strict=True):
-        if dist > BOOTSTRAP_ICON_MATCH or name in ("Unidentified", icon_refs.NOT_A_BADGE):
+        if dist > K.ANNOTATOR_ICON_MATCH or name in ("Unidentified", icon_refs.NOT_A_BADGE):
             continue
         if name.endswith("Influence"):
             continue  # a weak circle named a biome influence is usually terrain (user's rule)
-        if name == detector_constants.EXPEDITION and not badges._in_water(img, float(x), float(y)):
+        if name == detect_constants.EXPEDITION and not badges._in_water(img, float(x), float(y)):
             continue  # Expedition only appears in the water zone (user's rule)
         matches.append((dist, name, float(x), float(y)))
     matches.sort(key=lambda match: match[0])
@@ -222,7 +208,7 @@ def propose_icons(
     proposals: list[dict[str, Any]] = []
 
     def taken(match: tuple[float, str, float, float]) -> bool:
-        return any(np.hypot(match[2] - fx, match[3] - fy) <= BOOTSTRAP_ICON_NMS for fx, fy in found)
+        return any(np.hypot(match[2] - fx, match[3] - fy) <= K.ANNOTATOR_ICON_NMS for fx, fy in found)
 
     def accept(match: tuple[float, str, float, float]) -> None:
         dist, name, x, y = match
@@ -239,7 +225,7 @@ def propose_icons(
                 continue
             dist, _name, x, y = match
             neighbour = any(_row_neighbours(x, y, fx, fy) for fx, fy in found)
-            if dist <= BOOTSTRAP_ICON_MATCH_SURE or neighbour or _stands_on(x, y, dist, nodes, spots):
+            if dist <= K.ANNOTATOR_ICON_MATCH_SURE or neighbour or _stands_on(x, y, dist, nodes, spots):
                 accept(match)
             else:
                 waiting.append(match)
@@ -274,12 +260,12 @@ def _icon_rows(icons: list[dict[str, Any]]) -> list[list[dict[str, Any]]]:
 
     One icon of a row may be missed, so twice the gap also joins.
     """
-    low, high = BOOTSTRAP_ICON_ROW_GAP
+    low, high = K.ANNOTATOR_ICON_ROW_GAP
     rows: list[list[dict[str, Any]]] = []
     for icon in sorted(icons, key=lambda item: item["x"]):
         for row in rows:
             gap = icon["x"] - row[-1]["x"]
-            if abs(icon["y"] - row[-1]["y"]) <= BOOTSTRAP_ICON_ROW_HEIGHT and (
+            if abs(icon["y"] - row[-1]["y"]) <= K.ANNOTATOR_ICON_ROW_HEIGHT and (
                 low <= gap <= high or 2 * low <= gap <= 2 * high
             ):
                 row.append(icon)
@@ -293,7 +279,7 @@ def node_offset(icons: list[dict[str, Any]], nodes: list[dict[str, Any]]) -> flo
     """How far below its icons this screenshot's map nodes sit: the median over icons centred above a map node.
 
     Crawl screenshots measure 24 px (``ROW_DY``), the res atlases 31-36; fewer than
-    ``BOOTSTRAP_HIDDEN_MIN_PAIRS`` pairs fall back to ``ROW_DY``.
+    ``ANNOTATOR_HIDDEN_MIN_PAIRS`` pairs fall back to ``ROW_DY``.
     """
     found = _points([node for node in nodes if not node.get("hidden")])
     offsets = []
@@ -302,12 +288,12 @@ def node_offset(icons: list[dict[str, Any]], nodes: list[dict[str, Any]]) -> flo
             break
         dx = found[:, 0] - icon["x"]
         dy = found[:, 1] - icon["y"]
-        low, high = BOOTSTRAP_ICON_ROW_DY
-        below = (np.abs(dx) <= BOOTSTRAP_ICON_CENTRED) & (dy >= low) & (dy <= high)
+        low, high = K.ANNOTATOR_ICON_ROW_DY
+        below = (np.abs(dx) <= K.ANNOTATOR_ICON_CENTRED) & (dy >= low) & (dy <= high)
         if below.any():
             offsets.append(float(dy[below].min()))
-    if len(offsets) < BOOTSTRAP_HIDDEN_MIN_PAIRS:
-        return float(detector_constants.ROW_DY)
+    if len(offsets) < K.ANNOTATOR_HIDDEN_MIN_PAIRS:
+        return float(detect_constants.ROW_DY)
     return float(np.median(offsets))
 
 
@@ -342,16 +328,16 @@ def hidden_nodes(
         x = (row[0]["x"] + row[-1]["x"]) / 2  # the map node sits under the row's middle (user's rule)
         y = float(np.mean([icon["y"] for icon in row]))
         y += offset
-        if len(visible) and np.hypot(visible[:, 0] - x, visible[:, 1] - y).min() <= detector_constants.HIDDEN_SNAP:
+        if len(visible) and np.hypot(visible[:, 0] - x, visible[:, 1] - y).min() <= detect_constants.HIDDEN_SNAP:
             continue  # a visible map node this close is the row's map node, not a hidden one next to it (user's rule)
-        if len(known) and np.hypot(known[:, 0] - x, known[:, 1] - y).min() <= detector_constants.MAP_NMS:
+        if len(known) and np.hypot(known[:, 0] - x, known[:, 1] - y).min() <= detect_constants.MAP_NMS:
             continue
-        if len(icon_points) and np.hypot(icon_points[:, 0] - x, icon_points[:, 1] - y).min() <= BOOTSTRAP_ICON_NMS:
+        if len(icon_points) and np.hypot(icon_points[:, 0] - x, icon_points[:, 1] - y).min() <= K.ANNOTATOR_ICON_NMS:
             continue  # a marker pinned above another icon, not a row above a map node
         if len(spots):
             distance = np.hypot(spots[:, 0] - x, spots[:, 1] - y)
             nearest = int(np.argmin(distance))
-            if distance[nearest] <= BOOTSTRAP_HIDDEN_SNAP:
+            if distance[nearest] <= K.ANNOTATOR_HIDDEN_SNAP:
                 x, y = float(spots[nearest, 0]), float(spots[nearest, 1])
         if not (0 <= x < width and 0 <= y < height) or core.on_hud_mask([(x, y)], width, height, pad=0)[0]:
             continue

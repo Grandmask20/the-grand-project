@@ -1,4 +1,5 @@
-/* Box editor styles. Streamlit's theme variables keep it readable in light and dark themes. */
+/* Box editor of the detection dataset annotator. Streamlit's theme variables keep it readable in light and dark
+   themes. */
 
 .ann {
   --ann-text: var(--st-text-color, #fafafa);
@@ -6,6 +7,8 @@
   --ann-panel: var(--st-secondary-background-color, #262730);
   --ann-accent: var(--st-primary-color, #ff4b4b);
   --ann-border: rgba(128, 128, 128, 0.35);
+  --ann-ok: #3dd56d;
+  --ann-canvas: #000;
   display: flex;
   flex-direction: column;
   width: 100%;
@@ -26,7 +29,7 @@
   flex: 1;
   min-width: 0;
   overflow: hidden;
-  background: #000;
+  background: var(--ann-canvas);
   border: 1px solid var(--ann-border);
   border-radius: 6px;
   outline: none;
@@ -113,7 +116,7 @@
   display: block;
 }
 
-.ann-all-chips .ann-box:not(.hover):not(.selected) .ann-chip {
+.ann-all-chips .ann-box:not(.hover, .selected) .ann-chip {
   opacity: 0.75;
 }
 
@@ -214,12 +217,8 @@
   padding: 3px 4px;
 }
 
-.ann-btn.ann-off {
-  text-decoration: line-through;
-  opacity: 0.7;
-}
-
-.ann-btn.ann-on {
+/* Toggles (boxes, labels, help) and the label for new boxes show their state through aria-pressed. */
+.ann-btn[aria-pressed="true"] {
   border-color: var(--ann-accent);
 }
 
@@ -229,7 +228,7 @@
 }
 
 .ann-ok {
-  color: #3dd56d;
+  color: var(--ann-ok);
 }
 
 .ann-muted {
@@ -262,7 +261,7 @@
   border-color: var(--ann-border);
 }
 
-.ann-label.current {
+.ann-label[aria-pressed="true"] {
   border-color: var(--ann-accent);
 }
 
@@ -338,6 +337,7 @@
   background: rgba(0, 0, 0, 0.55);
 }
 
+/* The overlay's display: flex would otherwise override the hidden attribute. */
 .ann-help[hidden] {
   display: none;
 }

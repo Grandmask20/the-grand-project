@@ -1,4 +1,4 @@
-"""The bootstrapper's box editor: a Streamlit components v2 component with plain JS and CSS, no build step.
+"""The annotator's box editor: a Streamlit components v2 component with plain JS and CSS, no build step.
 
 The screenshot is shown as an ``<img>`` and every box as its own element above it, so boxes are never part of the
 picture. The editor sends its boxes back as the ``edit`` state (autosave) and navigation as the ``action`` trigger.
@@ -12,16 +12,16 @@ from typing import Any
 
 import streamlit as st
 
+__all__ = ["annotate"]
+
 _HERE = Path(__file__).resolve().parent
 
 # Registered once per process; asset paths only work for installed packages, so the files are passed as text.
 _COMPONENT = st.components.v2.component(
-    "bootstrap_box_editor",
+    "dataset_box_editor",
     js=(_HERE / "annotator.js").read_text(encoding="utf-8"),
     css=(_HERE / "annotator.css").read_text(encoding="utf-8"),
 )
-
-__all__ = ["annotate"]
 
 
 def annotate(

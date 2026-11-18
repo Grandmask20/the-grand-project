@@ -27,7 +27,8 @@ NumPy, SciPy, scikit-learn. It must run on Windows, macOS and Linux.
 `grand_project/` is the package (see the README's *Code layout* table): `core/` (screenshots, placement, the atlas
 file, terrain, waiting groups `islands.py`, clean map `seams.py`), `detect/` (the per-screenshot detector),
 `finalize/` (the atlas-wide check), `viewer/` (the window, one mixin per file), plus `builder.py`, `cities.py`,
-`towers.py`, `paths.py` (every folder location). `tools/` are developer helpers, `tests/` regression tests,
+`towers.py`, `paths.py` (every folder location). `tools/` are developer helpers
+(`tools/detection_dataset_annotator/` is the Streamlit RF-DETR dataset annotator), `tests/` regression tests,
 `references/` every data file the program reads.
 
 ## Conventions

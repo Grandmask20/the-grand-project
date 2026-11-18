@@ -1,4 +1,4 @@
-// Box editor for the RF-DETR dataset bootstrapper (a Streamlit components v2 module, no build step).
+// Box editor for the detection dataset annotator (a Streamlit components v2 module, no build step).
 //
 // The screenshot is a plain <img>; every box is its own element above it, so the picture is never changed and
 // "Save image as" gives the clean screenshot. All coordinates are source-image pixels; the stage is scaled with a
@@ -7,18 +7,30 @@
 // Streamlit calls the default export again whenever the data changes (after every autosave rerun) and runs only
 // the last returned cleanup, on unmount. So one Annotator lives per mount point and later calls only update it:
 // a rerun must never reset boxes that are still being edited.
+//
+// Python sends the sizes and timings (chip_px, editor_height, autosave_ms) with the data; the numbers below only
+// shape the interaction itself.
 
 const INSTANCES = new WeakMap();
 const DESTROY_DELAY_MS = 100; // a cleanup followed by a new call for the same mount point is a re-render
-const HANDLE_PX = 9; // resize handle size on screen, at any zoom
+const HANDLE_PX = 9; // resize handle reach on screen, at any zoom
+const DRAG_START_PX = 3; // pointer travel on screen before a press becomes a drag
+const HIT_PAD_PX = 2; // boxes are hit this far outside their border (screen pixels)
 const MIN_BOX_PX = 2; // smaller drags are clicks, not new boxes (source pixels)
 const HISTORY_LIMIT = 200;
 const MAX_ZOOM = 16;
+const MIN_ZOOM_OF_FIT = 0.5; // zoom out to half the fitted size at most
+const WHEEL_ZOOM_RATE = 0.0015; // zoom factor exponent per wheel delta unit
+const KEY_ZOOM_STEP = 1.25; // + / - zoom factor
 const NEW_BOX_OFFSET = 8; // duplicate offset (source pixels)
+const NUDGE_PX = 1; // arrows move / resize this much (source pixels)
+const NUDGE_SHIFT_PX = 10; // ... with Shift
 const SCALE_STEP_PX = 1; // , and . shrink / grow every side of a box this much (source pixels)
 const SCALE_STEP_SHIFT_PX = 5; // ... with Shift
 const SCALE_WHEEL_DELTA = 100; // wheel delta per resize step: one mouse-wheel notch; trackpads add up small deltas
 const SCALE_UNDO_MS = 600; // resize steps closer together than this are one undo step (one wheel gesture)
+const REVEAL_MARGIN_PX = 24; // Tab pans when the box comes closer than this to the viewport edge
+const MANUAL = "manual"; // box source of drawn or changed boxes (constants.ANNOTATOR_MANUAL_SOURCE)
 
 const HANDLES = ["nw", "n", "ne", "e", "se", "s", "sw", "w"];
 const HANDLE_CURSORS = {
@@ -62,7 +74,7 @@ const SHORTCUTS = [
 function el(tag, className, parent) {
   const node = document.createElement(tag);
   if (className) node.className = className;
-  if (parent) parent.appendChild(node);
+  parent?.appendChild(node);
   return node;
 }
 
@@ -93,6 +105,7 @@ class Annotator {
     this.history = [];
     this.future = [];
     this.view = { zoom: 1, x: 0, y: 0 };
+    this.fitZoom = null;
     this.fitted = false;
     this.drag = null;
     this.spaceDown = false;
@@ -109,6 +122,9 @@ class Annotator {
     this.session = Date.now().toString(36);
     this.currentLabel = null;
     this.data = null;
+    this.labels = [];
+    this.colors = {};
+    this.listeners = [];
     this.build();
     this.listen();
   }
@@ -118,25 +134,22 @@ class Annotator {
   bind(component) {
     this.setStateValue = component.setStateValue;
     this.setTriggerValue = component.setTriggerValue;
-    if (this.destroyTimer) {
-      clearTimeout(this.destroyTimer);
-      this.destroyTimer = null;
-    }
+    clearTimeout(this.destroyTimer);
+    this.destroyTimer = null;
   }
 
   update(data) {
-    const first =
-      !this.data || this.data.image_key !== data.image_key || this.data.revision !== data.revision;
+    const first = !this.data || this.data.image_key !== data.image_key || this.data.revision !== data.revision;
     this.data = data;
-    this.labels = data.labels || [];
+    this.labels = data.labels ?? [];
     this.colors = Object.fromEntries(this.labels.map((label) => [label.name, label.color]));
     if (!this.currentLabel || !this.colors[this.currentLabel]) {
-      this.currentLabel = this.labels.length ? this.labels[0].name : "";
+      this.currentLabel = this.labels[0]?.name ?? "";
     }
-    this.wrap.style.setProperty("--chip-px", `${data.chip_px || 11}px`);
-    this.wrap.style.height = `${data.editor_height || 760}px`;
+    this.wrap.style.setProperty("--chip-px", `${data.chip_px}px`);
+    this.wrap.style.height = `${data.editor_height}px`;
     if (first) {
-      this.boxes = cloneBoxes(data.boxes || []);
+      this.boxes = cloneBoxes(data.boxes ?? []);
       this.selected.clear();
       this.history = [];
       this.future = [];
@@ -145,9 +158,9 @@ class Annotator {
       this.sentSeq = 0;
     }
     if (this.img.dataset.src !== data.image_url) {
-      this.img.dataset.src = data.image_url || "";
+      this.img.dataset.src = data.image_url ?? "";
       this.fitted = false;
-      this.img.src = data.image_url || "";
+      this.img.src = data.image_url ?? "";
     }
     this.stage.style.width = `${data.width}px`;
     this.stage.style.height = `${data.height}px`;
@@ -156,7 +169,7 @@ class Annotator {
   }
 
   scheduleDestroy() {
-    if (this.destroyTimer) clearTimeout(this.destroyTimer);
+    clearTimeout(this.destroyTimer);
     this.destroyTimer = setTimeout(() => {
       this.destroyTimer = null;
       this.flushAutosave();
@@ -169,7 +182,7 @@ class Annotator {
       target.removeEventListener(type, handler, options);
     }
     this.listeners = [];
-    if (this.resizeObserver) this.resizeObserver.disconnect();
+    this.resizeObserver?.disconnect();
     clearTimeout(this.autosaveTimer);
     this.wrap.remove();
     INSTANCES.delete(this.root);
@@ -180,13 +193,13 @@ class Annotator {
       image_key: this.data.image_key,
       revision: this.data.revision,
       seq: this.seq,
-      boxes: this.boxes.map((box) => ({
-        id: box.id,
-        label: box.label,
-        x: round2(box.x),
-        y: round2(box.y),
-        w: round2(box.w),
-        h: round2(box.h),
+      boxes: this.boxes.map(({ id, label, x, y, w, h }) => ({
+        id,
+        label,
+        x: round2(x),
+        y: round2(y),
+        w: round2(w),
+        h: round2(h),
       })),
     };
   }
@@ -194,7 +207,7 @@ class Annotator {
   changed() {
     this.seq += 1;
     clearTimeout(this.autosaveTimer);
-    this.autosaveTimer = setTimeout(() => this.flushAutosave(), this.data.autosave_ms || 500);
+    this.autosaveTimer = setTimeout(() => this.flushAutosave(), this.data.autosave_ms);
     this.renderStatus();
   }
 
@@ -233,8 +246,11 @@ class Annotator {
     this.layer = el("div", "ann-boxes", this.stage);
     this.drawEl = el("div", "ann-draw", this.stage);
     this.drawEl.hidden = true;
+
     this.helpEl = el("div", "ann-help", this.viewport);
     this.helpEl.hidden = true;
+    this.helpEl.setAttribute("role", "dialog");
+    this.helpEl.setAttribute("aria-label", "Shortcuts");
     const card = el("div", "ann-help-card", this.helpEl);
     el("h3", "", card).textContent = "Shortcuts";
     const table = el("table", "", card);
@@ -256,6 +272,7 @@ class Annotator {
     this.reviewBtn.classList.add("ann-primary");
     this.reviewState = el("div", "ann-row ann-muted", side);
     this.statusEl = el("div", "ann-status", side);
+    this.statusEl.setAttribute("aria-live", "polite");
 
     el("div", "ann-heading", side).textContent = "Labels";
     this.legendEl = el("div", "ann-legend", side);
@@ -268,7 +285,8 @@ class Annotator {
     this.chipsBtn = this.button(view, "Labels", "Show every label (L)", () => this.toggleChips());
     this.button(view, "Fit", "Fit the screenshot (F)", () => this.fit());
     this.button(view, "Centre", "Centre the screenshot, keeping the zoom (C)", () => this.centre());
-    this.button(view, "?", "Shortcuts (?)", () => this.toggleHelp());
+    this.helpBtn = this.button(view, "?", "Shortcuts (?)", () => this.toggleHelp());
+    this.helpBtn.setAttribute("aria-label", "Shortcuts");
   }
 
   button(parent, text, title, onClick) {
@@ -289,7 +307,6 @@ class Annotator {
   }
 
   listen() {
-    this.listeners = [];
     const viewport = this.viewport;
     this.on(viewport, "pointerdown", (event) => this.pointerDown(event));
     this.on(viewport, "pointermove", (event) => this.pointerMove(event));
@@ -305,14 +322,16 @@ class Annotator {
       if (event.key === " ") this.spaceDown = false;
     });
     // Keys belong to the editor after a click inside it and stop after a click anywhere else on the page.
-    this.on(document, "pointerdown", (event) => {
-      this.active = event.composedPath().includes(this.wrap);
-      this.wrap.classList.toggle("ann-inactive", !this.active);
-    });
+    this.on(document, "pointerdown", (event) => this.setActive(event.composedPath().includes(this.wrap)));
     this.resizeObserver = new ResizeObserver(() => {
       if (!this.fitted) this.fit();
     });
     this.resizeObserver.observe(viewport);
+  }
+
+  setActive(active) {
+    this.active = active;
+    this.wrap.classList.toggle("ann-inactive", !active);
   }
 
   // ---- geometry -------------------------------------------------------------------------------------------
@@ -355,11 +374,16 @@ class Annotator {
     const rect = this.viewport.getBoundingClientRect();
     const px = clientX - rect.left;
     const py = clientY - rect.top;
-    const low = (this.fitZoom || this.view.zoom) * 0.5;
+    const low = (this.fitZoom ?? this.view.zoom) * MIN_ZOOM_OF_FIT;
     const zoom = clamp(this.view.zoom * factor, low, MAX_ZOOM);
     const applied = zoom / this.view.zoom;
     this.view = { zoom, x: px - (px - this.view.x) * applied, y: py - (py - this.view.y) * applied };
     this.applyView();
+  }
+
+  zoomCentre(factor) {
+    const rect = this.viewport.getBoundingClientRect();
+    this.zoomAt(factor, rect.left + rect.width / 2, rect.top + rect.height / 2);
   }
 
   toImage(event) {
@@ -371,7 +395,8 @@ class Annotator {
   }
 
   boxesAt(point) {
-    const pad = 2 / this.view.zoom;
+    // Every box under the point, smallest first (a map node inside a tower box wins).
+    const pad = HIT_PAD_PX / this.view.zoom;
     return this.boxes
       .filter(
         (box) =>
@@ -386,7 +411,7 @@ class Annotator {
   handleAt(point) {
     // Handles of the selected box (one selected) or the hovered one, so a small box can be resized directly.
     const candidates = [];
-    if (this.selected.size === 1) candidates.push(this.byId([...this.selected][0]));
+    if (this.selected.size === 1) candidates.push(this.selectedBoxes()[0]);
     if (this.hoverId) candidates.push(this.byId(this.hoverId));
     const reach = HANDLE_PX / this.view.zoom;
     for (const box of candidates) {
@@ -409,9 +434,12 @@ class Annotator {
     return this.boxes.find((box) => box.id === id);
   }
 
+  selectedBoxes() {
+    return [...this.selected].map((id) => this.byId(id)).filter(Boolean);
+  }
+
   clampBox(box) {
-    const width = this.data.width;
-    const height = this.data.height;
+    const { width, height } = this.data;
     box.w = clamp(box.w, 1, width);
     box.h = clamp(box.h, 1, height);
     box.x = clamp(box.x, 0, width - box.w);
@@ -425,7 +453,7 @@ class Annotator {
   }
 
   markEdited(box) {
-    box.source = "manual";
+    box.source = MANUAL;
     box.score = null;
   }
 
@@ -460,8 +488,7 @@ class Annotator {
   // ---- pointer --------------------------------------------------------------------------------------------
 
   pointerDown(event) {
-    this.active = true;
-    this.wrap.classList.remove("ann-inactive");
+    this.setActive(true);
     this.viewport.focus({ preventScroll: true });
     if (event.button === 2) return; // keep the browser's menu (Save image as gives the clean screenshot)
     event.preventDefault();
@@ -471,50 +498,44 @@ class Annotator {
     } else if (!this.showBoxes) {
       return;
     } else {
-      const handle = this.handleAt(point);
-      const under = this.boxesAt(point);
-      if (handle) {
-        this.select(handle.box.id, false);
-        this.drag = { kind: "resize", handle: handle.handle, start: point, box: { ...handle.box }, id: handle.box.id };
-      } else if (under.length) {
-        let target = under[0];
-        if (event.altKey && under.length > 1) {
-          const current = under.findIndex((box) => this.selected.has(box.id));
-          target = under[(current + 1) % under.length];
-        }
-        if (event.shiftKey) {
-          if (this.selected.has(target.id)) this.selected.delete(target.id);
-          else this.selected.add(target.id);
-        } else if (!this.selected.has(target.id) || event.altKey) {
-          this.select(target.id, false);
-        }
-        const originals = [...this.selected].map((id) => ({ ...this.byId(id) }));
-        this.drag = { kind: "move", start: point, originals };
-      } else {
-        if (!event.shiftKey) this.selected.clear();
-        this.drag = { kind: "draw", start: point };
-      }
+      this.drag = this.startBoxDrag(event, point);
     }
     this.viewport.setPointerCapture(event.pointerId);
     this.drag.moved = false;
     this.renderAll();
   }
 
+  startBoxDrag(event, point) {
+    // A press on a handle resizes, on a box selects and moves, elsewhere draws a new box.
+    const handle = this.handleAt(point);
+    if (handle) {
+      this.select(handle.box.id);
+      return { kind: "resize", handle: handle.handle, start: point, box: { ...handle.box }, id: handle.box.id };
+    }
+    const under = this.boxesAt(point);
+    if (!under.length) {
+      if (!event.shiftKey) this.selected.clear();
+      return { kind: "draw", start: point };
+    }
+    let target = under[0];
+    if (event.altKey && under.length > 1) {
+      const current = under.findIndex((box) => this.selected.has(box.id));
+      target = under[(current + 1) % under.length];
+    }
+    if (event.shiftKey) {
+      if (this.selected.has(target.id)) this.selected.delete(target.id);
+      else this.selected.add(target.id);
+    } else if (!this.selected.has(target.id) || event.altKey) {
+      this.select(target.id);
+    }
+    return { kind: "move", start: point, originals: cloneBoxes(this.selectedBoxes()) };
+  }
+
   pointerMove(event) {
     const point = this.toImage(event);
     const drag = this.drag;
     if (!drag) {
-      if (!this.showBoxes) return;
-      const handle = this.handleAt(point);
-      const under = this.boxesAt(point);
-      this.setHover(handle ? handle.box.id : under.length ? under[0].id : null);
-      this.viewport.style.cursor = this.spaceDown
-        ? "grab"
-        : handle
-          ? HANDLE_CURSORS[handle.handle]
-          : under.length
-            ? "move"
-            : "crosshair";
+      this.hoverAt(point);
       return;
     }
     if (drag.kind === "pan") {
@@ -528,56 +549,70 @@ class Annotator {
     }
     const dx = point.x - drag.start.x;
     const dy = point.y - drag.start.y;
-    if (!drag.moved && Math.hypot(dx, dy) * this.view.zoom < 3) return;
+    if (!drag.moved && Math.hypot(dx, dy) * this.view.zoom < DRAG_START_PX) return;
     if (!drag.moved && drag.kind !== "draw") this.snapshot();
     drag.moved = true;
-    if (drag.kind === "move") {
-      for (const original of drag.originals) {
-        const box = this.byId(original.id);
-        if (!box) continue;
-        box.x = original.x + dx;
-        box.y = original.y + dy;
-        this.clampBox(box);
-        this.markEdited(box);
-        this.positionBox(box);
-      }
-    } else if (drag.kind === "resize") {
-      const box = this.byId(drag.id);
-      if (!box) return;
-      const start = drag.box;
-      let left = start.x;
-      let top = start.y;
-      let right = start.x + start.w;
-      let bottom = start.y + start.h;
-      if (drag.handle.includes("w")) left += dx;
-      if (drag.handle.includes("e")) right += dx;
-      if (drag.handle.includes("n")) top += dy;
-      if (drag.handle.includes("s")) bottom += dy;
-      left = clamp(left, 0, this.data.width);
-      right = clamp(right, 0, this.data.width);
-      top = clamp(top, 0, this.data.height);
-      bottom = clamp(bottom, 0, this.data.height);
-      box.x = Math.min(left, right);
-      box.y = Math.min(top, bottom);
-      box.w = Math.max(1, Math.abs(right - left));
-      box.h = Math.max(1, Math.abs(bottom - top));
+    if (drag.kind === "move") this.dragMove(drag, dx, dy);
+    else if (drag.kind === "resize") this.dragResize(drag, dx, dy);
+    else if (drag.kind === "draw") this.dragDraw(drag, point);
+  }
+
+  hoverAt(point) {
+    if (!this.showBoxes) return;
+    const handle = this.handleAt(point);
+    const under = this.boxesAt(point);
+    this.setHover(handle?.box.id ?? under[0]?.id ?? null);
+    let cursor = "crosshair";
+    if (this.spaceDown) cursor = "grab";
+    else if (handle) cursor = HANDLE_CURSORS[handle.handle];
+    else if (under.length) cursor = "move";
+    this.viewport.style.cursor = cursor;
+  }
+
+  dragMove(drag, dx, dy) {
+    for (const original of drag.originals) {
+      const box = this.byId(original.id);
+      if (!box) continue;
+      box.x = original.x + dx;
+      box.y = original.y + dy;
+      this.clampBox(box);
       this.markEdited(box);
-      this.positionBox(box);
-    } else if (drag.kind === "draw") {
-      const left = clamp(Math.min(drag.start.x, point.x), 0, this.data.width);
-      const top = clamp(Math.min(drag.start.y, point.y), 0, this.data.height);
-      const right = clamp(Math.max(drag.start.x, point.x), 0, this.data.width);
-      const bottom = clamp(Math.max(drag.start.y, point.y), 0, this.data.height);
-      drag.rect = { x: left, y: top, w: right - left, h: bottom - top };
-      Object.assign(this.drawEl.style, {
-        left: `${left}px`,
-        top: `${top}px`,
-        width: `${right - left}px`,
-        height: `${bottom - top}px`,
-        borderColor: this.colors[this.currentLabel] || "#fff",
-      });
-      this.drawEl.hidden = false;
+      this.updateBoxNode(box);
     }
+  }
+
+  dragResize(drag, dx, dy) {
+    const box = this.byId(drag.id);
+    if (!box) return;
+    const { width, height } = this.data;
+    const start = drag.box;
+    const left = clamp(start.x + (drag.handle.includes("w") ? dx : 0), 0, width);
+    const right = clamp(start.x + start.w + (drag.handle.includes("e") ? dx : 0), 0, width);
+    const top = clamp(start.y + (drag.handle.includes("n") ? dy : 0), 0, height);
+    const bottom = clamp(start.y + start.h + (drag.handle.includes("s") ? dy : 0), 0, height);
+    box.x = Math.min(left, right);
+    box.y = Math.min(top, bottom);
+    box.w = Math.max(1, Math.abs(right - left));
+    box.h = Math.max(1, Math.abs(bottom - top));
+    this.markEdited(box);
+    this.updateBoxNode(box);
+  }
+
+  dragDraw(drag, point) {
+    const { width, height } = this.data;
+    const left = clamp(Math.min(drag.start.x, point.x), 0, width);
+    const top = clamp(Math.min(drag.start.y, point.y), 0, height);
+    const right = clamp(Math.max(drag.start.x, point.x), 0, width);
+    const bottom = clamp(Math.max(drag.start.y, point.y), 0, height);
+    drag.rect = { x: left, y: top, w: right - left, h: bottom - top };
+    Object.assign(this.drawEl.style, {
+      left: `${left}px`,
+      top: `${top}px`,
+      width: `${right - left}px`,
+      height: `${bottom - top}px`,
+      borderColor: this.colors[this.currentLabel] ?? "#fff",
+    });
+    this.drawEl.hidden = false;
   }
 
   pointerUp(event) {
@@ -586,13 +621,13 @@ class Annotator {
     if (this.viewport.hasPointerCapture(event.pointerId)) this.viewport.releasePointerCapture(event.pointerId);
     this.drawEl.hidden = true;
     if (!drag) return;
-    if (drag.kind === "draw" && drag.moved && drag.rect && drag.rect.w >= MIN_BOX_PX && drag.rect.h >= MIN_BOX_PX) {
+    if (drag.moved && drag.kind === "draw" && drag.rect?.w >= MIN_BOX_PX && drag.rect?.h >= MIN_BOX_PX) {
       this.snapshot();
-      const box = { id: this.makeId(), label: this.currentLabel, ...drag.rect, score: null, source: "manual" };
+      const box = { id: this.makeId(), label: this.currentLabel, ...drag.rect, score: null, source: MANUAL };
       this.boxes.push(box);
-      this.select(box.id, false);
+      this.select(box.id);
       this.changed();
-    } else if ((drag.kind === "move" || drag.kind === "resize") && drag.moved) {
+    } else if (drag.moved && (drag.kind === "move" || drag.kind === "resize")) {
       this.changed();
     }
     this.renderAll();
@@ -604,7 +639,7 @@ class Annotator {
     this.drag = null;
     this.drawEl.hidden = true;
     if ((drag.kind === "move" || drag.kind === "resize") && drag.moved) {
-      this.boxes = this.history.pop() || this.boxes;
+      this.boxes = this.history.pop() ?? this.boxes;
     }
     this.renderAll();
   }
@@ -621,94 +656,133 @@ class Annotator {
       }
       return;
     }
-    this.zoomAt(Math.exp(-event.deltaY * 0.0015), event.clientX, event.clientY);
+    this.zoomAt(Math.exp(-event.deltaY * WHEEL_ZOOM_RATE), event.clientX, event.clientY);
   }
 
   // ---- keyboard -------------------------------------------------------------------------------------------
 
   keyDown(event) {
     if (!this.active || !this.data || isTyping(event)) return;
-    const key = event.key;
-    const ctrl = event.ctrlKey || event.metaKey;
-    let handled = true;
-    if (key === " ") {
-      this.spaceDown = true;
-      this.viewport.style.cursor = "grab";
-    } else if (ctrl && key.toLowerCase() === "z") {
-      if (event.shiftKey) this.redo();
-      else this.undo();
-    } else if (ctrl && key.toLowerCase() === "y") {
-      this.redo();
-    } else if (ctrl && key.toLowerCase() === "d") {
-      this.duplicate();
-    } else if (ctrl && key.toLowerCase() === "a") {
-      this.selected = new Set(this.boxes.map((box) => box.id));
-      this.renderAll();
-    } else if (ctrl) {
-      handled = false; // leave copy, paste, reload … to the browser
-    } else if (key === "Escape") {
-      if (this.drag) this.cancelDrag();
-      else if (!this.helpEl.hidden) this.toggleHelp();
-      else {
-        this.selected.clear();
-        this.renderAll();
-      }
-    } else if (key === "Delete" || key === "Backspace") {
-      this.deleteSelected();
-    } else if (key.startsWith("Arrow")) {
-      this.nudge(key, event.shiftKey ? 10 : 1, event.altKey);
-    } else if (key === "Tab") {
-      this.cycle(event.shiftKey ? -1 : 1);
-    } else if (key === "Enter") {
-      this.act(event.shiftKey ? "toggle_review" : "review_next");
-    } else if (key === "n" || key === "N" || key === "]") {
-      this.act("next");
-    } else if (key === "p" || key === "P" || key === "[") {
-      this.act("prev");
-    } else if (key === "h" || key === "H") {
-      this.toggleBoxes();
-    } else if (key === "l" || key === "L") {
-      this.toggleChips();
-    } else if (key === "f" || key === "F") {
-      this.fit();
-    } else if (key === "c" || key === "C") {
-      this.centre();
-    } else if (key === "," || key === "<" || key === "." || key === ">") {
-      const step = event.shiftKey ? SCALE_STEP_SHIFT_PX : SCALE_STEP_PX;
-      this.scaleSelected(key === "," || key === "<" ? -step : step);
-    } else if (key === "+" || key === "=") {
-      if (this.selected.size) this.scaleSelected(SCALE_STEP_PX);
-      else this.zoomCentre(1.25);
-    } else if (key === "-" || key === "_") {
-      if (this.selected.size) this.scaleSelected(-SCALE_STEP_PX);
-      else this.zoomCentre(0.8);
-    } else if (key === "?") {
-      this.toggleHelp();
-    } else {
-      const label = this.labels.find((item) => item.hotkey && item.hotkey === key);
-      if (label) this.useLabel(label.name);
-      else handled = false;
-    }
+    const handled = event.ctrlKey || event.metaKey ? this.commandKey(event) : this.plainKey(event);
     if (handled) {
       event.preventDefault();
       event.stopPropagation(); // Streamlit's own page shortcuts must not also fire
     }
   }
 
-  zoomCentre(factor) {
-    const rect = this.viewport.getBoundingClientRect();
-    this.zoomAt(factor, rect.left + rect.width / 2, rect.top + rect.height / 2);
+  commandKey(event) {
+    // Ctrl / Cmd shortcuts; anything else (copy, paste, reload …) is left to the browser.
+    switch (event.key.toLowerCase()) {
+      case "z":
+        if (event.shiftKey) this.redo();
+        else this.undo();
+        return true;
+      case "y":
+        this.redo();
+        return true;
+      case "d":
+        this.duplicate();
+        return true;
+      case "a":
+        this.selected = new Set(this.boxes.map((box) => box.id));
+        this.renderAll();
+        return true;
+      default:
+        return false;
+    }
+  }
+
+  plainKey(event) {
+    const { key, shiftKey } = event;
+    if (key.startsWith("Arrow")) {
+      this.nudge(key, shiftKey ? NUDGE_SHIFT_PX : NUDGE_PX, event.altKey);
+      return true;
+    }
+    switch (key.length === 1 ? key.toLowerCase() : key) {
+      case " ":
+        this.spaceDown = true;
+        this.viewport.style.cursor = "grab";
+        return true;
+      case "Escape":
+        this.escape();
+        return true;
+      case "Delete":
+      case "Backspace":
+        this.deleteSelected();
+        return true;
+      case "Tab":
+        this.cycle(shiftKey ? -1 : 1);
+        return true;
+      case "Enter":
+        this.act(shiftKey ? "toggle_review" : "review_next");
+        return true;
+      case "n":
+      case "]":
+        this.act("next");
+        return true;
+      case "p":
+      case "[":
+        this.act("prev");
+        return true;
+      case "h":
+        this.toggleBoxes();
+        return true;
+      case "l":
+        this.toggleChips();
+        return true;
+      case "f":
+        this.fit();
+        return true;
+      case "c":
+        this.centre();
+        return true;
+      case ",":
+      case "<":
+        this.scaleSelected(-(shiftKey ? SCALE_STEP_SHIFT_PX : SCALE_STEP_PX));
+        return true;
+      case ".":
+      case ">":
+        this.scaleSelected(shiftKey ? SCALE_STEP_SHIFT_PX : SCALE_STEP_PX);
+        return true;
+      case "+":
+      case "=":
+        if (this.selected.size) this.scaleSelected(SCALE_STEP_PX);
+        else this.zoomCentre(KEY_ZOOM_STEP);
+        return true;
+      case "-":
+      case "_":
+        if (this.selected.size) this.scaleSelected(-SCALE_STEP_PX);
+        else this.zoomCentre(1 / KEY_ZOOM_STEP);
+        return true;
+      case "?":
+        this.toggleHelp();
+        return true;
+      default: {
+        const label = this.labels.find((item) => item.hotkey && item.hotkey === key);
+        if (label) this.useLabel(label.name);
+        return Boolean(label);
+      }
+    }
+  }
+
+  escape() {
+    if (this.drag) this.cancelDrag();
+    else if (!this.helpEl.hidden) this.toggleHelp();
+    else {
+      this.selected.clear();
+      this.renderAll();
+    }
   }
 
   // ---- edits ----------------------------------------------------------------------------------------------
 
-  select(id, add) {
-    if (!add) this.selected.clear();
+  select(id) {
+    this.selected.clear();
     if (id) this.selected.add(id);
   }
 
   useLabel(name) {
-    const boxes = [...this.selected].map((id) => this.byId(id)).filter(Boolean);
+    const boxes = this.selectedBoxes();
     if (!boxes.length) {
       this.currentLabel = name;
       this.renderSide();
@@ -735,7 +809,7 @@ class Annotator {
   }
 
   duplicate() {
-    const boxes = [...this.selected].map((id) => this.byId(id)).filter(Boolean);
+    const boxes = this.selectedBoxes();
     if (!boxes.length) return;
     this.snapshot();
     this.selected.clear();
@@ -746,7 +820,7 @@ class Annotator {
         x: box.x + NEW_BOX_OFFSET,
         y: box.y + NEW_BOX_OFFSET,
         score: null,
-        source: "manual",
+        source: MANUAL,
       };
       this.clampBox(copy);
       this.boxes.push(copy);
@@ -756,20 +830,13 @@ class Annotator {
     this.renderAll();
   }
 
-  nudge(key, step, resize) {
-    const boxes = [...this.selected].map((id) => this.byId(id)).filter(Boolean);
+  editSelected(edit, { snapshot = true } = {}) {
+    // Apply one edit to every selected box as one undo step.
+    const boxes = this.selectedBoxes();
     if (!boxes.length) return;
-    this.snapshot();
-    const dx = key === "ArrowLeft" ? -step : key === "ArrowRight" ? step : 0;
-    const dy = key === "ArrowUp" ? -step : key === "ArrowDown" ? step : 0;
+    if (snapshot) this.snapshot();
     for (const box of boxes) {
-      if (resize) {
-        box.w += dx;
-        box.h += dy;
-      } else {
-        box.x += dx;
-        box.y += dy;
-      }
+      edit(box);
       this.clampBox(box);
       this.markEdited(box);
     }
@@ -777,27 +844,37 @@ class Annotator {
     this.renderAll();
   }
 
+  nudge(key, step, resize) {
+    const dx = key === "ArrowLeft" ? -step : key === "ArrowRight" ? step : 0;
+    const dy = key === "ArrowUp" ? -step : key === "ArrowDown" ? step : 0;
+    this.editSelected((box) => {
+      if (resize) {
+        box.w += dx;
+        box.h += dy;
+      } else {
+        box.x += dx;
+        box.y += dy;
+      }
+    });
+  }
+
   scaleSelected(step) {
     // Grow (step > 0) or shrink every side of the selected boxes by step source px, so each keeps its centre:
     // the classical map-node boxes are fixed squares, often a little large for the map node.
-    const boxes = [...this.selected].map((id) => this.byId(id)).filter(Boolean);
-    if (!boxes.length) return;
+    if (!this.selected.size) return;
     const now = Date.now();
     const selection = [...this.selected].sort().join(" ");
-    if (now - this.lastScale.at > SCALE_UNDO_MS || this.lastScale.selection !== selection) this.snapshot();
+    const newGesture = now - this.lastScale.at > SCALE_UNDO_MS || this.lastScale.selection !== selection;
     this.lastScale = { at: now, selection };
-    for (const box of boxes) {
+    const resize = (box) => {
       const cx = box.x + box.w / 2;
       const cy = box.y + box.h / 2;
       box.w = Math.max(MIN_BOX_PX, box.w + 2 * step);
       box.h = Math.max(MIN_BOX_PX, box.h + 2 * step);
       box.x = cx - box.w / 2;
       box.y = cy - box.h / 2;
-      this.clampBox(box);
-      this.markEdited(box);
-    }
-    this.changed();
-    this.renderAll();
+    };
+    this.editSelected(resize, { snapshot: newGesture }); // one wheel gesture is one undo step
   }
 
   cycle(step) {
@@ -806,7 +883,7 @@ class Annotator {
     const current = order.findIndex((box) => this.selected.has(box.id));
     const index = current < 0 ? (step > 0 ? 0 : order.length - 1) : (current + step + order.length) % order.length;
     const box = order[index];
-    this.select(box.id, false);
+    this.select(box.id);
     this.reveal(box);
     this.renderAll();
   }
@@ -818,7 +895,7 @@ class Annotator {
     const height = this.viewport.clientHeight;
     const left = box.x * zoom + x;
     const top = box.y * zoom + y;
-    const margin = 24;
+    const margin = REVEAL_MARGIN_PX;
     if (left < margin || top < margin || left + box.w * zoom > width - margin || top + box.h * zoom > height - margin) {
       this.view = {
         zoom,
@@ -842,15 +919,18 @@ class Annotator {
 
   toggleHelp() {
     this.helpEl.hidden = !this.helpEl.hidden;
+    this.helpBtn.setAttribute("aria-pressed", String(!this.helpEl.hidden));
+  }
+
+  boxNode(id) {
+    return id ? this.layer.querySelector(`[data-id="${CSS.escape(id)}"]`) : null;
   }
 
   setHover(id) {
     if (this.hoverId === id) return;
-    const old = this.hoverId && this.layer.querySelector(`[data-id="${CSS.escape(this.hoverId)}"]`);
-    if (old) old.classList.remove("hover");
+    this.boxNode(this.hoverId)?.classList.remove("hover");
     this.hoverId = id;
-    const node = id && this.layer.querySelector(`[data-id="${CSS.escape(id)}"]`);
-    if (node) node.classList.add("hover");
+    this.boxNode(id)?.classList.add("hover");
   }
 
   // ---- rendering ------------------------------------------------------------------------------------------
@@ -870,70 +950,67 @@ class Annotator {
     for (const box of order) {
       const node = el("div", "ann-box", this.layer);
       node.dataset.id = box.id;
-      node.style.setProperty("--c", this.colors[box.label] || "#ffffff");
-      if (box.source === "manual") node.classList.add("manual");
-      if (this.selected.has(box.id)) node.classList.add("selected");
-      if (box.id === this.hoverId) node.classList.add("hover");
-      const chip = el("span", "ann-chip", node);
-      chip.textContent = box.label;
+      node.style.setProperty("--c", this.colors[box.label] ?? "#ffffff");
+      node.classList.toggle("selected", this.selected.has(box.id));
+      node.classList.toggle("hover", box.id === this.hoverId);
+      el("span", "ann-chip", node).textContent = box.label;
       for (const handle of HANDLES) el("span", `ann-handle ${handle}`, node);
-      this.positionBox(box, node);
+      this.updateBoxNode(box, node);
     }
   }
 
-  positionBox(box, node) {
-    const target = node || this.layer.querySelector(`[data-id="${CSS.escape(box.id)}"]`);
-    if (!target) return;
-    target.style.left = `${box.x}px`;
-    target.style.top = `${box.y}px`;
-    target.style.width = `${box.w}px`;
-    target.style.height = `${box.h}px`;
-    if (node) return;
-    if (box.source === "manual") target.classList.add("manual");
+  updateBoxNode(box, node = this.boxNode(box.id)) {
+    // Geometry and source style of one box element (during a drag only the dragged boxes are updated).
+    if (!node) return;
+    Object.assign(node.style, { left: `${box.x}px`, top: `${box.y}px`, width: `${box.w}px`, height: `${box.h}px` });
+    node.classList.toggle("manual", box.source === MANUAL);
   }
 
   renderSide() {
     const data = this.data;
     if (!data) return;
-    this.positionEl.textContent = data.position || "";
+    this.positionEl.textContent = data.position ?? "";
     this.prevBtn.disabled = !data.has_prev;
     this.nextBtn.disabled = !data.has_next;
     this.reviewState.textContent = data.reviewed ? "✓ Reviewed" : "Not reviewed yet";
     this.reviewState.classList.toggle("ann-ok", Boolean(data.reviewed));
-    this.boxesBtn.classList.toggle("ann-off", !this.showBoxes);
-    this.chipsBtn.classList.toggle("ann-on", this.showAllChips);
+    this.boxesBtn.setAttribute("aria-pressed", String(this.showBoxes));
+    this.chipsBtn.setAttribute("aria-pressed", String(this.showAllChips));
     this.renderStatus();
+    this.renderLegend();
+    this.renderInspector();
+  }
 
+  renderLegend() {
     const counts = {};
-    for (const box of this.boxes) counts[box.label] = (counts[box.label] || 0) + 1;
+    for (const box of this.boxes) counts[box.label] = (counts[box.label] ?? 0) + 1;
     this.legendEl.replaceChildren();
     for (const label of this.labels) {
       const row = el("button", "ann-label", this.legendEl);
       row.type = "button";
       row.title = this.selected.size ? `Label the selected boxes ${label.name}` : `Draw ${label.name} boxes`;
-      if (label.name === this.currentLabel) row.classList.add("current");
+      row.setAttribute("aria-pressed", String(label.name === this.currentLabel));
       el("span", "ann-key", row).textContent = label.hotkey || "·";
-      const swatch = el("span", "ann-swatch", row);
-      swatch.style.background = label.color;
+      el("span", "ann-swatch", row).style.background = label.color;
       el("span", "ann-name", row).textContent = label.name;
-      el("span", "ann-count", row).textContent = String(counts[label.name] || 0);
+      el("span", "ann-count", row).textContent = String(counts[label.name] ?? 0);
       row.addEventListener("click", () => this.useLabel(label.name));
     }
-    this.renderInspector();
   }
 
   renderStatus() {
-    if (!this.statusEl || !this.data) return;
-    const saved = (this.data.saved_seq || 0) >= this.seq;
+    if (!this.data) return;
+    const saved = (this.data.saved_seq ?? 0) >= this.seq;
     const waiting = this.seq !== this.sentSeq;
-    this.statusEl.textContent = `${this.boxes.length} boxes · ${saved ? "saved" : waiting ? "editing…" : "saving…"}`;
+    const state = saved ? "saved" : waiting ? "editing…" : "saving…";
+    this.statusEl.textContent = `${this.boxes.length} boxes · ${state}`;
     this.statusEl.classList.toggle("ann-ok", saved);
   }
 
   renderInspector() {
     const panel = this.inspectorEl;
     panel.replaceChildren();
-    const boxes = [...this.selected].map((id) => this.byId(id)).filter(Boolean);
+    const boxes = this.selectedBoxes();
     if (!boxes.length) {
       el("p", "ann-muted", panel).textContent =
         `Click a box, or drag on the screenshot to draw a ${this.currentLabel} box.`;
@@ -944,8 +1021,9 @@ class Annotator {
       this.button(panel, "Delete", "Delete selected (Del)", () => this.deleteSelected());
       return;
     }
-    const box = boxes[0];
+    const [box] = boxes;
     const select = el("select", "ann-select", panel);
+    select.setAttribute("aria-label", "Label");
     for (const label of this.labels) {
       const option = el("option", "", select);
       option.value = label.name;
@@ -976,9 +1054,8 @@ class Annotator {
         this.renderAll();
       });
     }
-    const info = el("p", "ann-muted", panel);
-    const score = box.score === null || box.score === undefined ? "" : ` · score ${Number(box.score).toFixed(3)}`;
-    info.textContent = `${box.source || "manual"}${score}`;
+    const score = box.score == null ? "" : ` · score ${Number(box.score).toFixed(3)}`;
+    el("p", "ann-muted", panel).textContent = `${box.source || MANUAL}${score}`;
     this.button(panel, "Delete", "Delete selected (Del)", () => this.deleteSelected());
   }
 }

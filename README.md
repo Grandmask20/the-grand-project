@@ -18,21 +18,22 @@ On macOS the shortcuts use **Cmd** instead of Ctrl, and right-click is a two-fin
 
 On first start the viewer opens the empty atlas **`atlases/default`**.
 
-## Bootstrap RF-DETR training data
+## Annotating RF-DETR training data
 
 Install the optional Streamlit UI and start it from the project folder with:
 
 ```sh
-make install_bootstrap
-make bootstrap_dataset
+make install_annotator
+make annotate_dataset
 ```
 
-The bootstrapper recursively discovers screenshots in `atlas_test_data/res_atlases`, `atlas_test_data/roa-atlas`, and
-`atlas_test_data/screenshots`. It shows the established classical detector's boxes over each screenshot in a
-keyboard-driven editor (draw, move, resize, relabel and delete boxes; edits save themselves; press `?` for the
-shortcuts), lets you mark screenshots reviewed, and hides reviewed screenshots. Screenshots are never changed. Exported reviewed
-annotations include COCO `annotations.json` and a project-native `manifest.json`; use the latter with
-`make prepare_rf_detr_data RF_DETR_BOOTSTRAP_MANIFEST=runs/rf-detr-bootstrap/manifest.json`.
+The annotator (`tools/detection_dataset_annotator`, see its README) recursively discovers screenshots in
+`atlas_test_data/res_atlases`, `atlas_test_data/roa-atlas`, and `atlas_test_data/screenshots`. It shows the
+established classical detector's boxes over each screenshot in a keyboard-driven editor (draw, move, resize, relabel
+and delete boxes; edits save themselves; press `?` for the shortcuts), lets you mark screenshots reviewed, and hides
+reviewed screenshots. Screenshots are never changed. Exported reviewed annotations include COCO `annotations.json` and
+a project-native `manifest.json`; use the latter with
+`make prepare_rf_detr_data RF_DETR_ANNOTATOR_MANIFEST=runs/detection-dataset/manifest.json`.
 
 ---
 
@@ -133,7 +134,7 @@ A screenshot that overlaps nothing yet goes to **Waiting** (Auto-add tab). Waiti
 | `atlases/` | Your atlases. `default/` opens on first start. |
 | `grand_project/` | The program, a Python package (see *Code layout* below). |
 | `references/` | Every file the program reads: the database copy, HUD mask, icons and tower / city templates. |
-| `tools/` | Helpers for improving the detector (mark checks, icon teaching, badge sheets, coverage). |
+| `tools/` | Helpers for improving the detector (mark checks, icon teaching, badge sheets, coverage, the detection dataset annotator). |
 | `tests/` | Regression tests. Their screenshots and hand-made truth are not included (see below). |
 | `user_data/` | Settings and the log, created on first run. |
 | `atlas_test_data/` | Trimmed test data, in Git LFS and not downloaded by default (see below). |

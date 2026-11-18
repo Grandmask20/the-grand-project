@@ -1,16 +1,19 @@
-# RF-DETR dataset bootstrapper
+# Detection dataset annotator
 
-This Streamlit app seeds an object-detection dataset from the existing classical atlas detector. It recursively scans
-the three default screenshot roots, runs the classical detector, and shows its boxes over each screenshot in a box
+This Streamlit app seeds an RF-DETR object-detection dataset from the existing classical atlas detector. It
+recursively scans the three default screenshot roots (`res_atlases`, `roa-atlas` and `screenshots` in the test data), runs the classical detector, and shows its boxes over each screenshot in a box
 editor where a reviewer fixes labels and geometry, draws missed detections, deletes false ones, and marks the
 screenshot reviewed.
 
 Run it from the project folder:
 
 ```sh
-make install_bootstrap
-make bootstrap_dataset
+make install_annotator   # pip install -e ".[annotator]": Streamlit
+make annotate_dataset    # python -m tools.detection_dataset_annotator
 ```
+
+Arguments after `python -m tools.detection_dataset_annotator` go to `streamlit run` (for example
+`--server.port 8600`).
 
 ## Reviewing a screenshot
 
@@ -54,11 +57,12 @@ The side panel also has the label list with counts, and the selected box's label
 
 ## Detection and export
 
-The app writes `review_state.json` while work is in progress. Exporting writes:
+The app writes `review_state.json` in the output folder (default `runs/detection-dataset`) while work is in
+progress. Exporting writes:
 
 - `annotations.json`: COCO object-detection JSON with absolute `file_name` paths.
 - `manifest.json`: the project-native manifest accepted by `make prepare_rf_detr_data` through
-  `RF_DETR_BOOTSTRAP_MANIFEST=...`.
+  `RF_DETR_ANNOTATOR_MANIFEST=...`.
 - `labels.json`: stable numeric IDs and labels.
 
 Only reviewed screenshots are exported by default. The classical detector provides map nodes, icons, towers, cities,
@@ -71,16 +75,16 @@ res atlas screenshot it finds 4 of about 35), and the map finder misses dim, fog
 1. **Icons.** Every icon-rim candidate in an icon row above a map node is proposed when its picture closely matches a
    stored icon picture. A near-exact match is enough. A weaker match must also be centred over its map node, sit next
    to an icon in the same row, or form a pair whose middle is centred over a map node. A fogged map node the finder
-   missed counts too (a map candidate it rated at least `BOOTSTRAP_SPOT_MIN`), but only for a closer match.
+   missed counts too (a map candidate it rated at least `ANNOTATOR_SPOT_MIN`), but only for a closer match.
 2. **Hidden map nodes.** An icon always stands on a map node, so every icon row with no map node under its middle gets
    one, at the icon-to-map-node offset measured on that screenshot. It is snapped to the fogged map node's glow when
    there is one. As in the classical finder, a visible map node within 45 px (`HIDDEN_SNAP`) is already the row's map
    node. Ship buttons and markers pinned above another icon never get one.
 
 The side panel shows each box's source: `classical`, `icon_match` (step 1) or `icon_row` (step 2). Review them like
-any other box. This changes only the bootstrap's boxes, never what the program's own detector finds. Screenshots
-detected before these steps have to be rerun to get the extra boxes. The thresholds are `BOOTSTRAP_ICON_...`,
-`BOOTSTRAP_SPOT_MIN` and `BOOTSTRAP_HIDDEN_...` in `constants.py`.
+any other box. This changes only the annotator's boxes, never what the program's own detector finds. Screenshots
+detected before these steps have to be rerun to get the extra boxes. The thresholds are `ANNOTATOR_ICON_...`,
+`ANNOTATOR_SPOT_MIN` and `ANNOTATOR_HIDDEN_...` in `constants.py`.
 
 Icons are one `icon` class by default; “Name icons by type” labels them with classes such as `icon_mapboss`. This
 changes labels, not icon finding, so processed screenshots must be rerun to apply it.
@@ -93,4 +97,19 @@ screenshot finishes. “Rerun detection” replaces one screenshot's boxes; “R
 because successful reruns replace annotations and clear review flags. A failed rerun keeps its previous detections and
 review flag.
 
-The editor is a small Streamlit component in `annotator/` (plain JavaScript and CSS, no build step).
+## Code
+
+| Module | What it does |
+| --- | --- |
+| `app.py` | the Streamlit page (sidebar, queue, autosave and navigation callbacks) |
+| `component/` | the box editor: a small Streamlit component (plain JavaScript and CSS, no build step) |
+| `state.py` | screenshot discovery, `review_state.json`, detection options, labels, the review queue |
+| `detection.py` | the classical detector's points and paths as boxes in source-image pixels |
+| `icon_proposals.py` | the extra icons and hidden map nodes (above) |
+| `pool.py`, `worker.py` | detection in worker processes (`python -m tools.detection_dataset_annotator.worker`) |
+| `boxes.py` | the editor's boxes mapped back to saved annotations by stable id |
+| `export.py` | COCO and manifest export |
+| `constants.py` | every threshold and setting (`ANNOTATOR_...`) |
+
+Tests: `pytest tests/test_dataset_annotator.py tests/test_dataset_annotator_icons.py
+tests/test_dataset_annotator_worker.py`.

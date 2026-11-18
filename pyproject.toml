@@ -35,7 +35,7 @@ training = [
     "torchvision>=0.20",
     "transformers>=5.0",
 ]
-bootstrap = [
+annotator = [
     "streamlit>=1.53",
 ]
 

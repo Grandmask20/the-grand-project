@@ -12,7 +12,7 @@ from grand_project.detect.rf_detr import (
     Record,
     _box,
     augment_detection_example,
-    load_bootstrap_manifest,
+    load_annotator_manifest,
     slug,
     split_records,
 )
@@ -32,7 +32,7 @@ def test_category_slug_is_stable_and_safe() -> None:
     assert slug("!!!") == "unknown"
 
 
-def test_bootstrap_manifest_loads_source_paths_and_labels(tmp_path: Path) -> None:
+def test_annotator_manifest_loads_source_paths_and_labels(tmp_path: Path) -> None:
     image = tmp_path / "shot.png"
     image.write_bytes(b"placeholder")
     manifest = tmp_path / "manifest.json"
@@ -46,7 +46,7 @@ def test_bootstrap_manifest_loads_source_paths_and_labels(tmp_path: Path) -> Non
                         "image_id": 7,
                         "path": str(image),
                         "source": "screenshots/shot.png",
-                        "source_type": "bootstrap_reviewed",
+                        "source_type": "annotator_reviewed",
                         "source_group": "screenshots",
                         "width": 1920,
                         "height": 1080,
@@ -58,7 +58,7 @@ def test_bootstrap_manifest_loads_source_paths_and_labels(tmp_path: Path) -> Non
         encoding="utf-8",
     )
 
-    records, labels = load_bootstrap_manifest(manifest)
+    records, labels = load_annotator_manifest(manifest)
 
     assert labels == {"0": "map_node", "1": "icon"}
     assert len(records) == 1

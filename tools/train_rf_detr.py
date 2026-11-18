@@ -47,7 +47,7 @@ from grand_project.detect.constants import (
 )
 from grand_project.detect.rf_detr import (
     build_dataset,
-    load_bootstrap_manifest,
+    load_annotator_manifest,
     load_records,
     processor_transform,
 )
@@ -164,10 +164,10 @@ def parse_args() -> argparse.Namespace:
         "--data-root", type=Path, default=None, help="dataset root; defaults to ATLAS_TEST_DATA or project test data"
     )
     parser.add_argument(
-        "--bootstrap-manifest",
+        "--annotator-manifest",
         type=Path,
         default=None,
-        help="reviewed manifest.json exported by bootstrap-dataset-program; overrides --data-root labels",
+        help="reviewed manifest.json exported by tools.detection_dataset_annotator; overrides --data-root labels",
     )
     parser.add_argument("--output-dir", type=Path, default=Path("runs/rf-detr-small"))
     parser.add_argument(
@@ -293,8 +293,8 @@ def _load_or_build_dataset(args: argparse.Namespace, data_root: Path):
             raise FileNotFoundError(f"reused dataset has no labels.json: {label_file}")
         return dataset, json.loads(label_file.read_text(encoding="utf-8")), dataset_dir, None
 
-    if args.bootstrap_manifest is not None:
-        records, label_map = load_bootstrap_manifest(args.bootstrap_manifest, max_images=args.max_images)
+    if args.annotator_manifest is not None:
+        records, label_map = load_annotator_manifest(args.annotator_manifest, max_images=args.max_images)
     else:
         records, label_map = load_records(
             data_root,
