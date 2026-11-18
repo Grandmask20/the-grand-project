@@ -1,4 +1,4 @@
-import { type DragEvent, useState } from "react";
+import { type DragEvent, useEffect, useState } from "react";
 import { ErrorBanner } from "@/components/common/ErrorBanner";
 import { ProgressBox } from "@/components/common/ProgressBox";
 import { BookmarkDialog } from "@/components/dialogs/BookmarkDialog";
@@ -18,6 +18,7 @@ import { useAppState } from "@/hooks/app/UseAppState";
 import { useEventStream } from "@/hooks/app/UseEventStream";
 import { useMeta } from "@/hooks/app/UseMeta";
 import { useAtlasActions } from "@/hooks/atlas/UseAtlasActions";
+import { useAppStore } from "@/store/AppStore";
 
 /** The app's one page: top bar, side panel, the map, the status line, and the dialogs. */
 export function AtlasPage() {
@@ -26,6 +27,15 @@ export function AtlasPage() {
 	const meta = useMeta();
 	const actions = useAtlasActions();
 	const [dragging, setDragging] = useState(false);
+	const atlasPath = state.data?.atlas?.path ?? null;
+
+	// another atlas: the replay belonged to the one before (its plan and steps): closed (the atlas owner rework
+	// will reset every such page state in one place)
+	// biome-ignore lint/correctness/useExhaustiveDependencies: runs when the open atlas changes
+	useEffect(() => {
+		const st = useAppStore.getState();
+		if (st.replay) st.setReplay(null);
+	}, [atlasPath]);
 
 	if (state.isError || meta.isError)
 		return (

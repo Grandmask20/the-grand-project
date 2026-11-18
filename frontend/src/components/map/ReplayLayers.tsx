@@ -13,7 +13,7 @@ import { useAppStore } from "@/store/AppStore";
 import { MapTint } from "./MapTint";
 
 /** The replay on the map: the ground not revealed yet under fog, and the screenshots coming in outlined. */
-export function ReplayLayers({ map, geo }: { map: MapLibreMap; geo: Geo; meta: Meta }) {
+export function ReplayLayers({ map, geo, meta }: { map: MapLibreMap; geo: Geo; meta: Meta }) {
 	const replay = useAppStore((s) => s.replay);
 	const planKey = replay
 		? `${replay.plan.kind}-${replay.plan.n_steps}-${replay.plan.settings.per_step}-${replay.plan.area}`
@@ -113,5 +113,5 @@ export function ReplayLayers({ map, geo }: { map: MapLibreMap; geo: Geo; meta: M
 			map.setPaintProperty("outline", "line-opacity", done ? 0 : ["case", ["==", ["get", "step"], cur], 0.9, 0]);
 	}, [map, cur, done]);
 
-	return <MapTint map={map} geo={geo} />;
+	return <MapTint map={map} geo={geo} meta={meta} />;
 }

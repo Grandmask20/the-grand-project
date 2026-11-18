@@ -70,6 +70,12 @@ export function AtlasMap({ info, meta }: Props) {
 			if (lng !== c.lng || lat !== c.lat) m.easeTo({ center: [lng, lat], duration: 300 });
 		};
 		m.on("moveend", limit);
+		// after the map is removed (another atlas opened) its layers and sources are simply gone: the parts of the page
+		// that tidy up after it (the replay's fog) asked a removed map and threw, which blanked the page (user)
+		const getLayer = m.getLayer.bind(m);
+		const getSource = m.getSource.bind(m);
+		m.getLayer = ((id: string) => (m.style ? getLayer(id) : undefined)) as typeof m.getLayer;
+		m.getSource = ((id: string) => (m.style ? getSource(id) : undefined)) as typeof m.getSource;
 		m.addControl(new NavigationControl({ visualizePitch: true }), "top-right");
 		m.addControl(
 			new ButtonControl("⤢", "Fit the whole atlas (0)", () => m.fitBounds(info.bounds, { padding: 30 })),

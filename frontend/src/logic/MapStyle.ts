@@ -406,7 +406,7 @@ export function applyLook(map: MapLibreMap, geo: Geo, meta: Meta, look: Look): v
 		for (const id of ids) visible(map, id, on(group));
 	}
 	visible(map, "removed", on("Removed"));
-	visible(map, "tint", look.tint === "frames");
+	visible(map, "tint", false); // Colour by is drawn as one picture (MapTint)
 
 	// biome colours: the city tints of the View tab, the ground kinds' own
 	const cities = cityColours(meta, st);

@@ -1,5 +1,10 @@
+import { ErrorBoundary } from "@/components/common/ErrorBoundary";
 import { AtlasPage } from "@/pages/AtlasPage";
 
 export function App() {
-	return <AtlasPage />;
+	return (
+		<ErrorBoundary>
+			<AtlasPage />
+		</ErrorBoundary>
+	);
 }

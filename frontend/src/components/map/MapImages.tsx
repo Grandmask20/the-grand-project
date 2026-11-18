@@ -2,24 +2,16 @@ import type { Map as MapLibreMap } from "maplibre-gl";
 import { useEffect } from "react";
 import { useAppClient } from "@/hooks/app/UseAppClient";
 import { useAppState } from "@/hooks/app/UseAppState";
-import { useSettings } from "@/hooks/app/UseSettings";
-import { useHeat } from "@/hooks/replay/UseHeat";
 import type { Geo } from "@/logic/Geo";
 import { setData, setImage } from "@/logic/MapStyle";
 import { useAppStore } from "@/store/AppStore";
 
-/** Pictures over the map: the screenshot being placed by hand, the one a question is about, and "times seen". */
+/** Pictures over the map: the screenshot being placed by hand and the one a question is about ("times seen" is
+ * drawn by MapTint). */
 export function MapImages({ map, geo }: { map: MapLibreMap; geo: Geo }) {
 	const app = useAppClient();
 	const mode = useAppStore((s) => s.mode);
-	const replay = useAppStore((s) => s.replay);
 	const question = useAppState().data?.questions[0] ?? null;
-	const settings = useSettings();
-	const heatOn = settings?.style.age_tint === "times seen";
-	// while replaying, the heat grows with it (fetched in about 40 steps over the whole replay)
-	const q = replay ? Math.max(1, Math.ceil(replay.plan.n_steps / 40)) : 1;
-	const upto = replay ? Math.ceil(replay.pos / q) * q : undefined;
-	const heat = useHeat(heatOn, upto);
 
 	const ghost = mode.kind === "ghost" ? mode : null;
 	useEffect(() => {
@@ -57,20 +49,6 @@ export function MapImages({ map, geo }: { map: MapLibreMap; geo: Geo }) {
 		const [x0, y0, x1, y1] = preview.box;
 		map.fitBounds(geo.boundsOf(x0, y0, x1, y1), { padding: 120, maxZoom: map.getMaxZoom() - 1 });
 	}, [map, geo, app, preview]);
-
-	const box = heatOn ? (heat.data?.box ?? null) : null;
-	const fetched = heat.dataUpdatedAt; // a new heat picture can have the same box (CodeRabbit): fetch it anyway
-	useEffect(() => {
-		// 0.38: at 0.55 the heat hid the ground (user)
-		setImage(
-			map,
-			"heat",
-			box && fetched ? app.heatUrl(upto, fetched) : null,
-			box ? geo.corners(box) : null,
-			"biomes",
-			0.38,
-		);
-	}, [map, geo, app, box, upto, fetched]);
 
 	return null;
 }
