@@ -153,9 +153,56 @@ def test_the_page_is_served_and_routes_itself(app, tmp_path, monkeypatch):
 def test_a_second_start_opens_the_running_app(app, monkeypatch, tmp_path):
     srv, _pts = app
     port = srv.server_address[1]
-    opened = []
+    opened, asked = [], []
     monkeypatch.setattr(S.webbrowser, "open", lambda url: opened.append(url))
     monkeypatch.setattr(S, "AtlasSession", lambda: pytest.fail("a second copy was started"))
-    assert S.running_app(port) == srv.url
+    monkeypatch.setenv("http_proxy", "http://127.0.0.1:9")  # a proxy that refuses: the probe goes direct
+    monkeypatch.setenv("HTTP_PROXY", "http://127.0.0.1:9")
+    assert S.running_app(port) == (srv.url, S.VERSION)
     assert S.main(["--port", str(port)]) == 0 and opened == [srv.url]  # its page, not a second copy
     assert S.running_app(port, root=tmp_path) is None  # a copy of the program in another folder: not this one
+    # an atlas asked for on the command line is opened by the running copy (it was dropped)
+    (tmp_path / "b").mkdir()
+    other, _p, _i = make_atlas(tmp_path / "b")
+    monkeypatch.setattr(srv.session, "open_atlas", lambda p: asked.append(p))
+    assert S.main(["--port", str(port), str(other)]) == 0
+    assert asked == [str(other.resolve())]
+
+
+def test_an_older_running_copy_is_closed_for_the_update(app, monkeypatch):
+    srv, _pts = app
+    port = srv.server_address[1]
+    quits = []
+    monkeypatch.setattr(S, "running_app", lambda port: (srv.url, "1.0"))  # an older copy answers there
+    monkeypatch.setattr(srv, "quit", lambda: quits.append(1))
+    monkeypatch.setattr(S, "APP_QUIT_WAIT", 0.5)
+    assert S.reuse_running(port, None, browser=False) is False  # starts normally (the old copy was reused)
+    assert quits == [1]
+
+
+def test_something_else_on_a_port_doesnt_stop_the_start():
+    import socket
+
+    sock = socket.socket()
+    sock.bind(("127.0.0.1", 0))
+    sock.listen(1)
+    port = sock.getsockname()[1]
+
+    def banner():
+        conn, _ = sock.accept()
+        conn.sendall(b"SSH-2.0-OpenSSH_9.6\r\n")  # not HTTP: urlopen raised BadStatusLine through main
+        conn.close()
+
+    threading.Thread(target=banner, daemon=True).start()
+    try:
+        assert S._local(f"http://127.0.0.1:{port}/api/hello", timeout=2) is None
+    finally:
+        sock.close()
+
+
+def test_looking_for_a_running_copy_is_quick_on_free_ports():
+    import time
+
+    t0 = time.perf_counter()
+    assert S.running_app(S.APP_PORT + 500) is None
+    assert time.perf_counter() - t0 < 1.0  # (a refused connection takes ~2 s on Windows: 20 ports made starts ~10 s)

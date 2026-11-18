@@ -105,6 +105,7 @@ class AtlasSession(
         self.V: dict = {"nodes": [], "paths": [], "icons": [], "landmarks": [], "final": None}
         self.D: dict = {}  # derived from V: biomes, icon rows, type counts, footprints (rebuild_model)
         self.model_version = 0
+        self.opening: str | None = None  # the atlas being opened at start (its name), shown on the page meanwhile
         self._closing = False
         self._extra_groups: set[str] = set()  # bookmark groups made empty (kept until the app closes)
         self._replay_on = False
@@ -480,6 +481,7 @@ class AtlasSession(
             "questions": self.events.open_questions(),
             "log": list(self.events.log_lines)[-300:],
             "log_scope": opened.scope,
+            "opening": self.opening,
         }
 
     def _forget_session(self) -> None:

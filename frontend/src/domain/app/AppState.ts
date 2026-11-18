@@ -26,6 +26,8 @@ export interface AppState {
 	log: string[];
 	/** Whose log `log` is: the open atlas's file ("" with none open). */
 	log_scope?: string;
+	/** The atlas being opened at start (its name): the page shows at once and says so meanwhile. */
+	opening?: string | null;
 	debug: boolean;
 	settings: UiSettings;
 	map: MapInfo | null;

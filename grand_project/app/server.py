@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import argparse
 import contextlib
+import http.client
 import json
 import mimetypes
 import queue
@@ -31,7 +32,17 @@ from grand_project import logs as atlas_log
 from grand_project import paths as rc_paths
 from grand_project.webmap.constants import WEBMAP_ICON_SPRITE
 
-from .constants import APP_HELLO_WAIT, APP_HOST, APP_PORT, APP_PORT_TRIES, HELLO_APP, UPLOAD_MAX, VERSION
+from .constants import (
+    APP_HELLO_WAIT,
+    APP_HOST,
+    APP_OPEN_WAIT,
+    APP_PORT,
+    APP_PORT_TRIES,
+    APP_QUIT_WAIT,
+    HELLO_APP,
+    UPLOAD_MAX,
+    VERSION,
+)
 from .debug import DEBUG_REASONS
 from .events import StaleAtlas, sse
 from .icons import icon_png
@@ -978,7 +989,53 @@ class AppServer(ThreadingHTTPServer):
             self.shutdown()
 
 
-def running_app(port: int, host: str = APP_HOST, root: Path | None = None) -> str | None:
+def _local(url: str, data: dict | None = None, timeout: float = APP_HELLO_WAIT) -> dict | None:
+    """Ask a server on this computer (no proxy: a proxy set for the internet refused 127.0.0.1, CodeRabbit).
+
+    Args:
+        url: The address.
+        data: A JSON body to POST (with the app's change header), or None for a GET.
+        timeout: Seconds to wait.
+
+    Returns:
+        The JSON answer, or None when nothing (or something else, e.g. an SSH banner: CodeRabbit) answers.
+    """
+    req = urllib.request.Request(url, method="GET" if data is None else "POST")
+    body = None
+    if data is not None:
+        req.add_header(HEADER, "1")
+        req.add_header("Content-Type", "application/json")
+        body = json.dumps(data).encode()
+    try:
+        with _NO_PROXY.open(req, data=body, timeout=timeout) as r:
+            answer = json.loads(r.read())
+    except (OSError, ValueError, http.client.HTTPException):
+        return None
+    return answer if isinstance(answer, dict) else None
+
+
+_NO_PROXY = urllib.request.build_opener(urllib.request.ProxyHandler({}))
+
+
+def _in_use(host: str, port: int) -> bool:
+    """Tell whether something listens on a port: binding it fails then. Instant, unlike a refused connection.
+
+    Args:
+        host: The address.
+        port: The port.
+
+    Returns:
+        True when the port is taken.
+    """
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+        try:
+            s.bind((host, port))
+        except OSError:
+            return True
+    return False
+
+
+def running_app(port: int, host: str = APP_HOST, root: Path | None = None) -> tuple[str, str] | None:
     """Find this program's own copy already running on one of the ports it would take.
 
     Starting it again (a double-click on the launcher, which shows no window on Windows) started a second copy on
@@ -990,19 +1047,52 @@ def running_app(port: int, host: str = APP_HOST, root: Path | None = None) -> st
         root: The program folder a running copy must be in (default: this one's).
 
     Returns:
-        The running copy's URL, or None.
+        (the running copy's URL, its version), or None.
     """
     want = str((root or rc_paths.ROOT).resolve())
     for p in range(port, port + APP_PORT_TRIES):
+        if not _in_use(host, p):
+            continue  # nobody listens there: not asked (a refused connection takes ~2 s on Windows: 20 ports
+            # made every start ~10 s slower, user)
         url = f"http://{host}:{p}/"
-        try:
-            with urllib.request.urlopen(url + "api/hello", timeout=APP_HELLO_WAIT) as r:
-                hello = json.loads(r.read())
-        except (OSError, ValueError):
-            continue  # nothing there (refused at once), or something else
-        if isinstance(hello, dict) and hello.get("app") == HELLO_APP and hello.get("root") == want:
-            return url
+        hello = _local(url + "api/hello")
+        if hello and hello.get("app") == HELLO_APP and hello.get("root") == want:
+            return url, str(hello.get("version", ""))
     return None
+
+
+def reuse_running(port: int, atlas: str | None, browser: bool) -> bool:
+    """Hand this start over to the copy already running, when there is one of this version.
+
+    The same version: its page is opened, and an atlas asked for on the command line is opened there (it was
+    dropped: CodeRabbit). An older version (the folder was updated while it ran): it is asked to quit, so this
+    start runs the update (the old copy kept being reused: CodeRabbit).
+
+    Args:
+        port: The first port the app would take.
+        atlas: The atlas file asked for on the command line, or None.
+        browser: Open the page.
+
+    Returns:
+        True when the running copy took over (this start ends), False to start normally.
+    """
+    found = running_app(port)
+    if not found:
+        return False
+    url, version = found
+    if version != VERSION:
+        _say(f"An older copy (v{version}) is running: closing it to start v{VERSION}")
+        _local(url + "api/quit", {})
+        t0 = time.monotonic()
+        while time.monotonic() - t0 < APP_QUIT_WAIT and _local(url + "api/hello"):
+            time.sleep(0.25)
+        return False
+    _say(f"The Grand Project is already running: {url}")
+    if browser:
+        webbrowser.open(url)
+    if atlas:
+        _local(url + "api/atlas/open", {"path": str(Path(atlas).resolve())}, timeout=APP_OPEN_WAIT)
+    return True
 
 
 def _say(text: str) -> None:
@@ -1057,14 +1147,9 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--port", type=int, default=APP_PORT, help=f"first port to try (default {APP_PORT}; 0: any)")
     ap.add_argument("--no-browser", action="store_true", help="don't open the browser")
     args = ap.parse_args(argv)
-    running = running_app(args.port) if args.port else None
-    if running:  # already running: its page, not a second copy writing the same atlas (user)
-        _say(f"The Grand Project is already running: {running}")
-        if not args.no_browser:
-            webbrowser.open(running)
-        return 0
+    if args.port and reuse_running(args.port, args.atlas, not args.no_browser):
+        return 0  # already running: its page, not a second copy writing the same atlas (user)
     session = AtlasSession()
-    open_first_atlas(session, args.atlas)
     try:
         server = AppServer(session, port=args.port)
     except OSError as e:
@@ -1075,6 +1160,18 @@ def main(argv: list[str] | None = None) -> int:
     LOG.info(f"serving on {server.url}")
     if not args.no_browser:
         threading.Timer(0.4, lambda: webbrowser.open(server.url)).start()
+    # the atlas opens behind the page: the page shows at once and says which atlas is loading (it waited for the
+    # whole atlas to load first: user)
+    session.opening = Path(args.atlas or session.settings.get("last_atlas") or rc_paths.DEFAULT_ATLAS).parent.name
+
+    def first_atlas() -> None:
+        try:
+            open_first_atlas(session, args.atlas)
+        finally:
+            session.opening = None
+            session.events.publish("atlas", session.atlas_summary())
+
+    threading.Thread(target=first_atlas, daemon=True).start()
     try:
         server.serve_forever(poll_interval=0.25)
     except KeyboardInterrupt:

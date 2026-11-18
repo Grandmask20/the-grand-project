@@ -68,7 +68,9 @@ export function AtlasPage() {
 							<AtlasMap key={mapKey} info={map} meta={meta.data} />
 						) : (
 							<div className="flex h-full flex-col items-center justify-center gap-3 text-center text-muted-foreground">
-								{s.atlas ? (
+								{!s.atlas && s.opening ? (
+									<p>Loading atlas {s.opening}…</p>
+								) : s.atlas ? (
 									s.atlas.shots ? (
 										<p>Building the map image…</p>
 									) : (
