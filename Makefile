@@ -61,8 +61,11 @@ page_coverage:
 
 # the browser tests: the real app on a hand-made atlas, driven through the built page (Playwright; once:
 # cd frontend && npx playwright install chromium). Screenshots of each step: frontend/test-results/
+# PYTHON is handed to the tests by make (no shell syntax: cmd.exe on Windows has none for it); the app starts in
+# this folder, so a relative .venv path works
+e2e: export PYTHON := $(PYTHON)
 e2e: page
-	cd frontend && PYTHON="$(PYTHON)" npm run e2e  # (the app starts in this folder: a relative .venv path works)
+	cd frontend && npm run e2e
 
 # score the detector on the hand-labelled screenshots (needs the full test data; takes ~15 min).
 # Put the numbers from before and after a detector change in the pull request.

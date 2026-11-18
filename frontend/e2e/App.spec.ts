@@ -78,8 +78,10 @@ test("layers: switching one off is kept", async ({ page }) => {
 	await expect(paths).toHaveAttribute("aria-pressed", "true");
 	await paths.click();
 	await expect(paths).toHaveAttribute("aria-pressed", "false");
-	const s = await api<{ layers: Record<string, boolean> }>(page, "/api/settings");
-	expect(s.layers.Paths).toBe(false);
+	// the page shows it at once and saves it after: wait for the app to have it (CodeRabbit)
+	await expect
+		.poll(async () => (await api<{ layers: Record<string, boolean> }>(page, "/api/settings")).layers.Paths)
+		.toBe(false);
 	await paths.click();
 	await expect(paths).toHaveAttribute("aria-pressed", "true");
 });
@@ -89,7 +91,9 @@ test("the screenshots of a spot show the atlas's screenshot", async ({ page }) =
 	const shots = await api<{ name: string; exists: boolean }[]>(page, "/api/sources?x=0&y=0");
 	expect(shots.map((s) => [s.name, s.exists])).toEqual([["a", true]]);
 	const jpeg = await page.request.get("/api/screenshot/a?w=320");
+	expect(jpeg.status()).toBe(200); // (a 204 is image/jpeg too, with nothing in it: CodeRabbit)
 	expect(jpeg.headers()["content-type"]).toBe("image/jpeg");
+	expect((await jpeg.body()).subarray(0, 2)).toEqual(Buffer.from([0xff, 0xd8])); // a JPEG
 	expect((await page.request.get("/api/screenshot/missing?w=320")).status()).toBe(204); // no picture
 });
 

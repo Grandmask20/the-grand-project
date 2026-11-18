@@ -91,3 +91,5 @@ def test_read_screenshot_of_a_missing_or_broken_file_is_none(tmp_path):
     assert core.read_screenshot(tmp_path / "missing.png") is None
     (tmp_path / "broken.png").write_bytes(b"not a picture")
     assert core.read_screenshot(tmp_path / "broken.png") is None
+    (tmp_path / "empty.png").write_bytes(b"")
+    assert core.read_screenshot(tmp_path / "empty.png") is None

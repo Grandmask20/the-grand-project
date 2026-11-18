@@ -12,6 +12,10 @@ defaults:
   run:
     shell: bash
 
+env:
+  # Python 3.12+'s sys.monitoring: coverage at little cost (the classic tracer made the detection ~2x slower)
+  COVERAGE_CORE: sysmon
+
 # the tests run on Windows, macOS and Linux (platform bugs show only there); coverage is measured on Ubuntu only
 # (the same code runs everywhere: other OSes only add their few own branches, and tracing doubled the slow jobs).
 # The coverage job makes one report from the Python jobs and adds the page's (settings in pyproject.toml and
@@ -64,15 +68,21 @@ jobs:
         if: steps.cache.outputs.cache-hit != 'true'
         run: git lfs fetch --include="atlas_test_data/**" --exclude=""
 
-  # the tests on the real screenshots (pytest marker "data"): detection, placement, false merges, atlas folders
+  # the tests on the real screenshots (pytest marker "data"): detection, placement, false merges, atlas folders.
+  # In two halves side by side (the false-merge test alone is about half the time), and the randomised tests with
+  # 3 runs each (new seeds every time: over many pushes they still try many cases; --runs N --seed S locally)
   data:
     needs: testdata
     strategy:
       fail-fast: false
       matrix:
         os: [windows-latest, macos-latest, ubuntu-latest]
+        part:
+          - { name: false-merge, args: "tests/test_false_merge.py" }
+          - { name: the-rest, args: "--ignore=tests/test_false_merge.py" }
+    name: data (${{ matrix.os }}, ${{ matrix.part.name }})
     runs-on: ${{ matrix.os }}
-    timeout-minutes: 60
+    timeout-minutes: 30
     env:
       COVER: ${{ matrix.os == 'ubuntu-latest' }}
     steps:
@@ -96,12 +106,13 @@ jobs:
       - run: python -m pip install -r requirements.txt pytest coverage
       - name: tests
         run: |
-          if [ "$COVER" = true ]; then python -m coverage run -m pytest -m "data and not slow"
-          else python -m pytest -m "data and not slow"; fi
+          args='-m "data and not slow" --runs 3 --durations=15 ${{ matrix.part.args }}'
+          if [ "$COVER" = true ]; then eval python -m coverage run -m pytest $args
+          else eval python -m pytest $args; fi
       - uses: actions/upload-artifact@v4
         if: ${{ !cancelled() && env.COVER == 'true' }}
         with:
-          name: coverage-data
+          name: coverage-data-${{ matrix.part.name }}
           path: .coverage.*
           include-hidden-files: true
           if-no-files-found: ignore
