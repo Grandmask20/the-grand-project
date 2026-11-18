@@ -93,3 +93,15 @@ def test_read_screenshot_of_a_missing_or_broken_file_is_none(tmp_path):
     assert core.read_screenshot(tmp_path / "broken.png") is None
     (tmp_path / "empty.png").write_bytes(b"")
     assert core.read_screenshot(tmp_path / "empty.png") is None
+
+
+def test_a_screenshot_that_cant_be_read_is_not_kept(tmp_path):
+    import cv2
+    import numpy as np
+
+    at = core.Atlas()
+    shot = tmp_path / "back.png"
+    assert at.image(str(shot)) is None  # missing
+    cv2.imwrite(str(shot), np.full((1080, 1920, 3), 90, np.uint8))
+    img = at.image(str(shot))  # put back: read now, not the missing one remembered
+    assert img is not None and img.shape[:2] == (1080, 1920)

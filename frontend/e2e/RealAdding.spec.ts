@@ -21,9 +21,10 @@ test.afterAll(async ({ browser }) => {
 test("two batches of real screenshots, the second sent while the first is detected, build one atlas", async ({
 	page,
 }) => {
+	test.setTimeout(480_000); // detecting 8 real screenshots may take its 300 s, then the checks (CodeRabbit)
 	const errors: string[] = [];
 	page.on("pageerror", (e) => errors.push(e.message));
-	await useAtlas(page, join(RUN, "real"), true);
+	await useAtlas(page, join(RUN, `real-${test.info().retry}`), true); // a retry starts a new atlas
 	const first = crawl.slice(0, 4);
 	const second = crawl.slice(4, 8);
 

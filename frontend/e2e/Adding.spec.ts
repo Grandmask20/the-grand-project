@@ -31,7 +31,7 @@ test.afterAll(async ({ browser }) => {
 });
 
 test("adds a batch through File › Add screenshots; the page stays usable while it detects", async ({ page }) => {
-	await useAtlas(page, join(RUN, "adding"), true);
+	await useAtlas(page, join(RUN, `adding-${test.info().retry}`), true); // a retry starts a new atlas
 	const batch = shots("batch");
 	expect(batch).toHaveLength(6);
 
@@ -47,14 +47,18 @@ test("adds a batch through File › Add screenshots; the page stays usable while
 	// while it works: the progress box, and the app answers the page at once (the detection runs beside it)
 	await expect(page.getByRole("status").filter({ hasText: /detecting|adding|placing|check/i })).toBeVisible();
 	let slowest = 0;
-	for (let i = 0; i < 6 && (await state(page)).busy; i++) {
-		const t = Date.now();
-		await get(page, "/api/state");
+	let whileBusy = 0;
+	for (let i = 0; i < 6; i++) {
+		const t = Date.now(); // the state read that decides the loop is timed too (CodeRabbit)
+		const busy = (await state(page)).busy;
 		await get(page, "/api/search?q=%230");
 		await get(page, "/api/bookmarks");
 		slowest = Math.max(slowest, Date.now() - t);
+		if (!busy) break;
+		whileBusy++;
 		await page.waitForTimeout(400);
 	}
+	expect(whileBusy, "measured while the job ran").toBeGreaterThan(0);
 	expect(slowest, "the page waited on the job").toBeLessThan(5_000);
 	await page.getByRole("tab", { name: "Log" }).click();
 	await expect(page.getByText(/adding: 6 screenshot\(s\)/)).toBeVisible();
