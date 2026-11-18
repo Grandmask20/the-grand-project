@@ -4,7 +4,7 @@ import { useAppClient } from "@/hooks/app/UseAppClient";
 import { useAppState } from "@/hooks/app/UseAppState";
 import { useAtlasActions } from "@/hooks/atlas/UseAtlasActions";
 import { useAtlases } from "@/hooks/atlas/UseAtlases";
-import { useAppStore } from "@/store/AppStore";
+import { useAppStoreCalm } from "@/store/AppStore";
 import { cn } from "@/utils/Cn";
 
 /** Saved atlases: a card per known atlas (its map, maps / icons / screenshots); click one to open it. */
@@ -13,7 +13,7 @@ export function AtlasesTab() {
 	const atlases = useAtlases();
 	const state = useAppState().data;
 	const actions = useAtlasActions();
-	const s = useAppStore();
+	const s = useAppStoreCalm();
 	const fail = (e: unknown) => s.showError(e);
 
 	return (

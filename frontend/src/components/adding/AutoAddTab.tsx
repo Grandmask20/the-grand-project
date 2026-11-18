@@ -8,7 +8,7 @@ import { Switch } from "@/components/ui/switch";
 import { useAppClient } from "@/hooks/app/UseAppClient";
 import { useAppState } from "@/hooks/app/UseAppState";
 import { useAtlasActions } from "@/hooks/atlas/UseAtlasActions";
-import { useAppStore } from "@/store/AppStore";
+import { useAppStoreCalm } from "@/store/AppStore";
 import { plural } from "@/utils/Format";
 
 /** Auto-add (the watched folder), the screenshots added lately and those waiting for a place. */
@@ -17,7 +17,7 @@ export function AutoAddTab() {
 	const queryClient = useQueryClient();
 	const state = useAppState().data;
 	const actions = useAtlasActions();
-	const s = useAppStore();
+	const s = useAppStoreCalm();
 	const [waitPick, setWaitPick] = useState<number | null>(null);
 	if (!state) return null;
 	const fail = (e: unknown) => s.showError(e);

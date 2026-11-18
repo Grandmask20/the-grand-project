@@ -1,5 +1,6 @@
 import type { Map as MapLibreMap } from "maplibre-gl";
 import { create } from "zustand";
+import { useShallow } from "zustand/shallow";
 import type { Ghost } from "@/domain/adding/Ghost";
 import type { ResultRow } from "@/domain/find/SearchResult";
 import type { ItemInfo } from "@/domain/map/ItemInfo";
@@ -157,3 +158,15 @@ export const useAppStore = create<AppStoreState>()((set) => ({
 	lookTick: 0,
 	bumpLook: () => set((s) => ({ lookTick: s.lookTick + 1 })),
 }));
+
+/** Stands for "a replay is open" in useAppStoreCalm (its contents left out). */
+const REPLAY_OPEN = {} as ReplayUi;
+
+/**
+ * The whole store for components that read many of its parts, without the replay's position: the replay moves it
+ * every frame, and every such component drew again each frame while playing (the page fell seconds behind and a
+ * pause came late: user). `replay` here only says whether one is open.
+ */
+export function useAppStoreCalm(): AppStoreState {
+	return useAppStore(useShallow((st) => ({ ...st, replay: st.replay ? REPLAY_OPEN : null })));
+}

@@ -16,7 +16,7 @@ import { useAppClient } from "@/hooks/app/UseAppClient";
 import { useDebugMarks } from "@/hooks/debug/UseDebugMarks";
 import { useRoutes } from "@/hooks/map/UseRoutes";
 import type { Point } from "@/logic/Geo";
-import { useAppStore } from "@/store/AppStore";
+import { useAppStoreCalm } from "@/store/AppStore";
 
 interface Props {
 	x: number;
@@ -32,7 +32,7 @@ interface Props {
 export function MapMenu({ x, y, at, hit, meta, debug, onClose }: Props) {
 	const app = useAppClient();
 	const queryClient = useQueryClient();
-	const s = useAppStore();
+	const s = useAppStoreCalm();
 	const routes = useRoutes();
 	const node = hit?.kind === "node" ? hit.id : (hit?.node ?? null);
 	const reasons: Record<string, string[]> = useDebugMarks(debug).data?.reasons ?? {};

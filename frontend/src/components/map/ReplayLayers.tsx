@@ -51,8 +51,10 @@ export function ReplayLayers({ map, geo }: { map: MapLibreMap; geo: Geo; meta: M
 				source: "fog-picture",
 				paint: { "raster-fade-duration": 0, "raster-resampling": "linear" },
 			},
-			"outline",
+			"bookmarks",
 		);
+		// over the map's layers, so it hides what isn't revealed yet; the screenshot box above it
+		if (map.getLayer("outline")) map.moveLayer("outline", "bookmarks");
 		return () => {
 			canvas.current = null;
 			if (map.getLayer("fog-picture")) map.removeLayer("fog-picture");
@@ -83,26 +85,33 @@ export function ReplayLayers({ map, geo }: { map: MapLibreMap; geo: Geo; meta: M
 		ctx.putImageData(img, 0, 0);
 	}, [field, cells, pos, area, nSteps]);
 
-	// the screenshots of the step coming in, outlined (not when revealing by area)
+	// the screenshots of the step coming in, outlined (not when revealing by area): every outline is put on the map
+	// once with its step, and only the current step's is shown (by opacity, at once). Setting new outline data on
+	// every step was handled in the background and trailed the replay (user).
 	const cur = pos === null ? -1 : Math.ceil(pos - 1e-9) - 1;
 	const plan = replay?.plan ?? null;
 	useEffect(() => {
-		if (!plan || !frames.data || plan.area || cur < 0 || (pos ?? 0) >= plan.n_steps) {
+		if (!plan || !frames.data || plan.area) {
 			setData(map, "outline", EMPTY);
 			return;
 		}
 		const features: GeoJSON.Feature[] = [];
 		plan.step_of.forEach((s, i) => {
 			const f = frames.data?.frames[i];
-			if (s === cur && f?.corners.length)
+			if (f?.corners.length)
 				features.push({
 					type: "Feature",
 					geometry: { type: "LineString", coordinates: geo.ring(f.corners) },
-					properties: {},
+					properties: { step: s },
 				});
 		});
 		setData(map, "outline", { type: "FeatureCollection", features });
-	}, [map, geo, plan, frames.data, cur, pos]);
+	}, [map, geo, plan, frames.data]);
+	const done = plan ? (pos ?? 0) >= plan.n_steps : true;
+	useEffect(() => {
+		if (map.getLayer("outline"))
+			map.setPaintProperty("outline", "line-opacity", done ? 0 : ["case", ["==", ["get", "step"], cur], 0.9, 0]);
+	}, [map, cur, done]);
 
 	return <MapTint map={map} geo={geo} />;
 }

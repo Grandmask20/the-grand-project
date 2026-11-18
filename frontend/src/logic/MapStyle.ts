@@ -514,22 +514,12 @@ export function applyLook(map: MapLibreMap, geo: Geo, meta: Meta, look: Look): v
 	// Find: a type highlighted
 	setFilter(map, "highlight", look.highlight ? ["in", `|${look.highlight}|`, ["get", "icons"]] : NONE);
 
-	// the replay: only what was revealed so far. Opacity by each item's step, not a filter: a filter makes MapLibre
-	// rebuild its tiles, so map nodes trailed the fog by a second or two and kept appearing after a pause (user).
-	// The 3D models can't take a per-item opacity, so they keep the filter (they're only drawn tilted).
+	// the replay: what isn't revealed yet lies under the fog, which is drawn over the map's layers while replaying
+	// (ReplayLayers). Per-item opacity or filters by step made MapLibre redo every feature (13k paths) each frame:
+	// the page fell seconds behind and kept going after a pause (user). The 3D models stand above the fog, so they
+	// keep a filter by step (only while tilted).
 	const pos = look.replayPos;
-	const shown = (on: number): ExpressionSpecification | number =>
-		pos === null ? on : ["case", ["<", ["coalesce", ["get", "step"], 0], pos], on, 0];
-	setPaint(map, "maps", "circle-opacity", shown(1));
-	setPaint(map, "maps", "circle-stroke-opacity", shown(1));
-	setPaint(map, "maps-square", "icon-opacity", shown(1));
-	setPaint(map, "maps-icon", "icon-opacity", shown(1));
-	setPaint(map, "paths", "line-opacity", shown(0.9));
-	setPaint(map, "icons", "icon-opacity", shown(1));
-	setPaint(map, "landmarks", "circle-stroke-opacity", shown(1));
-	setPaint(map, "towers", "icon-opacity", shown(1));
-	const step: FilterSpecification | null = pos === null ? null : ["<", ["coalesce", ["get", "step"], 0], pos];
-	setFilter(map, "solids", step);
+	setFilter(map, "solids", pos === null || !look.tilted ? null : ["<", ["coalesce", ["get", "step"], 0], pos]);
 	// the tower pictures only on Towers, always (CodeRabbit: the replay filter replaced it)
 	setFilter(map, "towers", ["==", ["get", "kind"], "Tower"]);
 	// bookmarks are not part of how the atlas was made: hidden while replaying (user: they showed from the start)

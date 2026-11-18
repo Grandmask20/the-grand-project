@@ -254,14 +254,17 @@ class ReplayMixin:
         late = max(0, plan.n_steps - 1)
 
         def steps(items, pts):
-            """Steps of maps / icons: where the sweep reaches them, else by their screenshots, else by area."""
+            """Steps of maps / icons: where the sweep reaches them, else when the first screenshot whose area holds
+            them comes in (with the ground under them). By the screenshots that detected them, 3081 of 13697 map
+            nodes of the crawl atlas came in long after their ground (a dim map node is often found only later)."""
             pts = np.asarray(pts, float).reshape(-1, 2)
             if plan.sweep is not None:
                 return plan.steps_at(pts)
-            s = R.item_steps([it.get("frames", []) for it in items], frames, plan.step_of, default=-1)
-            miss = np.nonzero(s < 0)[0]
+            s = R.point_steps(pts, fp, plan.step_of, default=-1)
+            miss = np.nonzero(s < 0)[0]  # outside every screenshot's area: by the screenshots that saw it
             if len(miss):
-                s[miss] = R.point_steps(pts[miss], fp, plan.step_of, default=late)
+                by = R.item_steps([items[i].get("frames", []) for i in miss], frames, plan.step_of, default=late)
+                s[miss] = by
             return s
 
         V = self.V

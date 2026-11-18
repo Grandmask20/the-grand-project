@@ -4,7 +4,7 @@ import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import { useAppClient } from "@/hooks/app/UseAppClient";
 import { useBookmarks } from "@/hooks/bookmarks/UseBookmarks";
-import { useAppStore } from "@/store/AppStore";
+import { useAppStoreCalm } from "@/store/AppStore";
 import { plural } from "@/utils/Format";
 
 /** Bookmarks by group: show / hide on the map, go to, edit, move, delete; groups made, renamed, hidden. */
@@ -12,7 +12,7 @@ export function BookmarksTab() {
 	const app = useAppClient();
 	const bookmarks = useBookmarks();
 	const [picked, setPicked] = useState<Set<number>>(new Set());
-	const s = useAppStore();
+	const s = useAppStoreCalm();
 	const groups = bookmarks.data?.groups ?? [];
 	const fail = (e: unknown) => s.showError(e);
 	const ids = [...picked];

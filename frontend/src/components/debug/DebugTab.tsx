@@ -2,7 +2,7 @@ import { Button } from "@/components/ui/button";
 import { useAppClient } from "@/hooks/app/UseAppClient";
 import { useSettings, useUpdateSettings } from "@/hooks/app/UseSettings";
 import { useDebugMarks } from "@/hooks/debug/UseDebugMarks";
-import { useAppStore } from "@/store/AppStore";
+import { useAppStoreCalm } from "@/store/AppStore";
 
 /** Debug marks (internal copy only): notes pinned on wrong / missing maps and paths, from the right-click menu. */
 export function DebugTab() {
@@ -10,7 +10,7 @@ export function DebugTab() {
 	const marks = useDebugMarks(true);
 	const settings = useSettings();
 	const update = useUpdateSettings();
-	const s = useAppStore();
+	const s = useAppStoreCalm();
 	const shown = settings?.layers["Debug marks"] !== false;
 	const list = marks.data?.marks ?? [];
 	const fail = (e: unknown) => s.showError(e);

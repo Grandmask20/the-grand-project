@@ -17,7 +17,7 @@ import { useAppClient } from "@/hooks/app/UseAppClient";
 import { useAppState } from "@/hooks/app/UseAppState";
 import { useAtlasActions } from "@/hooks/atlas/UseAtlasActions";
 import { useAtlases } from "@/hooks/atlas/UseAtlases";
-import { useAppStore } from "@/store/AppStore";
+import { useAppStoreCalm } from "@/store/AppStore";
 
 /** The File and Atlas menus, and the buttons used most (undo, bookmark, city biome lasso, replay). */
 export function TopBar() {
@@ -26,7 +26,7 @@ export function TopBar() {
 	const state = useAppState().data;
 	const atlases = useAtlases();
 	const actions = useAtlasActions();
-	const s = useAppStore();
+	const s = useAppStoreCalm();
 	const fail = (e: unknown) => s.showError(e);
 	const open = !!state?.atlas;
 	const busy = !!state?.busy;
