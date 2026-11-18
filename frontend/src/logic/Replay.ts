@@ -66,6 +66,22 @@ function boxOf(frames: Frames, pick: (i: number) => boolean): Box | null {
 	return Number.isFinite(x0) ? [x0, y0, x1, y1] : null;
 }
 
+/**
+ * The fallback of "follow newest" when no screenshot came in lately (a gap in an area sweep): the newest one already
+ * revealed, or before any is, the first. Worked out once (CodeRabbit). The first one always: the camera jumped back
+ * to the start in every gap (CodeRabbit).
+ */
+export function latestShown(s: number[], p: number): (i: number) => boolean {
+	let last = Number.NEGATIVE_INFINITY;
+	let first = Number.POSITIVE_INFINITY;
+	for (const v of s) {
+		if (v < p && v > last) last = v;
+		if (v < first) first = v;
+	}
+	const pick = Number.isFinite(last) ? last : first;
+	return (i: number) => s[i] === pick;
+}
+
 /** Where the camera setting wants the view: a box to fit, or a centre and a width in atlas units. */
 export function cameraTarget(meta: Meta, plan: ReplayPlan, frames: Frames, pos: number): Box | null {
 	const s = plan.step_of;
@@ -75,12 +91,7 @@ export function cameraTarget(meta: Meta, plan: ReplayPlan, frames: Frames, pos: 
 		const newest = plan.area
 			? (i: number) => s[i] < p && s[i] >= p - 0.05 * plan.n_steps
 			: (i: number) => s[i] === Math.max(0, Math.ceil(p - 1e-9) - 1);
-		const b =
-			boxOf(frames, newest) ??
-			(() => {
-				const first = s.length ? Math.min(...s) : 0; // (once, and only when needed: CodeRabbit)
-				return boxOf(frames, (i) => s[i] <= first);
-			})();
+		const b = boxOf(frames, newest) ?? boxOf(frames, latestShown(s, p));
 		if (!b) return null;
 		const cx = (b[0] + b[2]) / 2;
 		const cy = (b[1] + b[3]) / 2;

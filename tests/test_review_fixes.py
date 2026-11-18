@@ -351,3 +351,37 @@ def test_the_stronghold_search_releases_its_flag_with_its_result(session, monkey
     session.atlas.lock_scanned = []
     session.scan_locks()
     assert flags and flags[0] is True and session._lock_job is False
+
+
+def test_a_failing_fix_seams_start_lets_go_of_its_claim(session, monkeypatch):
+    def full(*a, **kw):
+        raise OSError("disk full")
+
+    monkeypatch.setattr("grand_project.app.mapimage.tempfile.mkdtemp", full)
+    with pytest.raises(OSError):
+        session.fix_seams()
+    assert not session.seams_running()  # (it stayed claimed: "already running" until a restart)
+
+
+def test_a_stop_while_fix_seams_starts_is_kept(session, monkeypatch):
+    ended = []
+
+    class Proc:
+        stdout = None
+
+        def poll(self):
+            return None
+
+        def terminate(self):
+            ended.append(1)
+
+        def wait(self, timeout=None):
+            return 0
+
+    def popen(*a, **kw):
+        session.stop_seams()  # Stop pressed while the process starts
+        return Proc()
+
+    monkeypatch.setattr("grand_project.app.mapimage.subprocess.Popen", popen)
+    session.fix_seams()
+    assert ended == [1] and session._seams_proc is None and not session.seams_running()

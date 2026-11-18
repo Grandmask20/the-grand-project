@@ -3,6 +3,7 @@ import type {
 	FilterSpecification,
 	GeoJSONSource,
 	ImageSource,
+	LayerSpecification,
 	Map as MapLibreMap,
 	StyleSpecification,
 } from "maplibre-gl";
@@ -247,30 +248,11 @@ export function baseStyle(
 					"circle-stroke-width": worldSize(geo, 2.2, 1),
 				},
 			},
-			{
-				id: "highlight",
-				type: "circle",
-				source: "atlas",
-				"source-layer": "maps",
-				filter: NONE,
-				paint: {
-					"circle-radius": ring(3),
-					"circle-color": "rgba(0,0,0,0)",
-					"circle-stroke-color": meta.colours.hit,
-					"circle-stroke-width": 3,
-				},
-			},
-			{
-				id: "hits",
-				type: "circle",
-				source: "hits",
-				paint: {
-					"circle-radius": ring(6),
-					"circle-color": "rgba(0,0,0,0)",
-					"circle-stroke-color": meta.colours.hit,
-					"circle-stroke-width": 2,
-				},
-			},
+			// Find's marks (a type listed, a search's results): a white ring edged in black on both sides, outside the
+			// yellow selection ring, so a result and the selection never look alike (user's mock-up: the two were
+			// both yellow in 3D). The black edge is a wider black stroke under the white one.
+			...findRing("highlight", { source: "atlas", "source-layer": "maps", filter: NONE }, ring, meta),
+			...findRing("hits", { source: "hits" }, ring, meta),
 			{
 				id: "route-nodes",
 				type: "circle",
@@ -344,7 +326,7 @@ export function baseStyle(
 				type: "line",
 				source: "selected-path",
 				layout: { "line-cap": "round", "line-join": "round" },
-				paint: { "line-color": "#ffffff", "line-width": 4, "line-opacity": 0.95 },
+				paint: { "line-color": meta.colours.select, "line-width": 4, "line-opacity": 0.95 }, // (the selection's yellow)
 			},
 			{
 				id: "selected",
@@ -585,7 +567,9 @@ export function applyLook(map: MapLibreMap, geo: Geo, meta: Meta, look: Look): v
 	if (look.tilted) visible(map, "paths", false);
 
 	// Find: a type highlighted
-	setFilter(map, "highlight", look.highlight ? ["in", `|${look.highlight}|`, ["get", "icons"]] : NONE);
+	const highlight: FilterSpecification = look.highlight ? ["in", `|${look.highlight}|`, ["get", "icons"]] : NONE;
+	setFilter(map, "highlight-edge", highlight);
+	setFilter(map, "highlight", highlight);
 
 	// the replay: what isn't revealed yet lies under the fog, which is drawn over the map's layers while replaying
 	// (ReplayLayers). Per-item opacity or filters by step made MapLibre redo every feature (13k paths) each frame:
@@ -641,4 +625,44 @@ export function squareImage(filled = false): { width: number; height: number; da
 			data[i + 3] = v;
 		}
 	return { width: n, height: n, data };
+}
+
+/** Size of Find's ring past the selection ring's (ring(10) plus its stroke), so it lies outside it. */
+const FIND_RING = 15;
+
+/**
+ * Find's ring as two circle layers: `<id>-edge`, a wide black stroke, then `<id>`, a narrower white one on the same
+ * circle, which leaves a black edge on both sides of the white ring.
+ */
+function findRing(
+	id: string,
+	from: Record<string, unknown>,
+	ring: (extra: number) => ExpressionSpecification,
+	meta: Meta,
+): LayerSpecification[] {
+	const radius = ring(FIND_RING);
+	return [
+		{
+			id: `${id}-edge`,
+			type: "circle",
+			...from,
+			paint: {
+				"circle-radius": radius,
+				"circle-color": "rgba(0,0,0,0)",
+				"circle-stroke-color": "#000000",
+				"circle-stroke-width": 6,
+			},
+		} as LayerSpecification,
+		{
+			id,
+			type: "circle",
+			...from,
+			paint: {
+				"circle-radius": radius,
+				"circle-color": "rgba(0,0,0,0)",
+				"circle-stroke-color": meta.colours.hit,
+				"circle-stroke-width": 2.5,
+			},
+		} as LayerSpecification,
+	];
 }

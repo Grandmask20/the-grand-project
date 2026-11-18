@@ -115,7 +115,8 @@ def test_nothing_of_a_shows_while_b_is_being_loaded(session, two, monkeypatch):
 
     monkeypatch.setattr(session, "rebuild_model", rebuild)
     session.open_atlas(b)
-    assert seen[0] == (b, [], [[]])  # (rebuilt again later: the stronghold search)
+    # B's first rebuild (A's own background search may still rebuild A's model just before the switch)
+    assert next(x for x in seen if x[0] == b) == (b, [], [[]])
     assert any(f["corners"] for f in session.frames_payload()["frames"])  # B's own once built
 
 

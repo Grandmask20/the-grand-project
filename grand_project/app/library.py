@@ -335,9 +335,10 @@ class LibraryMixin:
         last = self.settings.get("last_atlas")
         if last and same_file(last, json_path):  # (also when closed already: the list put it back, CodeRabbit)
             self.settings.pop("last_atlas", None)
-        L = self.known_atlases()
-        L[:] = [a for a in L if not same_file(a["json"], json_path)]
-        self.save_settings()
+        with ATLAS_LIST_LOCK:  # read, changed and saved in one step, as the list's other users (CodeRabbit)
+            L = self.known_atlases()
+            L[:] = [a for a in L if not same_file(a["json"], json_path)]
+            self.save_settings()
         self.events.log(f"stopped tracking {json_path} (its files are still there)")
         self.events.publish("atlases", None)
 

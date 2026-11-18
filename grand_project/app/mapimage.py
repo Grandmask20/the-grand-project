@@ -381,20 +381,25 @@ class MapImageMixin:
         """
         if not self.atlas or not self.atlas.frames:
             raise ValueError("no screenshots in this atlas")
+        # Starting is a state of its own, from the claim to the process's registration: every way out of it
+        # releases the claim (a failing temp folder or input write left it set: "already running" until a restart),
+        # and a Stop during it is kept and honoured at registration (it was lost: CodeRabbit, rounds 3 and 4)
         with self._lock:
             # the check and the claim in one step: two quick clicks both passed the check and started two
             # processes, the first one then out of stop_seams' reach (CodeRabbit)
             if self.seams_running():
                 raise ValueError("Fix seams is already running")
-            self._seams_starting = True
-            tmp = Path(tempfile.mkdtemp(prefix="grand_seams_"))
-            src, out, err = tmp / "atlas.pkl", tmp / "clean.npz", tmp / "errors.txt"
-            # its input and its atlas generation together (CodeRabbit); the atlas pickles without its decoded
-            # screenshot cache (core.Atlas.__getstate__), so the lock is held only briefly
-            src.write_bytes(pickle.dumps(self.atlas))
-            gen, scope = self.opened.gen, self.opened.scope
-        root = Path(__file__).resolve().parents[2]  # the folder holding the grand_project package
+            self._seams_starting, self._seams_stopped = True, False
+        tmp = None
         try:
+            with self._lock:
+                tmp = Path(tempfile.mkdtemp(prefix="grand_seams_"))
+                src, out, err = tmp / "atlas.pkl", tmp / "clean.npz", tmp / "errors.txt"
+                # its input and its atlas generation together (CodeRabbit); the atlas pickles without its decoded
+                # screenshot cache (core.Atlas.__getstate__), so the lock is held only briefly
+                src.write_bytes(pickle.dumps(self.atlas))
+                gen, scope = self.opened.gen, self.opened.scope
+            root = Path(__file__).resolve().parents[2]  # the folder holding the grand_project package
             with open(err, "w", encoding="utf-8") as errf:
                 proc = subprocess.Popen(
                     [sys.executable, "-m", "grand_project.core.seams", str(src), str(out), str(TERRAIN_PIXELS)],
@@ -407,15 +412,19 @@ class MapImageMixin:
         except Exception:
             with self._lock:
                 self._seams_starting = False
-            shutil.rmtree(tmp, ignore_errors=True)
+            if tmp is not None:
+                shutil.rmtree(tmp, ignore_errors=True)
             raise
         with self._lock:
             self._seams_starting = False
-            if not self.owns(gen):  # another atlas opened while it started: never registered for that one
+            stopped = self._seams_stopped
+            if stopped or not self.owns(gen):  # stopped while starting, or another atlas opened: never registered
                 _end_process(proc)
                 shutil.rmtree(tmp, ignore_errors=True)
+                if stopped:
+                    self.events.log("Fix seams: stopped", scope)
                 return
-            self._seams_proc, self._seams_stopped, self._seams_busy = proc, False, True
+            self._seams_proc, self._seams_busy = proc, True
         t0 = time.monotonic()
         self.events.set_progress("fixing seams: building the clean map...")
         self.events.log("Fix seams: building the clean map in the background")
@@ -466,6 +475,10 @@ class MapImageMixin:
 
     def stop_seams(self) -> None:
         """Stop a running Fix seams (its result is then dropped quietly)."""
+        with self._lock:
+            if self._seams_starting:  # its process not registered yet: kept, honoured at registration (CodeRabbit)
+                self._seams_stopped = True
+                return
         p = self._seams_proc
         if p is not None and p.poll() is None:
             self._seams_stopped = True

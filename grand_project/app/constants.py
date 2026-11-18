@@ -58,10 +58,10 @@ LANDMARK_COL = {
 BOOKMARK_COL = (40, 210, 255)
 
 
-SELECT_COL = (255, 255, 255)
+SELECT_COL = (89, 230, 255)  # BGR: the selection ring, yellow (as the 3D view's selected-icon ring, user)
 
 
-HIT_COL = (0, 255, 255)
+HIT_COL = (255, 255, 255)  # BGR: Find's rings, white edged in black, outside the selection ring (user)
 
 
 REMOVED_COL = (70, 70, 255)

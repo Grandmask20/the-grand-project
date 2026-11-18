@@ -8,6 +8,7 @@ import {
 	fogBands,
 	fogCover,
 	fogStep,
+	latestShown,
 	revealed,
 	seekAt,
 	stepFrom,
@@ -99,5 +100,13 @@ describe("the fog", () => {
 		expect(fogCover(1, 1.5, false, 0)).toBe(0);
 		expect(fogCover(4, 4, true, 0.08)).toBe(0); // the last spots at the end (half covered before)
 		expect(fogCover(4.04, 4, true, 0.08)).toBeCloseTo(0.5); // the soft edge lies ahead
+	});
+});
+
+describe("latestShown", () => {
+	it("follows the newest revealed screenshot through a gap, the first before any is revealed", () => {
+		const s = [0, 40, 99];
+		expect([0, 1, 2].filter(latestShown(s, 90))).toEqual([1]); // (it went back to step 0)
+		expect([0, 1, 2].filter(latestShown(s, 0))).toEqual([0]);
 	});
 });
