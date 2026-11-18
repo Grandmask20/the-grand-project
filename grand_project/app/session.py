@@ -171,7 +171,13 @@ class AtlasSession(
                 self._forget_session()
                 self._drop_stale_snapshots(p)
             self.atlas, self.path = atlas, p
-        LOG.info(f"opened atlas {p}: {len(atlas.frames)} screenshots, {len((atlas.final or {}).get('nodes', []))} maps")
+        maps = len((atlas.final or {}).get("nodes", []))
+        LOG.info(f"opened atlas {p}: {len(atlas.frames)} screenshots, {maps} maps")
+        name = p.stem if p.stem != "atlas" else p.parent.name
+        if self.events.scope and self.events.scope != str(p.resolve()):
+            self.events.log(f"switched to atlas {name}")
+        self.events.set_scope(str(p.resolve()))
+        self.events.log(f"opened atlas {name} ({p}): {len(atlas.frames)} screenshots, {maps} maps")
         self.settings["last_atlas"] = str(p)
         if atlas.frames and atlas.final is None:
             self.events.log("this atlas predates the atlas-wide check: running it now")
@@ -213,6 +219,7 @@ class AtlasSession(
             self.atlas, self.path = core.Atlas(), p
             self.atlas.save(p)
         self.settings["last_atlas"] = str(p)
+        self.events.set_scope(str(p.resolve()))
         self._after_load()
         self.events.log(f"new atlas: {p}")
 
@@ -234,6 +241,9 @@ class AtlasSession(
             self.D = {}
             self.model_version += 1
             self._reset_mapimage()
+        if self.events.scope:
+            self.events.log("closed the atlas")
+        self.events.set_scope("")
         self.events.publish("atlas", self.atlas_summary())
         self.events.publish("model", self.model_version)
 
@@ -358,6 +368,7 @@ class AtlasSession(
             "seams": self.seams_running(),
             "questions": self.events.open_questions(),
             "log": list(self.events.log_lines)[-300:],
+            "log_scope": self.events.scope,
         }
 
     def _forget_session(self) -> None:

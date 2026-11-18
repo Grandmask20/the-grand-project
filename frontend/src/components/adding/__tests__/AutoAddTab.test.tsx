@@ -29,7 +29,12 @@ describe("AutoAddTab", () => {
 	it("takes a waiting screenshot out to place it by hand", async () => {
 		const { user, calls } = renderWithApp(<AutoAddTab />, {
 			"POST /api/waiting/take": { path: "/atlases/default/lost.png" },
-			"POST /api/ghost": { picture: 1, box: [-480, -270, 480, 270], name: "lost.png", path: "/atlases/default/lost.png" },
+			"POST /api/ghost": {
+				picture: 1,
+				box: [-480, -270, 480, 270],
+				name: "lost.png",
+				path: "/atlases/default/lost.png",
+			},
 		});
 		await user.click(screen.getByRole("button", { name: /lost.png/ }));
 		await user.click(screen.getByRole("button", { name: "Place by hand" }));

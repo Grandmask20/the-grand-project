@@ -30,29 +30,32 @@ export function TypeList({ onList }: { onList: (label: string, icon: string | nu
 					Hide all
 				</Button>
 			</div>
-			{types.data.sections.map((sec) => (
-				<div key={sec.title} className="flex flex-col">
-					<div className="py-1 text-xs font-semibold text-muted-foreground">{sec.title}</div>
-					{sec.rows.map((row) => (
-						<div key={row.label} className="flex items-center gap-2 rounded px-1 py-0.5 hover:bg-accent">
-							<Checkbox
-								checked={!hidden.has(row.label)}
-								onCheckedChange={(v) => set(row.label, v === true)}
-								aria-label={`Show ${row.label}`}
-							/>
-							<IconPicture name={row.icon} />
-							<button
-								type="button"
-								className="flex-1 truncate text-left"
-								title={row.aliases || row.label}
-								onClick={() => onList(row.label, sec.title === "Map icons" ? row.icon : null)}
-							>
-								{row.label} <span className="text-muted-foreground">({row.count})</span>
-							</button>
-						</div>
-					))}
-				</div>
-			))}
+			{/* a box of its own (user: the results ended up far below a list of 80+ types) */}
+			<div className="max-h-72 overflow-y-auto rounded border p-1">
+				{types.data.sections.map((sec) => (
+					<div key={sec.title} className="flex flex-col">
+						<div className="py-1 text-xs font-semibold text-muted-foreground">{sec.title}</div>
+						{sec.rows.map((row) => (
+							<div key={row.label} className="flex items-center gap-2 rounded px-1 py-0.5 hover:bg-accent">
+								<Checkbox
+									checked={!hidden.has(row.label)}
+									onCheckedChange={(v) => set(row.label, v === true)}
+									aria-label={`Show ${row.label}`}
+								/>
+								<IconPicture name={row.icon} />
+								<button
+									type="button"
+									className="flex-1 truncate text-left"
+									title={row.aliases || row.label}
+									onClick={() => onList(row.label, sec.title === "Map icons" ? row.icon : null)}
+								>
+									{row.label} <span className="text-muted-foreground">({row.count})</span>
+								</button>
+							</div>
+						))}
+					</div>
+				))}
+			</div>
 		</div>
 	);
 }

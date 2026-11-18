@@ -12,7 +12,7 @@ from PIL import Image, ImageDraw
 
 from grand_project import paths as rc_paths
 
-from .constants import ICON_INFO, ICON_ROW_DY, ICON_ROW_STEP
+from .constants import ICON_ART_INNER, ICON_CROP_RIM, ICON_INFO, ICON_ROW_DY, ICON_ROW_STEP
 
 _PICTURES: dict = {}  # PNG bytes per (type, size) (icon_png)
 
@@ -124,11 +124,66 @@ def icon_col(raw: str):
     return ICON_INFO.get(raw, ("", (230, 140, 255), ""))[1]
 
 
-def icon_picture(raw: str, size: int) -> Image.Image:
-    """Return the picture of an icon type.
+def _zip_art(raw: str) -> Image.Image | None:
+    """The game's own picture of an icon type from atlas_icons.zip (cropped to the icon, rim included), or None."""
+    try:
+        with zipfile.ZipFile(rc_paths.ref("atlas_icons.zip")) as z:
+            want = {f"AtlasIconContent{raw}.webp", f"{raw}.webp"}
+            name = next((n for n in z.namelist() if n.split("/")[-1] in want), None)
+            if not name:
+                return None
+            im = Image.open(io.BytesIO(z.read(name))).convert("RGBA")
+    except (OSError, zipfile.BadZipFile, ValueError):
+        return None
+    bbox = im.getchannel("A").point(lambda a: 255 if a > 120 else 0).getbbox()
+    return im.crop(bbox) if bbox else im
 
-    The game's own icon from atlas_icons.zip when there is one, otherwise a taught reference crop (icon database)
-    cut to a circle, otherwise a dot in the type's colour.
+
+def _rim(size: int) -> Image.Image | None:
+    """The game's icon rim at `size` px: the outer ring of the Map Boss icon (inside it transparent), or None."""
+    im = _zip_art("MapBoss")
+    if im is None:
+        return None
+    im = im.resize((size, size), Image.LANCZOS)
+    yy, xx = np.mgrid[:size, :size]
+    r = np.hypot(xx - size / 2 + 0.5, yy - size / 2 + 0.5) / (size / 2)
+    a = np.array(im.getchannel("A"))
+    a[r < ICON_ART_INNER] = 0
+    im.putalpha(Image.fromarray(a))
+    return im
+
+
+def _poe2db_art(raw: str, size: int) -> Image.Image | None:
+    """poe2db's sharp art of an icon type (references/poe2db_icons): the whole icon, or the inner art set in the
+    game's rim (user: the db pictures had no rim), or None."""
+    folder = rc_paths.ref("poe2db_icons")
+    full = folder / f"full__{raw}.webp"
+    if full.exists():
+        im = Image.open(full).convert("RGBA")
+        bbox = im.getchannel("A").point(lambda a: 255 if a > 120 else 0).getbbox()
+        return (im.crop(bbox) if bbox else im).resize((size, size), Image.LANCZOS)
+    inner = folder / f"inner__{raw}.webp"
+    if not inner.exists():
+        return None
+    out = Image.new("RGBA", (size, size), (0, 0, 0, 0))
+    yy, xx = np.mgrid[:size, :size]
+    disc = np.hypot(xx - size / 2 + 0.5, yy - size / 2 + 0.5) <= size / 2 * ICON_ART_INNER + 1
+    out.paste((14, 12, 10, 255), (0, 0, size, size), Image.fromarray(disc.astype(np.uint8) * 255))
+    d = round(size * ICON_ART_INNER * 0.98)
+    art = Image.open(inner).convert("RGBA").resize((d, d), Image.LANCZOS)
+    out.alpha_composite(art, ((size - d) // 2, (size - d) // 2))
+    rim = _rim(size)
+    if rim is not None:
+        out.alpha_composite(rim)
+    return out
+
+
+def icon_picture(raw: str, size: int) -> Image.Image:
+    """Return the picture of an icon type, every source drawn to the same size (rim to the edge).
+
+    In order: the game's own icon from atlas_icons.zip; poe2db's sharp art (references/poe2db_icons, inner art put
+    in the game's rim); a taught on-screen crop (icon database) cut at the rim, since the crop has a margin around
+    the icon that drew those icons smaller than the others (user); a dot in the type's colour.
 
     Args:
         raw: The icon's raw (game) name, e.g. "LostTower".
@@ -137,17 +192,9 @@ def icon_picture(raw: str, size: int) -> Image.Image:
     Returns:
         PIL RGBA image of size (size, size).
     """
-    img = None
-    try:
-        with zipfile.ZipFile(rc_paths.ref("atlas_icons.zip")) as z:
-            want = {f"AtlasIconContent{raw}.webp", f"{raw}.webp"}
-            name = next((n for n in z.namelist() if n.split("/")[-1] in want), None)
-            if name:
-                im = Image.open(io.BytesIO(z.read(name))).convert("RGBA")
-                bbox = im.getchannel("A").point(lambda a: 255 if a > 120 else 0).getbbox()
-                img = im.crop(bbox) if bbox else im
-    except (OSError, zipfile.BadZipFile, ValueError):
-        img = None
+    img = _zip_art(raw)
+    if img is None:
+        img = _poe2db_art(raw, size)
     if img is None:
         from grand_project import icon_refs as atlas_icon_refs
 
@@ -158,8 +205,12 @@ def icon_picture(raw: str, size: int) -> Image.Image:
         if refs and refs[0][1] is not None:
             c = cv2.cvtColor(refs[0][1], cv2.COLOR_BGR2RGB)
             hh, ww = c.shape[:2]
+            r = min(ICON_CROP_RIM, min(hh, ww) / 2)  # the rim's outer edge in the crop
+            cy, cx = hh / 2, ww / 2
+            c = c[int(cy - r) : int(cy + r) + 1, int(cx - r) : int(cx + r) + 1]
+            hh, ww = c.shape[:2]
             yy, xx = np.mgrid[:hh, :ww]
-            alpha = (np.hypot(xx - ww / 2 + 0.5, yy - hh / 2 + 0.5) <= min(hh, ww) / 2 - 1).astype(np.uint8) * 255
+            alpha = (np.hypot(xx - ww / 2 + 0.5, yy - hh / 2 + 0.5) <= min(hh, ww) / 2).astype(np.uint8) * 255
             img = Image.fromarray(np.dstack([c, alpha]), "RGBA")
     if img is None:  # no picture: a dot in the type's colour
         b, g, r = icon_col(raw)

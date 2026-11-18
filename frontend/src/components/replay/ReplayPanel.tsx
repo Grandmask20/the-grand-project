@@ -5,8 +5,8 @@ import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import type { Meta, ReplaySettings } from "@/domain/app/Meta";
 import { useAppClient } from "@/hooks/app/UseAppClient";
-import { useFrames } from "@/hooks/replay/UseFrames";
 import { useGeo } from "@/hooks/map/UseGeo";
+import { useFrames } from "@/hooks/replay/UseFrames";
 import { cameraTarget, counts, ease, stepFrom, stepsPerSecond } from "@/logic/Replay";
 import { useAppStore } from "@/store/AppStore";
 import { download } from "@/utils/Download";
@@ -123,7 +123,11 @@ export function ReplayPanel({ meta }: { meta: Meta }) {
 	const sel = (label: string, key: keyof ReplaySettings, values: string[], disabled = false) => (
 		<label className="flex items-center gap-1.5 text-xs">
 			<span className="text-muted-foreground">{label}</span>
-			<Select value={String(st[key])} onValueChange={(v) => void change({ [key]: v })} disabled={disabled || replay.recording}>
+			<Select
+				value={String(st[key])}
+				onValueChange={(v) => void change({ [key]: v })}
+				disabled={disabled || replay.recording}
+			>
 				<SelectTrigger size="sm" aria-label={label}>
 					<SelectValue />
 				</SelectTrigger>
@@ -171,7 +175,10 @@ export function ReplayPanel({ meta }: { meta: Meta }) {
 					<SkipForwardIcon />
 				</Button>
 				<span className="flex items-center gap-2 font-mono text-xs">
-					<span className="size-2.5 rounded-full" style={{ background: meta.colours.sessions[c.session % meta.colours.sessions.length] }} />
+					<span
+						className="size-2.5 rounded-full"
+						style={{ background: meta.colours.sessions[c.session % meta.colours.sessions.length] }}
+					/>
 					{c.when} · screenshots {c.shots} / {plan.step_of.length} · maps {c.maps}
 				</span>
 				<span className="flex-1" />

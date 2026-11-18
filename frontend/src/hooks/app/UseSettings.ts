@@ -20,11 +20,19 @@ export function useUpdateSettings() {
 	return useMutation({
 		mutationFn: (change: SettingsChange) => app.updateSettings(change),
 		onMutate: (change) => {
-			queryClient.setQueryData<AppState>(AppQueryKeys.state, (s) => (s ? { ...s, settings: merge(s.settings, change) } : s));
+			queryClient.setQueryData<AppState>(AppQueryKeys.state, (s) =>
+				s ? { ...s, settings: merge(s.settings, change) } : s,
+			);
 		},
-		onSuccess: (settings) => {
+		onSuccess: (settings, change) => {
 			queryClient.setQueryData<AppState>(AppQueryKeys.state, (s) => (s ? { ...s, settings } : s));
 			void queryClient.invalidateQueries({ queryKey: AppQueryKeys.types });
+			// Colour by's colours come with the screenshots' outlines and the heat picture (user: switching them
+			// changed nothing on the map)
+			if (change.style && ("colour_spread" in change.style || "age_tint" in change.style || change.style.reset)) {
+				void queryClient.invalidateQueries({ queryKey: AppQueryKeys.frames });
+				void queryClient.invalidateQueries({ queryKey: ["heat"] });
+			}
 		},
 		onError: (e) => {
 			showError(e);

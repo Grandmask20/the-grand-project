@@ -10,7 +10,7 @@ import type { FolderOpened } from "@/domain/atlas/FolderOpened";
 import type { FsListing } from "@/domain/atlas/FsListing";
 import type { BookmarkDraft, Bookmarks } from "@/domain/bookmarks/Bookmarks";
 import type { DebugMark, DebugMarkDraft, DebugMarks } from "@/domain/debug/DebugMarks";
-import type { SearchResult, ResultRow } from "@/domain/find/SearchResult";
+import type { ResultRow, SearchResult } from "@/domain/find/SearchResult";
 import type { SourceShot } from "@/domain/find/Sources";
 import type { TypeList } from "@/domain/find/TypeList";
 import type { Graph } from "@/domain/map/Graph";
@@ -89,7 +89,8 @@ export function createAppClient(http: Http) {
 			http.send<Ok>("POST", "/api/landmark", { x, y, kind, on }),
 		setCityType: (id: number, type: string | null) => http.send<Ok>("POST", "/api/city-type", { id, type }),
 		lassoCount: (polygon: Point[]) => http.send<{ maps: number }>("POST", "/api/lasso", { polygon }),
-		setBiome: (polygon: Point[], biome: string) => http.send<{ maps: number }>("POST", "/api/biome", { polygon, biome }),
+		setBiome: (polygon: Point[], biome: string) =>
+			http.send<{ maps: number }>("POST", "/api/biome", { polygon, biome }),
 
 		// bookmarks
 		getBookmarks: () => http.get<Bookmarks>("/api/bookmarks"),

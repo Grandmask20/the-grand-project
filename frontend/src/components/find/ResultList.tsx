@@ -67,7 +67,9 @@ export function ResultList() {
 						</button>
 					</li>
 				))}
-				{results.length > 500 && <li className="px-2 py-1 text-muted-foreground">{results.length - 500} more: narrow the search</li>}
+				{results.length > 500 && (
+					<li className="px-2 py-1 text-muted-foreground">{results.length - 500} more: narrow the search</li>
+				)}
 			</ul>
 		</Section>
 	);

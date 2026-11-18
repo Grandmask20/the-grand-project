@@ -47,8 +47,22 @@ export function SelectedBox() {
 						onClick={() =>
 							editBookmark(
 								info.kind === "bookmark"
-									? { id: info.id, x: info.x, y: info.y, name: info.name ?? "", group: info.group ?? "Other", note: info.note ?? "" }
-									: { id: null, x: info.x, y: info.y, name: info.suggest?.name ?? info.title, group: info.suggest?.group ?? "Other", note: "" },
+									? {
+											id: info.id,
+											x: info.x,
+											y: info.y,
+											name: info.name ?? "",
+											group: info.group ?? "Other",
+											note: info.note ?? "",
+										}
+									: {
+											id: null,
+											x: info.x,
+											y: info.y,
+											name: info.suggest?.name ?? info.title,
+											group: info.suggest?.group ?? "Other",
+											note: "",
+										},
 							)
 						}
 					>

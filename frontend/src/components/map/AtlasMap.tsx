@@ -1,5 +1,6 @@
-import { FullscreenControl, type Map as MapLibreMap, NavigationControl, Map as MapView } from "maplibre-gl";
+import { FullscreenControl, type Map as MapLibreMap, Map as MapView, NavigationControl } from "maplibre-gl";
 import { useEffect, useRef, useState } from "react";
+import nodePicture from "@/assets/map_node_icon.webp";
 import type { Meta } from "@/domain/app/Meta";
 import type { MapInfo } from "@/domain/map/MapInfo";
 import { useAppClient } from "@/hooks/app/UseAppClient";
@@ -39,8 +40,9 @@ export function AtlasMap({ info, meta }: Props) {
 	useEffect(() => {
 		if (!box.current) return;
 		const [[w, s], [e, n]] = info.bounds;
-		const padX = (e - w) * 0.35;
-		const padY = (n - s) * 0.35;
+		// room to pan well past the atlas's edges (user: the old window let you pan off the atlas); ⤢ brings it back
+		const padX = (e - w) * 1.0;
+		const padY = (n - s) * 1.0;
 		const cam = useAppStore.getState().camera;
 		const m = new MapView({
 			container: box.current,
@@ -77,6 +79,12 @@ export function AtlasMap({ info, meta }: Props) {
 		m.on("pitch", () => three.setOn(m.getPitch() > 1));
 		m.on("load", () => {
 			if (!m.hasImage("node-square")) m.addImage("node-square", squareImage(), { sdf: true });
+			void m
+				.loadImage(nodePicture)
+				.then((img) => {
+					if (!m.hasImage("node-picture")) m.addImage("node-picture", img.data);
+				})
+				.catch(() => undefined); // the "map icons" style then draws nothing
 			setMap(m);
 			setStoreMap(m);
 		});

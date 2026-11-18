@@ -11,7 +11,9 @@ describe("QuestionDialog", () => {
 		const { user, calls, queryClient } = renderWithApp(<QuestionDialog />, { "POST /api/questions/5": { ok: true } });
 		queryClient.setQueryData<AppState>(AppQueryKeys.state, {
 			...state,
-			questions: [{ id: 5, question: "a.png would be added, but the match is weak.", preview: { picture: 2, box: [0, 0, 1, 1] } }],
+			questions: [
+				{ id: 5, question: "a.png would be added, but the match is weak.", preview: { picture: 2, box: [0, 0, 1, 1] } },
+			],
 		});
 		expect(await screen.findByText(/the match is weak/)).toBeInTheDocument();
 		expect(screen.getByText(/It is shown and outlined on the map/)).toBeInTheDocument();

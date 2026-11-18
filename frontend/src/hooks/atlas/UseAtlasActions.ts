@@ -28,11 +28,7 @@ export function useAtlasActions() {
 	}, [store, refreshAll]);
 
 	const openAtlas = useCallback(
-		(path: string) =>
-			app
-				.openAtlas(path)
-				.then(afterOpen)
-				.catch(fail),
+		(path: string) => app.openAtlas(path).then(afterOpen).catch(fail),
 		[app, afterOpen, fail],
 	);
 
@@ -54,19 +50,19 @@ export function useAtlasActions() {
 				folders: true,
 				save: "atlas.json",
 				start: atlasFolder,
-				onPick: ([p]) =>
-					p &&
-					void app
-						.newAtlas(p)
-						.then(afterOpen)
-						.catch(fail),
+				onPick: ([p]) => p && void app.newAtlas(p).then(afterOpen).catch(fail),
 			}),
 		[store, app, atlasFolder, afterOpen, fail],
 	);
 
 	const addScreenshots = useCallback(
 		(paths: string[]) =>
-			paths.length ? app.addScreenshots(paths).then(() => queryClient.invalidateQueries({ queryKey: AppQueryKeys.state })).catch(fail) : undefined,
+			paths.length
+				? app
+						.addScreenshots(paths)
+						.then(() => queryClient.invalidateQueries({ queryKey: AppQueryKeys.state }))
+						.catch(fail)
+				: undefined,
 		[app, queryClient, fail],
 	);
 
@@ -79,11 +75,7 @@ export function useAtlasActions() {
 						title: "New atlas",
 						text: `No atlas in this folder yet. Build one from its ${plural(r.create, "screenshot")}? It is saved as atlas.json in the folder.`,
 						yes: "Build it",
-						onYes: () =>
-							void app
-								.createFromFolder(folder)
-								.then(afterOpen)
-								.catch(fail),
+						onYes: () => void app.createFromFolder(folder).then(afterOpen).catch(fail),
 					});
 					return;
 				}
@@ -136,7 +128,12 @@ export function useAtlasActions() {
 				s.showError(null);
 				s.setTab("auto");
 				queryClient.setQueryData(AppQueryKeys.state, (old: typeof state) =>
-					old ? { ...old, status: `${baseName(path)}: drag it roughly where it belongs, then press Enter or double-click (Esc cancels)` } : old,
+					old
+						? {
+								...old,
+								status: `${baseName(path)}: drag it roughly where it belongs, then press Enter or double-click (Esc cancels)`,
+							}
+						: old,
 				);
 			} catch (e) {
 				fail(e);
@@ -173,14 +170,7 @@ export function useAtlasActions() {
 		[app, startGhost, addScreenshots, fail],
 	);
 
-	const closeAtlas = useCallback(
-		() =>
-			app
-				.closeAtlas()
-				.then(afterOpen)
-				.catch(fail),
-		[app, afterOpen, fail],
-	);
+	const closeAtlas = useCallback(() => app.closeAtlas().then(afterOpen).catch(fail), [app, afterOpen, fail]);
 
 	return useMemo(
 		() => ({

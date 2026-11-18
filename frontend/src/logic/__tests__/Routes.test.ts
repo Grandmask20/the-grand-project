@@ -15,7 +15,15 @@ const graph = new RouteGraph({
 	],
 	edges: [
 		{ a: 0, b: 1 },
-		{ a: 1, b: 2, line: [[100, 0], [150, 30], [200, 0]] },
+		{
+			a: 1,
+			b: 2,
+			line: [
+				[100, 0],
+				[150, 30],
+				[200, 0],
+			],
+		},
 		{ a: 2, b: 3 },
 		{ a: 0, b: 4 },
 		{ a: 4, b: 5 },
@@ -39,8 +47,17 @@ describe("RouteGraph", () => {
 	});
 
 	it("follows curved paths, either way round", () => {
-		expect(graph.line([1, 2])).toEqual([[100, 0], [150, 30], [200, 0]]);
-		expect(graph.line([3, 2, 1])).toEqual([[300, 0], [200, 0], [150, 30], [100, 0]]);
+		expect(graph.line([1, 2])).toEqual([
+			[100, 0],
+			[150, 30],
+			[200, 0],
+		]);
+		expect(graph.line([3, 2, 1])).toEqual([
+			[300, 0],
+			[200, 0],
+			[150, 30],
+			[100, 0],
+		]);
 	});
 
 	it("finds the closest map", () => {

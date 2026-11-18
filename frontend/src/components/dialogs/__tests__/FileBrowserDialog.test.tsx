@@ -19,7 +19,9 @@ describe("FileBrowserDialog", () => {
 	it("picks several files", async () => {
 		const onPick = vi.fn();
 		const { user } = renderWithApp(<FileBrowserDialog />, { "GET /api/fs": home });
-		act(() => useAppStore.getState().pickFiles({ title: "Add atlas screenshots", folders: false, multiple: true, onPick }));
+		act(() =>
+			useAppStore.getState().pickFiles({ title: "Add atlas screenshots", folders: false, multiple: true, onPick }),
+		);
 		await user.click(await screen.findByRole("button", { name: /a.png/ }));
 		await user.click(screen.getByRole("button", { name: /b.png/ }));
 		await user.click(screen.getByRole("button", { name: "Open" }));

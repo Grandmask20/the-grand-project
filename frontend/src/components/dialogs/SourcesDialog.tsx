@@ -33,7 +33,10 @@ export function SourcesDialog() {
 								<li key={s.name}>
 									<button
 										type="button"
-										className={cn("w-full truncate px-2 py-1 text-left hover:bg-accent", i === k && "bg-accent text-gold")}
+										className={cn(
+											"w-full truncate px-2 py-1 text-left hover:bg-accent",
+											i === k && "bg-accent text-gold",
+										)}
 										onClick={() => setK(i)}
 									>
 										{s.name}
@@ -45,7 +48,11 @@ export function SourcesDialog() {
 							{shot && !shot.exists && <p className="text-muted-foreground">missing file: {shot.name}</p>}
 							{shot?.exists && (
 								<div className="relative max-h-full max-w-full" style={{ aspectRatio: `${shot.w} / ${shot.h}` }}>
-									<img src={app.screenshotUrl(shot.name, 1600)} alt={shot.name} className="h-full w-full object-contain" />
+									<img
+										src={app.screenshotUrl(shot.name, 1600)}
+										alt={shot.name}
+										className="h-full w-full object-contain"
+									/>
 									<div
 										className="absolute size-11 -translate-x-1/2 -translate-y-1/2 rounded-full border-2 border-yellow-300"
 										style={{ left: `${(shot.px / shot.w) * 100}%`, top: `${(shot.py / shot.h) * 100}%` }}

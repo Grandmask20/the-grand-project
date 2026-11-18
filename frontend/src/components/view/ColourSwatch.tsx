@@ -1,5 +1,13 @@
 /** A colour square that opens the browser's colour picker. */
-export function ColourSwatch({ label, value, onChange }: { label: string; value: string; onChange: (hex: string) => void }) {
+export function ColourSwatch({
+	label,
+	value,
+	onChange,
+}: {
+	label: string;
+	value: string;
+	onChange: (hex: string) => void;
+}) {
 	return (
 		<label className="flex cursor-pointer items-center gap-2 text-xs">
 			<input

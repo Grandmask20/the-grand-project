@@ -1,7 +1,12 @@
 import { describe, expect, it } from "vitest";
 import { Geo } from "@/logic/Geo";
 
-const geo = new Geo({ grid: { x0: -300, y0: -200, scale: 0.5, width: 4000, height: 3000 }, world: 16384, offset: 4096, zmax: 6 });
+const geo = new Geo({
+	grid: { x0: -300, y0: -200, scale: 0.5, width: 4000, height: 3000 },
+	world: 16384,
+	offset: 4096,
+	zmax: 6,
+});
 
 describe("Geo", () => {
 	it("turns atlas points into longitude / latitude and back", () => {

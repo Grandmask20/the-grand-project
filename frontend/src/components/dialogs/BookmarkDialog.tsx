@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { ComboInput } from "@/components/common/ComboInput";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
@@ -63,12 +64,7 @@ export function BookmarkDialog() {
 					</div>
 					<div className="flex flex-col gap-1.5">
 						<Label htmlFor="bm-group">Group</Label>
-						<Input id="bm-group" value={group} onChange={(e) => setGroup(e.target.value)} list="bm-groups" />
-						<datalist id="bm-groups">
-							{options.map((g) => (
-								<option key={g} value={g} />
-							))}
-						</datalist>
+						<ComboInput id="bm-group" value={group} onChange={setGroup} options={options} />
 					</div>
 					<div className="flex flex-col gap-1.5">
 						<Label htmlFor="bm-note">Note</Label>

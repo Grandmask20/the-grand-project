@@ -32,7 +32,13 @@ export function PromptDialog() {
 					}}
 				>
 					<Label htmlFor="prompt-value">{prompt.label}</Label>
-					<Input id="prompt-value" value={value} onChange={(e) => setValue(e.target.value)} list="prompt-options" autoFocus />
+					<Input
+						id="prompt-value"
+						value={value}
+						onChange={(e) => setValue(e.target.value)}
+						list="prompt-options"
+						autoFocus
+					/>
 					{prompt.options && (
 						<datalist id="prompt-options">
 							{prompt.options.map((o) => (

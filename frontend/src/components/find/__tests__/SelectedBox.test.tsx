@@ -17,7 +17,14 @@ describe("SelectedBox", () => {
 		expect(await screen.findByText("Map #12: Breach")).toBeInTheDocument();
 		expect(screen.getByText("position 440, 200")).toBeInTheDocument();
 		await user.click(screen.getByRole("button", { name: "Bookmark" }));
-		expect(useAppStore.getState().bookmarkEdit).toEqual({ id: null, x: 440, y: 200, name: "Breach", group: "Breach", note: "" });
+		expect(useAppStore.getState().bookmarkEdit).toEqual({
+			id: null,
+			x: 440,
+			y: 200,
+			name: "Breach",
+			group: "Breach",
+			note: "",
+		});
 		await user.click(screen.getByRole("button", { name: "Screenshots" }));
 		expect(useAppStore.getState().sources).toEqual([440, 200]);
 	});

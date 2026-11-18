@@ -29,7 +29,9 @@ class Events:
         self._lock = threading.Lock()
         self._listeners: list[queue.Queue] = []
         self._ids = itertools.count(1)
-        self.log_lines: deque = deque(maxlen=LOG_KEEP)
+        # one log per atlas (user: one shared log mixed atlases up); "" is the app's own (no atlas open)
+        self.scope = ""
+        self._logs: dict[str, deque] = {"": deque(maxlen=LOG_KEEP)}
         self.history: deque = deque(maxlen=EVENT_HISTORY)  # recent events, for a page that reconnects
         self.progress: str | None = None
         self.status = ""
@@ -52,16 +54,26 @@ class Events:
                 except queue.Full:  # a stuck browser tab: dropped, it reloads the state when it reconnects
                     self._listeners.remove(q)
 
+    @property
+    def log_lines(self) -> deque:
+        """The log of the open atlas (or the app's own with none open)."""
+        return self._logs.setdefault(self.scope, deque(maxlen=LOG_KEEP))
+
+    def set_scope(self, key: str) -> None:
+        """Switch the Log tab to another atlas's log (key: its file path; "" for none open)."""
+        self.scope = key
+
     def log(self, text: str) -> None:
-        """Write a line to the log file and the browser's Log tab.
+        """Write a line to the log file and the open atlas's log in the browser's Log tab.
 
         Args:
             text: The line.
         """
         LOG.info(text)
         line = f"{time.strftime('%H:%M:%S')}  {text}"
-        self.log_lines.append(line)
-        self.publish("log", line)
+        scope = self.scope
+        self._logs.setdefault(scope, deque(maxlen=LOG_KEEP)).append(line)
+        self.publish("log", {"scope": scope, "line": line})
 
     def set_progress(self, text: str | None) -> None:
         """Show (or clear, with None) the progress box.

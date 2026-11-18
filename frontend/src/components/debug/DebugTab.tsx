@@ -1,7 +1,7 @@
 import { Button } from "@/components/ui/button";
 import { useAppClient } from "@/hooks/app/UseAppClient";
-import { useDebugMarks } from "@/hooks/debug/UseDebugMarks";
 import { useSettings, useUpdateSettings } from "@/hooks/app/UseSettings";
+import { useDebugMarks } from "@/hooks/debug/UseDebugMarks";
 import { useAppStore } from "@/store/AppStore";
 
 /** Debug marks (internal copy only): notes pinned on wrong / missing maps and paths, from the right-click menu. */
@@ -44,7 +44,11 @@ export function DebugTab() {
 			<ul className="flex flex-col gap-0.5 text-xs">
 				{list.map((m) => (
 					<li key={m.id} className="flex items-center gap-2">
-						<button type="button" className="flex-1 truncate text-left hover:text-gold" onClick={() => s.flyTo(m.x, m.y, 1)}>
+						<button
+							type="button"
+							className="flex-1 truncate text-left hover:text-gold"
+							onClick={() => s.flyTo(m.x, m.y, 1)}
+						>
 							D{m.id} {m.kind}: {m.reason}
 							{m.note && ` - ${m.note}`} ({m.x.toFixed(0)}, {m.y.toFixed(0)})
 						</button>

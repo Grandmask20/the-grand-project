@@ -21,7 +21,15 @@ export const style = {
 
 export const state: AppState = {
 	version: "1.17",
-	atlas: { name: "default", path: "/atlases/default/atlas.json", maps: 80, icons: 9, shots: 4, landmarks: 4, bookmarks: 1 },
+	atlas: {
+		name: "default",
+		path: "/atlases/default/atlas.json",
+		maps: 80,
+		icons: 9,
+		shots: 4,
+		landmarks: 4,
+		bookmarks: 1,
+	},
 	model_version: 3,
 	terrain_version: 2,
 	filter_version: 1,
@@ -87,7 +95,16 @@ export const meta: Meta = {
 		cameras: ["whole atlas", "grow with atlas", "follow newest"],
 		smoothing: { off: 0, light: 0.12 },
 		speeds: [0.5, 1, 2],
-		defaults: { type: "by time", reveal: "screenshots", camera: "whole atlas", smoothing: "light", length: 20, speed: 1, per_step: 1, video_width: 1280 },
+		defaults: {
+			type: "by time",
+			reveal: "screenshots",
+			camera: "whole atlas",
+			smoothing: "light",
+			length: 20,
+			speed: 1,
+			per_step: 1,
+			video_width: 1280,
+		},
 		follow_span: 2.5,
 		scan_column: 1920,
 		spiral_pitch: 900,
@@ -122,7 +139,13 @@ export const bookmarks: Bookmarks = {
 };
 
 export const atlases: AtlasCard[] = [
-	{ name: "default", json: "/atlases/default/atlas.json", numbers: { maps: 80, icons: 9, shots: 4 }, open: true, thumb: false },
+	{
+		name: "default",
+		json: "/atlases/default/atlas.json",
+		numbers: { maps: 80, icons: 9, shots: 4 },
+		open: true,
+		thumb: false,
+	},
 	{ name: "second", json: "/atlases/two/atlas.json", numbers: null, open: false, thumb: false },
 ];
 

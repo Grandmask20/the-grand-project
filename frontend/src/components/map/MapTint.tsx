@@ -28,8 +28,7 @@ export function MapTint({ map, geo }: { map: MapLibreMap; geo: Geo }) {
 		for (const i of f.order) {
 			const fr = f.frames[i];
 			if (!fr.corners.length || !revealed(plan, i, pos)) continue;
-			const colour =
-				mode === "by session" ? f.sessions[fr.session % f.sessions.length] : rampColour(f.ramp, fr.rank);
+			const colour = mode === "by session" ? f.sessions[fr.session % f.sessions.length] : rampColour(f.ramp, fr.rank);
 			features.push({
 				type: "Feature",
 				geometry: { type: "Polygon", coordinates: [geo.ring(fr.corners)] },

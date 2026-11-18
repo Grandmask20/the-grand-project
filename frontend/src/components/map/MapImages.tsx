@@ -34,7 +34,15 @@ export function MapImages({ map, geo }: { map: MapLibreMap; geo: Geo }) {
 		setImage(map, "ghost-picture", app.pictureUrl(ghost.ghost.picture), geo.corners(box), "selected", 0.6);
 		setData(map, "ghost-line", {
 			type: "Feature",
-			geometry: { type: "LineString", coordinates: geo.ring([[box[0], box[1]], [box[2], box[1]], [box[2], box[3]], [box[0], box[3]]]) },
+			geometry: {
+				type: "LineString",
+				coordinates: geo.ring([
+					[box[0], box[1]],
+					[box[2], box[1]],
+					[box[2], box[3]],
+					[box[0], box[3]],
+				]),
+			},
 			properties: {},
 		});
 	}, [map, geo, app, ghost]);
@@ -51,9 +59,18 @@ export function MapImages({ map, geo }: { map: MapLibreMap; geo: Geo }) {
 	}, [map, geo, app, preview]);
 
 	const box = heatOn ? (heat.data?.box ?? null) : null;
+	const fetched = heat.dataUpdatedAt; // a new heat picture can have the same box (CodeRabbit): fetch it anyway
 	useEffect(() => {
-		setImage(map, "heat", box ? app.heatUrl(upto, Date.now()) : null, box ? geo.corners(box) : null, "biomes", 0.55);
-	}, [map, geo, app, box, upto]);
+		// 0.38: at 0.55 the heat hid the ground (user)
+		setImage(
+			map,
+			"heat",
+			box && fetched ? app.heatUrl(upto, fetched) : null,
+			box ? geo.corners(box) : null,
+			"biomes",
+			0.38,
+		);
+	}, [map, geo, app, box, upto, fetched]);
 
 	return null;
 }

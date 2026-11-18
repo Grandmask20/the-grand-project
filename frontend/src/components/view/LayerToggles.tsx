@@ -19,7 +19,7 @@ export const LAYERS: [string, string][] = [
 	["Debug marks", "Debug marks"],
 ];
 
-const OFF_BY_DEFAULT = new Set(["Doubtful", "Removed"]);
+export const OFF_BY_DEFAULT = new Set(["Doubtful", "Removed"]);
 
 export function LayerToggles() {
 	const settings = useSettings();

@@ -286,7 +286,7 @@ REPLAY_AREA_STEPS = 400  # reveal by area: the sweep is split into this many ste
 REPLAY_AREA_RES = 1024  # reveal by area: the sweep field is worked out on a grid this many cells on its long side
 REPLAY_AREA_SOFT = 0.02  # reveal by area: the sweep's edge fades over this share of the whole sweep
 REPLAY_FOLLOW_SPAN = 2.5  # "follow newest": the view is this many screenshot widths across
-REPLAY_TINT_ALPHA = 0.32  # how strongly "Colour by" tints the map
+REPLAY_TINT_ALPHA = 0.22  # how strongly "Colour by" tints the map (0.32 hid the ground: user)
 COLOUR_BY = ("off", "by session", "oldest to newest", "times seen")  # View tab "Colour by" (times seen = heatmap)
 COLOUR_SPREADS = {  # View tab colour spread for oldest-to-newest and times seen: name -> OpenCV colour map
     "plasma": 15,  # cv2.COLORMAP_PLASMA
@@ -321,3 +321,9 @@ FS_LIST_MAX = 5000  # entries listed by the folder browser at most
 
 REPLAY_FOG_RES = 512  # timelapse: the "revealed yet" grid has this many cells on the atlas's long side
 REPLAY_FOG_BANDS = 400  # ...and its steps are grouped into at most this many fog bands
+
+
+ICON_CROP_RIM = 13.5  # px: the rim's outer edge from the centre of a taught on-screen icon crop (34 px at 1080p; the
+# detector's rim reaches 12.5, detect ICON_RIM_R): the crop is cut there so it is drawn as big as the game's art
+ICON_ART_INNER = 0.72  # share of an icon's radius inside its rim (the game's Map Boss icon): poe2db's inner art goes
+# there, inside the game's rim

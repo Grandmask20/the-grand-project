@@ -17,7 +17,8 @@ export function fakeHttp(routes: Record<string, Handler>) {
 		const key = `${method} ${path}`;
 		if (!(key in routes)) throw new ApiError(`no route for ${key}`, 404);
 		const h = routes[key];
-		const value = typeof h === "function" ? (h as (b: unknown, p?: Record<string, unknown>) => unknown)(body, params) : h;
+		const value =
+			typeof h === "function" ? (h as (b: unknown, p?: Record<string, unknown>) => unknown)(body, params) : h;
 		if (value instanceof Error) throw value;
 		return structuredClone(value);
 	};

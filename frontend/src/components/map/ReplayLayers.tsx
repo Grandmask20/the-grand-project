@@ -12,7 +12,9 @@ import { MapTint } from "./MapTint";
 /** The replay on the map: the ground not revealed yet under fog, and the screenshots coming in outlined. */
 export function ReplayLayers({ map, geo }: { map: MapLibreMap; geo: Geo; meta: Meta }) {
 	const replay = useAppStore((s) => s.replay);
-	const planKey = replay ? `${replay.plan.kind}-${replay.plan.n_steps}-${replay.plan.settings.per_step}-${replay.plan.area}` : null;
+	const planKey = replay
+		? `${replay.plan.kind}-${replay.plan.n_steps}-${replay.plan.settings.per_step}-${replay.plan.area}`
+		: null;
 	const fog = useFog(planKey);
 	const frames = useFrames(!!replay);
 
@@ -48,7 +50,11 @@ export function ReplayLayers({ map, geo }: { map: MapLibreMap; geo: Geo; meta: M
 		plan.step_of.forEach((s, i) => {
 			const f = frames.data?.frames[i];
 			if (s === cur && f?.corners.length)
-				features.push({ type: "Feature", geometry: { type: "LineString", coordinates: geo.ring(f.corners) }, properties: {} });
+				features.push({
+					type: "Feature",
+					geometry: { type: "LineString", coordinates: geo.ring(f.corners) },
+					properties: {},
+				});
 		});
 		setData(map, "outline", { type: "FeatureCollection", features });
 	}, [map, geo, plan, frames.data, cur, pos]);

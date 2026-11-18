@@ -49,7 +49,15 @@ export function MapIcons({ map, geo, info }: { map: MapLibreMap; geo: Geo; info:
 						minzoom: zMin,
 						layout: {
 							"icon-image": ["get", "name"],
-							"icon-size": ["interpolate", ["exponential", 2], ["zoom"], zMin, size(zMin), info.maxzoom, size(info.maxzoom)],
+							"icon-size": [
+								"interpolate",
+								["exponential", 2],
+								["zoom"],
+								zMin,
+								size(zMin),
+								info.maxzoom,
+								size(info.maxzoom),
+							],
 							"icon-allow-overlap": true,
 							"icon-ignore-placement": true,
 						},
@@ -67,7 +75,15 @@ export function MapIcons({ map, geo, info }: { map: MapLibreMap; geo: Geo; info:
 							minzoom: zMin,
 							layout: {
 								"icon-image": TOWER,
-								"icon-size": ["interpolate", ["exponential", 2], ["zoom"], zMin, 2 * size(zMin), info.maxzoom, 2 * size(info.maxzoom)],
+								"icon-size": [
+									"interpolate",
+									["exponential", 2],
+									["zoom"],
+									zMin,
+									2 * size(zMin),
+									info.maxzoom,
+									2 * size(info.maxzoom),
+								],
 								"icon-allow-overlap": true,
 								"icon-ignore-placement": true,
 								"icon-anchor": "bottom",

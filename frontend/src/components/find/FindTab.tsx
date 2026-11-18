@@ -1,4 +1,4 @@
-import { SearchIcon } from "lucide-react";
+import { SearchIcon, XIcon } from "lucide-react";
 import { useEffect, useState } from "react";
 import { Section } from "@/components/common/Section";
 import { Checkbox } from "@/components/ui/checkbox";
@@ -33,6 +33,24 @@ export function FindTab() {
 		return () => clearTimeout(t);
 	}, [text, setQuery]);
 
+	// a new search drops the rings of the one before (user: rings of different finds piled up and never left)
+	useEffect(() => {
+		if (query.trim()) {
+			setHighlight(null);
+			setGoto(null);
+		}
+	}, [query, setHighlight, setGoto]);
+
+	/** The x button: empty the search and take every find ring off the map. */
+	const clear = () => {
+		setText("");
+		setQuery("");
+		setListed(null);
+		setHighlight(null);
+		setGoto(null);
+		setResults([], "");
+	};
+
 	useEffect(() => {
 		const d = search.data;
 		if (!query.trim()) {
@@ -65,7 +83,7 @@ export function FindTab() {
 	);
 
 	return (
-		<div className="flex h-full flex-col gap-4">
+		<div className="flex flex-col gap-4">
 			<div className="relative">
 				<SearchIcon className="absolute top-2 left-2 size-4 text-muted-foreground" />
 				<Input
@@ -73,8 +91,18 @@ export function FindTab() {
 					placeholder="Find: a name, an icon, #12, or x, y"
 					value={text}
 					onChange={(e) => setText(e.target.value)}
-					className="pl-8"
+					onKeyDown={(e) => e.key === "Escape" && clear()}
+					className="pr-8 pl-8"
 				/>
+				<button
+					type="button"
+					aria-label="Clear the search"
+					title="Clear the search and the rings on the map (Esc)"
+					onClick={clear}
+					className="absolute top-1.5 right-1.5 rounded p-0.5 text-muted-foreground hover:bg-accent hover:text-foreground"
+				>
+					<XIcon className="size-4" />
+				</button>
 			</div>
 			<div className="flex flex-col gap-2">
 				{filter("multi_only", "only what 2+ screenshots show")}

@@ -18,5 +18,15 @@ export const AppQueryKeys = {
 	fog: ["fog"] as const,
 	debug: ["debug"] as const,
 	/** What changes when the atlas or its model changes. */
-	model: [["types"], ["search"], ["list"], ["info"], ["graph"], ["frames"], ["heat"], ["bookmarks"], ["recent"]] as const,
+	model: [
+		["types"],
+		["search"],
+		["list"],
+		["info"],
+		["graph"],
+		["frames"],
+		["heat"],
+		["bookmarks"],
+		["recent"],
+	] as const,
 };

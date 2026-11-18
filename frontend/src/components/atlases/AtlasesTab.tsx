@@ -2,8 +2,8 @@ import { PencilIcon, Trash2Icon } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { useAppClient } from "@/hooks/app/UseAppClient";
 import { useAppState } from "@/hooks/app/UseAppState";
-import { useAtlases } from "@/hooks/atlas/UseAtlases";
 import { useAtlasActions } from "@/hooks/atlas/UseAtlasActions";
+import { useAtlases } from "@/hooks/atlas/UseAtlases";
 import { useAppStore } from "@/store/AppStore";
 import { cn } from "@/utils/Cn";
 
@@ -40,7 +40,13 @@ export function AtlasesTab() {
 						onClick={() => !a.open && void actions.openAtlas(a.json)}
 					>
 						{a.thumb ? (
-							<img src={app.thumbUrl(a.json, state?.terrain_version ?? 0)} alt="" width={112} height={84} className="rounded" />
+							<img
+								src={app.thumbUrl(a.json, state?.terrain_version ?? 0)}
+								alt=""
+								width={112}
+								height={84}
+								className="rounded"
+							/>
 						) : (
 							<div className="flex h-[84px] w-[112px] items-center justify-center rounded bg-muted text-xs text-muted-foreground">
 								no map yet
@@ -49,7 +55,9 @@ export function AtlasesTab() {
 						<div className="flex min-w-0 flex-col">
 							<span className="truncate font-semibold">{a.name}</span>
 							<span className="text-xs text-muted-foreground">
-								{a.numbers ? `${a.numbers.maps} maps · ${a.numbers.icons} icons · ${a.numbers.shots} screenshots` : "reading…"}
+								{a.numbers
+									? `${a.numbers.maps} maps · ${a.numbers.icons} icons · ${a.numbers.shots} screenshots`
+									: "reading…"}
 							</span>
 							{a.open && <span className="text-xs text-gold">open</span>}
 						</div>
@@ -70,7 +78,12 @@ export function AtlasesTab() {
 						>
 							<PencilIcon />
 						</Button>
-						<Button size="icon-sm" variant="ghost" aria-label={`Delete ${a.name}`} onClick={() => s.askDeleteAtlas(a.json)}>
+						<Button
+							size="icon-sm"
+							variant="ghost"
+							aria-label={`Delete ${a.name}`}
+							onClick={() => s.askDeleteAtlas(a.json)}
+						>
 							<Trash2Icon />
 						</Button>
 					</div>

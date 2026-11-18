@@ -82,10 +82,13 @@ def atlas_numbers(data: dict) -> dict:
     Returns:
         {"maps", "icons", "shots"}.
     """
-    st = (data.get("final") or {}).get("stats", {})
+    final = data.get("final") or {}
+    st = final.get("stats", {})
     return {
         "maps": int(st.get("nodes_kept", 0)),
-        "icons": len(data.get("icons", [])),
+        # the icons after the atlas-wide check (what the map shows), not every sighting of them in every screenshot:
+        # the cards said 6062 where the top bar said 3762 (user)
+        "icons": len(final["icons"]) if final.get("icons") is not None else len(data.get("icons", [])),
         "shots": len(data.get("frames", [])),
     }
 
@@ -196,12 +199,9 @@ class LibraryMixin:
             entry = {"name": name or Path(json_path).parent.name, "json": str(Path(json_path).resolve())}
             L.append(entry)
         if self.atlas is not None and self.path is not None and same_file(json_path, self.path):
-            st = (self.atlas.final or {}).get("stats", {})
-            entry["numbers"] = {
-                "maps": int(st.get("nodes_kept", 0)),
-                "icons": len(self.atlas.icons),
-                "shots": len(self.atlas.frames),
-            }
+            entry["numbers"] = atlas_numbers(
+                {"final": self.atlas.final, "icons": self.atlas.icons, "frames": self.atlas.frames}
+            )
         self.save_settings()
         self.events.publish("atlases", None)
 

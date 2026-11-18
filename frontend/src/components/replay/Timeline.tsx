@@ -59,7 +59,11 @@ export function Timeline({
 				<div
 					key={b.from}
 					className="absolute top-3 h-1 rounded-sm"
-					style={{ left: `${(b.from / n) * 100}%`, width: `${((b.to - b.from) / n) * 100}%`, background: colour(b.session) }}
+					style={{
+						left: `${(b.from / n) * 100}%`,
+						width: `${((b.to - b.from) / n) * 100}%`,
+						background: colour(b.session),
+					}}
 				/>
 			))}
 			{plan.ticks.map((t) => (

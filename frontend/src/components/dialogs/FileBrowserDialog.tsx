@@ -81,7 +81,10 @@ export function FileBrowserDialog() {
 							<li key={e.path}>
 								<button
 									type="button"
-									className={cn("flex w-full items-center gap-2 px-2 py-1 text-left hover:bg-accent", on && "bg-accent text-gold")}
+									className={cn(
+										"flex w-full items-center gap-2 px-2 py-1 text-left hover:bg-accent",
+										on && "bg-accent text-gold",
+									)}
 									onClick={() => {
 										if (e.dir && !pick.folders) return setPath(e.path);
 										if (pick.save) return e.dir ? setPath(e.path) : setName(e.name);
@@ -109,7 +112,12 @@ export function FileBrowserDialog() {
 					{listing.data?.truncated && <li className="px-2 py-1 text-muted-foreground">(more not listed)</li>}
 				</ul>
 				{pick.save && (
-					<Input aria-label="File name" value={name} onChange={(e) => setName(e.target.value)} placeholder={pick.save} />
+					<Input
+						aria-label="File name"
+						value={name}
+						onChange={(e) => setName(e.target.value)}
+						placeholder={pick.save}
+					/>
 				)}
 				<DialogFooter className="items-center">
 					<span className="mr-auto text-xs text-muted-foreground">
@@ -120,10 +128,7 @@ export function FileBrowserDialog() {
 								: "Double-click a folder to open it."}
 					</span>
 					{pick.multiple && (
-						<Button
-							variant="outline"
-							onClick={() => setChosen(visible.filter((e) => !e.dir).map((e) => e.path))}
-						>
+						<Button variant="outline" onClick={() => setChosen(visible.filter((e) => !e.dir).map((e) => e.path))}>
 							Select all
 						</Button>
 					)}

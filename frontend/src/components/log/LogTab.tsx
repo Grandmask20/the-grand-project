@@ -3,9 +3,9 @@ import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
 import { useAppState } from "@/hooks/app/UseAppState";
+import { frameLog } from "@/logic/FrameLog";
 import { useAppStore } from "@/store/AppStore";
 import { download } from "@/utils/Download";
-import { frameLog } from "@/logic/FrameLog";
 
 /** The app's log, newest at the bottom; the frame log (how long the map takes to draw) can be saved as CSV. */
 export function LogTab() {

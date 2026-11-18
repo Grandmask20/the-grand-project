@@ -14,8 +14,8 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { useAppClient } from "@/hooks/app/UseAppClient";
 import { useAppState } from "@/hooks/app/UseAppState";
-import { useAtlases } from "@/hooks/atlas/UseAtlases";
 import { useAtlasActions } from "@/hooks/atlas/UseAtlasActions";
+import { useAtlases } from "@/hooks/atlas/UseAtlases";
 import { useAppStore } from "@/store/AppStore";
 
 /** The File and Atlas menus, and the buttons used most (undo, bookmark, city biome lasso, replay). */
@@ -81,7 +81,10 @@ export function TopBar() {
 					<DropdownMenuItem disabled={!open || !state?.atlas?.shots} onSelect={() => void app.exportPngs().catch(fail)}>
 						Export map PNGs
 					</DropdownMenuItem>
-					<DropdownMenuItem disabled={!open || busy || !state?.atlas?.shots} onSelect={() => void app.recheck().then(refresh).catch(fail)}>
+					<DropdownMenuItem
+						disabled={!open || busy || !state?.atlas?.shots}
+						onSelect={() => void app.recheck().then(refresh).catch(fail)}
+					>
 						Re-check the whole atlas
 					</DropdownMenuItem>
 					{state?.seams ? (
@@ -148,7 +151,9 @@ export function TopBar() {
 						</DropdownMenuSub>
 					))}
 					{!!atlases.data?.length && <DropdownMenuSeparator />}
-					<DropdownMenuItem onSelect={actions.askOpenFolder}>Add new atlas… (choose its screenshot folder)</DropdownMenuItem>
+					<DropdownMenuItem onSelect={actions.askOpenFolder}>
+						Add new atlas… (choose its screenshot folder)
+					</DropdownMenuItem>
 				</DropdownMenuContent>
 			</DropdownMenu>
 			<span className="mx-1 h-5 w-px bg-border" />

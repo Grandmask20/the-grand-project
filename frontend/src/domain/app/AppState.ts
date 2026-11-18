@@ -1,8 +1,8 @@
-import type { AtlasSummary } from "@/domain/atlas/AtlasSummary";
 import type { WaitingShot } from "@/domain/adding/WaitingShot";
 import type { WatchState } from "@/domain/adding/WatchState";
 import type { Question } from "@/domain/app/Question";
 import type { UiSettings } from "@/domain/app/UiSettings";
+import type { AtlasSummary } from "@/domain/atlas/AtlasSummary";
 import type { MapInfo } from "@/domain/map/MapInfo";
 
 /** GET /api/state: everything the page draws its frame from. */
@@ -22,6 +22,8 @@ export interface AppState {
 	seams: boolean;
 	questions: Question[];
 	log: string[];
+	/** Whose log `log` is: the open atlas's file ("" with none open). */
+	log_scope?: string;
 	debug: boolean;
 	settings: UiSettings;
 	map: MapInfo | null;

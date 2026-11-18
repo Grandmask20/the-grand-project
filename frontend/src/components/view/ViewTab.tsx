@@ -9,7 +9,6 @@ import { useSettings, useUpdateSettings } from "@/hooks/app/UseSettings";
 import { useFrames } from "@/hooks/replay/UseFrames";
 import { cityColours, landmarkColours, styleColour } from "@/logic/Colours";
 import { ColourSwatch } from "./ColourSwatch";
-import { LayerToggles } from "./LayerToggles";
 
 /** View: what the map shows and how (background, layers, paths, maps, colours, "Colour by"). */
 export function ViewTab() {
@@ -60,19 +59,51 @@ export function ViewTab() {
 				</div>
 			</Section>
 
-			<Section title="Show on the map">
-				<LayerToggles />
+			<Section title="Side panel">
+				<div className="flex gap-1.5" role="radiogroup" aria-label="Side panel">
+					{(["left", "right"] as const).map((side) => (
+						<Button
+							key={side}
+							size="xs"
+							role="radio"
+							aria-checked={(settings.ui.side ?? "left") === side}
+							variant={(settings.ui.side ?? "left") === side ? "default" : "outline"}
+							onClick={() => update.mutate({ ui: { side } })}
+						>
+							{side === "left" ? "Left" : "Right"}
+						</Button>
+					))}
+				</div>
+				<p className="text-xs text-muted-foreground">
+					Drag the panel's edge to resize it (double-click: back to normal).
+				</p>
 			</Section>
 
 			<Section title="Paths">
 				<div className="flex flex-wrap items-center gap-3">
-					<ColourSwatch label="colour" value={styleColour(st, "path_col", meta.colours.path_multi)} onChange={(c) => set({ path_col: c })} />
-					<ColourSwatch label="1 shot" value={styleColour(st, "path_col1", meta.colours.path_single)} onChange={(c) => set({ path_col1: c })} />
+					<ColourSwatch
+						label="colour"
+						value={styleColour(st, "path_col", meta.colours.path_multi)}
+						onChange={(c) => set({ path_col: c })}
+					/>
+					<ColourSwatch
+						label="1 shot"
+						value={styleColour(st, "path_col1", meta.colours.path_single)}
+						onChange={(c) => set({ path_col1: c })}
+					/>
 				</div>
 				{choice("style", st.path_style, ["solid", "dashed", "dotted"], (v) => set({ path_style: v }))}
 				<div className="flex items-center gap-2">
 					<span className="w-24 text-xs text-muted-foreground">width (0 = auto)</span>
-					<Slider min={0} max={8} step={1} value={[Number(st.path_width) || 0]} onValueChange={([v]) => set({ path_width: v })} className="w-36" aria-label="path width" />
+					<Slider
+						min={0}
+						max={8}
+						step={1}
+						value={[Number(st.path_width) || 0]}
+						onValueChange={([v]) => set({ path_width: v })}
+						className="w-36"
+						aria-label="path width"
+					/>
 					<span className="w-6 text-xs">{Number(st.path_width) || "auto"}</span>
 				</div>
 				<div className="flex items-center gap-2">
@@ -92,11 +123,23 @@ export function ViewTab() {
 			</Section>
 
 			<Section title="Maps">
-				<ColourSwatch label="colour" value={styleColour(st, "map_col", meta.colours.node.confirmed)} onChange={(c) => set({ map_col: c })} />
-				{choice("style", st.map_style, ["circles", "squares", "hidden"], (v) => set({ map_style: v }))}
+				<ColourSwatch
+					label="colour"
+					value={styleColour(st, "map_col", meta.colours.node.confirmed)}
+					onChange={(c) => set({ map_col: c })}
+				/>
+				{choice("style", st.map_style, ["circles", "squares", "map icons", "hidden"], (v) => set({ map_style: v }))}
 				<div className="flex items-center gap-2">
 					<span className="w-24 text-xs text-muted-foreground">size</span>
-					<Slider min={0.5} max={2.5} step={0.1} value={[Number(st.map_size) || 1]} onValueChange={([v]) => set({ map_size: v })} className="w-36" aria-label="map size" />
+					<Slider
+						min={0.5}
+						max={2.5}
+						step={0.1}
+						value={[Number(st.map_size) || 1]}
+						onValueChange={([v]) => set({ map_size: v })}
+						className="w-36"
+						aria-label="map size"
+					/>
 				</div>
 			</Section>
 
@@ -129,7 +172,12 @@ export function ViewTab() {
 				)}
 				{(tint === "oldest to newest" || tint === "times seen") && frames.data && (
 					<div className="flex flex-col gap-1">
-						<div className="h-2.5 w-56 rounded" style={{ background: `linear-gradient(to right, ${frames.data.ramp.filter((_, i) => i % 16 === 0).join(",")})` }} />
+						<div
+							className="h-2.5 w-56 rounded"
+							style={{
+								background: `linear-gradient(to right, ${frames.data.ramp.filter((_, i) => i % 16 === 0).join(",")})`,
+							}}
+						/>
 						<div className="flex w-56 justify-between text-xs text-muted-foreground">
 							<span>{tint === "times seen" ? "seen 1x" : frames.data.oldest}</span>
 							<span>{tint === "times seen" ? `${frames.data.heat_top}x` : frames.data.newest}</span>
@@ -145,7 +193,12 @@ export function ViewTab() {
 				</Label>
 			</Section>
 
-			<Button size="sm" variant="outline" className="self-start" onClick={() => update.mutate({ style: { reset: true } })}>
+			<Button
+				size="sm"
+				variant="outline"
+				className="self-start"
+				onClick={() => update.mutate({ style: { reset: true } })}
+			>
 				Reset styles
 			</Button>
 		</div>

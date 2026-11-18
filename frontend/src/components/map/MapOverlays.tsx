@@ -15,7 +15,10 @@ const point = (c: [number, number], props: Record<string, unknown> = {}): GeoJSO
 	properties: props,
 });
 
-const collection = (features: GeoJSON.Feature[]): GeoJSON.FeatureCollection => ({ type: "FeatureCollection", features });
+const collection = (features: GeoJSON.Feature[]): GeoJSON.FeatureCollection => ({
+	type: "FeatureCollection",
+	features,
+});
 
 /** What the page draws over the tiles: the selection, Find's results, the go-to mark, the route, the recent
  * additions' outlines and the debug marks. */
@@ -52,7 +55,9 @@ export function MapOverlays({ map, geo }: { map: MapLibreMap; geo: Geo }) {
 		setData(
 			map,
 			"route",
-			line.length > 1 ? { type: "Feature", geometry: { type: "LineString", coordinates: line }, properties: {} } : EMPTY,
+			line.length > 1
+				? { type: "Feature", geometry: { type: "LineString", coordinates: line }, properties: {} }
+				: EMPTY,
 		);
 		setData(
 			map,

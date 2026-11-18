@@ -11,13 +11,21 @@ describe("BookmarkDialog", () => {
 			"GET /api/bookmarks": bookmarks,
 			"POST /api/bookmarks": { id: 1 },
 		});
-		act(() => useAppStore.getState().editBookmark({ id: null, x: 10, y: 20, name: "Breach", group: "Breach", note: "" }));
+		act(() =>
+			useAppStore.getState().editBookmark({ id: null, x: 10, y: 20, name: "Breach", group: "Breach", note: "" }),
+		);
 		const name = await screen.findByLabelText("Name");
 		await user.clear(name);
 		await user.type(name, "my breach");
 		await user.click(screen.getByRole("button", { name: "Save" }));
 		await waitFor(() =>
-			expect(calls.find((c) => c.method === "POST")?.body).toEqual({ x: 10, y: 20, name: "my breach", group: "Breach", note: "" }),
+			expect(calls.find((c) => c.method === "POST")?.body).toEqual({
+				x: 10,
+				y: 20,
+				name: "my breach",
+				group: "Breach",
+				note: "",
+			}),
 		);
 		await waitFor(() => expect(useAppStore.getState().bookmarkEdit).toBeNull());
 	});

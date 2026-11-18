@@ -18,6 +18,8 @@ export interface PageSettings {
 	player?: { x: number; y: number; node: number } | null;
 	labels?: boolean;
 	side_width?: number;
+	/** Which side of the window the side panel is on (user). */
+	side?: "left" | "right";
 }
 
 export type Background = "picture" | "vector" | "none";

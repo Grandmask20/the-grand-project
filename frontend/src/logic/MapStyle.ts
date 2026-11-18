@@ -35,7 +35,7 @@ export type GeoJsonSourceId = (typeof GEOJSON_SOURCES)[number];
 export const LAYER_GROUPS: Record<string, string[]> = {
 	Terrain: ["terrain"],
 	Paths: ["paths"],
-	Nodes: ["maps", "maps-square"],
+	Nodes: ["maps", "maps-square", "maps-icon"],
 	Icons: ["icons"],
 	Landmarks: ["landmarks"],
 	Bookmarks: ["bookmarks"],
@@ -47,7 +47,7 @@ export const LAYER_GROUPS: Record<string, string[]> = {
 };
 
 /** Layers whose features carry the replay's "step" (hidden until the replay reaches them). */
-export const STEPPED = ["maps", "maps-square", "paths", "icons", "landmarks", "towers", "solids"] as const;
+export const STEPPED = ["maps", "maps-square", "maps-icon", "paths", "icons", "landmarks", "towers", "solids"] as const;
 
 const NONE: FilterSpecification = ["==", ["get", "id"], -1];
 
@@ -55,7 +55,13 @@ const NONE: FilterSpecification = ["==", ["get", "id"], -1];
 const zoomAt = (geo: Geo, px: number) => geo.zoomFor(px);
 
 /** The style the map starts with: sources and every layer (looks are set by applyLook). */
-export function baseStyle(info: MapInfo, geo: Geo, meta: Meta, terrainUrl: string, vectorUrl: string): StyleSpecification {
+export function baseStyle(
+	info: MapInfo,
+	geo: Geo,
+	meta: Meta,
+	terrainUrl: string,
+	vectorUrl: string,
+): StyleSpecification {
 	const bounds = [...info.bounds[0], ...info.bounds[1]] as [number, number, number, number];
 	const ring = (extra: number): ExpressionSpecification => [
 		"interpolate",
@@ -138,7 +144,7 @@ export function baseStyle(info: MapInfo, geo: Geo, meta: Meta, terrainUrl: strin
 				source: "atlas",
 				"source-layer": "removed",
 				paint: {
-					"circle-radius": ring(-2),
+					"circle-radius": worldSize(geo, 7, 1.5),
 					"circle-color": "rgba(0,0,0,0)",
 					"circle-stroke-color": meta.colours.removed,
 					"circle-stroke-width": 2,
@@ -158,13 +164,6 @@ export function baseStyle(info: MapInfo, geo: Geo, meta: Meta, terrainUrl: strin
 				layout: { "line-cap": "round", "line-join": "round" },
 				paint: { "line-color": "#7cff6b", "line-width": 5 },
 			},
-			{
-				id: "landmarks",
-				type: "circle",
-				source: "atlas",
-				"source-layer": "landmarks",
-				paint: { "circle-radius": ring(8), "circle-color": "rgba(0,0,0,0.15)", "circle-stroke-width": 2.5 },
-			},
 			{ id: "maps", type: "circle", source: "atlas", "source-layer": "maps", paint: { "circle-stroke-width": 2 } },
 			{
 				id: "maps-square",
@@ -176,6 +175,30 @@ export function baseStyle(info: MapInfo, geo: Geo, meta: Meta, terrainUrl: strin
 					"icon-image": "node-square",
 					"icon-allow-overlap": true,
 					"icon-ignore-placement": true,
+				},
+			},
+			{
+				// the "map icons" style: the game's map node picture (references/map_node_icon.webp), as the old window
+				id: "maps-icon",
+				type: "symbol",
+				source: "atlas",
+				"source-layer": "maps",
+				layout: {
+					visibility: "none",
+					"icon-image": "node-picture",
+					"icon-allow-overlap": true,
+					"icon-ignore-placement": true,
+				},
+			},
+			{
+				id: "landmarks",
+				type: "circle",
+				source: "atlas",
+				"source-layer": "landmarks",
+				paint: {
+					"circle-radius": worldSize(geo, 14, 4),
+					"circle-color": "rgba(0,0,0,0)",
+					"circle-stroke-width": worldSize(geo, 2.2, 1),
 				},
 			},
 			{
@@ -281,7 +304,12 @@ export function baseStyle(info: MapInfo, geo: Geo, meta: Meta, terrainUrl: strin
 				id: "goto",
 				type: "circle",
 				source: "goto",
-				paint: { "circle-radius": 12, "circle-color": "rgba(0,0,0,0)", "circle-stroke-color": "#ff4040", "circle-stroke-width": 3 },
+				paint: {
+					"circle-radius": 12,
+					"circle-color": "rgba(0,0,0,0)",
+					"circle-stroke-color": "#ff4040",
+					"circle-stroke-width": 3,
+				},
 			},
 			{
 				id: "ghost-line",
@@ -315,9 +343,19 @@ export interface Look {
 	tint: "off" | "frames" | "heat";
 }
 
-/** A size growing with the zoom from `a` (at 0.25 px per unit) to `b` (at 1.6), like the old window's. */
-function grow(geo: Geo, a: number, b: number): ExpressionSpecification {
-	return ["interpolate", ["exponential", 2], ["zoom"], zoomAt(geo, a / 8), a, zoomAt(geo, b / 8), b];
+/**
+ * A size that grows and shrinks with the map like the thing it draws (`units` atlas units), but never below
+ * `minPx` screen px, and from `capPx` per unit on stays put. Fixed screen sizes made the zoomed out atlas one cyan
+ * blob (2 px rings on map nodes 3 px apart) and changed how paths looked from zoom to zoom (user).
+ */
+export function worldSize(geo: Geo, units: number, minPx: number, capPx = 0): ExpressionSpecification {
+	const z0 = zoomAt(geo, minPx / units);
+	if (capPx > 0) {
+		const z1 = zoomAt(geo, capPx);
+		if (z1 > z0) return ["interpolate", ["exponential", 2], ["zoom"], z0, minPx, z1, units * capPx];
+		return minPx as unknown as ExpressionSpecification;
+	}
+	return ["interpolate", ["exponential", 2], ["zoom"], z0, minPx, z0 + 12, minPx * 4096];
 }
 
 function visible(map: MapLibreMap, id: string, on: boolean) {
@@ -364,10 +402,24 @@ export function applyLook(map: MapLibreMap, geo: Geo, meta: Meta, look: Look): v
 	// paths
 	const strong = styleColour(st, "path_col", meta.colours.path_multi);
 	const weak = styleColour(st, "path_col1", meta.colours.path_single);
-	setPaint(map, "paths", "line-color", ["case", ["get", "abyss"], meta.colours.path_abyss, ["get", "strong"], strong, weak]);
-	const w = Number(st.path_width) || 0;
-	setPaint(map, "paths", "line-width", w > 0 ? (st.path_style === "dotted" ? Math.max(2, 2 * w) : w) : grow(geo, 1, 3));
-	setPaint(map, "paths", "line-dasharray", st.path_style === "dashed" ? [3, 2] : st.path_style === "dotted" ? [0.1, 2] : [1, 0]);
+	setPaint(map, "paths", "line-color", [
+		"case",
+		["get", "abyss"],
+		meta.colours.path_abyss,
+		["get", "strong"],
+		strong,
+		weak,
+	]);
+	// the width is the px at 1 px per atlas unit; it scales with the map (up to 1.6 px per unit), so dashes keep
+	// their place along the path as you zoom
+	const w = Number(st.path_width) || 2.5;
+	setPaint(map, "paths", "line-width", worldSize(geo, st.path_style === "dotted" ? 1.6 * w : w, 0.6, 1.6));
+	setPaint(
+		map,
+		"paths",
+		"line-dasharray",
+		st.path_style === "dashed" ? [3, 2] : st.path_style === "dotted" ? [0.1, 2] : [1, 0],
+	);
 	if (map.getLayer("paths")) map.setLayoutProperty("paths", "line-cap", st.path_style === "dotted" ? "round" : "butt");
 
 	// maps: circles, squares or hidden; the ring by status (or the View tab's colour), filled with the icon's
@@ -381,14 +433,19 @@ export function applyLook(map: MapLibreMap, geo: Geo, meta: Meta, look: Look): v
 	const ringColour = typeof st.map_col === "string" && st.map_col ? st.map_col : statusColour;
 	const fill: ExpressionSpecification = ["case", ["==", ["get", "fill"], ""], meta.colours.no_icon, ["get", "fill"]];
 	const nodes = on("Nodes") && st.map_style !== "hidden";
-	visible(map, "maps", nodes && st.map_style !== "squares");
+	visible(map, "maps", nodes && st.map_style !== "squares" && st.map_style !== "map icons");
 	visible(map, "maps-square", nodes && st.map_style === "squares");
-	setPaint(map, "maps", "circle-radius", grow(geo, 2 * size, 13 * size));
+	visible(map, "maps-icon", nodes && st.map_style === "map icons");
+	// the picture is 49 px, drawn 2.8 map node radii wide (the old window's size)
+	if (map.getLayer("maps-icon"))
+		map.setLayoutProperty("maps-icon", "icon-size", worldSize(geo, (22.4 * size) / 49, (5 * size) / 49));
+	setPaint(map, "maps", "circle-radius", worldSize(geo, 8 * size, 1.2 * size));
+	setPaint(map, "maps", "circle-stroke-width", worldSize(geo, 1.25, 0.4, 1.6));
 	setPaint(map, "maps", "circle-color", fill);
 	setPaint(map, "maps", "circle-stroke-color", ringColour);
 	setPaint(map, "maps-square", "icon-color", ringColour);
 	if (map.getLayer("maps-square"))
-		map.setLayoutProperty("maps-square", "icon-size", ["interpolate", ["exponential", 2], ["zoom"], zoomAt(geo, 0.25), 0.25 * size, zoomAt(geo, 1.6), 1.0 * size]);
+		map.setLayoutProperty("maps-square", "icon-size", worldSize(geo, (16 * size) / 32, (3 * size) / 32));
 
 	// landmarks by kind (locked strongholds and removed ones in their own colours)
 	const lm = landmarkColours(meta, st);
@@ -439,7 +496,10 @@ export function setImage(
 	if (src) src.updateImage({ url, coordinates });
 	else map.addSource(id, { type: "image", url, coordinates });
 	if (!map.getLayer(id))
-		map.addLayer({ id, type: "raster", source: id, paint: { "raster-fade-duration": 0, "raster-opacity": opacity } }, before);
+		map.addLayer(
+			{ id, type: "raster", source: id, paint: { "raster-fade-duration": 0, "raster-opacity": opacity } },
+			before,
+		);
 	else map.setPaintProperty(id, "raster-opacity", opacity);
 }
 

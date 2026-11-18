@@ -37,11 +37,13 @@ export function AutoAddTab() {
 					Add new screenshots automatically
 				</Label>
 				<p className="text-xs break-all text-muted-foreground">
-					{w.folder ? `${w.picked ? "watching: " : "watching this atlas's folder: "}${w.folder}` : "open an atlas first"}
+					{w.folder
+						? `${w.picked ? "watching: " : "watching this atlas's folder: "}${w.folder}`
+						: "open an atlas first"}
 				</p>
 				<p className="text-xs text-muted-foreground">
-					Set Steam to save screenshots in this folder while you map: each new one is added. One that might be
-					wrong is shown on the map before it is added.
+					Set Steam to save screenshots in this folder while you map: each new one is added. One that might be wrong is
+					shown on the map before it is added.
 				</p>
 				<div className="flex flex-wrap gap-1.5">
 					<Button
@@ -116,7 +118,10 @@ export function AutoAddTab() {
 										className={`w-full truncate px-2 py-0.5 text-left hover:bg-accent ${waitPick === k ? "bg-accent" : ""}`}
 										onClick={() => setWaitPick(k)}
 									>
-										{wt.name} <span className="text-muted-foreground">- {wt.tries ? `waiting, tried ${wt.tries}x` : "queued"}</span>
+										{wt.name}{" "}
+										<span className="text-muted-foreground">
+											- {wt.tries ? `waiting, tried ${wt.tries}x` : "queued"}
+										</span>
 									</button>
 								</li>
 							))}

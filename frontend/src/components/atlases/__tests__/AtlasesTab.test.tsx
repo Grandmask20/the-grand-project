@@ -19,7 +19,9 @@ describe("AtlasesTab", () => {
 			"POST /api/atlas/open": { name: "second" },
 		});
 		await user.click(await screen.findByText("second"));
-		await waitFor(() => expect(calls.find((c) => c.path === "/api/atlas/open")?.body).toEqual({ path: "/atlases/two/atlas.json" }));
+		await waitFor(() =>
+			expect(calls.find((c) => c.path === "/api/atlas/open")?.body).toEqual({ path: "/atlases/two/atlas.json" }),
+		);
 	});
 
 	it("asks what to do before deleting", async () => {

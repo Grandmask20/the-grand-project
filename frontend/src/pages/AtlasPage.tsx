@@ -31,7 +31,9 @@ export function AtlasPage() {
 		return (
 			<div className="flex h-full flex-col items-center justify-center gap-3 p-8 text-center">
 				<h1 className="text-lg font-semibold text-gold">The app isn't running</h1>
-				<p className="text-muted-foreground">Start it again (python -m grand_project, or the start script), then reload this page.</p>
+				<p className="text-muted-foreground">
+					Start it again (python -m grand_project, or the start script), then reload this page.
+				</p>
 				<Button onClick={() => window.location.reload()}>Reload</Button>
 			</div>
 		);
@@ -53,7 +55,7 @@ export function AtlasPage() {
 			<div className="flex min-h-0 flex-1">
 				<SidePanel debug={s.debug} />
 				<main
-					className="relative min-w-0 flex-1 bg-black"
+					className={`relative min-w-0 flex-1 bg-black ${s.settings.ui.side === "right" ? "-order-1" : ""}`}
 					onDragOver={(e) => {
 						e.preventDefault();
 						setDragging(true);

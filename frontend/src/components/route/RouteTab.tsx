@@ -22,11 +22,19 @@ export function RouteTab() {
 			<Section title="You are here">
 				<p>{routes.player ? <>map #{routes.player.node}</> : <span className="text-muted-foreground">not set</span>}</p>
 				<div className="flex gap-1.5">
-					<Button size="xs" variant={mode.kind === "player" ? "default" : "outline"} onClick={() => setMode({ kind: "player" })}>
+					<Button
+						size="xs"
+						variant={mode.kind === "player" ? "default" : "outline"}
+						onClick={() => setMode({ kind: "player" })}
+					>
 						Set my position
 					</Button>
 					{routes.player && (
-						<Button size="xs" variant="outline" onClick={() => flyTo(routes.player?.x ?? 0, routes.player?.y ?? 0, 0.5)}>
+						<Button
+							size="xs"
+							variant="outline"
+							onClick={() => flyTo(routes.player?.x ?? 0, routes.player?.y ?? 0, 0.5)}
+						>
 							Go there
 						</Button>
 					)}

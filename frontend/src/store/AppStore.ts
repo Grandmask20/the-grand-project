@@ -96,6 +96,9 @@ export interface AppStoreState {
 	showError: (e: unknown) => void;
 	frameLog: boolean;
 	setFrameLog: (on: boolean) => void;
+	/** Bookmark groups folded shut in the Bookmarks tab (user: as in the old window). */
+	foldedGroups: string[];
+	foldGroup: (name: string, folded: boolean) => void;
 	/** Bumped when a layer was added late (the icons): the look is applied again. */
 	lookTick: number;
 	bumpLook: () => void;
@@ -146,6 +149,11 @@ export const useAppStore = create<AppStoreState>()((set) => ({
 	showError: (e) => set({ error: e == null ? null : e instanceof Error ? e.message : String(e) }),
 	frameLog: false,
 	setFrameLog: (frameLog) => set({ frameLog }),
+	foldedGroups: [],
+	foldGroup: (name, folded) =>
+		set((s) => ({
+			foldedGroups: folded ? [...new Set([...s.foldedGroups, name])] : s.foldedGroups.filter((g) => g !== name),
+		})),
 	lookTick: 0,
 	bumpLook: () => set((s) => ({ lookTick: s.lookTick + 1 })),
 }));

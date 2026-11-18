@@ -21,7 +21,9 @@ export function resetStore() {
 export function renderWithApp(ui: ReactNode, routes: Record<string, unknown> = {}) {
 	const { http, calls } = fakeHttp({ "GET /api/state": state, "GET /api/meta": meta, ...routes });
 	const client = createAppClient(http);
-	const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false, staleTime: Number.POSITIVE_INFINITY }, mutations: { retry: false } } });
+	const queryClient = new QueryClient({
+		defaultOptions: { queries: { retry: false, staleTime: Number.POSITIVE_INFINITY }, mutations: { retry: false } },
+	});
 	queryClient.setQueryData(AppQueryKeys.state, structuredClone(state));
 	queryClient.setQueryData(AppQueryKeys.meta, structuredClone(meta));
 	const user = userEvent.setup();

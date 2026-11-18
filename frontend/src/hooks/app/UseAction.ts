@@ -12,7 +12,10 @@ interface Options<R, V> {
 }
 
 /** A call that changes something in the app; failures go to the error box unless told otherwise. */
-export function useAction<V = void, R = unknown>(fn: (app: AppClient, vars: V) => Promise<R>, opts: Options<R, V> = {}) {
+export function useAction<V = void, R = unknown>(
+	fn: (app: AppClient, vars: V) => Promise<R>,
+	opts: Options<R, V> = {},
+) {
 	const app = useAppClient();
 	const queryClient = useQueryClient();
 	const showError = useAppStore((s) => s.showError);

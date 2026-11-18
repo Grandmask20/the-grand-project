@@ -135,6 +135,8 @@ def test_the_event_stream_and_questions(app):
 
 def test_the_page_is_served_and_routes_itself(app, tmp_path, monkeypatch):
     srv, _pts = app
+    # an empty page folder, not the real frontend/dist (it fails once the page was built: CodeRabbit)
+    monkeypatch.setattr(S, "DIST", tmp_path / "no_page")
     assert call(srv, "/")[0] == 503  # not built: says how to build it
     dist = tmp_path / "dist"
     (dist / "assets").mkdir(parents=True)

@@ -51,7 +51,13 @@ export function createEventHandler(queryClient: QueryClient) {
 	return (kind: EventKind, data: unknown) => {
 		switch (kind) {
 			case "log":
-				patch((s) => ({ ...s, log: [...s.log, String(data)].slice(-LOG_KEEP) }));
+				// one log per atlas: a line of another atlas's log (work finishing after a switch) is left out
+				patch((s) => {
+					const d = data as { scope?: string; line?: string } | string;
+					if (typeof d === "object" && d && d.scope !== undefined && d.scope !== s.log_scope) return s;
+					const line = typeof d === "object" && d ? String(d.line ?? "") : String(d);
+					return { ...s, log: [...s.log, line].slice(-LOG_KEEP) };
+				});
 				break;
 			case "progress":
 				patch((s) => ({ ...s, progress: (data as string | null) ?? null }));
@@ -60,14 +66,29 @@ export function createEventHandler(queryClient: QueryClient) {
 				patch((s) => ({ ...s, status: String(data ?? "") }));
 				break;
 			case "question":
-				patch((s) => ({ ...s, questions: [...s.questions.filter((q) => q.id !== (data as Question).id), data as Question] }));
+				patch((s) => ({
+					...s,
+					questions: [...s.questions.filter((q) => q.id !== (data as Question).id), data as Question],
+				}));
 				break;
 			case "answered":
 				patch((s) => ({ ...s, questions: s.questions.filter((q) => q.id !== (data as { id: number }).id) }));
 				break;
 			case "model":
 			case "atlas":
-				refresh("state", "types", "search", "list", "info", "graph", "frames", "heat", "bookmarks", "recent", "atlases");
+				refresh(
+					"state",
+					"types",
+					"search",
+					"list",
+					"info",
+					"graph",
+					"frames",
+					"heat",
+					"bookmarks",
+					"recent",
+					"atlases",
+				);
 				if (kind === "atlas") refresh("debug", "fog", "sources");
 				break;
 			case "terrain":

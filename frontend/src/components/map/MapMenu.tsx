@@ -41,7 +41,12 @@ export function MapMenu({ x, y, at, hit, meta, debug, onClose }: Props) {
 		fn().catch((e) => s.showError(e));
 	};
 	const withNote = (title: string, fn: (note: string) => Promise<unknown>) => () =>
-		s.ask({ title: "Debug mark", label: `${title} - note (optional)`, value: "", onOk: (note) => void fn(note).catch(s.showError) });
+		s.ask({
+			title: "Debug mark",
+			label: `${title} - note (optional)`,
+			value: "",
+			onOk: (note) => void fn(note).catch(s.showError),
+		});
 	const refreshDebug = () => queryClient.invalidateQueries({ queryKey: AppQueryKeys.debug });
 
 	return (
@@ -66,7 +71,9 @@ export function MapMenu({ x, y, at, hit, meta, debug, onClose }: Props) {
 						{hit.kind === "bookmark" ? "Edit bookmark…" : "Bookmark this…"}
 					</DropdownMenuItem>
 				)}
-				<DropdownMenuItem onSelect={() => s.editBookmark({ id: null, x: at[0], y: at[1], name: "", group: "Other", note: "" })}>
+				<DropdownMenuItem
+					onSelect={() => s.editBookmark({ id: null, x: at[0], y: at[1], name: "", group: "Other", note: "" })}
+				>
 					Add bookmark here…
 				</DropdownMenuItem>
 				<DropdownMenuItem onSelect={() => s.showSources(at)}>Screenshots of this spot</DropdownMenuItem>
