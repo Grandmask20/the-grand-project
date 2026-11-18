@@ -64,6 +64,51 @@ export function MapIcons({ map, geo, info }: { map: MapLibreMap; geo: Geo; info:
 					},
 					map.getPitch() > 1 ? "bookmarks" : "maps",
 				);
+				// the 3D view's icons: standing up facing the camera, in a row on top of their map node as in the game
+				// (user: lying on the ground they shifted oddly and stacked into walls at a low angle). Offsets are in the
+				// picture's px (64 px = 26 units): rows 36 units apart, the icon's bottom 11 units above the node.
+				const px = sp.size / sp.units;
+				const offset = [
+					"match",
+					["get", "slot"],
+					...["-2", "-1.5", "-1", "-0.5", "0.5", "1", "1.5", "2"].flatMap((k) => [
+						k,
+						["literal", [Number(k) * 36 * px, -11 * px]],
+					]),
+					["literal", [0, -11 * px]],
+				];
+				if (!map.getLayer("icons-3d"))
+					map.addLayer(
+						{
+							id: "icons-3d",
+							type: "symbol",
+							source: "atlas",
+							"source-layer": "icon_rows",
+							minzoom: zMin,
+							layout: {
+								visibility: "none",
+								"icon-image": ["get", "name"],
+								"icon-size": [
+									"interpolate",
+									["exponential", 2],
+									["zoom"],
+									zMin,
+									size(zMin),
+									info.maxzoom,
+									size(info.maxzoom),
+								],
+								"icon-anchor": "bottom",
+								"icon-offset": offset as unknown as [number, number],
+								"icon-pitch-alignment": "viewport",
+								"icon-rotation-alignment": "viewport",
+								// far away icons that would overlap are left out: no wall of icons at a low angle
+								"icon-allow-overlap": false,
+								"icon-padding": 0,
+								"symbol-z-order": "viewport-y",
+							},
+						},
+						"bookmarks",
+					);
 				if (!map.getLayer("towers"))
 					map.addLayer(
 						{

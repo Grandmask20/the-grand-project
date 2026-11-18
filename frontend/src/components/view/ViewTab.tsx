@@ -9,6 +9,7 @@ import { useSettings, useUpdateSettings } from "@/hooks/app/UseSettings";
 import { useFrames } from "@/hooks/replay/UseFrames";
 import { cityColours, landmarkColours, styleColour } from "@/logic/Colours";
 import { ColourSwatch } from "./ColourSwatch";
+import { MapPreview, PathPreview } from "./StylePreview";
 
 /** View: what the map shows and how (background, layers, paths, maps, colours, "Colour by"). */
 export function ViewTab() {
@@ -80,6 +81,7 @@ export function ViewTab() {
 			</Section>
 
 			<Section title="Paths">
+				<PathPreview st={st} meta={meta} />
 				<div className="flex flex-wrap items-center gap-3">
 					<ColourSwatch
 						label="colour"
@@ -123,6 +125,7 @@ export function ViewTab() {
 			</Section>
 
 			<Section title="Maps">
+				<MapPreview st={st} meta={meta} />
 				<ColourSwatch
 					label="colour"
 					value={styleColour(st, "map_col", meta.colours.node.confirmed)}

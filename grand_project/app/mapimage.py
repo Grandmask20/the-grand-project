@@ -632,7 +632,7 @@ class MapImageMixin:
                 layers = self.vector_layers(self.grid)
             g = self.grid
             dense = max(0, g.zmax - 4)  # icons, models and labels are not drawn zoomed far out
-            tiler = VectorTiler(layers, g, min_zoom={"icons": dense, "solids": dense})
+            tiler = VectorTiler(layers, g, min_zoom={"icons": dense, "icon_rows": dense, "solids": dense})
             self._vector = (key, tiler)
             return tiler
 
@@ -658,7 +658,7 @@ class MapImageMixin:
                 return {}
             return {"step": round(float(rs[kind][i]), 3)}
 
-        L: dict[str, list[dict]] = {k: [] for k in ("land", "biomes", "paths", "removed", "maps", "icons",
+        L: dict[str, list[dict]] = {k: [] for k in ("land", "biomes", "paths", "removed", "maps", "icons", "icon_rows",
                                                      "landmarks", "bookmarks", "solids")}  # fmt: skip
         for i, n in enumerate(nodes):
             if n["status"] == "removed":
@@ -705,9 +705,30 @@ class MapImageMixin:
                 }
             )
         pts = D.get("icon_pts")
+        # the 3D view's icons: at their map node, with their place in its row (-2 .. 2 in halves), so the page stands
+        # them upright in a row above the node, as in the game (user: on the ground they shifted oddly and stacked)
+        slot: dict[int, float] = {}
+        rows: dict[int, list[int]] = {}
+        for i, v in D.get("icon_node", {}).items():
+            rows.setdefault(v, []).append(i)
+        for members in rows.values():
+            members.sort(key=lambda i: V["icons"][i]["x"])
+            for k, i in enumerate(members):
+                slot[i] = k - (len(members) - 1) / 2
+        node_of = D.get("icon_node", {})
         for i, ic in enumerate(V["icons"]):
             if not self.icon_visible(i, fl):
                 continue
+            v = node_of.get(i)
+            at = (nodes[v]["x"], nodes[v]["y"]) if v is not None and v < len(nodes) else (ic["x"], ic["y"])
+            L["icon_rows"].append(
+                {
+                    "kind": "point",
+                    "pts": [W(*at)],
+                    "id": i,
+                    "props": {"id": i, "name": ic["name"], "slot": f"{slot.get(i, 0.0):g}", **step("icon", i)},
+                }
+            )
             x, y = pts[i] if pts is not None and i < len(pts) else (ic["x"], ic["y"])
             L["icons"].append(
                 {

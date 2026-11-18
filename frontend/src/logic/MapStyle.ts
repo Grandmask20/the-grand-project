@@ -509,7 +509,9 @@ export function applyLook(map: MapLibreMap, geo: Geo, meta: Meta, look: Look): v
 
 	// 3D models while tilted; icons above them then
 	visible(map, "solids", look.tilted && on("3D models"));
-	if (map.getLayer("icons")) map.moveLayer("icons", look.tilted ? "bookmarks" : "maps");
+	// icons: on the ground when flat, standing in rows above their map nodes when tilted
+	visible(map, "icons", on("Icons") && !look.tilted);
+	visible(map, "icons-3d", on("Icons") && look.tilted);
 
 	// Find: a type highlighted
 	setFilter(map, "highlight", look.highlight ? ["in", `|${look.highlight}|`, ["get", "icons"]] : NONE);
