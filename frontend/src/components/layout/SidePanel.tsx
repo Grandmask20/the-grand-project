@@ -9,6 +9,7 @@ import { RouteTab } from "@/components/route/RouteTab";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { LayersDock } from "@/components/view/LayersDock";
 import { ViewTab } from "@/components/view/ViewTab";
+import { useAppState } from "@/hooks/app/UseAppState";
 import { useSettings, useUpdateSettings } from "@/hooks/app/UseSettings";
 import { useAppStore } from "@/store/AppStore";
 import { cn } from "@/utils/Cn";
@@ -32,6 +33,7 @@ const SIDE_DEFAULT = 400;
 export function SidePanel({ debug }: { debug: boolean }) {
 	const tab = useAppStore((s) => s.tab);
 	const setTab = useAppStore((s) => s.setTab);
+	const gen = useAppState().data?.generation ?? 0;
 	const settings = useSettings();
 	const update = useUpdateSettings();
 	const side = settings?.ui.side ?? "left";
@@ -75,8 +77,9 @@ export function SidePanel({ debug }: { debug: boolean }) {
 						</TabsTrigger>
 					))}
 				</TabsList>
-				{/* keyed by the tab, so a tab opens at its top, not at the scroll of the one before */}
-				<div key={tab} className="min-h-0 flex-1 overflow-x-hidden overflow-y-auto p-3">
+				{/* keyed by the tab, so a tab opens at its top, not at the scroll of the one before; and by the atlas, so
+				    what a tab picked (bookmarks, a waiting group) doesn't carry over to another atlas */}
+				<div key={`${tab}|${gen}`} className="min-h-0 flex-1 overflow-x-hidden overflow-y-auto p-3">
 					<TabsContent value="find" className="h-full">
 						<FindTab />
 					</TabsContent>

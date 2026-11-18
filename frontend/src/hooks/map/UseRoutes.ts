@@ -1,5 +1,5 @@
 import { useCallback } from "react";
-import { useSettings, useUpdateSettings } from "@/hooks/app/UseSettings";
+import { usePlayer, useUpdateSettings } from "@/hooks/app/UseSettings";
 import { useRouteGraph } from "@/hooks/map/UseGraph";
 import { useAppStore } from "@/store/AppStore";
 import { plural } from "@/utils/Format";
@@ -7,7 +7,7 @@ import { plural } from "@/utils/Format";
 /** Directions: your position (a map) and routes from it, fewest maps first. */
 export function useRoutes() {
 	const graph = useRouteGraph();
-	const player = useSettings()?.ui.player ?? null;
+	const { player, atlas } = usePlayer();
 	const update = useUpdateSettings();
 	const setRoute = useAppStore((s) => s.setRoute);
 	const setMode = useAppStore((s) => s.setMode);
@@ -15,9 +15,9 @@ export function useRoutes() {
 	const setPlayer = useCallback(
 		(node: number) => {
 			const p = graph?.at(node);
-			if (p) update.mutate({ ui: { player: { x: p[0], y: p[1], node } } });
+			if (p) update.mutate({ ui: { player: { x: p[0], y: p[1], node, atlas } } });
 		},
-		[graph, update],
+		[graph, update, atlas],
 	);
 
 	const need = useCallback(() => {

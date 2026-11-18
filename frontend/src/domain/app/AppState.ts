@@ -10,6 +10,8 @@ export interface AppState {
 	version: string;
 	atlas: AtlasSummary | null;
 	model_version: number;
+	/** Bumped whenever another atlas is opened, made or closed: what the page shows belongs to one generation. */
+	generation?: number;
 	terrain_version: number;
 	filter_version: number;
 	busy: boolean;

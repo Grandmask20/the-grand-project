@@ -173,7 +173,7 @@ class EditsMixin:
         if not todo:
             return
         self._lock_job = True
-        atlas = self.atlas
+        atlas, gen = self.atlas, self.generation
 
         def work():
             """Find the hand badges, keep them in the atlas and rebuild the model (background thread)."""
@@ -185,13 +185,19 @@ class EditsMixin:
                 found = None
             finally:
                 self._lock_job = False
-            if found is None or atlas is not self.atlas:
-                return
             with self._lock:
-                atlas.locks = atlas_cities.merge_locks(atlas.locks, found)
-                atlas.lock_scanned = sorted(set(atlas.lock_scanned) | {f["name"] for f in todo})
-                if self.path:
-                    atlas.save(self.path)
+                # another atlas opened meanwhile: its file is not this one's (user, CodeRabbit)
+                stale = not self.owns(gen)
+                if found is not None and not stale:
+                    atlas.locks = atlas_cities.merge_locks(atlas.locks, found)
+                    atlas.lock_scanned = sorted(set(atlas.lock_scanned) | {f["name"] for f in todo})
+                    if self.path:
+                        atlas.save(self.path)
+            if stale:
+                self.scan_locks()  # the one open now (its own search was skipped while this one ran)
+                return
+            if found is None:
+                return
             if found:
                 self.events.log(f"{len(atlas.locks)} locked Breach stronghold(s) (hand badge)")
             self.rebuild_model()

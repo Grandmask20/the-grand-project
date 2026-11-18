@@ -6,7 +6,7 @@ import type { Meta } from "@/domain/app/Meta";
 import type { ItemInfo } from "@/domain/map/ItemInfo";
 import { useAppClient } from "@/hooks/app/UseAppClient";
 import { useAppState } from "@/hooks/app/UseAppState";
-import { useSettings, useUpdateSettings } from "@/hooks/app/UseSettings";
+import { usePlayer, useSettings, useUpdateSettings } from "@/hooks/app/UseSettings";
 import { useRouteGraph } from "@/hooks/map/UseGraph";
 import type { Geo, Point } from "@/logic/Geo";
 import type { IconLayer3D } from "@/logic/IconLayer3D";
@@ -31,6 +31,7 @@ export function MapInteraction({ map, geo, meta }: { map: MapLibreMap; geo: Geo;
 	const showError = useAppStore((s) => s.showError);
 	const settings = useSettings();
 	const update = useUpdateSettings();
+	const atlasFile = usePlayer().atlas; // your position is kept with the atlas it was set in
 	const debug = !!useAppState().data?.debug;
 	const graph = useRouteGraph(mode.kind === "player");
 	const [menu, setMenu] = useState<{ x: number; y: number; at: Point; hit: ItemInfo | null } | null>(null);
@@ -113,7 +114,7 @@ export function MapInteraction({ map, geo, meta }: { map: MapLibreMap; geo: Geo;
 						const hit = await pick(at);
 						const node = hit?.kind === "node" ? hit.id : (hit?.node ?? graph?.nearest(at[0], at[1]) ?? null);
 						const p = node !== null ? graph?.at(node) : undefined;
-						if (node !== null && p) update.mutate({ ui: { player: { x: p[0], y: p[1], node } } });
+						if (node !== null && p) update.mutate({ ui: { player: { x: p[0], y: p[1], node, atlas: atlasFile } } });
 						setMode({ kind: "normal" });
 						break;
 					}
@@ -142,7 +143,23 @@ export function MapInteraction({ map, geo, meta }: { map: MapLibreMap; geo: Geo;
 		return () => {
 			map.off("click", onClick);
 		};
-	}, [map, mode, atlasAt, pick, select, setTab, editBookmark, setMode, graph, update, app, showError, clickAt, pick3d]);
+	}, [
+		map,
+		mode,
+		atlasAt,
+		pick,
+		select,
+		setTab,
+		editBookmark,
+		setMode,
+		graph,
+		update,
+		app,
+		showError,
+		clickAt,
+		pick3d,
+		atlasFile,
+	]);
 
 	// --- double click: place the ghost, else zoom in
 	useEffect(() => {

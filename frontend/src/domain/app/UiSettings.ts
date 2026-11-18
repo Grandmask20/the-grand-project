@@ -15,7 +15,8 @@ export interface UiSettings {
 /** Settings only the page uses, kept with the others. */
 export interface PageSettings {
 	background?: Background;
-	player?: { x: number; y: number; node: number } | null;
+	/** Your position for routes, in the atlas it was set in (`atlas`: its file; another atlas ignores it). */
+	player?: { x: number; y: number; node: number; atlas?: string } | null;
 	labels?: boolean;
 	side_width?: number;
 	/** Which side of the window the side panel is on (user). */

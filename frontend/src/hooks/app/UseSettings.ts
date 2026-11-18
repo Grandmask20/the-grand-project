@@ -12,6 +12,14 @@ export function useSettings(): UiSettings | undefined {
 	return useAppState().data?.settings;
 }
 
+/** Your position for routes, when it was set in the open atlas (another atlas's map ids mean other maps: user). */
+export function usePlayer() {
+	const state = useAppState().data;
+	const player = state?.settings.ui.player ?? null;
+	const atlas = state?.atlas?.path ?? "";
+	return { player: player && atlas && player.atlas === atlas ? player : null, atlas };
+}
+
 /** Change settings: shown at once, then saved by the app (the map's tiles follow its new filter version). */
 export function useUpdateSettings() {
 	const app = useAppClient();

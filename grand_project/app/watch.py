@@ -173,7 +173,8 @@ class WatchMixin:
         self._watch_seen = {k: -1 for k in files}
         todo = [q for q in self._not_in_atlas(files) if not core.is_generated(q)]
         own = Path(folder).resolve() == Path(self.path).resolve().parent
-        atlas = self.atlas
+        atlas, gen = self.atlas, self.generation
+        self._watch_gen = gen
         self._watch_on = True
         self.events.set_status(f"watching {folder} for new screenshots")
         self.events.publish("watch", self.watch_state())
@@ -188,7 +189,7 @@ class WatchMixin:
             ):
                 self.events.log(f"auto-add: left the {len(todo)} screenshot(s) already in {folder} out")
                 todo = []
-            if atlas is not self.atlas or not self._watch_on:
+            if atlas is not self.atlas or not self._watch_on or stop.is_set():  # replaced or stopped meanwhile
                 return
             self.events.log(
                 f"auto-add: watching {folder}"
@@ -196,7 +197,7 @@ class WatchMixin:
             )
             if todo:
                 try:
-                    self.add_screenshots(todo, mode="watch")
+                    self.add_screenshots(todo, mode="watch", gen=gen)  # skipped if another atlas opened meanwhile
                 except ValueError as e:
                     self.events.log(f"auto-add: {e}")
             self._poll_loop(stop)
@@ -232,6 +233,9 @@ class WatchMixin:
         """
         if not self._watch_on or not self.atlas or self._closing:
             return []
+        # the atlas this watcher was started for: a check still running when another atlas opens hands its
+        # screenshots to that one's jobs, which the worker then skips (user, CodeRabbit)
+        gen = getattr(self, "_watch_gen", self.generation)
         key = (id(self.atlas), len(self.atlas.frames))
         if self._known_key != key:
             self._known = {str(Path(f["path"]).resolve()) for f in self.atlas.frames}
@@ -250,7 +254,7 @@ class WatchMixin:
         if ready:
             ready.sort(key=lambda q: q.stat().st_mtime)
             self.events.log(f"auto-add: {len(ready)} new screenshot(s): {', '.join(q.name for q in ready)}")
-            self.add_screenshots(ready, mode="watch")
+            self.add_screenshots(ready, mode="watch", gen=gen)
         return ready
 
     def _watch_failed(self, paths: list[str]) -> None:

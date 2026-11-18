@@ -43,6 +43,18 @@ LOG = atlas_log.get("app")
 DIST = rc_paths.ROOT / "frontend" / "dist"
 SSE_PING_S = 15.0
 HEADER = "X-Grand"
+GEN_HEADER = "X-Atlas-Gen"  # the open atlas's generation: on every answer, and on the page's changes
+# changes that don't belong to one atlas (switching atlas itself, settings, the atlas list, answers, quitting)
+GEN_FREE = (
+    "/api/atlas/open",
+    "/api/atlas/new",
+    "/api/atlas/folder",
+    "/api/atlases",
+    "/api/settings",
+    "/api/quit",
+    "/api/questions/",
+    "/api/replay/close",
+)
 
 
 class ApiError(Exception):
@@ -143,6 +155,7 @@ class Handler(BaseHTTPRequestHandler):
         self.send_response(status)
         self.send_header("Content-Type", ctype)
         self.send_header("Content-Length", str(len(body)))
+        self.send_header(GEN_HEADER, str(self.S.generation))
         if self.close_connection:
             self.send_header("Connection", "close")
         for k, v in (extra or {}).items():
@@ -230,6 +243,17 @@ class Handler(BaseHTTPRequestHandler):
                 self._static(path)
             else:
                 self._json({"error": "not found"}, 404)
+            return
+        stale = self.headers.get(GEN_HEADER)
+        if (
+            method not in ("GET", "HEAD")
+            and stale is not None
+            and stale != str(self.S.generation)
+            and not path.startswith(GEN_FREE)
+        ):
+            # a change the page made for the atlas open before (a bookmark id, a lasso, a placement): not applied to
+            # the one open now (user, CodeRabbit)
+            self._json({"error": "the atlas changed", "stale": True}, 409)
             return
         if method not in ("GET", "HEAD") and self.headers.get(HEADER) != "1":
             self._json({"error": f"missing {HEADER} header"}, 403)
@@ -757,11 +781,13 @@ class Handler(BaseHTTPRequestHandler):
     def get_heat(self, q) -> None:
         """Where the times-seen picture goes (and make it)."""
         upto = _num(q, "upto", -1.0)
+        # kept for the atlas and model it was asked for (read first: one opened while it is made never gets it)
+        key = (upto, self.S.generation, self.S.model_version)
         got = self.S.heat_png(None if upto < 0 else upto)
         if got is None:
             self._json(None)
             return
-        self.server.heat = (upto, got[0])  # type: ignore[attr-defined]
+        self.server.heat = (key, got[0])  # type: ignore[attr-defined]
         self._json({"box": got[1]})
 
     @route("GET", "/api/heat.png")
@@ -769,7 +795,7 @@ class Handler(BaseHTTPRequestHandler):
         """The times-seen picture."""
         upto = _num(q, "upto", -1.0)
         kept = getattr(self.server, "heat", None)
-        if kept is not None and kept[0] == upto:
+        if kept is not None and kept[0] == (upto, self.S.generation, self.S.model_version):  # (CodeRabbit)
             self._bytes(kept[1], "image/png", cache=False)
             return
         got = self.S.heat_png(None if upto < 0 else upto)

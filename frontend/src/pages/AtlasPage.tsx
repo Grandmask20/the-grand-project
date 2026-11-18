@@ -1,4 +1,5 @@
-import { type DragEvent, useEffect, useState } from "react";
+import { useQueryClient } from "@tanstack/react-query";
+import { type DragEvent, useEffect, useRef, useState } from "react";
 import { ErrorBanner } from "@/components/common/ErrorBanner";
 import { ProgressBox } from "@/components/common/ProgressBox";
 import { BookmarkDialog } from "@/components/dialogs/BookmarkDialog";
@@ -27,15 +28,21 @@ export function AtlasPage() {
 	const meta = useMeta();
 	const actions = useAtlasActions();
 	const [dragging, setDragging] = useState(false);
-	const atlasPath = state.data?.atlas?.path ?? null;
+	const queryClient = useQueryClient();
+	const gen = state.data?.generation ?? null;
+	const seenGen = useRef<number | null>(null);
 
-	// another atlas: the replay belonged to the one before (its plan and steps): closed (the atlas owner rework
-	// will reset every such page state in one place)
-	// biome-ignore lint/correctness/useExhaustiveDependencies: runs when the open atlas changes
+	// another atlas opened, made or closed (here or in another tab): what the page held for the one before goes
+	// (selection, search, route, replay, waiting clicks), and everything but the state is fetched again (answers
+	// that came for the old one were dropped as stale)
 	useEffect(() => {
-		const st = useAppStore.getState();
-		if (st.replay) st.setReplay(null);
-	}, [atlasPath]);
+		if (gen === null) return;
+		const before = seenGen.current;
+		seenGen.current = gen;
+		if (before === null || before === gen) return;
+		useAppStore.getState().resetAtlas();
+		void queryClient.invalidateQueries({ predicate: (q) => q.queryKey[0] !== "state" });
+	}, [gen, queryClient]);
 
 	if (state.isError || meta.isError)
 		return (

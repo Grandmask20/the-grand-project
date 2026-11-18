@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { StaleError } from "@/api/Http";
 import { useAppStore } from "@/store/AppStore";
 
 describe("useAppStore", () => {
@@ -22,5 +23,32 @@ describe("useAppStore", () => {
 		expect(useAppStore.getState().error).toBe("boom");
 		useAppStore.getState().showError(null);
 		expect(useAppStore.getState().error).toBeNull();
+	});
+
+	it("doesn't show an answer for the atlas open before as an error", () => {
+		useAppStore.getState().showError(new StaleError());
+		expect(useAppStore.getState().error).toBeNull();
+	});
+
+	it("forgets what belonged to the atlas open before", () => {
+		const s = useAppStore.getState();
+		s.select({ kind: "node", id: 3 } as never);
+		s.setResults([{ id: 1 } as never], "Breach");
+		s.setQuery("Breach");
+		s.setHighlight("Breach");
+		s.setMode({ kind: "lasso" });
+		s.setRoute({ path: [1, 2], message: "1 map to run" });
+		s.setTab("bookmarks");
+		s.resetAtlas();
+		const t = useAppStore.getState();
+		expect([t.selected, t.results, t.query, t.highlight, t.mode, t.route]).toEqual([
+			null,
+			[],
+			"",
+			null,
+			{ kind: "normal" },
+			null,
+		]);
+		expect(t.tab).toBe("bookmarks"); // the tab stays
 	});
 });

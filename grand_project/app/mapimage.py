@@ -150,15 +150,15 @@ class MapImageMixin:
         except Exception:
             LOG.debug("map image cache not usable, rebuilding", exc_info=True)
         self._terrain_job += 1
-        job, atlas = self._terrain_job, self.atlas
+        job, atlas, gen = self._terrain_job, self.atlas, self.generation
         self.events.set_progress("building the map image (first time for this atlas)…")
 
         def work():
             """Build the map image and show it (background thread)."""
             try:
                 canvas, origin, weight = atlas.composite(max_pixels=TERRAIN_PIXELS, with_weight=True)
-                if job == self._terrain_job and atlas is self.atlas:
-                    self.set_terrain(canvas, weight, origin)
+                if job == self._terrain_job:
+                    self.set_terrain(canvas, weight, origin, gen=gen)
             except Exception as e:
                 LOG.exception("map image could not be built")
                 self.events.log(f"map image could not be built: {e}")
@@ -170,7 +170,9 @@ class MapImageMixin:
         else:
             work()
 
-    def set_terrain(self, canvas, weight, origin, save: bool = True, labels=None, cities: bool = True) -> None:
+    def set_terrain(
+        self, canvas, weight, origin, save: bool = True, labels=None, cities: bool = True, gen: int | None = None
+    ) -> bool:
         """Show a new map image: keep it, set up its grid and tilers and, when asked, write its cache files.
 
         Args:
@@ -180,9 +182,16 @@ class MapImageMixin:
             save: Write the cache files and the atlas card picture.
             labels: (ownership map, screenshot names) of the clean map, or None.
             cities: Rebuild the model (biomes follow the ground).
+            gen: The atlas generation the image was made for (None: now): another atlas opened since drops it.
+
+        Returns:
+            Whether it was shown (False: made for an atlas no longer open).
         """
         origin = tuple(float(v) for v in origin)
         with self._lock:
+            if gen is not None and not self.owns(gen):
+                LOG.info("a map image made for another atlas was dropped")
+                return False
             self.terrain = (canvas, weight, origin)
             self.labels = labels
             self.grid = Grid(origin, canvas.shape[1], canvas.shape[0])
@@ -223,6 +232,7 @@ class MapImageMixin:
         if cities and self.V.get("nodes"):
             self.rebuild_model()  # the biomes follow the ground now
         self.events.publish("terrain", self.terrain_version)
+        return True
 
     def _sharp_folder(self) -> Path | None:
         """Return the folder sharp tiles of the current screenshots are kept in (older ones are removed).
@@ -361,7 +371,7 @@ class MapImageMixin:
                 creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0) if os.name == "nt" else 0,
             )
         self._seams_proc, self._seams_stopped = proc, False
-        atlas = self.atlas
+        gen = self.generation
         self.events.set_progress("fixing seams: building the clean map...")
         self.events.log("Fix seams: building the clean map in the background")
         self.events.publish("seams", True)
@@ -373,14 +383,14 @@ class MapImageMixin:
                     self.events.set_progress(line.strip())
             proc.wait()
             try:
-                if proc.returncode == 0 and out.exists() and atlas is self.atlas:
+                if proc.returncode == 0 and out.exists() and self.owns(gen) and not self._seams_stopped:
                     with np.load(out) as r:
                         canvas, weight, labels = r["canvas"], r["weight"], r["labels"]
                         origin = tuple(float(v) for v in r["origin"])
                         names = [str(n) for n in r["names"]]
-                    self.set_terrain(canvas, weight, origin, labels=(labels, names))
-                    self.events.log("Fix seams: clean map ready")
-                    self._seams_ready(names)
+                    if self.set_terrain(canvas, weight, origin, labels=(labels, names), gen=gen):
+                        self.events.log("Fix seams: clean map ready")
+                        self._seams_ready(names)
                 elif self._seams_stopped:
                     pass  # stopped: dropped quietly
                 elif proc.returncode != 0:
@@ -389,7 +399,8 @@ class MapImageMixin:
                     self.events.log(f"clean map could not be built: {text[-1] if text else proc.returncode}")
             finally:
                 shutil.rmtree(tmp, ignore_errors=True)
-                self._seams_proc = None
+                if self._seams_proc is proc:  # (a newer Fix seams may have started meanwhile: CodeRabbit)
+                    self._seams_proc = None
                 self.events.set_progress(None)
                 self.events.publish("seams", False)
 
@@ -433,12 +444,13 @@ class MapImageMixin:
         Raises:
             ValueError: With no atlas open.
         """
-        if not self.atlas or not self.path:
-            raise ValueError("open an atlas first")
-        with self._lock:
-            builder.export(self.atlas, self.path)
-        d = core.atlas_files(self.path)
-        files = [str(p) for p in sorted(d.glob(f"{self.path.stem}_*.png")) if not p.name.endswith("_thumb.png")]
+        with self._lock:  # atlas and path read together: an atlas opened meanwhile can't mix them
+            atlas, path = self.atlas, self.path
+            if not atlas or not path:
+                raise ValueError("open an atlas first")
+            builder.export(atlas, path)
+        d = core.atlas_files(path)
+        files = [str(p) for p in sorted(d.glob(f"{path.stem}_*.png")) if not p.name.endswith("_thumb.png")]
         self.events.log(f"map PNGs written in {d}")
         return files
 

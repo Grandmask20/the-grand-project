@@ -166,11 +166,21 @@ class AtlasSession(
         except Exception as e:
             LOG.exception(f"could not read atlas {p}")
             raise ValueError(f"could not read {p}: {e}") from e
+        switching = self.path is None or p.resolve() != self.path.resolve()
+        # the open atlas's background work stops first (auto-add restarts below; Fix seams' result would be for the
+        # atlas object read before, also when the same file is opened again)
+        self.stop_watch()
+        if self.seams_running():
+            self.stop_seams()
+            self.events.log("Fix seams stopped: another atlas was opened")
         self.save()
         with self._lock:
-            if self.path is None or p.resolve() != self.path.resolve():
+            if self.working():  # a job slipped in meanwhile
+                raise ValueError("wait until the screenshots being added are done")
+            if switching:
                 self._forget_session()
                 self._drop_stale_snapshots(p)
+                self._reset_mapimage()  # the other atlas's map image never shows for this one
             self.atlas, self.path = atlas, p
             self.generation += 1
         maps = len((atlas.final or {}).get("nodes", []))
@@ -214,10 +224,15 @@ class AtlasSession(
             raise ValueError("wait until the screenshots being added are done")
         if p.exists():
             raise ValueError(f"{p} already exists: open it instead")
+        self.stop_watch()
+        self.stop_seams()
         self.save()
         p.parent.mkdir(parents=True, exist_ok=True)
         with self._lock:
+            if self.working():
+                raise ValueError("wait until the screenshots being added are done")
             self._forget_session()
+            self._reset_mapimage()
             self.atlas, self.path = core.Atlas(), p
             self.generation += 1
             self.atlas.save(p)
@@ -226,6 +241,21 @@ class AtlasSession(
         self._after_load()
         self.events.log(f"new atlas: {p}")
 
+    def owns(self, gen: int) -> bool:
+        """Tell whether work started under atlas generation `gen` may still change things (call under the lock).
+
+        Every background job (map image, Fix seams, saves, exports, stronghold search, replay fog) remembers the
+        generation it started under and applies its result only while that is still the open atlas: work for
+        another atlas was installed into the one opened meanwhile (user, CodeRabbit).
+
+        Args:
+            gen: The generation the work started under.
+
+        Returns:
+            True while that atlas is still the open one.
+        """
+        return gen == self.generation
+
     def save(self) -> None:
         """Save the open atlas (if any)."""
         if self.atlas is not None and self.path is not None:
@@ -233,7 +263,13 @@ class AtlasSession(
                 self.atlas.save(self.path)
 
     def close(self) -> None:
-        """Close the open atlas: stop auto-add and Fix seams, save, and clear everything that belonged to it."""
+        """Close the open atlas: stop auto-add and Fix seams, save, and clear everything that belonged to it.
+
+        Raises:
+            ValueError: While screenshots are being added (they would land in no atlas).
+        """
+        if self.working():
+            raise ValueError("wait until the screenshots being added are done")
         self.stop_watch()
         self.stop_seams()
         self.save()
@@ -363,6 +399,7 @@ class AtlasSession(
             "terrain_version": self.terrain_version,
             "filter_version": self.filter_version,
             "busy": self.working(),
+            "generation": self.generation,
             "progress": self.events.progress,
             "status": self.events.status,
             "watch": self.watch_state(),
@@ -380,6 +417,7 @@ class AtlasSession(
         self._forget_adding()
         self._extra_groups = set()
         self._replay_on, self._plan, self._replay_steps = False, None, None
+        self._fog = None
 
 
 def potential_kind(label: str) -> str:

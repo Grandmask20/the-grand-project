@@ -1,11 +1,11 @@
 import { type Map as MapLibreMap, Marker } from "maplibre-gl";
 import { useEffect, useRef } from "react";
-import { useSettings } from "@/hooks/app/UseSettings";
+import { usePlayer } from "@/hooks/app/UseSettings";
 import type { Geo } from "@/logic/Geo";
 
 /** "You are here": the map the player set for routes. */
 export function PlayerMarker({ map, geo }: { map: MapLibreMap; geo: Geo }) {
-	const player = useSettings()?.ui.player ?? null;
+	const { player } = usePlayer();
 	const marker = useRef<Marker | null>(null);
 
 	useEffect(() => {

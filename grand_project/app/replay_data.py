@@ -391,7 +391,10 @@ class ReplayMixin:
             ground = np.isfinite(steps)
         enc = np.where(ground, np.clip(np.nan_to_num(steps, posinf=n) / n * 65534, 0, 65534), 65535).astype("<u2")
         corners = [self.grid.lnglat(x0 + cx * cell, y0 + cy * cell) for cx, cy in ((0, 0), (W, 0), (W, H), (0, H))]
-        self._fog = {
+        fog = {
             "field": {"w": W, "h": H, "top": n, "data": base64.b64encode(enc.tobytes()).decode(), "corners": corners}
         }
-        return self._fog
+        with self._lock:  # kept only while its plan is still the replay's (a replan or atlas switch meanwhile: not)
+            if getattr(self, "_plan", None) is plan:
+                self._fog = fog
+        return fog

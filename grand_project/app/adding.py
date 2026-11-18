@@ -122,17 +122,18 @@ class AddingMixin:
             time.sleep(0.05)
         return True
 
-    def _queue_job(self, paths, mode) -> None:
+    def _queue_job(self, paths, mode, gen: int | None = None) -> None:
         """Hand a job to the worker, tagged with the atlas it is for (not started while closing).
 
         Args:
             paths: Screenshot files (may be empty: "undo", "recheck_all", retry).
             mode: "manual", "watch", "recheck_all", "undo", ("drop", x, y) or ("retry", indices or None).
+            gen: The atlas generation it is for (None: the open one); the worker skips it once another is open.
         """
         if self._closing:
             self.events.log(f"closing: {len(paths) or 'a'} job(s) not started")
             return
-        self._jobs.put((list(paths), mode, self.atlas))
+        self._jobs.put((list(paths), mode, self.generation if gen is None else gen))
         self.events.publish("busy", True)
 
     def _drop_queued_jobs(self) -> None:
@@ -168,13 +169,14 @@ class AddingMixin:
                 "Reinstall, or set DATABASE in local_paths.json."
             )
 
-    def add_screenshots(self, paths: list, mode: str = "manual", sync: bool = False) -> None:
+    def add_screenshots(self, paths: list, mode: str = "manual", sync: bool = False, gen: int | None = None) -> None:
         """Add screenshots to the atlas through the worker.
 
         Args:
             paths: Screenshot files.
             mode: "manual" (by hand) or "watch" (auto-add).
             sync: Run the job now on this thread (tests).
+            gen: The atlas generation they are for (auto-add: the one it was started for; None: the open one).
 
         Raises:
             ValueError: With no atlas open, or the detector database missing.
@@ -186,7 +188,7 @@ class AddingMixin:
         if sync:
             self.run_job(paths, mode)
         else:
-            self._queue_job(paths, mode)
+            self._queue_job(paths, mode, gen)
 
     def place_by_hand(self, path, x: float, y: float) -> None:
         """Line up a screenshot put roughly in place by hand near (x, y) (a "drop" job).
@@ -402,25 +404,27 @@ class AddingMixin:
     def _worker(self) -> None:
         """Run queued jobs one at a time, forever (auto-add jobs that arrived meanwhile run as one batch)."""
         while True:
-            paths, mode, atlas = self._jobs.get()
+            paths, mode, gen = self._jobs.get()
             jobs = 1
             if mode == "watch":
                 paths = list(paths)
                 with self._jobs.mutex:
                     q = self._jobs.queue
-                    while q and q[0][1] == "watch" and q[0][2] is atlas and len(paths) < WATCH_BATCH:
+                    while q and q[0][1] == "watch" and q[0][2] == gen and len(paths) < WATCH_BATCH:
                         paths += q.popleft()[0]
                         jobs += 1
-            self._busy = True
+            with self._lock:  # decided together with the open atlas: a switch can't slip in between
+                current = self.owns(gen) and not self._closing
+                self._busy = True
             try:
-                if atlas is not self.atlas or self._closing:
+                if not current:
                     self.events.log(f"skipped a job queued for another atlas ({mode})")
                 else:
                     self.run_job(paths, mode)
             except Exception as e:
                 LOG.exception(f"adding failed ({mode}): {paths}")
                 self.events.log(f"adding failed: {e}")
-                if mode == "watch" and atlas is self.atlas:
+                if mode == "watch" and self.owns(gen):
                     self._watch_failed([str(p) for p in paths])
             finally:
                 for _ in range(jobs):
@@ -588,7 +592,7 @@ class AddingMixin:
             if refused:
                 msg += f"; not placed (no overlap found): {', '.join(refused)}"
             if added:
-                threading.Thread(target=self._export_quiet, daemon=True).start()
+                threading.Thread(target=self._export_quiet, args=(self.generation,), daemon=True).start()
         elif mode == "drop":
             msg = "screenshot added" if added else "screenshot not added"
         elif mode == "retry":
@@ -603,10 +607,16 @@ class AddingMixin:
         if mode in ("watch", "retry") and refused and not added:
             self.events.publish("show_tab", "auto")
 
-    def _export_quiet(self) -> None:
-        """Write the map PNGs in the background; a failure is only logged."""
+    def _export_quiet(self, gen: int) -> None:
+        """Write the map PNGs in the background (not when another atlas was opened meanwhile); failures are logged.
+
+        Args:
+            gen: The atlas generation they are for.
+        """
         try:
             with self._lock:
+                if not self.owns(gen):
+                    return
                 builder.export(self.atlas, self.path)
         except Exception as e:
             LOG.exception("PNG export failed")

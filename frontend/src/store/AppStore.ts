@@ -1,6 +1,7 @@
 import type { Map as MapLibreMap } from "maplibre-gl";
 import { create } from "zustand";
 import { useShallow } from "zustand/shallow";
+import { isStale } from "@/api/Http";
 import type { Ghost } from "@/domain/adding/Ghost";
 import type { ResultRow } from "@/domain/find/SearchResult";
 import type { ItemInfo } from "@/domain/map/ItemInfo";
@@ -103,6 +104,8 @@ export interface AppStoreState {
 	/** Bumped when a layer was added late (the icons): the look is applied again. */
 	lookTick: number;
 	bumpLook: () => void;
+	/** Forget what belonged to the atlas open before (another atlas was opened, made or closed). */
+	resetAtlas: () => void;
 }
 
 export const useAppStore = create<AppStoreState>()((set) => ({
@@ -147,7 +150,11 @@ export const useAppStore = create<AppStoreState>()((set) => ({
 	deleteAtlas: null,
 	askDeleteAtlas: (deleteAtlas) => set({ deleteAtlas }),
 	error: null,
-	showError: (e) => set({ error: e == null ? null : e instanceof Error ? e.message : String(e) }),
+	// an answer for the atlas open before isn't an error: the page just draws the new one
+	showError: (e) => {
+		if (isStale(e)) return;
+		set({ error: e == null ? null : e instanceof Error ? e.message : String(e) });
+	},
 	frameLog: false,
 	setFrameLog: (frameLog) => set({ frameLog }),
 	foldedGroups: [],
@@ -157,6 +164,26 @@ export const useAppStore = create<AppStoreState>()((set) => ({
 		})),
 	lookTick: 0,
 	bumpLook: () => set((s) => ({ lookTick: s.lookTick + 1 })),
+	// the selection, search, highlight, route, replay, a placement or lasso waiting for a click, and dialogs about
+	// one of its items all belonged to the atlas open before (user: they showed or acted on the new one). Kept: the
+	// tab, the camera (a new map fits itself), the file picker and the atlas dialogs (not about one atlas).
+	resetAtlas: () =>
+		set({
+			selected: null,
+			results: [],
+			resultsTitle: "",
+			query: "",
+			highlight: null,
+			mode: { kind: "normal" },
+			fly: null,
+			goto: null,
+			route: null,
+			replay: null,
+			prompt: null,
+			confirm: null,
+			bookmarkEdit: null,
+			sources: null,
+		}),
 }));
 
 /** Stands for "a replay is open" in useAppStoreCalm (its contents left out). */
