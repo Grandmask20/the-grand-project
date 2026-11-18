@@ -169,15 +169,49 @@ def test_a_second_start_opens_the_running_app(app, monkeypatch, tmp_path):
     assert asked == [str(other.resolve())]
 
 
-def test_an_older_running_copy_is_closed_for_the_update(app, monkeypatch):
-    srv, _pts = app
-    port = srv.server_address[1]
-    quits = []
-    monkeypatch.setattr(S, "running_app", lambda port: (srv.url, "1.0"))  # an older copy answers there
-    monkeypatch.setattr(srv, "quit", lambda: quits.append(1))
+def test_an_older_running_copy_is_closed_for_the_update(monkeypatch):
+    monkeypatch.setattr(S, "running_app", lambda port: ("http://127.0.0.1:1/", "1.0"))  # an older copy answers
     monkeypatch.setattr(S, "APP_QUIT_WAIT", 0.5)
-    assert S.reuse_running(port, None, browser=False) is False  # starts normally (the old copy was reused)
-    assert quits == [1]
+    state = {"gone": False, "quits": 0}
+
+    def fake(url, data=None, timeout=0):
+        if url.endswith("api/quit"):
+            state["quits"] += 1
+            state["gone"] = state["obeys"]
+            return {"ok": True}
+        return None if state["gone"] else {"app": S.HELLO_APP}
+
+    monkeypatch.setattr(S, "_local", fake)
+    state["obeys"] = True
+    assert S.reuse_running(1, None, browser=False) == S.START and state["quits"] == 1  # it quit: the update starts
+    state.update(gone=False, obeys=False)  # still closing after the wait: no second copy writing the same atlas
+    assert S.reuse_running(1, None, browser=False) == S.FAILED
+
+
+def test_a_refused_atlas_hand_over_is_reported(app, monkeypatch, tmp_path):
+    srv, _pts = app
+    monkeypatch.setattr(S.webbrowser, "open", lambda url: None)
+
+    def busy(p):
+        raise ValueError("wait until the screenshots being added are done")
+
+    monkeypatch.setattr(srv.session, "open_atlas", busy)
+    assert S.main(["--port", str(srv.server_address[1]), str(tmp_path / "x.json")]) == 1  # (it said success)
+
+
+def test_the_start_doesnt_replace_an_atlas_opened_meanwhile(tmp_path):
+    (tmp_path / "a").mkdir()
+    (tmp_path / "b").mkdir()
+    a, _p, _i = make_atlas(tmp_path / "a")
+    b, _p, _i = make_atlas(tmp_path / "b")
+    session = AtlasSession(settings={}, worker=False)
+    try:
+        start = session.generation
+        session.open_atlas(b)  # opened on the page while the start's atlas was still loading
+        S.open_first_atlas(session, str(a), start)
+        assert session.path == b  # (it switched back to the start's atlas)
+    finally:
+        session.shutdown()
 
 
 def test_something_else_on_a_port_doesnt_stop_the_start():

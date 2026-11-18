@@ -4,6 +4,7 @@ import nodePicture from "@/assets/map_node_icon.webp";
 import type { Meta } from "@/domain/app/Meta";
 import type { MapInfo } from "@/domain/map/MapInfo";
 import { useAppClient } from "@/hooks/app/UseAppClient";
+import { useAppState } from "@/hooks/app/UseAppState";
 import { Geo } from "@/logic/Geo";
 import { baseStyle, squareImage } from "@/logic/MapStyle";
 import { useAppStore } from "@/store/AppStore";
@@ -38,6 +39,9 @@ interface Props {
 	meta: Meta;
 }
 
+/** The longest the map stays covered while its first view loads (ms): never hidden for good by a slow part. */
+const MAP_SHOW_WAIT = 20000;
+
 /** The map: MapLibre on the app's tiles, with everything the page draws over them. */
 export function AtlasMap({ info, meta }: Props) {
 	const app = useAppClient();
@@ -45,6 +49,37 @@ export function AtlasMap({ info, meta }: Props) {
 	const [map, setMap] = useState<MapLibreMap | null>(null);
 	const [geo] = useState(() => new Geo(info));
 	const setStoreMap = useAppStore((s) => s.setMap);
+	const modelReady = useAppState().data?.model_ready !== false;
+	const [shown, setShown] = useState(false);
+
+	// the map is shown in one go: once the atlas's model is built and the map image and the map's content (map
+	// nodes, paths, icons, landmarks, biomes) for the view have loaded. Shown as each came, the map image was up
+	// seconds before the rest on a big atlas (user). Only this map's first draw waits; moving around afterwards loads
+	// as before. MAP_SHOW_WAIT ms at most, so a slow or failing part never keeps the map hidden.
+	useEffect(() => {
+		if (!map || shown) return;
+		const timer = window.setTimeout(() => setShown(true), MAP_SHOW_WAIT);
+		if (!modelReady) return () => window.clearTimeout(timer);
+		// only what is shown is waited for: a source none of whose layers is ticked loads nothing (MapLibre skips it),
+		// so with Ground off the map image isn't waited for (user: what isn't ticked mustn't slow the loading)
+		const ticked = (id: string) =>
+			map
+				.getStyle()
+				.layers.some((l) => "source" in l && l.source === id && (l.layout?.visibility ?? "visible") !== "none");
+		const loaded = () =>
+			map.isStyleLoaded() &&
+			["terrain", "atlas"].every((id) => !map.getSource(id) || !ticked(id) || map.isSourceLoaded(id));
+		const check = () => {
+			if (loaded()) setShown(true);
+		};
+		// (the content tiles' address changes when the model is built: the drawing after it is the one waited for)
+		map.on("idle", check);
+		check();
+		return () => {
+			window.clearTimeout(timer);
+			map.off("idle", check);
+		};
+	}, [map, modelReady, shown]);
 
 	// biome-ignore lint/correctness/useExhaustiveDependencies: made once per grid (the parent remounts on a new one)
 	useEffect(() => {
@@ -165,6 +200,11 @@ export function AtlasMap({ info, meta }: Props) {
 			{/* h-full, not absolute inset-0: MapLibre's stylesheet makes its container position: relative, which
 			    turned the absolute box 0 px tall (a black map) */}
 			<div ref={box} className="h-full w-full" />
+			{!shown && (
+				<div className="absolute inset-0 z-10 flex items-center justify-center bg-background text-muted-foreground">
+					Loading atlas…
+				</div>
+			)}
 			{map && (
 				<>
 					<MapTiles map={map} />

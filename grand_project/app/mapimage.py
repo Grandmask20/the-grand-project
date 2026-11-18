@@ -219,6 +219,7 @@ class MapImageMixin:
             self._terrain_snap = (self.terrain, self.terrain_version)
             self._tiles.clear()
             self._vector = None
+            self._scene3d = None
         if save and self.path:
             key, path = self.atlas.terrain_key(), self.path
 
@@ -526,6 +527,8 @@ class MapImageMixin:
         self.filter_version += 1
         self._vector = None
         self._vector_steps = None
+        self._scene3d = None
+        self._scene3d_steps = None
         if publish:
             self.events.publish("filters", self.filter_version)
 
@@ -771,14 +774,45 @@ class MapImageMixin:
             g = self.grid
             if g is None:
                 return None
-            layers = self.vector_layers(g, steps)
-            # the 3D view's icons and models aren't cut into tiles: the page gets them whole (scene_3d), read back
-            # from loaded tiles they were missing zoomed out, came twice at tile edges and were gathered again
-            # after every move (user: lag, popping)
-            scene = {k: layers.pop(k) for k in ("icon_rows", "solids")}
-            scene["paths"] = layers["paths"]
+            # without the 3D view's parts: built only when it asks (scene_3d). Built for every flat map too, they
+            # were ~0.8 s of a big atlas's first tiles though never in them (user: what isn't shown shouldn't slow it)
+            layers = self.vector_layers(g, steps, with_3d=False)
+            for k in ("icon_rows", "solids"):
+                layers.pop(k, None)
             dense = max(0, g.zmax - 4)  # icons and labels are not drawn zoomed far out
-            made = (key, VectorTiler(layers, g, min_zoom={"icons": dense}), scene, g)
+            made = (key, VectorTiler(layers, g, min_zoom={"icons": dense}), None, g)
+            setattr(self, slot, made)
+            return made
+
+    def _scene_made(self, steps: bool = False) -> tuple | None:
+        """Return (versions, 3D scene features, grid) of the current model, filters and map image, made once and only
+        when the 3D view asks (the flat map's tiles never carry them).
+
+        The 3D view's icons and models aren't cut into tiles: the page gets them whole (scene_3d); read back from
+        loaded tiles they were missing zoomed out, came twice at tile edges and were gathered again after every move
+        (user: lag, popping).
+
+        Args:
+            steps: The timelapse's (items carry their reveal step), kept beside the plain one.
+
+        Returns:
+            The tuple, or None without a map image.
+        """
+        slot = "_scene3d_steps" if steps else "_scene3d"
+        key = (self.model_version, self.filter_version, self.terrain_version, self.replay_token if steps else 0)
+        v = getattr(self, slot, None)
+        if v is not None and v[0] == key:
+            return v
+        with self._vector_lock, self._lock:
+            key = (self.model_version, self.filter_version, self.terrain_version, self.replay_token if steps else 0)
+            v = getattr(self, slot, None)
+            if v is not None and v[0] == key:
+                return v
+            g = self.grid
+            if g is None:
+                return None
+            layers = self.vector_layers(g, steps)
+            made = (key, {"icon_rows": layers["icon_rows"], "solids": layers["solids"], "paths": layers["paths"]}, g)
             setattr(self, slot, made)
             return made
 
@@ -797,10 +831,10 @@ class MapImageMixin:
             the start; pick: what a click on it selects, "node:<i>" / "landmark:<i>" / "").
         """
         steps = replay and self.replay_steps() is not None
-        made = self._vector_made(steps)  # its own snapshot: the slot can be replaced meanwhile (CodeRabbit)
+        made = self._scene_made(steps)  # its own snapshot: the slot can be replaced meanwhile (CodeRabbit)
         if made is None:
             return b'{"icons": [], "paths": [], "models": []}'
-        key, _tiler, scene, g = made
+        key, scene, g = made
         kept = getattr(self, "_scene", None)
         if kept is not None and kept[0] == (key, steps):
             return kept[1]
@@ -831,12 +865,13 @@ class MapImageMixin:
         self._scene = ((key, steps), data)
         return data
 
-    def vector_layers(self, grid: Grid, steps: bool = False) -> dict[str, list[dict]]:
+    def vector_layers(self, grid: Grid, steps: bool = False, with_3d: bool = True) -> dict[str, list[dict]]:
         """Build the vector tile features of what the filters show (world px at zmax).
 
         Args:
             grid: The map image's grid.
             steps: Give items their timelapse reveal step (while one is open).
+            with_3d: Also the 3D view's parts (icon rows, models); without them icon_rows and solids stay empty.
 
         Returns:
             Layer name -> features: land, biomes, paths, removed, maps, icons, landmarks, bookmarks, solids.
@@ -912,30 +947,31 @@ class MapImageMixin:
             for k, i in enumerate(members):
                 slot[i] = k - (len(members) - 1) / 2
         node_of = D.get("icon_node", {})
-        shapes = self._solid_shapes(node_ok)
+        shapes = self._solid_shapes(node_ok) if with_3d else []
         lift = self._model_tops(shapes)
         for i, ic in enumerate(V["icons"]):
             if not self.icon_visible(i, fl):
                 continue
             v = node_of.get(i)
             at = (nodes[v]["x"], nodes[v]["y"]) if v is not None and v < len(nodes) else (ic["x"], ic["y"])
-            L["icon_rows"].append(
-                {
-                    "kind": "point",
-                    "pts": [W(*at)],
-                    "id": i,
-                    "props": {
+            if with_3d:
+                L["icon_rows"].append(
+                    {
+                        "kind": "point",
+                        "pts": [W(*at)],
                         "id": i,
-                        "name": ic["name"],
-                        "slot": f"{slot.get(i, 0.0):g}",
-                        # the top of the 3D model under it (pillar, tower, city), atlas units in steps of 10: the
-                        # page stands the icon on top when the models are shown (user: city icons sat inside)
-                        "lift": int(round(lift.get(v, 0.0) / 10) * 10) if v is not None else 0,
-                        "node": -1 if v is None else v,  # (a selected map node rings its icon in 3D)
-                        **step("icon", i),
-                    },
-                }
-            )
+                        "props": {
+                            "id": i,
+                            "name": ic["name"],
+                            "slot": f"{slot.get(i, 0.0):g}",
+                            # the top of the 3D model under it (pillar, tower, city), atlas units in steps of 10: the
+                            # page stands the icon on top when the models are shown (user: city icons sat inside)
+                            "lift": int(round(lift.get(v, 0.0) / 10) * 10) if v is not None else 0,
+                            "node": -1 if v is None else v,  # (a selected map node rings its icon in 3D)
+                            **step("icon", i),
+                        },
+                    }
+                )
             x, y = pts[i] if pts is not None and i < len(pts) else (ic["x"], ic["y"])
             L["icons"].append(
                 {
@@ -972,7 +1008,7 @@ class MapImageMixin:
                 L["biomes"].append(
                     {"kind": "polygon", "rings": [[W(x, y) for x, y in r] for r in poly], "props": {"kind": kind}}
                 )
-        L["solids"] = self._solids(grid, shapes, rs)
+        L["solids"] = self._solids(grid, shapes, rs) if with_3d else []
         return L
 
     def _land(self) -> list:

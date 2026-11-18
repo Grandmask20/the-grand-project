@@ -175,7 +175,7 @@ class AtlasSession(
         return self.ui_settings()
 
     # ------------------------------------------------------------------ open / new / save / close
-    def open_atlas(self, p) -> None:
+    def open_atlas(self, p, expect_gen: int | None = None) -> None:
         """Open an atlas file and show it.
 
         Unsaved changes of the open atlas are saved first. An atlas with screenshots but no atlas-wide result
@@ -183,11 +183,15 @@ class AtlasSession(
 
         Args:
             p: Path of the atlas .json file.
+            expect_gen: Open it only while this is still the generation (the app's start opening the last atlas in
+                the background: an atlas opened on the page meanwhile stays, CodeRabbit). None: always.
 
         Raises:
             ValueError: When the file cannot be read as an atlas, or work is still running.
         """
         p = Path(p)
+        if expect_gen is not None and not self.owns(expect_gen):
+            return
         if self.working():
             raise ValueError("wait until the screenshots being added are done")
         try:
@@ -205,6 +209,9 @@ class AtlasSession(
         self.save()
         name = p.stem if p.stem != "atlas" else p.parent.name
         with self._lock:
+            if expect_gen is not None and not self.owns(expect_gen):  # another atlas opened while this one loaded
+                self._resume_watch()
+                return
             if self.working():  # a job slipped in meanwhile
                 self._resume_watch()  # (stopped above for a switch that doesn't happen: CodeRabbit)
                 raise ValueError("wait until the screenshots being added are done")
@@ -482,6 +489,9 @@ class AtlasSession(
             "log": list(self.events.log_lines)[-300:],
             "log_scope": opened.scope,
             "opening": self.opening,
+            # this atlas's model is built (map nodes, paths, icons, biomes): the page shows the map only then, so
+            # everything comes in together (user: the map image came first and the rest seconds later)
+            "model_ready": bool(self.D),
         }
 
     def _forget_session(self) -> None:

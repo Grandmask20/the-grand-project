@@ -385,3 +385,12 @@ def test_a_stop_while_fix_seams_starts_is_kept(session, monkeypatch):
     monkeypatch.setattr("grand_project.app.mapimage.subprocess.Popen", popen)
     session.fix_seams()
     assert ended == [1] and session._seams_proc is None and not session.seams_running()
+
+
+def test_the_flat_map_doesnt_build_the_3d_view(session, monkeypatch):
+    real = type(session)._solid_shapes
+    built = []
+    monkeypatch.setattr(type(session), "_solid_shapes", lambda self, ok: (built.append(1), real(self, ok))[1])
+    session._vector_made(False)  # the flat map's tiles
+    assert built == []  # (its models were built for every flat map though never in its tiles)
+    assert json.loads(session.scene_3d())["models"] and built == [1]  # asked for by the 3D view: built then

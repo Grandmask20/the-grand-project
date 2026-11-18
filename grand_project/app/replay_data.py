@@ -232,6 +232,7 @@ class ReplayMixin:
             self._plan = None
             self._replay_steps = None
             self._vector_steps = None
+            self._scene3d_steps = None
 
     def set_replay_settings(self, changes: dict) -> dict:
         """Change replay settings; the plan is worked out again when it depends on them.

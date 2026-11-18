@@ -1061,7 +1061,10 @@ def running_app(port: int, host: str = APP_HOST, root: Path | None = None) -> tu
     return None
 
 
-def reuse_running(port: int, atlas: str | None, browser: bool) -> bool:
+HANDED, START, FAILED = "handed over", "start", "failed"  # reuse_running's outcomes
+
+
+def reuse_running(port: int, atlas: str | None, browser: bool) -> str:
     """Hand this start over to the copy already running, when there is one of this version.
 
     The same version: its page is opened, and an atlas asked for on the command line is opened there (it was
@@ -1074,25 +1077,31 @@ def reuse_running(port: int, atlas: str | None, browser: bool) -> bool:
         browser: Open the page.
 
     Returns:
-        True when the running copy took over (this start ends), False to start normally.
+        HANDED (the running copy took over), START (none running, or the old one quit: start normally) or FAILED
+        (a hand-over that didn't work: reported, and no second copy is started, CodeRabbit).
     """
     found = running_app(port)
     if not found:
-        return False
+        return START
     url, version = found
     if version != VERSION:
         _say(f"An older copy (v{version}) is running: closing it to start v{VERSION}")
         _local(url + "api/quit", {})
         t0 = time.monotonic()
-        while time.monotonic() - t0 < APP_QUIT_WAIT and _local(url + "api/hello"):
+        while time.monotonic() - t0 < APP_QUIT_WAIT:
+            if not _local(url + "api/hello"):
+                return START  # gone: this start takes over
             time.sleep(0.25)
-        return False
+        # still there (saving or finishing work): two copies would write the same atlas
+        _say(f"The older copy at {url} is still closing: start the app again in a moment.")
+        return FAILED
     _say(f"The Grand Project is already running: {url}")
     if browser:
         webbrowser.open(url)
-    if atlas:
-        _local(url + "api/atlas/open", {"path": str(Path(atlas).resolve())}, timeout=APP_OPEN_WAIT)
-    return True
+    if atlas and _local(url + "api/atlas/open", {"path": str(Path(atlas).resolve())}, timeout=APP_OPEN_WAIT) is None:
+        _say(f"The running copy couldn't open {atlas} (it may be adding screenshots): open it there when it's done.")
+        return FAILED
+    return HANDED
 
 
 def _say(text: str) -> None:
@@ -1105,12 +1114,14 @@ def _say(text: str) -> None:
         print(text, flush=True)
 
 
-def open_first_atlas(session: AtlasSession, given: str | None) -> None:
+def open_first_atlas(session: AtlasSession, given: str | None, gen: int | None = None) -> None:
     """Open the atlas given, else the last one, else (first start) the empty default atlas, with a welcome note.
 
     Args:
         session: The session.
         given: The atlas file from the command line, or None.
+        gen: The generation the start began under: the atlas is only switched to while it is still current (one
+            opened on the page meanwhile isn't replaced).
     """
     target = given or session.settings.get("last_atlas")
     welcome = False
@@ -1121,7 +1132,7 @@ def open_first_atlas(session: AtlasSession, given: str | None) -> None:
             core.Atlas().save(target)
         welcome = True
     try:
-        session.open_atlas(target)
+        session.open_atlas(target, expect_gen=gen)
     except ValueError as e:
         session.events.log(str(e))
         return
@@ -1147,8 +1158,10 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--port", type=int, default=APP_PORT, help=f"first port to try (default {APP_PORT}; 0: any)")
     ap.add_argument("--no-browser", action="store_true", help="don't open the browser")
     args = ap.parse_args(argv)
-    if args.port and reuse_running(args.port, args.atlas, not args.no_browser):
-        return 0  # already running: its page, not a second copy writing the same atlas (user)
+    if args.port:
+        outcome = reuse_running(args.port, args.atlas, not args.no_browser)
+        if outcome != START:  # already running: its page, not a second copy writing the same atlas (user)
+            return 0 if outcome == HANDED else 1
     session = AtlasSession()
     try:
         server = AppServer(session, port=args.port)
@@ -1164,9 +1177,11 @@ def main(argv: list[str] | None = None) -> int:
     # whole atlas to load first: user)
     session.opening = Path(args.atlas or session.settings.get("last_atlas") or rc_paths.DEFAULT_ATLAS).parent.name
 
+    start_gen = session.generation  # (an atlas opened on the page meanwhile wins: CodeRabbit)
+
     def first_atlas() -> None:
         try:
-            open_first_atlas(session, args.atlas)
+            open_first_atlas(session, args.atlas, start_gen)
         finally:
             session.opening = None
             session.events.publish("atlas", session.atlas_summary())
