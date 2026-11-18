@@ -2,26 +2,24 @@
 
 The page plays the replay; the session works out its plan (app.replay.make_plan): the step each screenshot, map,
 icon and landmark appears at. While the replay is open those steps go into the vector tiles (a "step" property the
-page filters on). The ground not revealed yet is covered by fog bands: polygons of where the ground is still hidden
-at each of up to REPLAY_FOG_BANDS points of the replay. "Colour by" needs every screenshot's outline, session and age
-rank, and the "times seen" heatmap picture.
+page filters on). The ground not revealed yet is covered by fog: a grid of the step each spot's ground is revealed at,
+which the page draws every frame. "Colour by" needs every screenshot's outline, session and age rank, and the "times
+seen" heatmap picture.
 """
 
 from __future__ import annotations
 
+import base64
 import math
 
 import cv2
 import numpy as np
-
-from grand_project.webmap.shapes import _trace
 
 from . import replay as R
 from .constants import (
     COLOUR_SPREADS,
     HEAT_RES,
     REPLAY_DEFAULTS,
-    REPLAY_FOG_BANDS,
     REPLAY_FOG_RES,
     REPLAY_SESSION_COLS,
     REPLAY_TINT_ALPHA,
@@ -348,18 +346,22 @@ class ReplayMixin:
         }
 
     def replay_fog(self) -> dict:
-        """Return the fog bands: band b covers the ground still hidden when the replay is at b / bands of the way.
+        """Return the fog field: for each cell of a grid over the atlas, the replay step its ground is revealed at.
+
+        The page draws the fog from it every frame (hidden while the replay is before that step, fading in over a soft
+        edge when revealing by area), so the sweep moves smoothly; fog bands of polygons snapped in steps (user).
 
         Returns:
-            {"bands": B, "features": GeoJSON features (lng/lat) with properties {"band"}}.
+            {"field": {"w", "h", "top" (the step a value of 65534 means), "data" (base64 little-endian uint16 per cell,
+            row by row; 65535 = no ground there), "corners" ([lng, lat] of the grid's top left, top right, bottom
+            right, bottom left)}} or {"field": None} without a plan.
         """
         plan = getattr(self, "_plan", None)
         if plan is None or self.grid is None:
-            return {"bands": 0, "features": []}
+            return {"field": None}
         if getattr(self, "_fog", None) is not None:
             return self._fog
         n = max(1, plan.n_steps)
-        B = int(min(REPLAY_FOG_BANDS, n))
         x0, y0, x1, y1 = self.atlas_bounds()
         cell = max(x1 - x0, y1 - y0, 1.0) / REPLAY_FOG_RES
         W, H = int(math.ceil((x1 - x0) / cell)) + 1, int(math.ceil((y1 - y0) / cell)) + 1
@@ -367,28 +369,26 @@ class ReplayMixin:
             g, (gx, gy, gc), top = plan.sweep.grid, plan.sweep.origin, plan.sweep.top
             A = np.array([[cell / gc, 0, (x0 - gx) / gc], [0, cell / gc, (y0 - gy) / gc]], np.float32)
             key = cv2.warpAffine(g, A, (W, H), flags=cv2.INTER_LINEAR | cv2.WARP_INVERSE_MAP, borderValue=float(top))
-            level = np.floor(key / top * B).astype(np.int32)
-        else:
-            level = np.full((H, W), -1, np.int32)  # -1: no screenshot: no ground to hide
+            steps = key.astype(np.float64) / max(float(top), 1e-9) * n
+            ground = np.ones((H, W), bool)
             fp = self.D.get("footprints") or []
-            big = np.iinfo(np.int32).max
-            first = np.full((H, W), big, np.int32)
+            if fp:  # only where screenshots show ground
+                ground[:] = False
+                for poly, _bb in fp:
+                    m = np.zeros((H, W), np.uint8)
+                    cv2.fillConvexPoly(m, ((np.asarray(poly, float) - [x0, y0]) / cell).round().astype(np.int32), 1)
+                    ground |= m > 0
+        else:
+            fp = self.D.get("footprints") or []
+            steps = np.full((H, W), np.inf)
             for i, (poly, _bb) in enumerate(fp):
-                s = int(math.floor(float(plan.step_of[i]) / n * B))
-                q = ((np.asarray(poly, float) - [x0, y0]) / cell).round().astype(np.int32)
                 m = np.zeros((H, W), np.uint8)
-                cv2.fillConvexPoly(m, q, 1)
-                np.minimum(first, np.where(m > 0, s, big), out=first)
-            level = np.where(first == big, -1, first)
-        grid = self.grid
-        feats = []
-        for b in range(B):
-            mask = ((level >= b) * 255).astype(np.uint8)
-            if not mask.any():
-                continue
-            to = lambda c, r: grid.lnglat(x0 + c * cell, y0 + r * cell)  # noqa: E731
-            for poly in _trace(mask, to, 0.8):
-                feats.append({"type": "Feature", "properties": {"band": b},
-                              "geometry": {"type": "Polygon", "coordinates": [r + [r[0]] for r in poly]}})  # fmt: skip
-        self._fog = {"bands": B, "features": feats}
+                cv2.fillConvexPoly(m, ((np.asarray(poly, float) - [x0, y0]) / cell).round().astype(np.int32), 1)
+                np.minimum(steps, np.where(m > 0, float(plan.step_of[i]), np.inf), out=steps)
+            ground = np.isfinite(steps)
+        enc = np.where(ground, np.clip(np.nan_to_num(steps, posinf=n) / n * 65534, 0, 65534), 65535).astype("<u2")
+        corners = [self.grid.lnglat(x0 + cx * cell, y0 + cy * cell) for cx, cy in ((0, 0), (W, 0), (W, H), (0, H))]
+        self._fog = {
+            "field": {"w": W, "h": H, "top": n, "data": base64.b64encode(enc.tobytes()).decode(), "corners": corners}
+        }
         return self._fog

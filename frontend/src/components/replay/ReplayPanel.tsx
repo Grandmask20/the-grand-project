@@ -1,5 +1,15 @@
-import { DownloadIcon, PauseIcon, PlayIcon, SkipBackIcon, SkipForwardIcon, SquareIcon, XIcon } from "lucide-react";
-import { useEffect, useRef } from "react";
+import {
+	DownloadIcon,
+	PauseIcon,
+	PlayIcon,
+	SkipBackIcon,
+	SkipForwardIcon,
+	SquareIcon,
+	StepBackIcon,
+	StepForwardIcon,
+	XIcon,
+} from "lucide-react";
+import { useEffect, useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
 import {
 	DropdownMenu,
@@ -13,8 +23,19 @@ import type { Meta, ReplaySettings } from "@/domain/app/Meta";
 import { useAppClient } from "@/hooks/app/UseAppClient";
 import { useGeo } from "@/hooks/map/UseGeo";
 import { useFrames } from "@/hooks/replay/UseFrames";
-import { GifRecorder } from "@/logic/GifExport";
 import { cameraTarget, counts, ease, stepFrom, stepsPerSecond } from "@/logic/Replay";
+import {
+	END_HOLD_MS,
+	type ExportKind,
+	GIF_FPS,
+	GIF_MAX_FRAMES,
+	GIF_WIDTH,
+	mapIdle,
+	nextFrames,
+	onNextRender,
+	ReplayExporter,
+	VIDEO_FPS,
+} from "@/logic/ReplayExport";
 import { useAppStore } from "@/store/AppStore";
 import { download } from "@/utils/Download";
 import { Timeline } from "./Timeline";
@@ -32,7 +53,8 @@ export function ReplayPanel({ meta }: { meta: Meta }) {
 	const geo = useGeo();
 	const last = useRef(0);
 	const recorder = useRef<MediaRecorder | null>(null);
-	const gif = useRef<GifRecorder | null>(null);
+	const exporting = useRef<{ cancel: boolean } | null>(null);
+	const [exportInfo, setExportInfo] = useState("");
 
 	// playback: move on, move the camera
 	useEffect(() => {
@@ -50,7 +72,6 @@ export function ReplayPanel({ meta }: { meta: Meta }) {
 			const done = pos >= plan.n_steps;
 			patch({ pos, playing: !done });
 			if (done && recorder.current) recorder.current.stop();
-			if (done && gif.current) finishGif();
 			if (!done) raf = requestAnimationFrame(loop);
 		};
 		raf = requestAnimationFrame(loop);
@@ -98,25 +119,62 @@ export function ReplayPanel({ meta }: { meta: Meta }) {
 		patch({ pos: pos >= plan.n_steps ? 0 : pos, playing: true });
 	};
 
-	function finishGif() {
-		const g = gif.current;
-		gif.current = null;
-		patch({ recording: false, playing: false });
-		const blob = g?.finish();
-		if (blob) download(blob, "atlas-timelapse.gif");
-	}
-
-	/** Export as a GIF: played from the start, the map's frames taken as it plays. */
-	const recordGif = () => {
-		if (!map) return;
-		gif.current = new GifRecorder(map, plan.n_steps / stepsPerSecond(plan));
-		patch({ recording: true, pos: 0, playing: true });
-		moveCamera(0, 1);
+	/**
+	 * Export the replay as a GIF or a video, frame by frame: each frame waits until the map has drawn it, and gets a
+	 * fixed time in the file, so it lasts the replay's length (the preview speed doesn't apply), as the old window's
+	 * GIF export did. The last frame stays up for 2 s.
+	 */
+	const exportReplay = async (kind: ExportKind) => {
+		if (!map || !geo || !frames.data || exporting.current) return;
+		const fps = kind === "gif" ? GIF_FPS : VIDEO_FPS;
+		const n = Math.max(2, Math.round(st.length * fps));
+		const count = kind === "gif" ? Math.min(GIF_MAX_FRAMES, n) : n;
+		const src = map.getCanvas();
+		const W = kind === "gif" ? GIF_WIDTH : Number(st.video_width) || 1280;
+		const H = Math.round((W * src.height) / Math.max(1, src.width));
+		let ex: ReplayExporter;
+		try {
+			ex = new ReplayExporter(kind, W, H, fps);
+		} catch (e) {
+			showError(e);
+			return;
+		}
+		const job = { cancel: false };
+		exporting.current = job;
+		patch({ recording: true, playing: false });
+		const frameMs = (st.length * 1000) / count;
+		const k = ease(meta, st.smoothing, frameMs / 1000);
+		try {
+			for (let i = 0; i < count && !job.cancel; i++) {
+				const p = (plan.n_steps * i) / (count - 1);
+				patch({ pos: p });
+				await nextFrames(); // the map's layers follow the new position
+				moveCamera(p, i === 0 ? 1 : k);
+				await mapIdle(map);
+				const cc = counts(plan, p);
+				await onNextRender(map, (canvas) =>
+					ex.draw(canvas, {
+						text: `${cc.when} · screenshots ${cc.shots} / ${plan.step_of.length} · maps ${cc.maps}`,
+						colour: meta.colours.sessions[cc.session % meta.colours.sessions.length],
+					}),
+				);
+				ex.add(i === count - 1 ? frameMs + END_HOLD_MS : frameMs);
+				setExportInfo(`exporting ${kind === "gif" ? "GIF" : "video"}: frame ${i + 1} / ${count}`);
+			}
+			if (!job.cancel) download(await ex.finish(), kind === "gif" ? "atlas-timelapse.gif" : "atlas-timelapse.webm");
+		} catch (e) {
+			showError(e);
+		} finally {
+			ex.close();
+			exporting.current = null;
+			setExportInfo("");
+			patch({ recording: false });
+		}
 	};
 
 	const stopRecording = () => {
 		if (recorder.current) recorder.current.stop();
-		if (gif.current) finishGif();
+		if (exporting.current) exporting.current.cancel = true;
 	};
 
 	const record = () => {
@@ -146,8 +204,7 @@ export function ReplayPanel({ meta }: { meta: Meta }) {
 
 	const close = async () => {
 		recorder.current?.stop();
-		gif.current?.finish();
-		gif.current = null;
+		if (exporting.current) exporting.current.cancel = true;
 		setReplay(null);
 		await app.closeReplay().catch(showError);
 	};
@@ -198,13 +255,38 @@ export function ReplayPanel({ meta }: { meta: Meta }) {
 		// under the map, not over it (user: the panel hid the map); the map gets the rest of the height
 		<div className="z-20 flex shrink-0 flex-col gap-2 border-t bg-card p-3">
 			<div className="flex items-center gap-2">
-				<Button size="icon-sm" variant="outline" aria-label="Step back" onClick={() => seek(stepFrom(pos, -1, plan))}>
+				{/* start, a step back, play, a step on, the end (user: there was no jump to the start) */}
+				<Button size="icon-sm" variant="outline" aria-label="To the start" title="To the start" onClick={() => seek(0)}>
 					<SkipBackIcon />
+				</Button>
+				<Button
+					size="icon-sm"
+					variant="outline"
+					aria-label="Step back"
+					title="Step back"
+					onClick={() => seek(stepFrom(pos, -1, plan))}
+				>
+					<StepBackIcon />
 				</Button>
 				<Button size="icon-sm" aria-label={replay.playing ? "Pause" : "Play"} onClick={play}>
 					{replay.playing ? <PauseIcon /> : <PlayIcon />}
 				</Button>
-				<Button size="icon-sm" variant="outline" aria-label="Step forward" onClick={() => seek(stepFrom(pos, 1, plan))}>
+				<Button
+					size="icon-sm"
+					variant="outline"
+					aria-label="Step forward"
+					title="Step forward"
+					onClick={() => seek(stepFrom(pos, 1, plan))}
+				>
+					<StepForwardIcon />
+				</Button>
+				<Button
+					size="icon-sm"
+					variant="outline"
+					aria-label="To the end"
+					title="To the end"
+					onClick={() => seek(plan.n_steps)}
+				>
 					<SkipForwardIcon />
 				</Button>
 				<span className="flex items-center gap-2 font-mono text-xs">
@@ -215,10 +297,11 @@ export function ReplayPanel({ meta }: { meta: Meta }) {
 					{c.when} · screenshots {c.shots} / {plan.step_of.length} · maps {c.maps}
 				</span>
 				<span className="flex-1" />
+				{exportInfo && <span className="text-xs text-gold">{exportInfo}</span>}
 				{replay.recording ? (
 					<Button size="xs" variant="destructive" onClick={stopRecording}>
 						<SquareIcon />
-						Stop and save
+						{exporting.current ? "Cancel export" : "Stop and save"}
 					</Button>
 				) : (
 					// one Export with both kinds (user: the old window exported GIFs, the page only recorded video)
@@ -230,8 +313,13 @@ export function ReplayPanel({ meta }: { meta: Meta }) {
 							</Button>
 						</DropdownMenuTrigger>
 						<DropdownMenuContent align="end">
-							<DropdownMenuItem onSelect={recordGif}>GIF (animated picture, up to 720 px)</DropdownMenuItem>
-							<DropdownMenuItem onSelect={record}>Video (.webm, full size)</DropdownMenuItem>
+							<DropdownMenuItem onSelect={() => void exportReplay("gif")}>
+								GIF ({GIF_FPS} fps, {GIF_WIDTH} px wide, lasts the length setting)
+							</DropdownMenuItem>
+							<DropdownMenuItem onSelect={() => void exportReplay("video")}>
+								Video (.webm, {VIDEO_FPS} fps, lasts the length setting)
+							</DropdownMenuItem>
+							<DropdownMenuItem onSelect={record}>Record the screen as it plays (.webm)</DropdownMenuItem>
 						</DropdownMenuContent>
 					</DropdownMenu>
 				)}

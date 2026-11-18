@@ -13,14 +13,14 @@ import { useSettings, useUpdateSettings } from "@/hooks/app/UseSettings";
 import { useAppStore } from "@/store/AppStore";
 import { cn } from "@/utils/Cn";
 
+// the old window's order (user), with Route (new) after the atlases; Debug and then Log at the end
 const TABS: [string, string][] = [
 	["find", "Find"],
-	["bookmarks", "Bookmarks"],
-	["auto", "Auto-add"],
-	["atlases", "Atlases"],
 	["view", "View"],
+	["auto", "Auto-add"],
+	["bookmarks", "Bookmarks"],
+	["atlases", "Saved atlases"],
 	["route", "Route"],
-	["log", "Log"],
 ];
 
 /** The side panel's width range in px (dragging its edge; user: resize the panel, not zoom it). */
@@ -38,7 +38,11 @@ export function SidePanel({ debug }: { debug: boolean }) {
 	const saved = settings?.ui.side_width ?? SIDE_DEFAULT;
 	const [width, setWidth] = useState(saved);
 	const drag = useRef<{ x: number; w: number } | null>(null);
-	const tabs = debug ? [...TABS, ["debug", "Debug"] as [string, string]] : TABS;
+	const tabs: [string, string][] = [
+		...TABS,
+		...(debug ? [["debug", "Debug"] as [string, string]] : []),
+		["log", "Log"],
+	];
 
 	useEffect(() => setWidth(saved), [saved]);
 

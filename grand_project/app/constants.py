@@ -322,7 +322,6 @@ UPLOAD_MAX = 64 * 1024 * 1024  # bytes: one uploaded screenshot at most
 FS_LIST_MAX = 5000  # entries listed by the folder browser at most
 
 REPLAY_FOG_RES = 512  # timelapse: the "revealed yet" grid has this many cells on the atlas's long side
-REPLAY_FOG_BANDS = 400  # ...and its steps are grouped into at most this many fog bands
 
 
 ICON_CROP_RIM = 13.5  # px: the rim's outer edge from the centre of a taught on-screen icon crop (34 px at 1080p; the

@@ -4,6 +4,7 @@ The map image comes from the cache next to the atlas; the tiles, Find, bookmarks
 and the saved atlases are checked through the session, as the page uses them.
 """
 
+import base64
 import json
 from pathlib import Path
 
@@ -179,8 +180,11 @@ def test_replay_and_colour_by(session, tmp_path):
     assert plan["step_session"] == [0, 0, 1, 1] and plan["real"] == "3 min"
     steps = {fid: p["step"] for fid, (*_xy, p) in points(session, "maps").items()}
     assert set(steps.values()) <= {0, 1, 2, 3} and len(steps) == 15
-    fog = session.replay_fog()
-    assert fog["bands"] == 4 and {f["properties"]["band"] for f in fog["features"]} == {0, 1, 2, 3}
+    fog = session.replay_fog()["field"]
+    cells = np.frombuffer(base64.b64decode(fog["data"]), "<u2").reshape(fog["h"], fog["w"])
+    shown = cells[cells < 65535] / 65534 * fog["top"]  # each cell's reveal step: one of the screenshots' steps
+    assert fog["top"] == 4 and shown.size and set(np.round(shown).astype(int)) <= {0, 1, 2, 3}
+    assert len(fog["corners"]) == 4
     frames = session.frames_payload()
     assert [f["session"] for f in frames["frames"]] == [0, 0, 1, 1] and len(frames["ramp"]) == 256
     png, box = session.heat_png(upto=2)

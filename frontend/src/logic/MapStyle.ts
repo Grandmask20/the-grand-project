@@ -467,22 +467,31 @@ export function applyLook(map: MapLibreMap, geo: Geo, meta: Meta, look: Look): v
 			? st.map_border
 			: mapColour;
 	const nodes = on("Nodes") && st.map_style !== "hidden";
-	visible(map, "maps", nodes && st.map_style !== "squares" && st.map_style !== "map icons");
+	// as the old window: zoomed out (under 0.45 px per unit) every style is a dot in the map's colour; above that the
+	// style's own look (circles / squares / the map picture) takes over and grows with the zoom (user: the map pictures
+	// stayed on zoomed out, and the dots never turned into the style)
+	const zDots = zoomAt(geo, 0.45);
+	const z07 = zoomAt(geo, 0.7);
+	const circles = st.map_style !== "squares" && st.map_style !== "map icons";
+	visible(map, "maps", nodes);
 	visible(map, "maps-square", nodes && st.map_style === "squares");
 	visible(map, "maps-icon", nodes && st.map_style === "map icons");
-	// the picture is 49 px, drawn 2.8 map node radii wide (the old window's size)
+	if (map.getLayer("maps")) map.setLayerZoomRange("maps", 0, circles ? 24 : zDots);
+	if (map.getLayer("maps-square")) map.setLayerZoomRange("maps-square", zDots, 24);
+	if (map.getLayer("maps-icon")) map.setLayerZoomRange("maps-icon", zDots, 24);
+	// the picture is 49 px, drawn 2.8 map node radii wide (the old window's size), up to the 13 px radius
 	if (map.getLayer("maps-icon"))
-		map.setLayoutProperty("maps-icon", "icon-size", worldSize(geo, (22.4 * size) / 49, (5 * size) / 49));
-	// the old window's size: 8 px per screen px per unit, between 2 and 13 px (times the size setting)
+		map.setLayoutProperty("maps-icon", "icon-size", worldSize(geo, (22.4 * size) / 49, (10 * size) / 49, 13 / 8));
 	setPaint(map, "maps", "circle-radius", nodeRadius(geo, size));
-	setPaint(map, "maps", "circle-stroke-width", solid ? 0.6 : ["step", ["zoom"], 1, zoomAt(geo, 0.7), 2]);
-	setPaint(map, "maps", "circle-color", fill);
+	setPaint(map, "maps", "circle-color", ["step", ["zoom"], mapColour, zDots, fill]);
+	setPaint(map, "maps", "circle-stroke-width", ["step", ["zoom"], 0, zDots, solid ? 0.6 : 1, z07, solid ? 0.6 : 2]);
 	setPaint(map, "maps", "circle-stroke-color", ringColour);
 	setPaint(map, "maps-square", "icon-color", solid ? mapColour : ringColour);
-	if (map.getLayer("maps-square"))
+	if (map.getLayer("maps-square")) {
 		map.setLayoutProperty("maps-square", "icon-image", solid ? "node-square-solid" : "node-square");
-	if (map.getLayer("maps-square"))
-		map.setLayoutProperty("maps-square", "icon-size", worldSize(geo, (16 * size) / 32, (3 * size) / 32));
+		// a 32 px picture: half of it is the 8 units of a map node's radius, up to 13 px
+		map.setLayoutProperty("maps-square", "icon-size", worldSize(geo, (16 * size) / 32, (7 * size) / 32, 13 / 8));
+	}
 
 	// landmarks by kind (locked strongholds and removed ones in their own colours)
 	const lm = landmarkColours(meta, st);

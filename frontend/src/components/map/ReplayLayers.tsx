@@ -1,11 +1,14 @@
 import type { Map as MapLibreMap } from "maplibre-gl";
-import { useEffect } from "react";
+import { useEffect, useMemo, useRef } from "react";
 import type { Meta } from "@/domain/app/Meta";
 import { useFog } from "@/hooks/replay/UseFog";
 import { useFrames } from "@/hooks/replay/UseFrames";
 import type { Geo } from "@/logic/Geo";
 import { EMPTY, setData } from "@/logic/MapStyle";
-import { fogBands } from "@/logic/Replay";
+
+/** The area sweep's soft edge, as a share of the whole replay (the app's REPLAY_AREA_SOFT). */
+const FOG_SOFT = 0.02;
+
 import { useAppStore } from "@/store/AppStore";
 import { MapTint } from "./MapTint";
 
@@ -18,25 +21,67 @@ export function ReplayLayers({ map, geo }: { map: MapLibreMap; geo: Geo; meta: M
 	const fog = useFog(planKey);
 	const frames = useFrames(!!replay);
 
-	const open = replay !== null;
+	// the fog: a picture over the atlas, drawn from the step each spot is revealed at, every time the replay moves.
+	// Smooth (soft-edged when revealing by area), and it hides ground whose tiles came in early (user: bands of
+	// polygons snapped in, and unloaded areas showed through when pausing or restarting)
+	const field = replay ? (fog.data?.field ?? null) : null;
+	const cells = useMemo(() => {
+		if (!field) return null;
+		const bin = atob(field.data);
+		const out = new Uint16Array(field.w * field.h);
+		for (let i = 0; i < out.length; i++) out[i] = bin.charCodeAt(2 * i) | (bin.charCodeAt(2 * i + 1) << 8);
+		return out;
+	}, [field]);
+	const canvas = useRef<HTMLCanvasElement | null>(null);
 	useEffect(() => {
-		setData(map, "fog", open && fog.data ? { type: "FeatureCollection", features: fog.data.features } : EMPTY);
-	}, [map, open, fog.data]);
-
-	const bands = fog.data?.bands ?? 0;
-	const pos = replay?.pos ?? null;
-	const nSteps = replay?.plan.n_steps ?? 1;
-	useEffect(() => {
-		if (pos === null || !bands) {
-			map.setFilter("fog-full", ["==", ["get", "band"], -1]);
-			map.setFilter("fog-fading", ["==", ["get", "band"], -1]);
+		if (!field || !cells) {
+			if (map.getLayer("fog-picture")) map.removeLayer("fog-picture");
+			if (map.getSource("fog-picture")) map.removeSource("fog-picture");
 			return;
 		}
-		const b = fogBands(pos, nSteps, bands);
-		map.setFilter("fog-full", ["==", ["get", "band"], b.full]);
-		map.setFilter("fog-fading", ["==", ["get", "band"], b.fading]);
-		map.setPaintProperty("fog-fading", "fill-opacity", 1 - b.fade);
-	}, [map, pos, nSteps, bands]);
+		const c = document.createElement("canvas");
+		c.width = field.w;
+		c.height = field.h;
+		canvas.current = c;
+		map.addSource("fog-picture", { type: "canvas", canvas: c, coordinates: field.corners, animate: true });
+		map.addLayer(
+			{
+				id: "fog-picture",
+				type: "raster",
+				source: "fog-picture",
+				paint: { "raster-fade-duration": 0, "raster-resampling": "linear" },
+			},
+			"outline",
+		);
+		return () => {
+			canvas.current = null;
+			if (map.getLayer("fog-picture")) map.removeLayer("fog-picture");
+			if (map.getSource("fog-picture")) map.removeSource("fog-picture");
+		};
+	}, [map, field, cells]);
+
+	const pos = replay?.pos ?? null;
+	const area = replay?.plan.area ?? false;
+	const nSteps = replay?.plan.n_steps ?? 1;
+	useEffect(() => {
+		const c = canvas.current;
+		if (!c || !field || !cells || pos === null) return;
+		const ctx = c.getContext("2d");
+		if (!ctx) return;
+		const img = ctx.createImageData(field.w, field.h);
+		const px = img.data;
+		const scale = field.top / 65534;
+		const soft = Math.max(1e-6, FOG_SOFT * nSteps); // the sweep's edge fades over this many steps
+		for (let i = 0; i < cells.length; i++) {
+			const v = cells[i];
+			if (v === 65535) continue; // no ground: nothing to hide
+			const step = v * scale;
+			// a screenshot shows from its step on (step < pos, as the counts); by area, a soft edge ahead of pos
+			const a = area ? Math.min(1, Math.max(0, (step - pos) / soft + 0.5)) : step < pos - 1e-9 ? 0 : 1;
+			px[4 * i + 3] = Math.round(a * 255);
+		}
+		ctx.putImageData(img, 0, 0);
+	}, [field, cells, pos, area, nSteps]);
 
 	// the screenshots of the step coming in, outlined (not when revealing by area)
 	const cur = pos === null ? -1 : Math.ceil(pos - 1e-9) - 1;

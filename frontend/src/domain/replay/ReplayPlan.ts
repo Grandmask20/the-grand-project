@@ -18,8 +18,16 @@ export interface ReplayPlan {
 	bounds: [number, number, number, number];
 }
 
-/** The ground still hidden at each band of the replay (GeoJSON in lng / lat). */
+/** GET /api/replay/fog: the step each spot's ground is revealed at, on a grid over the atlas. */
 export interface ReplayFog {
-	bands: number;
-	features: GeoJSON.Feature<GeoJSON.Polygon, { band: number }>[];
+	field: {
+		w: number;
+		h: number;
+		/** The step a cell value of 65534 means (values scale linearly; 65535 = no ground there). */
+		top: number;
+		/** Base64 little-endian uint16 per cell, row by row. */
+		data: string;
+		/** [lng, lat] of the grid's top left, top right, bottom right, bottom left. */
+		corners: [[number, number], [number, number], [number, number], [number, number]];
+	} | null;
 }
