@@ -163,6 +163,11 @@ class QueryMixin:
                 lines.append(self.near_city_text(i))
             if n.get("origin") == "from icon":
                 lines.append("map base not detected; placed under its icon")
+            marks = [k for k, v in D.get("landmark_node", {}).items() if v == i]
+            for k in marks:
+                lines.append(f"{self.landmark_name(k)} here")
+            if marks:
+                out["landmark"] = marks[0]
             out["node"] = i
         elif kind == "path":
             p = V["paths"][i]
@@ -187,10 +192,15 @@ class QueryMixin:
         elif kind == "landmark":
             lm = V["landmarks"][i]
             out["title"] = self.landmark_name(i)
+            n_seen = lm.get("n", 0)  # (a landmark added by hand has no counts)
             lines += [
-                f"found in {lm['n']} of {lm.get('could', lm['n'])} screenshot(s)",
-                f"confidence {lm['conf']:.2f}, detected by {lm.get('source', '')}",
+                f"found in {n_seen} of {lm.get('could', n_seen)} screenshot(s)",
+                f"confidence {lm.get('conf', 1.0):.2f}, detected by {lm.get('source', 'you')}",
             ]
+            v = D.get("landmark_node", {}).get(i)
+            if v is not None:
+                lines.append(f"its map: #{v}")
+                out["node"] = v
             ct = D.get("city_type", {}).get(i)
             if ct:
                 lines.append(

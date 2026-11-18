@@ -751,7 +751,8 @@ class MapImageMixin:
             replay: For the tab playing the timelapse: each item carries the step it appears at.
 
         Returns:
-            JSON {"icons": [[x, y, id, name, slot, lift, step]], "paths": [{"id", "strong", "abyss", "step", "pts"}],
+            JSON {"icons": [[x, y, id, name, slot, lift, step, node]],
+            "paths": [{"id", "strong", "abyss", "step", "pts"}],
             "models": [{"rings", "colour", "base", "height" (metres), "ax", "ay", "step", "pick"}]} (step -1: from
             the start; pick: what a click on it selects, "node:<i>" / "landmark:<i>" / "").
         """
@@ -771,7 +772,7 @@ class MapImageMixin:
         st = lambda pr: pr.get("step", -1)  # noqa: E731
         icons = [
             [*A(f["pts"][0]), f["props"]["id"], f["props"]["name"], float(f["props"]["slot"]), f["props"]["lift"],
-             st(f["props"])]
+             st(f["props"]), f["props"]["node"]]
             for f in scene["icon_rows"]
         ]  # fmt: skip
         paths = [
@@ -890,6 +891,7 @@ class MapImageMixin:
                         # the top of the 3D model under it (pillar, tower, city), atlas units in steps of 10: the
                         # page stands the icon on top when the models are shown (user: city icons sat inside)
                         "lift": int(round(lift.get(v, 0.0) / 10) * 10) if v is not None else 0,
+                        "node": -1 if v is None else v,  # (a selected map node rings its icon in 3D)
                         **step("icon", i),
                     },
                 }
@@ -984,8 +986,11 @@ class MapImageMixin:
                 continue
             if lm["kind"] == "Tower":
                 towers.append((lm["x"], lm["y"]))
+            # a click on it selects the map node it marks (its city, hall, tower or boss map: user), else itself
+            v = D.get("landmark_node", {}).get(k)
+            pick = ("node", v) if v is not None else ("landmark", k)
             shapes += [
-                dict(sh, anchor=(lm["x"], lm["y"]), pick=("landmark", k))
+                dict(sh, anchor=(lm["x"], lm["y"]), pick=pick)
                 for sh in structure(lm["kind"], lm["x"], lm["y"], ct.get(k, ("", ""))[0], k in locked)
             ]
         for i, nd in enumerate(nodes):  # map nodes marked as towers with no Tower landmark: a tower too

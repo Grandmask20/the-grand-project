@@ -26,7 +26,13 @@ from grand_project import logs as atlas_log
 
 from .adding import AddingMixin
 from .bookmarks import BookmarksMixin
-from .constants import POTENTIAL_TYPES, STYLE_DEFAULT, VERSION
+from .constants import (
+    LANDMARK_NODE_REACH,
+    LANDMARK_NODE_REACH_STRONGHOLD,
+    POTENTIAL_TYPES,
+    STYLE_DEFAULT,
+    VERSION,
+)
 from .debug import DebugMixin
 from .edits import EditsMixin
 from .events import Events
@@ -378,6 +384,7 @@ class AtlasSession(
             D["node_pts"] = np.array([[n["x"], n["y"]] for n in V["nodes"]], float).reshape(-1, 2)
             D["icon_pts"] = icon_rows(V["nodes"], V["icons"], D["icon_node"]) if V["icons"] else np.zeros((0, 2))
             D["footprints"] = [core.footprint(self.atlas, f) for f in self.atlas.frames] if self.atlas else []
+            D["landmark_node"] = landmark_nodes(V["nodes"], V["landmarks"])
             self.V, self.D = V, D
             self.model_version += 1
         if getattr(self, "_replay_on", False) and self.atlas and self.atlas.frames:
@@ -466,3 +473,32 @@ def dist(a, b) -> float:
 
 
 __all__ = ["AtlasSession", "potential_kind", "dist"]
+
+
+def landmark_nodes(nodes: list[dict], landmarks: list[dict]) -> dict[int, int]:
+    """Find the map node each landmark marks: the nearest live map node within reach (a locked stronghold has none).
+
+    A click on a landmark's 3D model selects this map node (user: clicking a city's citadel didn't light up its map).
+
+    Args:
+        nodes: The view model's map nodes ("x", "y", "status").
+        landmarks: The view model's landmarks ("x", "y", "kind", "status").
+
+    Returns:
+        Landmark index -> map node index.
+    """
+    live = [i for i, n in enumerate(nodes) if n.get("status") != "removed"]
+    if not live or not landmarks:
+        return {}
+    from scipy.spatial import cKDTree
+
+    tree = cKDTree(np.array([[nodes[i]["x"], nodes[i]["y"]] for i in live], float))
+    out = {}
+    for k, lm in enumerate(landmarks):
+        if str(lm.get("status", "")).startswith("removed"):
+            continue
+        reach = LANDMARK_NODE_REACH_STRONGHOLD if lm.get("kind") == "Breach stronghold" else LANDMARK_NODE_REACH
+        d, j = tree.query([lm["x"], lm["y"]])
+        if d <= reach:
+            out[k] = live[int(j)]
+    return out

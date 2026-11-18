@@ -185,3 +185,22 @@ def test_the_waiting_list_stays_shown_while_a_question_is_open(session, tmp_path
     session.events.ask = ask
     session._place_watched([])
     assert seen[0] == ["sha-a", "sha-b", "sha-c"]  # (it read empty while the question was open)
+
+
+def test_a_landmark_model_selects_the_map_node_it_marks(session):
+    n4 = session.V["nodes"][4]
+    with session._lock:
+        session.atlas.final["landmarks"].append({"kind": "Hall", "x": n4["x"] + 6, "y": n4["y"] - 4, "status": "kept"})
+    session.rebuild_model()
+    k = len(session.V["landmarks"]) - 1
+    assert session.D["landmark_node"][k] == 4
+    picks = {m["pick"] for m in json.loads(session.scene_3d())["models"]}
+    assert "node:4" in picks and f"landmark:{k}" not in picks  # (it selected the landmark, its map not lit up)
+    assert session.info("landmark", k)["node"] == 4
+    node = session.info("node", 4)
+    assert node["landmark"] == k and any("here" in str(line) for line in node["lines"])
+    # a hand-added landmark (no counts) still has details
+    with session._lock:
+        session.atlas.final["landmarks"].append({"kind": "Tower", "x": 9000.0, "y": 9000.0, "status": "kept"})
+    session.rebuild_model()
+    assert session.info("landmark", len(session.V["landmarks"]) - 1)["title"]

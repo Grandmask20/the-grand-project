@@ -354,3 +354,9 @@ PREVIEW_AGREE_TOL = 8  # atlas units: a weak match's map node on an atlas one co
 PREVIEW_NEAR = 3  # a weak match's preview is shown with this many placed screenshots nearest to it
 PICTURE_SIDE = 1600  # px: longest side of a flattened screenshot picture (ghost / weak-match preview)
 PICTURES_KEPT = 8  # ghost / preview pictures kept for the page to fetch (the newest)
+
+# --- a landmark's map node (app.session: the city / hall / tower / deadly boss map it marks)
+# atlas units: on the crawl atlas a landmark is a median 1-7 units from its map node (at most 38) and the next map
+# node 75-86 away; a Breach stronghold's map node is about 38 units below it (at most 86)
+LANDMARK_NODE_REACH = 45.0
+LANDMARK_NODE_REACH_STRONGHOLD = 90.0
