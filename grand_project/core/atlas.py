@@ -707,6 +707,22 @@ class Atlas:
                 self._merge_icons(fr, np.array(f["M"], float))
 
     # -------- export
+    def terrain_key(self) -> str:
+        """Return the key of the stitched map image: a hash of every screenshot's name and placement.
+
+        A cached map image (map_image_files) is used only when its key matches; the viewer and the web map share it.
+
+        Returns:
+            The hex digest.
+        """
+        import hashlib
+
+        h = hashlib.sha1()
+        for f in self.frames:
+            h.update(f["name"].encode())
+            h.update(np.round(np.array(f["M"], float), 2).tobytes())
+        return h.hexdigest()
+
     def to_json(self) -> dict:
         """Return the atlas as the dict saved in atlas.json.
 

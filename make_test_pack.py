@@ -24,7 +24,7 @@ HERE = Path(__file__).resolve().parent
 SRC = HERE.parent / "atlas_test_data"
 RES_SRC = HERE.parent / "atlas-tests"  # the resolution atlases (score_atlases.py)
 TARGET = HERE.parent / (sys.argv[sys.argv.index("--to") + 1] if "--to" in sys.argv else "1.0") / "atlas_test_data"
-CRAWL_SHOTS = 110  # test_atlas_folder uses crawl #100-#103; the viewer test needs a long run
+CRAWL_SHOTS = 110  # test_atlas_folder uses crawl #100-#103; the placement tests need a long run
 TRUTH_FILES = ("truth.json", "truth_key.json", "labels.txt")  # (extra_maps.json: training only, its shots not here)
 OCEAN_FILES = ("truth.json", "truth_key.json", "labels_ocean.txt", "ship_marker_template.png")
 
@@ -86,7 +86,7 @@ def copy_detections(src_dir: Path, out_dir: Path, shas: set[str]) -> int:
 def res_atlases() -> None:
     """Copy the resolution atlases into TARGET/res_atlases: screenshots, atlas.json and cached detections (their
     paths made bare file names: the screenshots sit next to the atlas), score_atlases.py, its baseline and README.
-    The map pictures in atlas_files/ are left out (the viewer makes them again)."""
+    The map pictures in atlas_files/ are left out (the app makes them again)."""
     if not RES_SRC.exists():
         raise SystemExit(f"resolution atlases not found at {RES_SRC}")
     out = TARGET / "res_atlases"

@@ -1,0 +1,151 @@
+import type { Map as MapLibreMap } from "maplibre-gl";
+import { create } from "zustand";
+import type { Ghost } from "@/domain/adding/Ghost";
+import type { ResultRow } from "@/domain/find/SearchResult";
+import type { ItemInfo } from "@/domain/map/ItemInfo";
+import type { ReplayPlan } from "@/domain/replay/ReplayPlan";
+import type { Point } from "@/logic/Geo";
+
+/** What a click on the map does. */
+export type MapMode =
+	| { kind: "normal" }
+	| { kind: "lasso" }
+	| { kind: "bookmark" }
+	| { kind: "player" }
+	| { kind: "ghost"; ghost: Ghost; centre: Point }
+	| { kind: "debug-link"; from: number; note: string };
+
+export type FilePick = {
+	title: string;
+	folders: boolean; // pick a folder (else files)
+	multiple?: boolean;
+	save?: string; // a file name to save as (new atlas): the folder is picked, the name typed
+	start?: string;
+	onPick: (paths: string[]) => void;
+};
+
+export type Prompt = {
+	title: string;
+	label: string;
+	value: string;
+	options?: string[];
+	onOk: (value: string) => void;
+};
+
+export type Confirm = {
+	title: string;
+	text: string;
+	yes: string;
+	danger?: boolean;
+	onYes: () => void;
+};
+
+export type BookmarkEdit = { id: number | null; x: number; y: number; name: string; group: string; note: string };
+
+export type Camera = { x: number; y: number; px: number; bearing: number; pitch: number };
+
+export interface ReplayUi {
+	plan: ReplayPlan;
+	pos: number;
+	playing: boolean;
+	recording: boolean;
+}
+
+export interface AppStoreState {
+	map: MapLibreMap | null;
+	setMap: (map: MapLibreMap | null) => void;
+	camera: Camera | null;
+	setCamera: (c: Camera | null) => void;
+	tab: string;
+	setTab: (tab: string) => void;
+	selected: ItemInfo | null;
+	select: (info: ItemInfo | null) => void;
+	results: ResultRow[];
+	resultsTitle: string;
+	setResults: (rows: ResultRow[], title: string) => void;
+	query: string;
+	setQuery: (q: string) => void;
+	highlight: string | null;
+	setHighlight: (type: string | null) => void;
+	mode: MapMode;
+	setMode: (mode: MapMode) => void;
+	fly: { x: number; y: number; px?: number; n: number } | null;
+	flyTo: (x: number, y: number, px?: number) => void;
+	fitAtlas: number;
+	requestFit: () => void;
+	goto: Point | null;
+	setGoto: (p: Point | null) => void;
+	route: { path: number[]; message: string } | null;
+	setRoute: (r: { path: number[]; message: string } | null) => void;
+	replay: ReplayUi | null;
+	setReplay: (r: ReplayUi | null) => void;
+	patchReplay: (r: Partial<ReplayUi>) => void;
+	filePick: FilePick | null;
+	pickFiles: (p: FilePick | null) => void;
+	prompt: Prompt | null;
+	ask: (p: Prompt | null) => void;
+	confirm: Confirm | null;
+	askConfirm: (c: Confirm | null) => void;
+	bookmarkEdit: BookmarkEdit | null;
+	editBookmark: (b: BookmarkEdit | null) => void;
+	sources: Point | null;
+	showSources: (p: Point | null) => void;
+	deleteAtlas: string | null;
+	askDeleteAtlas: (json: string | null) => void;
+	error: string | null;
+	showError: (e: unknown) => void;
+	frameLog: boolean;
+	setFrameLog: (on: boolean) => void;
+	/** Bumped when a layer was added late (the icons): the look is applied again. */
+	lookTick: number;
+	bumpLook: () => void;
+}
+
+export const useAppStore = create<AppStoreState>()((set) => ({
+	map: null,
+	setMap: (map) => set({ map }),
+	camera: null,
+	setCamera: (camera) => set({ camera }),
+	tab: "find",
+	setTab: (tab) => set({ tab }),
+	selected: null,
+	select: (selected) => set({ selected }),
+	results: [],
+	resultsTitle: "",
+	setResults: (results, resultsTitle) => set({ results, resultsTitle }),
+	query: "",
+	setQuery: (query) => set({ query }),
+	highlight: null,
+	setHighlight: (highlight) => set({ highlight }),
+	mode: { kind: "normal" },
+	setMode: (mode) => set({ mode }),
+	fly: null,
+	flyTo: (x, y, px) => set((s) => ({ fly: { x, y, px, n: (s.fly?.n ?? 0) + 1 } })),
+	fitAtlas: 0,
+	requestFit: () => set((s) => ({ fitAtlas: s.fitAtlas + 1 })),
+	goto: null,
+	setGoto: (goto) => set({ goto }),
+	route: null,
+	setRoute: (route) => set({ route }),
+	replay: null,
+	setReplay: (replay) => set({ replay }),
+	patchReplay: (r) => set((s) => (s.replay ? { replay: { ...s.replay, ...r } } : {})),
+	filePick: null,
+	pickFiles: (filePick) => set({ filePick }),
+	prompt: null,
+	ask: (prompt) => set({ prompt }),
+	confirm: null,
+	askConfirm: (confirm) => set({ confirm }),
+	bookmarkEdit: null,
+	editBookmark: (bookmarkEdit) => set({ bookmarkEdit }),
+	sources: null,
+	showSources: (sources) => set({ sources }),
+	deleteAtlas: null,
+	askDeleteAtlas: (deleteAtlas) => set({ deleteAtlas }),
+	error: null,
+	showError: (e) => set({ error: e == null ? null : e instanceof Error ? e.message : String(e) }),
+	frameLog: false,
+	setFrameLog: (frameLog) => set({ frameLog }),
+	lookTick: 0,
+	bumpLook: () => set((s) => ({ lookTick: s.lookTick + 1 })),
+}));

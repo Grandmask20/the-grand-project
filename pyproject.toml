@@ -1,6 +1,6 @@
 [project]
 name = "the-grand-project"
-version = "1.16"
+version = "1.17"
 description = "Builds one big map of your Path of Exile 2 atlas from screenshots: maps, paths, badges, towers and cities."
 readme = "README.md"
 requires-python = ">=3.11"
@@ -11,11 +11,10 @@ dependencies = [
     "scipy",
     "scikit-learn",
     "skops",
-    "tkinterdnd2",
 ]
 
 [project.scripts]
-grand-project = "grand_project.viewer.app:main"
+grand-project = "grand_project.app.server:main"
 
 [project.urls]
 Repository = "https://github.com/Grandmask20/the-grand-project"
@@ -49,12 +48,11 @@ default-groups = ["dev"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
-# `pytest` alone runs the offline tests and the ones with test data (skipped without it); the window test and
-# the long ones are opt-in: pytest -m gui / pytest -m slow / pytest -m "" for everything
-addopts = '-ra -m "not gui and not slow"'
+# `pytest` alone runs the offline tests and the ones with test data (skipped without it); the long ones are
+# opt-in: pytest -m slow / pytest -m "" for everything
+addopts = '-ra -m "not slow"'
 markers = [
     "data: needs the test screenshots (Git LFS or ATLAS_TEST_DATA); skipped without them",
-    "gui: opens a window (needs a desktop)",
     "slow: takes several minutes",
 ]
 

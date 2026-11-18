@@ -1,0 +1,28 @@
+name: frontend
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  page:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      # no lock file is committed yet: npm install resolves the versions in package.json
+      - run: npm install --no-audit --no-fund
+      - name: biome
+        run: npm run lint
+      - name: types
+        run: npm run typecheck
+      - name: tests
+        run: npm test
+      - name: build
+        run: npm run build

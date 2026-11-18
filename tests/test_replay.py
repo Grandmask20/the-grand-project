@@ -1,8 +1,8 @@
-"""The replay's order and timing (viewer.replay): no window, no screenshots needed."""
+"""The replay's order and timing (app.replay): no screenshots needed."""
 
 import numpy as np
 
-from grand_project.viewer import replay as R
+from grand_project.app import replay as R
 
 
 def _frame(name, x=0.0, y=0.0):
