@@ -29,9 +29,6 @@ import { ReplayLayers } from "./ReplayLayers";
  */
 const GAME_PITCH = 59;
 
-/** The furthest latitude Web Mercator can show. */
-const MERCATOR_LAT = 85.0511;
-
 interface Props {
 	info: MapInfo;
 	meta: Meta;
@@ -48,7 +45,6 @@ export function AtlasMap({ info, meta }: Props) {
 	// biome-ignore lint/correctness/useExhaustiveDependencies: made once per grid (the parent remounts on a new one)
 	useEffect(() => {
 		if (!box.current) return;
-		const [[w, s], [e, n]] = info.bounds;
 		const cam = useAppStore.getState().camera;
 		const m = new MapView({
 			container: box.current,
@@ -68,20 +64,23 @@ export function AtlasMap({ info, meta }: Props) {
 		// pan freely, well past the atlas (user: the old window let you pan off it); a center more than an atlas-width
 		// past an edge eases back. MapLibre's maxBounds kept the view in a corner beside the atlas instead (user):
 		// zoomed out, the atlas fills much of MapLibre's world and the limit forced the view into its corner.
+		// pan limit in atlas units: the centre stays within half an atlas past its edges (MapLibre's world was too
+		// small a limit on a big atlas, and tilted the view reaches the horizon: it panned off endlessly, user)
+		const ax0 = info.grid.x0;
+		const ay0 = info.grid.y0;
+		const ax1 = ax0 + info.grid.width / info.grid.scale;
+		const ay1 = ay0 + info.grid.height / info.grid.scale;
+		const mx = (ax1 - ax0) * 0.5;
+		const my = (ay1 - ay0) * 0.5;
 		const limit = () => {
 			const c = m.getCenter();
-			const v = m.getBounds();
-			// room: an atlas-width plus a view-width past each edge, so zoomed far out you can still move it about; the
-			// view-width counted at most once more (tilted, the view reaches the horizon: dragging towards it ran off
-			// to infinity: user)
-			const rx = e - w + Math.min(v.getEast() - v.getWest(), e - w);
-			const ry = n - s + Math.min(v.getNorth() - v.getSouth(), n - s);
-			const lng = Math.min(Math.max(c.lng, Math.max(w - rx, -180)), Math.min(e + rx, 180));
-			const lat = Math.min(Math.max(c.lat, Math.max(s - ry, -MERCATOR_LAT)), Math.min(n + ry, MERCATOR_LAT));
-			if (lng !== c.lng || lat !== c.lat) m.easeTo({ center: [lng, lat], duration: 300 });
+			const [x, y] = geo.toAtlas(c.lng, c.lat);
+			const cx = Math.min(Math.max(x, ax0 - mx), ax1 + mx);
+			const cy = Math.min(Math.max(y, ay0 - my), ay1 + my);
+			if (cx !== x || cy !== y) m.setCenter(geo.toLngLat(cx, cy));
 		};
+		m.on("drag", limit);
 		m.on("moveend", limit);
-		m.on("dragend", limit);
 		// after the map is removed (another atlas opened) its layers and sources are simply gone: the parts of the page
 		// that tidy up after it (the replay's fog) asked a removed map and threw, which blanked the page (user)
 		const getLayer = m.getLayer.bind(m);
@@ -129,7 +128,7 @@ export function AtlasMap({ info, meta }: Props) {
 					<MapTiles map={map} />
 					<MapLook map={map} geo={geo} meta={meta} />
 					<MapIcons map={map} geo={geo} info={info} />
-					<Icons3D map={map} info={info} />
+					<Icons3D map={map} info={info} meta={meta} />
 					<MapCamera map={map} geo={geo} info={info} />
 					<MapOverlays map={map} geo={geo} />
 					<MapImages map={map} geo={geo} />

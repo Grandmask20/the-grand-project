@@ -546,8 +546,8 @@ export function applyLook(map: MapLibreMap, geo: Geo, meta: Meta, look: Look): v
 	if (map.getLayer("icons-3d")) map.setLayoutProperty("icons-3d", "icon-offset", iconOffset(geo, models));
 	// the flat map node dots would show through the bottom of the 3D pillars (user)
 	if (models) for (const id of ["maps", "maps-square", "maps-icon"]) visible(map, id, false);
-	// paths tilted: one steady screen width, so far ones don't thin out to nothing (user)
-	if (look.tilted) setPaint(map, "paths", "line-width", Math.max(2, Number(st.path_width) || 3));
+	// paths tilted: drawn by PathLayer3D (raised, one width on screen)
+	if (look.tilted) visible(map, "paths", false);
 
 	// Find: a type highlighted
 	setFilter(map, "highlight", look.highlight ? ["in", `|${look.highlight}|`, ["get", "icons"]] : NONE);

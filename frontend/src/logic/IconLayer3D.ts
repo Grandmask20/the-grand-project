@@ -30,14 +30,15 @@ uniform mat4 u_m;
 uniform float u_k;
 uniform float u_models;
 uniform vec2 u_view;
+uniform float u_size;
 varying vec2 v_uv;
 varying float v_step;
 void main() {
 	vec3 p = vec3(a_xy, (${BASE.toFixed(1)} + a_info.y * u_models) * u_k);
 	vec4 c0 = u_m * vec4(p, 1.0);
-	vec4 c1 = u_m * vec4(p + vec3(${HALF.toFixed(1)} * u_k, 0.0, 0.0), 1.0);
-	vec2 d = (c1.xy / c1.w - c0.xy / c0.w) * u_view * 0.5;
-	float hs = length(d); // screen px of half an icon at this distance (shrinks with it, as the ground does)
+	// screen px of half an icon at this distance: in perspective sizes go as 1 / w, so the size at the view's centre
+	// (u_size, with its w) scaled by w (measuring along one map direction changed as the map turned: user)
+	float hs = u_size / c0.w;
 	vec2 off = vec2(a_corner.x + a_info.x * ${(ROW / HALF).toFixed(4)}, a_corner.y) * hs * 2.0 / u_view;
 	gl_Position = vec4((c0.xy / c0.w + off) * c0.w, c0.z, c0.w);
 	v_uv = mix(a_uv.xy, a_uv.zw, a_corner * 0.5 + 0.5);
@@ -191,11 +192,19 @@ export class IconLayer3D implements CustomLayerInterface {
 		// biome-ignore lint/correctness/useHookAtTopLevel: WebGL's useProgram, not a React hook
 		gl.useProgram(p);
 		// mercator 0..1 -> clip space (modelViewProjectionMatrix here is for world px, not mercator)
-		gl.uniformMatrix4fv(gl.getUniformLocation(p, "u_m"), false, options.defaultProjectionData.mainMatrix as Float32Array);
+		gl.uniformMatrix4fv(
+			gl.getUniformLocation(p, "u_m"),
+			false,
+			options.defaultProjectionData.mainMatrix as Float32Array,
+		);
 		gl.uniform1f(gl.getUniformLocation(p, "u_k"), this.k);
 		gl.uniform1f(gl.getUniformLocation(p, "u_models"), this.models ? 1 : 0);
 		gl.uniform1f(gl.getUniformLocation(p, "u_pos"), this.pos);
 		gl.uniform2f(gl.getUniformLocation(p, "u_view"), gl.drawingBufferWidth, gl.drawingBufferHeight);
+		gl.uniform1f(
+			gl.getUniformLocation(p, "u_size"),
+			this.centreSize(options.defaultProjectionData.mainMatrix as Float32Array, gl),
+		);
 		gl.activeTexture(gl.TEXTURE0);
 		gl.bindTexture(gl.TEXTURE_2D, this.tex);
 		gl.uniform1i(gl.getUniformLocation(p, "u_tex"), 0);
@@ -215,5 +224,20 @@ export class IconLayer3D implements CustomLayerInterface {
 		gl.enable(gl.BLEND);
 		gl.blendFunc(gl.ONE, gl.ONE_MINUS_SRC_ALPHA);
 		gl.drawArrays(gl.TRIANGLES, 0, this.count);
+		// leave WebGL as MapLibre expects it (left on, its next draw read our buffer: black frames, user)
+		for (const name of ["a_xy", "a_corner", "a_info", "a_uv"])
+			gl.disableVertexAttribArray(gl.getAttribLocation(p, name));
+		gl.bindBuffer(gl.ARRAY_BUFFER, null);
+	}
+
+	/** Half an icon in drawing px at the view's centre, times the centre's clip w (see the vertex shader). */
+	private centreSize(M: Float32Array, gl: WebGLRenderingContext | WebGL2RenderingContext): number {
+		const map = this.map;
+		if (!map) return 0;
+		const c = MercatorCoordinate.fromLngLat(map.getCenter());
+		const w = M[3] * c.x + M[7] * c.y + M[15];
+		// ground px per atlas unit at the centre: a mercator unit spans 512 * 2^zoom css px
+		const ppu = this.k * 512 * 2 ** map.getZoom() * (gl.drawingBufferWidth / map.getCanvas().clientWidth);
+		return HALF * ppu * w;
 	}
 }

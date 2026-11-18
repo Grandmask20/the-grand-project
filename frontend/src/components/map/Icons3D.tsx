@@ -1,13 +1,16 @@
 import type { Map as MapLibreMap } from "maplibre-gl";
 import { useEffect, useRef } from "react";
+import type { Meta } from "@/domain/app/Meta";
 import type { MapInfo } from "@/domain/map/MapInfo";
 import { useAppClient } from "@/hooks/app/UseAppClient";
 import { useSettings } from "@/hooks/app/UseSettings";
+import { styleColour } from "@/logic/Colours";
 import { type Icon3D, IconLayer3D } from "@/logic/IconLayer3D";
+import { type Path3D, PathLayer3D } from "@/logic/PathLayer3D";
 import { useAppStore } from "@/store/AppStore";
 
 /** Puts the 3D view's icons on the map (IconLayer3D) while it is tilted, fed from the tiles' icon_rows layer. */
-export function Icons3D({ map, info }: { map: MapLibreMap; info: MapInfo }) {
+export function Icons3D({ map, info, meta }: { map: MapLibreMap; info: MapInfo; meta: Meta }) {
 	const app = useAppClient();
 	const settings = useSettings();
 	const tilted = useAppStore((s) => (s.camera?.pitch ?? map.getPitch()) > 1);
@@ -15,6 +18,53 @@ export function Icons3D({ map, info }: { map: MapLibreMap; info: MapInfo }) {
 	const layer = useRef<IconLayer3D | null>(null);
 	const on = tilted && settings?.layers.Icons !== false;
 	const models = settings?.layers["3D models"] !== false;
+	const pathsOn = tilted && settings?.layers.Paths !== false;
+	const st = settings?.style;
+	const pathLayer = useRef<PathLayer3D | null>(null);
+	const strong = st ? styleColour(st, "path_col", meta.colours.path_multi) : meta.colours.path_multi;
+	const weak = st ? styleColour(st, "path_col1", meta.colours.path_single) : meta.colours.path_single;
+	const pathStyle = st?.path_style ?? "solid";
+	const pathWidth = Number(st?.path_width) || 3;
+
+	// the paths, as ribbons of one width on screen (PathLayer3D)
+	useEffect(() => {
+		if (!pathsOn) return;
+		const rgb = (h: string): [number, number, number] =>
+			[1, 3, 5].map((k) => Number.parseInt(h.slice(k, k + 2), 16) / 255) as [number, number, number];
+		const l = new PathLayer3D(info.grid.scale / info.world);
+		pathLayer.current = l;
+		l.width = pathWidth;
+		// dashes in atlas units along the path: their shape stays as the distance changes
+		l.dash = pathStyle === "dashed" ? [12, 8] : pathStyle === "dotted" ? [3, 9] : [0, 0];
+		map.addLayer(l, "bookmarks");
+		let timer = 0;
+		const gather = () => {
+			timer = 0;
+			const out: Path3D[] = [];
+			for (const f of map.querySourceFeatures("atlas", { sourceLayer: "paths" })) {
+				const p = f.properties ?? {};
+				const colour = rgb(p.abyss ? meta.colours.path_abyss : p.strong ? strong : weak);
+				const step = typeof p.step === "number" ? p.step : -1;
+				const g = f.geometry;
+				const lines = g.type === "LineString" ? [g.coordinates] : g.type === "MultiLineString" ? g.coordinates : [];
+				for (const pts of lines) out.push({ pts: pts as [number, number][], colour, step });
+			}
+			l.setPaths(out);
+		};
+		const later = (e: { sourceId?: string }) => {
+			if (e.sourceId === "atlas" && !timer) timer = window.setTimeout(gather, 250);
+		};
+		map.on("sourcedata", later);
+		map.on("moveend", gather);
+		gather();
+		return () => {
+			map.off("sourcedata", later);
+			map.off("moveend", gather);
+			if (timer) clearTimeout(timer);
+			if (map.getLayer(l.id)) map.removeLayer(l.id);
+			pathLayer.current = null;
+		};
+	}, [map, info, meta, pathsOn, strong, weak, pathStyle, pathWidth]);
 
 	useEffect(() => {
 		if (!on) return;
@@ -67,6 +117,7 @@ export function Icons3D({ map, info }: { map: MapLibreMap; info: MapInfo }) {
 		if (!l) return;
 		l.models = models;
 		l.pos = replayPos ?? 1e9;
+		if (pathLayer.current) pathLayer.current.pos = replayPos ?? 1e9;
 		map.triggerRepaint();
 	}, [map, models, replayPos, on]);
 
