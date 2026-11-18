@@ -1,12 +1,19 @@
-import { PauseIcon, PlayIcon, SkipBackIcon, SkipForwardIcon, SquareIcon, VideoIcon, XIcon } from "lucide-react";
+import { DownloadIcon, PauseIcon, PlayIcon, SkipBackIcon, SkipForwardIcon, SquareIcon, XIcon } from "lucide-react";
 import { useEffect, useRef } from "react";
 import { Button } from "@/components/ui/button";
+import {
+	DropdownMenu,
+	DropdownMenuContent,
+	DropdownMenuItem,
+	DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import type { Meta, ReplaySettings } from "@/domain/app/Meta";
 import { useAppClient } from "@/hooks/app/UseAppClient";
 import { useGeo } from "@/hooks/map/UseGeo";
 import { useFrames } from "@/hooks/replay/UseFrames";
+import { GifRecorder } from "@/logic/GifExport";
 import { cameraTarget, counts, ease, stepFrom, stepsPerSecond } from "@/logic/Replay";
 import { useAppStore } from "@/store/AppStore";
 import { download } from "@/utils/Download";
@@ -25,6 +32,7 @@ export function ReplayPanel({ meta }: { meta: Meta }) {
 	const geo = useGeo();
 	const last = useRef(0);
 	const recorder = useRef<MediaRecorder | null>(null);
+	const gif = useRef<GifRecorder | null>(null);
 
 	// playback: move on, move the camera
 	useEffect(() => {
@@ -42,6 +50,7 @@ export function ReplayPanel({ meta }: { meta: Meta }) {
 			const done = pos >= plan.n_steps;
 			patch({ pos, playing: !done });
 			if (done && recorder.current) recorder.current.stop();
+			if (done && gif.current) finishGif();
 			if (!done) raf = requestAnimationFrame(loop);
 		};
 		raf = requestAnimationFrame(loop);
@@ -89,6 +98,27 @@ export function ReplayPanel({ meta }: { meta: Meta }) {
 		patch({ pos: pos >= plan.n_steps ? 0 : pos, playing: true });
 	};
 
+	function finishGif() {
+		const g = gif.current;
+		gif.current = null;
+		patch({ recording: false, playing: false });
+		const blob = g?.finish();
+		if (blob) download(blob, "atlas-timelapse.gif");
+	}
+
+	/** Export as a GIF: played from the start, the map's frames taken as it plays. */
+	const recordGif = () => {
+		if (!map) return;
+		gif.current = new GifRecorder(map, plan.n_steps / stepsPerSecond(plan));
+		patch({ recording: true, pos: 0, playing: true });
+		moveCamera(0, 1);
+	};
+
+	const stopRecording = () => {
+		if (recorder.current) recorder.current.stop();
+		if (gif.current) finishGif();
+	};
+
 	const record = () => {
 		if (!map) return;
 		if (recorder.current) {
@@ -116,6 +146,8 @@ export function ReplayPanel({ meta }: { meta: Meta }) {
 
 	const close = async () => {
 		recorder.current?.stop();
+		gif.current?.finish();
+		gif.current = null;
 		setReplay(null);
 		await app.closeReplay().catch(showError);
 	};
@@ -183,10 +215,26 @@ export function ReplayPanel({ meta }: { meta: Meta }) {
 					{c.when} · screenshots {c.shots} / {plan.step_of.length} · maps {c.maps}
 				</span>
 				<span className="flex-1" />
-				<Button size="xs" variant={replay.recording ? "destructive" : "outline"} onClick={record}>
-					{replay.recording ? <SquareIcon /> : <VideoIcon />}
-					{replay.recording ? "Stop recording" : "Record video"}
-				</Button>
+				{replay.recording ? (
+					<Button size="xs" variant="destructive" onClick={stopRecording}>
+						<SquareIcon />
+						Stop and save
+					</Button>
+				) : (
+					// one Export with both kinds (user: the old window exported GIFs, the page only recorded video)
+					<DropdownMenu>
+						<DropdownMenuTrigger asChild>
+							<Button size="xs" variant="outline">
+								<DownloadIcon />
+								Export
+							</Button>
+						</DropdownMenuTrigger>
+						<DropdownMenuContent align="end">
+							<DropdownMenuItem onSelect={recordGif}>GIF (animated picture, up to 720 px)</DropdownMenuItem>
+							<DropdownMenuItem onSelect={record}>Video (.webm, full size)</DropdownMenuItem>
+						</DropdownMenuContent>
+					</DropdownMenu>
+				)}
 				<Button size="icon-sm" variant="ghost" aria-label="Close the replay" onClick={() => void close()}>
 					<XIcon />
 				</Button>

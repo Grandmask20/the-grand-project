@@ -75,6 +75,8 @@ STYLE_DEFAULT = {
     "map_col": "",
     "map_size": 1.0,
     "map_style": "circles",
+    "map_fill": "solid",  # circles / squares: "solid" (filled with the map's colour) or "bordered" (icon colour inside)
+    "map_border": "",  # the border's colour when bordered ("" = by status)
     "path_freq": 0.0,
     "ov_towers": False,
     "age_tint": "off",  # View tab "Colour by": one of COLOUR_BY

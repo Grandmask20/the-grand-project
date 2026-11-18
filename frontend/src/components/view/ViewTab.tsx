@@ -129,6 +129,14 @@ export function ViewTab() {
 					onChange={(c) => set({ map_col: c })}
 				/>
 				{choice("style", st.map_style, ["circles", "squares", "map icons", "hidden"], (v) => set({ map_style: v }))}
+				{choice("fill", st.map_fill ?? "solid", ["solid", "bordered"], (v) => set({ map_fill: v }))}
+				{st.map_fill === "bordered" && (
+					<ColourSwatch
+						label="border"
+						value={styleColour(st, "map_border", styleColour(st, "map_col", meta.colours.node.confirmed))}
+						onChange={(c) => set({ map_border: c })}
+					/>
+				)}
 				<div className="flex items-center gap-2">
 					<span className="w-24 text-xs text-muted-foreground">size</span>
 					<Slider

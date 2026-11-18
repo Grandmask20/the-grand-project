@@ -13,6 +13,8 @@ export const style = {
 	map_col: "",
 	map_size: 1,
 	map_style: "circles",
+	map_fill: "solid",
+	map_border: "",
 	path_freq: 0,
 	ov_towers: false,
 	age_tint: "off",

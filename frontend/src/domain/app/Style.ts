@@ -7,6 +7,10 @@ export interface Style {
 	map_col: string;
 	map_size: number;
 	map_style: "circles" | "squares" | "map icons" | "hidden";
+	/** Circles and squares filled with the map's colour, or a border around the icon's colour (user). */
+	map_fill: "solid" | "bordered";
+	/** The border's colour when bordered ("" = by status). */
+	map_border: string;
 	path_freq: number;
 	ov_towers: boolean;
 	age_tint: string;

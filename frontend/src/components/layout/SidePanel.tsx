@@ -64,7 +64,7 @@ export function SidePanel({ debug }: { debug: boolean }) {
 		>
 			<Tabs value={tab} onValueChange={setTab} className="flex min-h-0 flex-1 flex-col">
 				{/* one row that scrolls sideways when the panel is narrow (it wrapped onto the panel before) */}
-				<TabsList className="m-2 mb-0 flex h-auto w-auto shrink-0 flex-nowrap justify-start overflow-x-auto [scrollbar-width:thin]">
+				<TabsList className="m-2 mb-0 flex h-auto w-auto shrink-0 flex-nowrap justify-start overflow-x-auto pb-2.5 [scrollbar-width:thin]">
 					{tabs.map(([k, label]) => (
 						<TabsTrigger key={k} value={k} className="shrink-0 grow-0 px-2.5">
 							{label}

@@ -84,6 +84,7 @@ export function AtlasMap({ info, meta }: Props) {
 		m.on("pitch", () => three.setOn(m.getPitch() > 1));
 		m.on("load", () => {
 			if (!m.hasImage("node-square")) m.addImage("node-square", squareImage(), { sdf: true });
+			if (!m.hasImage("node-square-solid")) m.addImage("node-square-solid", squareImage(true), { sdf: true });
 			void m
 				.loadImage(nodePicture)
 				.then((img) => {

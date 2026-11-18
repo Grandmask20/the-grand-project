@@ -170,7 +170,7 @@ export function baseStyle(
 				type: "circle",
 				source: "atlas",
 				"source-layer": "maps",
-				paint: { "circle-radius": worldSize(geo, 8, 1.2), "circle-stroke-width": worldSize(geo, 1.25, 0.4, 1.6) },
+				paint: { "circle-radius": nodeRadius(geo, 1), "circle-stroke-width": 0.6 },
 			},
 			{
 				id: "maps-square",
@@ -377,6 +377,18 @@ function setFilter(map: MapLibreMap, id: string, filter: FilterSpecification | n
 	if (map.getLayer(id)) map.setFilter(id, filter);
 }
 
+/**
+ * A map node's radius as the old window drew it: zoomed out (under 0.45 px per unit) 3 px dots whatever the size
+ * setting (a big size made the far view one blob: user), then 8 px per screen px per unit times the size, up to 13.
+ */
+export function nodeRadius(geo: Geo, size: number): ExpressionSpecification {
+	const z = zoomAt(geo, 0.45);
+	const r = Math.max(2, 0.45 * 8) * size;
+	const zCap = zoomAt(geo, 13 / 8);
+	if (zCap <= z + 0.02) return ["step", ["zoom"], 1.5, z, 13 * size];
+	return ["interpolate", ["exponential", 2], ["zoom"], z, 1.5, z + 0.01, r, zCap, 13 * size];
+}
+
 /** Apply the settings to the map's layers (visibility, colours, sizes, filters). */
 export function applyLook(map: MapLibreMap, geo: Geo, meta: Meta, look: Look): void {
 	const { settings: s } = look;
@@ -420,7 +432,8 @@ export function applyLook(map: MapLibreMap, geo: Geo, meta: Meta, look: Look): v
 	// the width is the px at 1 px per atlas unit; it scales with the map (up to 1.6 px per unit), so dashes keep
 	// their place along the path as you zoom
 	const w = Number(st.path_width) || 2.5;
-	setPaint(map, "paths", "line-width", worldSize(geo, st.path_style === "dotted" ? 1.6 * w : w, 0.6, 1.6));
+	// at least 1 px, like the old window's (thinner paths were hard to see zoomed out: user)
+	setPaint(map, "paths", "line-width", worldSize(geo, st.path_style === "dotted" ? 1.6 * w : w, 1, 1.6));
 	setPaint(
 		map,
 		"paths",
@@ -437,8 +450,22 @@ export function applyLook(map: MapLibreMap, geo: Geo, meta: Meta, look: Look): v
 		...Object.entries(meta.colours.node).flat(),
 		"#ffffff",
 	] as unknown as ExpressionSpecification;
-	const ringColour = typeof st.map_col === "string" && st.map_col ? st.map_col : statusColour;
-	const fill: ExpressionSpecification = ["case", ["==", ["get", "fill"], ""], meta.colours.no_icon, ["get", "fill"]];
+	const mapColour = typeof st.map_col === "string" && st.map_col ? st.map_col : statusColour;
+	// solid: filled with the map's colour (the old window's dots; user: the black inside hid the colour); bordered:
+	// the icon's colour inside a border of its own colour (or the map's colour)
+	const solid = st.map_fill !== "bordered";
+	const iconFill: ExpressionSpecification = [
+		"case",
+		["==", ["get", "fill"], ""],
+		meta.colours.no_icon,
+		["get", "fill"],
+	];
+	const fill = solid ? mapColour : iconFill;
+	const ringColour = solid
+		? "rgba(0,0,0,0.55)"
+		: typeof st.map_border === "string" && st.map_border
+			? st.map_border
+			: mapColour;
 	const nodes = on("Nodes") && st.map_style !== "hidden";
 	visible(map, "maps", nodes && st.map_style !== "squares" && st.map_style !== "map icons");
 	visible(map, "maps-square", nodes && st.map_style === "squares");
@@ -446,11 +473,14 @@ export function applyLook(map: MapLibreMap, geo: Geo, meta: Meta, look: Look): v
 	// the picture is 49 px, drawn 2.8 map node radii wide (the old window's size)
 	if (map.getLayer("maps-icon"))
 		map.setLayoutProperty("maps-icon", "icon-size", worldSize(geo, (22.4 * size) / 49, (5 * size) / 49));
-	setPaint(map, "maps", "circle-radius", worldSize(geo, 8 * size, 1.2 * size));
-	setPaint(map, "maps", "circle-stroke-width", worldSize(geo, 1.25, 0.4, 1.6));
+	// the old window's size: 8 px per screen px per unit, between 2 and 13 px (times the size setting)
+	setPaint(map, "maps", "circle-radius", nodeRadius(geo, size));
+	setPaint(map, "maps", "circle-stroke-width", solid ? 0.6 : ["step", ["zoom"], 1, zoomAt(geo, 0.7), 2]);
 	setPaint(map, "maps", "circle-color", fill);
 	setPaint(map, "maps", "circle-stroke-color", ringColour);
-	setPaint(map, "maps-square", "icon-color", ringColour);
+	setPaint(map, "maps-square", "icon-color", solid ? mapColour : ringColour);
+	if (map.getLayer("maps-square"))
+		map.setLayoutProperty("maps-square", "icon-image", solid ? "node-square-solid" : "node-square");
 	if (map.getLayer("maps-square"))
 		map.setLayoutProperty("maps-square", "icon-size", worldSize(geo, (16 * size) / 32, (3 * size) / 32));
 
@@ -516,14 +546,14 @@ export function setImage(
 	else map.setPaintProperty(id, "raster-opacity", opacity);
 }
 
-/** A white square for the "squares" map style, tinted by icon-color (an SDF image). */
-export function squareImage(): { width: number; height: number; data: Uint8Array } {
+/** A white square for the "squares" map style, tinted by icon-color (an SDF image): hollow, or filled. */
+export function squareImage(filled = false): { width: number; height: number; data: Uint8Array } {
 	const n = 32;
 	const data = new Uint8Array(n * n * 4);
 	for (let y = 0; y < n; y++)
 		for (let x = 0; x < n; x++) {
 			const d = Math.min(x, y, n - 1 - x, n - 1 - y);
-			const v = d >= 3 && d <= 7 ? 255 : 0; // a hollow square: the ring
+			const v = d >= 3 && (filled || d <= 7) ? 255 : 0; // the ring, or the whole square
 			const i = (y * n + x) * 4;
 			data[i] = 255;
 			data[i + 1] = 255;
