@@ -732,6 +732,13 @@ class Handler(BaseHTTPRequestHandler):
         """A colour spread as 256 colours."""
         self._json(spread_colours(q.get("name", [""])[0]))
 
+    @route("GET", "/api/ground")
+    def get_ground(self, q) -> None:
+        """Where the map image shows ground, on a grid (one byte per cell): "Colour by" tints only there."""
+        got = self.S.ground_mask(_num(q, "x0", 0.0), _num(q, "y0", 0.0), _num(q, "cell", 1.0),
+                                 _num(q, "w", 1, int), _num(q, "h", 1, int))  # fmt: skip
+        self._bytes(got, "application/octet-stream", cache=False)
+
     @route("GET", "/api/heat")
     def get_heat(self, q) -> None:
         """Where the times-seen picture goes (and make it)."""

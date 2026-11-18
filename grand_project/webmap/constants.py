@@ -76,3 +76,8 @@ WEBMAP_SOLID = {
     "boss_map": 24.0,  # pillar height of a map with a map boss icon
 }
 WEBMAP_TOWER_SAME = 150.0  # atlas units: a map node marked as a tower this close to a Tower landmark is that tower
+
+
+WEBMAP_FOG_DARK = 14.0  # 0-255 grey: darker map image is the black fog at screenshots' edges (no ground: Colour by
+# leaves it alone)
+WEBMAP_MASK_MAX = 4096  # the ground mask's largest side in cells

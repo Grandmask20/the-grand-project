@@ -21,15 +21,18 @@ import tempfile
 import threading
 from pathlib import Path
 
+import cv2
 import numpy as np
 
 from grand_project import builder, core
 from grand_project import cities as atlas_cities
 from grand_project import logs as atlas_log
 from grand_project.webmap.constants import (
+    WEBMAP_FOG_DARK,
     WEBMAP_ICON_MIN_PX,
     WEBMAP_ICON_SPRITE,
     WEBMAP_ICON_UNITS,
+    WEBMAP_MASK_MAX,
     WEBMAP_OVERZOOM,
     WEBMAP_SHARP_LEVEL,
     WEBMAP_TOWER_SAME,
@@ -270,6 +273,32 @@ class MapImageMixin:
             self._ground = atlas_cities.ground_sampler(canvas, weight, origin)
             self._ground_for = self.terrain_version
         return self._ground
+
+    def ground_mask(self, x0: float, y0: float, cell: float, w: int, h: int) -> bytes | None:
+        """Where the map image shows ground (not the black fog at screenshots' edges), on a grid over the atlas.
+
+        "Colour by" tints only there (user: the fog around the atlas was tinted too, unlike the old window).
+
+        Args:
+            x0, y0: Atlas point of the grid's top left corner.
+            cell: Atlas units per grid cell.
+            w, h: Grid size in cells (each at most WEBMAP_MASK_MAX).
+
+        Returns:
+            One byte per cell, row by row (1 = ground), or None without a map image.
+        """
+        if self.terrain is None:
+            return None
+        w, h = min(int(w), WEBMAP_MASK_MAX), min(int(h), WEBMAP_MASK_MAX)
+        canvas, weight, (ox, oy, sc) = self.terrain
+        # grid cell (c, r) -> map image px ((x0 + c * cell - ox) * sc, ...)
+        A = np.array([[cell * sc, 0, (x0 - ox) * sc], [0, cell * sc, (y0 - oy) * sc]], np.float32)
+        grey = canvas.mean(axis=2).astype(np.float32) if canvas.ndim == 3 else canvas.astype(np.float32)
+        wt = (weight > 0).astype(np.float32)
+        flags = cv2.INTER_AREA | cv2.WARP_INVERSE_MAP
+        g = cv2.warpAffine(grey, A, (w, h), flags=flags, borderValue=0.0)
+        k = cv2.warpAffine(wt, A, (w, h), flags=flags, borderValue=0.0)
+        return ((g > WEBMAP_FOG_DARK) & (k > 0.5)).astype(np.uint8).tobytes()
 
     # ------------------------------------------------------------------ Fix seams
     def fix_seams(self) -> None:

@@ -115,6 +115,11 @@ export function createAppClient(http: Http) {
 		getFrames: () => http.get<Frames>("/api/frames"),
 		getHeat: (upto?: number) => http.get<{ box: [number, number, number, number] } | null>("/api/heat", { upto }),
 		heatUrl: (upto?: number, v = 0) => http.url("/api/heat.png", { upto, v }),
+		/** Where the map image shows ground on a grid (1 byte per cell, 1 = ground; "Colour by" tints only there). */
+		groundMask: async (q: { x0: number; y0: number; cell: number; w: number; h: number }) => {
+			const res = await fetch(http.url("/api/ground", q));
+			return res.status === 200 ? new Uint8Array(await res.arrayBuffer()) : null;
+		},
 		openReplay: () => http.send<ReplayPlan>("POST", "/api/replay/open"),
 		closeReplay: () => http.send<Ok>("POST", "/api/replay/close"),
 		setReplay: (change: Partial<ReplaySettings>) => http.send<ReplayPlan>("PATCH", "/api/replay", change),

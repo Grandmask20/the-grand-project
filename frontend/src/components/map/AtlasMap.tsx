@@ -20,6 +20,14 @@ import { MapTiles, terrainVersion, vectorVersion } from "./MapTiles";
 import { PlayerMarker } from "./PlayerMarker";
 import { ReplayLayers } from "./ReplayLayers";
 
+/**
+ * The game's own atlas camera, for the 3D button: facing north, tilted so the ground's vanishing line sits where the
+ * program measured it (core HORIZON: 2155 px above a 1080p screenshot's top, 2695 px above its middle). With
+ * MapLibre's lens (36.87 deg high: a 1620 px focal length on 1080 px) that is atan(2695 / 1620) = 59 deg from straight
+ * down. (It turned the map by -20 deg unless already turned, so it landed on different views: user.)
+ */
+const GAME_PITCH = 59;
+
 /** The furthest latitude Web Mercator can show. */
 const MERCATOR_LAT = 85.0511;
 
@@ -83,7 +91,7 @@ export function AtlasMap({ info, meta }: Props) {
 		);
 		const three = new ButtonControl("3D", "3D view (or right-drag / Ctrl-drag to tilt and turn)", () => {
 			if (m.getPitch() > 1) m.easeTo({ pitch: 0, bearing: 0, duration: 700 });
-			else m.easeTo({ pitch: 60, bearing: m.getBearing() || -20, duration: 700 });
+			else m.easeTo({ pitch: GAME_PITCH, bearing: 0, duration: 700 });
 		});
 		m.addControl(three, "top-right");
 		m.addControl(new FullscreenControl(), "top-right");
