@@ -4,13 +4,14 @@ import { useMeta } from "@/hooks/app/UseMeta";
 import { useSettings, useUpdateSettings } from "@/hooks/app/UseSettings";
 import { cityColours, styleColour } from "@/logic/Colours";
 import { useAppStore } from "@/store/AppStore";
+import { cn } from "@/utils/Cn";
 import { LAYERS, OFF_BY_DEFAULT } from "./LayerToggles";
 
 /** Layers only the 3D view uses: listed while the map is tilted (user). */
 const ONLY_3D = new Set(["3D models"]);
 
 /**
- * "Show on the map" at the bottom of the side panel, always in view as in the old window (user: the View tab hid
+ * "Layers" at the bottom of the side panel, always in view as in the old window (user: the View tab hid
  * it), with the colour legend that was the old window's bottom bar. Folds away to one line.
  */
 export function LayersDock() {
@@ -34,31 +35,37 @@ export function LayersDock() {
 	];
 
 	return (
-		<section className="shrink-0 border-t bg-card/60 px-3 py-2" aria-label="Show on the map">
+		<section className="shrink-0 border-t bg-card/60 px-3 py-2" aria-label="Layers">
 			<button
 				type="button"
 				className="flex w-full items-center justify-between text-xs font-semibold tracking-wide text-gold uppercase"
 				onClick={() => setOpen(!open)}
 				aria-expanded={open}
 			>
-				Show on the map
+				Layers
 				{open ? <ChevronDownIcon className="size-4" /> : <ChevronUpIcon className="size-4" />}
 			</button>
 			{open && (
 				<>
-					<div className="mt-1.5 grid grid-cols-3 gap-x-2 gap-y-0.5">
+					{/* toggle buttons: lit when shown (user: this layout reads better than checkboxes) */}
+					<div className="mt-1.5 grid grid-cols-3 gap-1.5">
 						{shown.map(([key, label]) => {
 							const on = layers[key] ?? !OFF_BY_DEFAULT.has(key);
 							return (
-								<label key={key} className="flex cursor-pointer items-center gap-1.5 truncate py-0.5 text-xs">
-									<input
-										type="checkbox"
-										className="accent-[var(--color-gold)]"
-										checked={on}
-										onChange={() => update.mutate({ layers: { [key]: !on } })}
-									/>
-									<span className={on ? "" : "text-muted-foreground"}>{label}</span>
-								</label>
+								<button
+									key={key}
+									type="button"
+									aria-pressed={on}
+									onClick={() => update.mutate({ layers: { [key]: !on } })}
+									className={cn(
+										"truncate rounded-md border px-1.5 py-1 text-xs",
+										on
+											? "border-gold/70 bg-accent text-foreground"
+											: "border-border text-muted-foreground hover:bg-accent/50",
+									)}
+								>
+									{label}
+								</button>
 							);
 						})}
 					</div>

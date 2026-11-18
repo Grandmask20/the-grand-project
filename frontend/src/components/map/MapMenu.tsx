@@ -126,7 +126,7 @@ export function MapMenu({ x, y, at, hit, meta, debug, onClose }: Props) {
 								onSelect={() =>
 									s.askConfirm({
 										title: "Delete landmark",
-										text: `Delete this ${hit.title}? (Kept in the atlas: Show on the map > Removed shows it; right-click it to bring it back.)`,
+										text: `Delete this ${hit.title}? (Kept in the atlas: Layers > Removed shows it; right-click it to bring it back.)`,
 										yes: "Delete",
 										danger: true,
 										onYes: run(() => app.setLandmark(hit.x, hit.y, "")),

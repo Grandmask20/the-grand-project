@@ -117,7 +117,7 @@ export function SelectedBox() {
 							onClick={() =>
 								askConfirm({
 									title: "Delete landmark",
-									text: `Delete this ${info.title}? (Kept in the atlas: Show on the map > Removed shows it.)`,
+									text: `Delete this ${info.title}? (Kept in the atlas: Layers > Removed shows it.)`,
 									yes: "Delete",
 									danger: true,
 									onYes: () =>
