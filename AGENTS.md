@@ -87,7 +87,8 @@ The browser tests (`frontend/e2e/`, Playwright: `make e2e`) run the real app on 
 `tests/e2e_atlas.py` and drive the built page: add one there for a flow that crosses the page and the app (the map,
 clicking it, dialogs that save). They keep the app's settings in `e2e-run/user_data` (`GRAND_PROJECT_USER_DATA`),
 never the player's. Coverage: `make coverage` (Python, settings in `pyproject.toml`) and `npm run coverage` (the
-page); CI runs every test job under coverage, combines them into one report and comments it on pull requests. A new
+page); CI runs the tests on Windows, macOS and Linux, measures coverage on the Ubuntu jobs, shows the Python and page tables
+on the `tests` run's page and comments the Python one on pull requests. A new
 module gets its own test file (one per module or class under test).
 
 ## Git workflow
