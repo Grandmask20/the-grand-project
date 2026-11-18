@@ -390,6 +390,36 @@ export function nodeRadius(geo: Geo, size: number): ExpressionSpecification {
 	return ["interpolate", ["exponential", 2], ["zoom"], z, 2.2, z + 0.01, Math.max(r, 2.2), zCap, 13 * size];
 }
 
+/** Icons in a row: their place (-2 .. 2 in halves). Model heights: 0 .. 440 atlas units in steps of 10. */
+const ICON_SLOTS = ["-2", "-1.5", "-1", "-0.5", "0", "0.5", "1", "1.5", "2"];
+const ICON_LIFTS = Array.from({ length: 45 }, (_, k) => k * 10);
+/** How tall a height looks next to the same length across the screen, at the game's camera angle (sin 59 deg). */
+const UPRIGHT = 0.857;
+
+/**
+ * Where a 3D view icon is drawn, in its picture's px (64 px = 26 units): its place in the row (36 units apart) and
+ * its bottom 11 units above the map node, on top of the 3D model under it while models are shown (user: city icons
+ * sat inside the city).
+ */
+function iconOffset(geo: Geo, models: boolean): ExpressionSpecification {
+	void geo;
+	const px = 64 / 26;
+	const at = (slot: string, lift: number) => ["literal", [Number(slot) * 36 * px, -(11 + lift * UPRIGHT) * px]];
+	if (!models)
+		return [
+			"match",
+			["get", "slot"],
+			...ICON_SLOTS.flatMap((k) => [k, at(k, 0)]),
+			at("0", 0),
+		] as unknown as ExpressionSpecification;
+	return [
+		"match",
+		["concat", ["get", "slot"], "|", ["to-string", ["get", "lift"]]],
+		...ICON_SLOTS.flatMap((k) => ICON_LIFTS.flatMap((l) => [`${k}|${l}`, at(k, l)])),
+		at("0", 0),
+	] as unknown as ExpressionSpecification;
+}
+
 /** Apply the settings to the map's layers (visibility, colours, sizes, filters). */
 export function applyLook(map: MapLibreMap, geo: Geo, meta: Meta, look: Look): void {
 	const { settings: s } = look;
@@ -512,6 +542,12 @@ export function applyLook(map: MapLibreMap, geo: Geo, meta: Meta, look: Look): v
 	// icons: on the ground when flat, standing in rows above their map nodes when tilted
 	visible(map, "icons", on("Icons") && !look.tilted);
 	visible(map, "icons-3d", on("Icons") && look.tilted);
+	const models = look.tilted && on("3D models");
+	if (map.getLayer("icons-3d")) map.setLayoutProperty("icons-3d", "icon-offset", iconOffset(geo, models));
+	// the flat map node dots would show through the bottom of the 3D pillars (user)
+	if (models) for (const id of ["maps", "maps-square", "maps-icon"]) visible(map, id, false);
+	// paths tilted: one steady screen width, so far ones don't thin out to nothing (user)
+	if (look.tilted) setPaint(map, "paths", "line-width", Math.max(2, Number(st.path_width) || 3));
 
 	// Find: a type highlighted
 	setFilter(map, "highlight", look.highlight ? ["in", `|${look.highlight}|`, ["get", "icons"]] : NONE);

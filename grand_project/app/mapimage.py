@@ -274,6 +274,40 @@ class MapImageMixin:
             self._ground_for = self.terrain_version
         return self._ground
 
+    def _model_tops(self, nodes: list[dict]) -> dict[int, float]:
+        """The top of the 3D model standing at each map node (atlas units): its pillar, or a landmark's structure.
+
+        Args:
+            nodes: The view model's map nodes.
+
+        Returns:
+            Map node index -> height.
+        """
+        from grand_project.webmap.solids import map_pillar, structure
+
+        tops: dict[int, float] = {}
+        for i, nd in enumerate(nodes):
+            sh = map_pillar(nd["x"], nd["y"], sorted(set(nd.get("icons") or [])), "#000", i)
+            tops[i] = max((x["top"] for x in sh), default=0.0)
+        P = self.D.get("node_pts")
+        if P is None or not len(P):
+            return tops
+        from scipy.spatial import cKDTree
+
+        tree = cKDTree(np.asarray(P, float))
+        ct = self.D.get("city_type", {})
+        for k, lm in enumerate(self.V["landmarks"]):
+            if str(lm.get("status", "")).startswith("removed"):
+                continue
+            sh = structure(lm["kind"], lm["x"], lm["y"], ct.get(k, ("", ""))[0])
+            # the beam of a hall is thin and tall: the icon stands on the building, not on the beam
+            top = max((x["top"] for x in sh if x["top"] < 300), default=0.0)
+            if top:
+                d, i = tree.query([lm["x"], lm["y"]])
+                if d < WEBMAP_TOWER_SAME:
+                    tops[int(i)] = max(tops.get(int(i), 0.0), top)
+        return tops
+
     def ground_mask(self, x0: float, y0: float, cell: float, w: int, h: int) -> bytes | None:
         """Where the map image shows ground (not the black fog at screenshots' edges), on a grid over the atlas.
 
@@ -716,6 +750,7 @@ class MapImageMixin:
             for k, i in enumerate(members):
                 slot[i] = k - (len(members) - 1) / 2
         node_of = D.get("icon_node", {})
+        lift = self._model_tops(nodes)
         for i, ic in enumerate(V["icons"]):
             if not self.icon_visible(i, fl):
                 continue
@@ -726,7 +761,15 @@ class MapImageMixin:
                     "kind": "point",
                     "pts": [W(*at)],
                     "id": i,
-                    "props": {"id": i, "name": ic["name"], "slot": f"{slot.get(i, 0.0):g}", **step("icon", i)},
+                    "props": {
+                        "id": i,
+                        "name": ic["name"],
+                        "slot": f"{slot.get(i, 0.0):g}",
+                        # the top of the 3D model under it (pillar, tower, city), atlas units in steps of 10: the
+                        # page stands the icon on top when the models are shown (user: city icons sat inside)
+                        "lift": int(round(lift.get(v, 0.0) / 10) * 10) if v is not None else 0,
+                        **step("icon", i),
+                    },
                 }
             )
             x, y = pts[i] if pts is not None and i < len(pts) else (ic["x"], ic["y"])
