@@ -1,0 +1,1094 @@
+"""app.mapimage: part of AtlasSession (a mixin; see app/session.py): the map image, Fix seams, and the map's tiles.
+
+The map image (the stitched screenshots) is kept in memory and cached next to the atlas (<stem>_terrain.png / .npz,
+with the clean map's ownership after Fix seams). The page's map is MapLibre on tiles made here when asked for:
+the map image's levels (raster), sharp ground past it built from the screenshots, and vector tiles (MVT) of what
+the filters show: map nodes, paths, icons, landmarks, bookmarks, the vector ground (land, biome areas) and the 3D
+models. Every tile URL carries a version, so a changed atlas, map image or filter is fetched again.
+"""
+
+from __future__ import annotations
+
+import collections
+import contextlib
+import math
+import os
+import pickle
+import shutil
+import subprocess
+import sys
+import tempfile
+import threading
+import time
+from pathlib import Path
+
+import cv2
+import numpy as np
+
+from grand_project import builder, core
+from grand_project import cities as atlas_cities
+from grand_project import logs as atlas_log
+from grand_project.webmap.constants import (
+    WEBMAP_BEAM_MIN,
+    WEBMAP_FOG_DARK,
+    WEBMAP_ICON_MIN_PX,
+    WEBMAP_ICON_SPRITE,
+    WEBMAP_ICON_UNITS,
+    WEBMAP_MASK_MAX,
+    WEBMAP_OVERZOOM,
+    WEBMAP_SHARP_LEVEL,
+    WEBMAP_TOWER_SAME,
+)
+from grand_project.webmap.shapes import biome_polygons, land_polygons
+from grand_project.webmap.sharp import SharpTiles
+from grand_project.webmap.solids import map_pillar, structure
+from grand_project.webmap.tiles import Grid, RasterTiler, VectorTiler
+
+from .constants import TERRAIN_PIXELS, TILE_CACHE
+from .icons import bgr_hex, icon_art_version, icon_col, icon_label, icon_name
+
+LOG = atlas_log.get("app")
+SESSION_RUN = os.urandom(4).hex()  # this run of the app: part of every tile URL (map_info "tile_key")
+
+
+class _LRU:
+    """A small thread-safe least-recently-used cache."""
+
+    def __init__(self, size: int):
+        """Make an empty cache.
+
+        Args:
+            size: Entries kept at most.
+        """
+        self.size, self.data, self.lock = size, collections.OrderedDict(), threading.Lock()
+
+    def get(self, key):
+        """Return a cached value (None when missing).
+
+        Args:
+            key: The key.
+
+        Returns:
+            The value or None.
+        """
+        with self.lock:
+            if key in self.data:
+                self.data.move_to_end(key)
+                return self.data[key]
+        return None
+
+    def put(self, key, value) -> None:
+        """Keep a value.
+
+        Args:
+            key: The key.
+            value: The value.
+        """
+        with self.lock:
+            self.data[key] = value
+            self.data.move_to_end(key)
+            while len(self.data) > self.size:
+                self.data.popitem(last=False)
+
+    def clear(self) -> None:
+        """Forget everything."""
+        with self.lock:
+            self.data.clear()
+
+
+class MapImageMixin:
+    """AtlasSession mixin: the map image, Fix seams and the map's tiles (see the module docstring)."""
+
+    # ------------------------------------------------------------------ state
+    def _init_mapimage(self) -> None:
+        """Start with no map image."""
+        self._tiles = _LRU(TILE_CACHE)
+        self._seams_proc = None
+        self._seams_starting = False  # Fix seams claimed, its process not registered yet
+        self._seams_stopped = False
+        self._terrain_job = 0
+        self.filter_version = 0
+        self._vector = None  # (key, VectorTiler)
+        self._vector_lock = threading.Lock()
+        self._reset_mapimage()
+
+    def _reset_mapimage(self) -> None:
+        """Forget the map image (another atlas, or none)."""
+        self.terrain = None  # (canvas, weight, origin)
+        self.labels = None  # (ownership map, screenshot names) of the clean map
+        self.terrain_version = getattr(self, "terrain_version", 0) + 1
+        self._terrain_snap = (None, self.terrain_version)  # (map image, its version): read as one
+        self.grid: Grid | None = None
+        self._raster: RasterTiler | None = None
+        self._sharp: SharpTiles | None = None
+        self._ground = None
+        self._ground_for = None
+        self._tiles.clear()
+
+    # ------------------------------------------------------------------ the map image
+    def load_terrain(self, cities: bool = True, background: bool = True) -> None:
+        """Show the stitched map: from the cache next to the atlas when it matches, else built in the background.
+
+        Args:
+            cities: Rebuild the model when the map image arrives (its biomes follow the ground).
+            background: Build on a background thread (False: now, on this thread; tests).
+        """
+        if not self.atlas or not self.atlas.frames:
+            self._reset_mapimage()
+            self.events.publish("terrain", self.terrain_version)
+            return
+        png, npz = core.map_image_files(self.path)
+        key = self.atlas.terrain_key()
+        try:
+            gen = self.generation  # (read for this atlas: a switch meanwhile drops it, CodeRabbit)
+            with np.load(npz) as meta:
+                if str(meta["key"]) == key:
+                    import cv2
+
+                    canvas = cv2.imdecode(np.fromfile(str(png), np.uint8), cv2.IMREAD_COLOR)
+                    weight = meta["weight"].astype(np.float32)
+                    origin = tuple(float(v) for v in meta["origin"])
+                    labels = (meta["labels"], [str(n) for n in meta["names"]]) if "labels" in meta.files else None
+                    if canvas is not None and canvas.shape[:2] == weight.shape:
+                        self.set_terrain(canvas, weight, origin, save=False, labels=labels, cities=cities, gen=gen)
+                        return
+        except Exception:
+            LOG.debug("map image cache not usable, rebuilding", exc_info=True)
+        self._terrain_job += 1
+        opened = self.opened  # (one record: its atlas, generation and log together)
+        job, atlas, gen, scope = self._terrain_job, opened.atlas, opened.gen, opened.scope
+        self.events.set_progress("building the map image (first time for this atlas)…")
+
+        def work():
+            """Build the map image and show it (background thread)."""
+            try:
+                t0 = time.monotonic()
+                canvas, origin, weight = atlas.composite(max_pixels=TERRAIN_PIXELS, with_weight=True)
+                if job == self._terrain_job and self.set_terrain(canvas, weight, origin, gen=gen):
+                    h, w = canvas.shape[:2]
+                    self.events.log(f"map image built in {time.monotonic() - t0:.1f} s ({w} x {h} px)", scope)
+            except Exception as e:
+                LOG.exception("map image could not be built")
+                self.events.log(f"map image could not be built: {e}", scope)
+            finally:
+                self.events.set_progress(None)
+
+        if background:
+            threading.Thread(target=work, daemon=True).start()
+        else:
+            work()
+
+    def set_terrain(
+        self, canvas, weight, origin, save: bool = True, labels=None, cities: bool = True, gen: int | None = None
+    ) -> bool:
+        """Show a new map image: keep it, set up its grid and tilers and, when asked, write its cache files.
+
+        Args:
+            canvas: BGR map image.
+            weight: Its coverage weight (0 where no screenshot is).
+            origin: (x0, y0, scale): atlas (x, y) is image px ((x - x0) * scale, (y - y0) * scale).
+            save: Write the cache files and the atlas card picture.
+            labels: (ownership map, screenshot names) of the clean map, or None.
+            cities: Rebuild the model (biomes follow the ground).
+            gen: The atlas generation the image was made for (None: now): another atlas opened since drops it.
+
+        Returns:
+            Whether it was shown (False: made for an atlas no longer open).
+        """
+        origin = tuple(float(v) for v in origin)
+        with self._lock:
+            if gen is not None and not self.owns(gen):
+                LOG.info("a map image made for another atlas was dropped")
+                return False
+            self.terrain = (canvas, weight, origin)
+            self.labels = labels
+            self.grid = Grid(origin, canvas.shape[1], canvas.shape[0])
+            self._raster = RasterTiler(canvas, self.grid)
+            self._sharp = SharpTiles(
+                self.atlas,
+                [core.footprint(self.atlas, f) for f in self.atlas.frames],
+                self.grid,
+                self._raster,
+                self.grid.deepest(WEBMAP_SHARP_LEVEL),
+                labels=labels,
+                origin=origin if labels is not None else None,
+                folder=self._sharp_folder(),
+            )
+            self._ground = None
+            self.terrain_version += 1
+            self._terrain_snap = (self.terrain, self.terrain_version)
+            self._tiles.clear()
+            self._vector = None
+        if save and self.path:
+            key, path = self.atlas.terrain_key(), self.path
+
+            def write():
+                """Write the map image cache files and the atlas card picture (background thread)."""
+                try:
+                    png, npz = core.map_image_files(path)
+                    core.write_png(png, canvas, "map image")
+                    self.write_thumb(path, canvas)
+                    extra = {} if labels is None else {"labels": labels[0], "names": np.array(labels[1])}
+                    np.savez_compressed(
+                        npz, key=key, origin=np.array(origin, float), weight=weight.astype(np.float16), **extra
+                    )
+                except Exception:
+                    LOG.warning("map image cache could not be saved", exc_info=True)
+
+            threading.Thread(target=write, daemon=True).start()
+        elif self.path and not self.thumb_exists(self.path):
+            threading.Thread(target=self.write_thumb, args=(self.path, canvas), daemon=True).start()
+        if cities and self.V.get("nodes"):
+            self.rebuild_model()  # the biomes follow the ground now
+        self.events.publish("terrain", self.terrain_version)
+        return True
+
+    def _labels_key(self) -> str:
+        """Return a short fingerprint of the clean map's ownership map (which screenshot shows each spot).
+
+        Fix seams again after adding screenshots can give the same screenshots other spots: tiles built from the old
+        clean map were served for the new one (CodeRabbit).
+
+        Returns:
+            8 hex digits.
+        """
+        import hashlib
+
+        labels, names = self.labels
+        h = hashlib.blake2b(digest_size=4)
+        h.update(np.ascontiguousarray(labels).tobytes())  # (every pixel: a sample missed changes, CodeRabbit)
+        h.update("|".join(names).encode())
+        return h.hexdigest()
+
+    def _sharp_folder(self) -> Path | None:
+        """Return the folder sharp tiles of the current screenshots are kept in (older ones are removed).
+
+        Returns:
+            <stem>_files/<stem>_sharp/<key>, or None with no atlas.
+        """
+        if not self.path or not self.atlas:
+            return None
+        base = core.atlas_files(self.path) / (self.path.stem + "_sharp")
+        key = self.atlas.terrain_key()[:16] + (f"c{self._labels_key()}" if self.labels is not None else "")
+        if base.exists():
+            for d in base.iterdir():  # tiles of other screenshots / placements: never shown again
+                if d.is_dir() and d.name != key:
+                    shutil.rmtree(d, ignore_errors=True)
+        return base / key
+
+    def paste_terrain(self, frames: list[dict]) -> bool:
+        """Paste new screenshots into a copy of the map image (fast). Worker thread.
+
+        Args:
+            frames: The new screenshots' atlas.frames entries.
+
+        Returns:
+            False when they fall outside the map image (it has to be built again).
+        """
+        if self.terrain is None:
+            return False
+        canvas, weight, origin = self.terrain
+        canvas, weight = canvas.copy(), weight.copy()
+        lab = self.labels
+        labels, names = (lab[0].copy(), list(lab[1])) if lab is not None else (None, None)
+        if not self.atlas.paste_into(canvas, weight, origin, frames, labels=labels, names=names):
+            return False
+        self.set_terrain(canvas, weight, origin, labels=(labels, names) if labels is not None else None, cities=False)
+        return True
+
+    def ground(self):
+        """Return the ground sampler of the map image (the biomes compare ground looks), made once per map image.
+
+        Returns:
+            A cities.ground_sampler, or None without a map image.
+        """
+        if self.terrain is None:
+            return None
+        if self._ground_for != self.terrain_version:
+            canvas, weight, origin = self.terrain
+            self._ground = atlas_cities.ground_sampler(canvas, weight, origin)
+            self._ground_for = self.terrain_version
+        return self._ground
+
+    @staticmethod
+    def _model_tops(shapes: list[dict]) -> dict[int, float]:
+        """The top of the 3D models standing at each map node (atlas units): its pillar, or a structure that marks it.
+
+        Read from the very shapes the 3D view draws (_solid_shapes), so an icon stands on what is shown there: a
+        separate guess of the heights missed the towers drawn for map nodes without a Tower landmark (CodeRabbit).
+
+        Args:
+            shapes: The 3D view's shapes, each with its pick ("node", i) when a click on it selects map node i.
+
+        Returns:
+            Map node index -> height.
+        """
+        tops: dict[int, float] = {}
+        for sh in shapes:
+            kind, i = sh.get("pick", ("", -1))
+            # the beam of a hall or tower is thin and tall: the icon stands on the building, not on the beam
+            if kind == "node" and sh["top"] < WEBMAP_BEAM_MIN:
+                tops[i] = max(tops.get(i, 0.0), sh["top"])
+        return tops
+
+    def ground_mask(self, x0: float, y0: float, cell: float, w: int, h: int) -> bytes | None:
+        """Where the map image shows ground (not the black fog at screenshots' edges), on a grid over the atlas.
+
+        "Colour by" tints only there (user: the fog around the atlas was tinted too, unlike the old window).
+
+        Args:
+            x0, y0: Atlas point of the grid's top left corner.
+            cell: Atlas units per grid cell.
+            w, h: Grid size in cells (each at most WEBMAP_MASK_MAX).
+
+        Returns:
+            One byte per cell, row by row (1 = ground), or None without a map image.
+        """
+        terrain, version = self._terrain_snap  # one read: the image and its version together (CodeRabbit)
+        if terrain is None:
+            return None
+        w, h = min(int(w), WEBMAP_MASK_MAX), min(int(h), WEBMAP_MASK_MAX)
+        # kept until the map image changes: Colour by asks again each time it is turned on, and working it out from a
+        # big map image took a while (user: the blocky tint showed every time first)
+        key = (version, float(x0), float(y0), float(cell), w, h)
+        kept = getattr(self, "_masks", {})
+        if key in kept:
+            return kept[key]
+        canvas, weight, (ox, oy, sc) = terrain
+        # grid cell (c, r) -> map image px ((x0 + c * cell - ox) * sc, ...)
+        A = np.array([[cell * sc, 0, (x0 - ox) * sc], [0, cell * sc, (y0 - oy) * sc]], np.float32)
+        grey = canvas.mean(axis=2).astype(np.float32) if canvas.ndim == 3 else canvas.astype(np.float32)
+        wt = (weight > 0).astype(np.float32)
+        flags = cv2.INTER_AREA | cv2.WARP_INVERSE_MAP
+        g = cv2.warpAffine(grey, A, (w, h), flags=flags, borderValue=0.0)
+        k = cv2.warpAffine(wt, A, (w, h), flags=flags, borderValue=0.0)
+        mask = ((g > WEBMAP_FOG_DARK) & (k > 0.5)).astype(np.uint8).tobytes()
+        # a few grids (plain and while replaying) of this map image only
+        kept = {k_: v for k_, v in kept.items() if k_[0] == version}
+        if len(kept) >= 4:
+            kept = {}
+        kept[key] = mask
+        self._masks = kept
+        return mask
+
+    # ------------------------------------------------------------------ Fix seams
+    def fix_seams(self) -> None:
+        """Build the clean map (core.seams) in a separate process: map nodes and icons whole, seams where the
+        ground matches. Progress lines become the progress box; the clean map replaces the map image when ready.
+
+        Raises:
+            ValueError: With no screenshots, or when it is already running.
+        """
+        if not self.atlas or not self.atlas.frames:
+            raise ValueError("no screenshots in this atlas")
+        # Starting is a state of its own, from the claim to the process's registration: every way out of it
+        # releases the claim (a failing temp folder or input write left it set: "already running" until a restart),
+        # and a Stop during it is kept and honoured at registration (it was lost: CodeRabbit, rounds 3 and 4)
+        with self._lock:
+            # the check and the claim in one step: two quick clicks both passed the check and started two
+            # processes, the first one then out of stop_seams' reach (CodeRabbit)
+            if self.seams_running():
+                raise ValueError("Fix seams is already running")
+            self._seams_starting, self._seams_stopped = True, False
+        tmp = None
+        try:
+            with self._lock:
+                tmp = Path(tempfile.mkdtemp(prefix="grand_seams_"))
+                src, out, err = tmp / "atlas.pkl", tmp / "clean.npz", tmp / "errors.txt"
+                # its input and its atlas generation together (CodeRabbit); the atlas pickles without its decoded
+                # screenshot cache (core.Atlas.__getstate__), so the lock is held only briefly
+                src.write_bytes(pickle.dumps(self.atlas))
+                gen, scope = self.opened.gen, self.opened.scope
+            root = Path(__file__).resolve().parents[2]  # the folder holding the grand_project package
+            with open(err, "w", encoding="utf-8") as errf:
+                proc = subprocess.Popen(
+                    [sys.executable, "-m", "grand_project.core.seams", str(src), str(out), str(TERRAIN_PIXELS)],
+                    cwd=str(root),
+                    stdout=subprocess.PIPE,
+                    stderr=errf,
+                    text=True,
+                    creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0) if os.name == "nt" else 0,
+                )
+        except Exception:
+            with self._lock:
+                self._seams_starting = False
+            if tmp is not None:
+                shutil.rmtree(tmp, ignore_errors=True)
+            raise
+        with self._lock:
+            self._seams_starting = False
+            stopped = self._seams_stopped
+            if stopped or not self.owns(gen):  # stopped while starting, or another atlas opened: never registered
+                _end_process(proc)
+                shutil.rmtree(tmp, ignore_errors=True)
+                if stopped:
+                    self.events.log("Fix seams: stopped", scope)
+                return
+            self._seams_proc, self._seams_busy = proc, True
+        t0 = time.monotonic()
+        self.events.set_progress("fixing seams: building the clean map...")
+        self.events.log("Fix seams: building the clean map in the background")
+        self.events.publish("seams", True)
+
+        def watch():
+            """Pass the process's progress lines on, then show the clean map (background thread)."""
+            for line in proc.stdout:
+                if line.strip() and line.strip() != "done":
+                    self.events.set_progress(line.strip())
+            proc.wait()
+            try:
+                if proc.returncode == 0 and out.exists() and self.owns(gen) and not self._seams_stopped:
+                    with np.load(out) as r:
+                        canvas, weight, labels = r["canvas"], r["weight"], r["labels"]
+                        origin = tuple(float(v) for v in r["origin"])
+                        names = [str(n) for n in r["names"]]
+                    with self._lock:  # shown and followed up for the same atlas (a close between: CodeRabbit)
+                        if self.set_terrain(canvas, weight, origin, labels=(labels, names), gen=gen):
+                            self.events.log(f"Fix seams: clean map ready ({time.monotonic() - t0:.0f} s)", scope)
+                            self._seams_ready(names)
+                elif self._seams_stopped:
+                    self.events.log("Fix seams: stopped (its clean map was left out)", scope)
+                elif proc.returncode != 0:
+                    text = err.read_text(encoding="utf-8", errors="replace").strip().splitlines()
+                    LOG.error("clean map could not be built: %s", " | ".join(text[-30:]))
+                    self.events.log(f"clean map could not be built: {text[-1] if text else proc.returncode}")
+            finally:
+                shutil.rmtree(tmp, ignore_errors=True)
+                if self._seams_proc is proc:  # (a newer Fix seams may have started meanwhile: CodeRabbit)
+                    self._seams_proc, self._seams_busy = None, False
+                self.events.set_progress(None)
+                self.events.publish("seams", False)
+
+        threading.Thread(target=watch, daemon=True).start()
+
+    def seams_running(self) -> bool:
+        """Tell whether Fix seams is running.
+
+        Returns:
+            True while its process runs.
+        """
+        if getattr(self, "_seams_starting", False):  # claimed, its process starting
+            return True
+        p = self._seams_proc
+        # also while its watcher still applies the result after the process ended (CodeRabbit)
+        return p is not None and (p.poll() is None or getattr(self, "_seams_busy", False))
+
+    def stop_seams(self) -> None:
+        """Stop a running Fix seams (its result is then dropped quietly)."""
+        with self._lock:
+            if self._seams_starting:  # its process not registered yet: kept, honoured at registration (CodeRabbit)
+                self._seams_stopped = True
+                return
+        p = self._seams_proc
+        if p is not None and p.poll() is None:
+            self._seams_stopped = True
+            p.terminate()
+            with contextlib.suppress(subprocess.TimeoutExpired):
+                p.wait(timeout=3)
+
+    def _seams_ready(self, names: list[str]) -> None:
+        """Paste screenshots added while the clean map was being built.
+
+        Args:
+            names: The screenshots the clean map was built from.
+        """
+        have = set(names)
+        missing = [f for f in self.atlas.frames if f["name"] not in have]
+        if missing and not self.paste_terrain(missing):
+            self.load_terrain()
+
+    def export_pngs(self) -> list[str]:
+        """Write the map PNGs (<stem>_composite.png and _network.png) into the atlas's files folder.
+
+        Returns:
+            The files written.
+
+        Raises:
+            ValueError: With no atlas open.
+        """
+        with self._lock:  # atlas and path read together: an atlas opened meanwhile can't mix them
+            atlas, path = self.atlas, self.path
+            if not atlas or not path:
+                raise ValueError("open an atlas first")
+            builder.export(atlas, path)
+        d = core.atlas_files(path)
+        files = [str(p) for p in sorted(d.glob(f"{path.stem}_*.png")) if not p.name.endswith("_thumb.png")]
+        self.events.log(f"map PNGs written in {d}")
+        return files
+
+    # ------------------------------------------------------------------ what the map shows (filters)
+    def filters_changed(self, publish: bool = True) -> None:
+        """Note that what the map shows changed (a filter, a hidden type, the model): vector tiles are made again.
+
+        Args:
+            publish: Tell the page (a "filters" event with the new version).
+        """
+        self.filter_version += 1
+        self._vector = None
+        self._vector_steps = None
+        if publish:
+            self.events.publish("filters", self.filter_version)
+
+    def _flags(self) -> dict:
+        """Return the filter settings, read once.
+
+        Returns:
+            {"doubtful", "removed", "multi", "only_icons", "near", "freq", "hidden"}.
+        """
+        s = self.ui_settings()
+        return {
+            "doubtful": bool(s["layers"].get("Doubtful")),
+            "removed": bool(s["layers"].get("Removed")),
+            "multi": s["multi_only"],
+            "only_icons": s["only_icon_maps"],
+            "near": s["near_only"],
+            "freq": float(s["style"].get("path_freq") or 0.0),
+            "hidden": set(s["hidden_types"]),
+        }
+
+    def node_shown(self, n: dict, fl: dict) -> bool:
+        """Whether a map node passes the filters (removed map nodes never do).
+
+        Args:
+            n: Map node dict.
+            fl: _flags().
+
+        Returns:
+            True when shown.
+        """
+        st = n["status"]
+        if st == "removed" or (st == "doubtful" and not fl["doubtful"]):
+            return False
+        if fl["multi"] and n.get("seen", 1) < 2 and st != "icon":
+            return False
+        if fl["only_icons"]:
+            shown = {icon_name(r) for r in n.get("icons", [])} - fl["hidden"]
+            if not shown and not (
+                "MapBossSpecial" in n.get("icons", [])
+                and any(t.startswith("Deadly Map Boss") and t not in fl["hidden"] for t in self.D.get("icon_types", []))
+            ):
+                return False
+        return True
+
+    def path_shown(self, p: dict, node_ok: list[bool], fl: dict) -> bool:
+        """Whether a path passes the filters (both its map nodes shown, enough screenshots drew it).
+
+        Args:
+            p: Path dict.
+            node_ok: node_shown of every map node.
+            fl: _flags().
+
+        Returns:
+            True when shown.
+        """
+        if fl["multi"] and p["frames"] < 2 and not p.get("abyss"):
+            return False
+        if fl["freq"] > 0 and not p.get("abyss") and p.get("seen_in", 0) < fl["freq"] * max(1, p.get("frames", 0)):
+            return False  # drawn by too few of the screenshots that show both maps
+        return node_ok[p["a"]] and node_ok[p["b"]]
+
+    def landmark_name(self, i: int) -> str:
+        """Return a landmark's name with the city type: "Vaal city", "Ezomyte city?" (? = guessed by look),
+        "Locked Breach stronghold".
+
+        Args:
+            i: Landmark index in V["landmarks"].
+
+        Returns:
+            The name.
+        """
+        lm = self.V["landmarks"][i]
+        if i in self.D.get("locked", ()):
+            return "Locked Breach stronghold"
+        ct = self.D.get("city_type", {})
+        if lm["kind"] == "City" and i in ct:
+            t, how = ct[i]
+            return f"{t} city" + ("?" if how == "look-alike" else "")
+        return lm["kind"]
+
+    def landmark_shown(self, i: int, fl: dict) -> bool:
+        """Whether a landmark passes the filters.
+
+        Args:
+            i: Landmark index.
+            fl: _flags().
+
+        Returns:
+            True when shown.
+        """
+        lm = self.V["landmarks"][i]
+        if lm["status"].startswith("removed"):
+            return fl["removed"]
+        if lm["kind"] in fl["hidden"] or (fl["near"] and lm["kind"] != "City"):
+            return False
+        t = self.D.get("city_type", {}).get(i)
+        return not t or f"{t[0]} city" not in fl["hidden"]
+
+    def icon_visible(self, i: int, fl: dict) -> bool:
+        """Whether an icon passes the filters (its type ticked, and near a city when only those are shown).
+
+        Args:
+            i: Icon index.
+            fl: _flags().
+
+        Returns:
+            True when shown.
+        """
+        if icon_label(self.V["icons"][i]) in fl["hidden"]:
+            return False
+        if fl["near"]:
+            v = self.D.get("icon_node", {}).get(i)
+            return v is not None and v in self.D.get("near_city", {})
+        return True
+
+    # ------------------------------------------------------------------ map info and tiles
+    def map_info(self) -> dict | None:
+        """Return what the page's map needs besides tiles: grid, zoom range, bounds, versions, icon picture size.
+
+        Returns:
+            The info dict, or None without a map image.
+        """
+        g = self.grid
+        if g is None:
+            return None
+        zdeep = g.deepest(WEBMAP_SHARP_LEVEL)
+        return {
+            "grid": g.to_json(),
+            "zmax": g.zmax,
+            "zdeep": zdeep,
+            "world": g.world,
+            "offset": g.offset,
+            # MapLibre shows 256 px raster tiles of level z at map zoom z - 1: sharpest at zdeep - 1, then stretched
+            "maxzoom": zdeep - 1 + WEBMAP_OVERZOOM,
+            "bounds": g.bounds(),
+            # in every tile URL: this run of the app and the open atlas. The versions alone restart at every start
+            # and are shared by every atlas, and the browser keeps tiles for a year, so another atlas's cached tiles
+            # showed at some zooms (user; CodeRabbit)
+            "tile_key": f"{SESSION_RUN}.{self.generation}",
+            "terrain_version": self.terrain_version,
+            "model_version": self.model_version,
+            "filter_version": self.filter_version,
+            "sprite": {
+                "size": WEBMAP_ICON_SPRITE,
+                "units": WEBMAP_ICON_UNITS,
+                "min_px": WEBMAP_ICON_MIN_PX,
+                "art": icon_art_version(),  # (in the pictures' URLs)
+            },
+        }
+
+    def terrain_tile(self, z: int, x: int, y: int, wanted=None) -> bytes | None:
+        """Return a ground tile as JPEG: the map image's levels, sharp ground past them.
+
+        Args:
+            z: Tile level.
+            x: Tile column.
+            y: Tile row.
+
+        Returns:
+            The JPEG bytes, or None where there is no ground.
+        """
+        key = ("t", self.terrain_version, z, x, y)
+        hit = self._tiles.get(key)
+        if hit is not None:
+            return hit or None
+        raster, sharp = self._raster, self._sharp
+        if raster is None:
+            return None
+        if sharp is not None and sharp.has(z):
+            if raster.pixels(raster.grid.zmax, x >> (z - raster.grid.zmax), y >> (z - raster.grid.zmax)) is None:
+                data = None  # nothing under it at all: no screenshot there
+            else:
+                data = sharp.jpeg(z, x, y, wanted)
+                if data is None:  # given up by the browser: built when asked again, not cached as empty
+                    return None
+        else:
+            data = raster.jpeg(z, x, y)
+        self._tiles.put(key, data or b"")
+        return data
+
+    def vector_tile(self, z: int, x: int, y: int, replay: bool = False) -> bytes:
+        """Return a vector tile (MVT) of what the filters show.
+
+        Args:
+            z: Tile level.
+            x: Tile column.
+            y: Tile row.
+            replay: Asked by the page tab playing the timelapse: its items carry their reveal step (while one is
+                open). Every other tab gets the plain tiles (user: opening the timelapse in one tab changed them all,
+                and a reload left the steps on).
+
+        Returns:
+            The tile's bytes (b"" when empty).
+        """
+        steps = replay and self.replay_steps() is not None
+        made = self._vector_made(steps)
+        if made is None:
+            return b""
+        tiler = made[1]
+        # kept under the versions of the tiler that made it: read again, they may name a newer one (CodeRabbit)
+        key = ("v", *made[0], z, x, y)
+        hit = self._tiles.get(key)
+        if hit is not None:
+            return hit
+        data = tiler.tile(z, x, y)
+        self._tiles.put(key, data)
+        return data
+
+    def _vector_tiler(self, steps: bool = False) -> VectorTiler | None:
+        """Return the vector tiler of the current model, filters and map image (made on first use).
+
+        Args:
+            steps: The timelapse's tiler (items carry their reveal step), kept beside the plain one.
+
+        Returns:
+            The tiler, or None without a map image.
+        """
+        made = self._vector_made(steps)
+        return made[1] if made is not None else None
+
+    def _vector_made(self, steps: bool = False) -> tuple | None:
+        """Return (versions, tiler, 3D scene features, grid) of the current model, filters and map image, made once.
+
+        Versions, grid and features are read together under the session lock: read apart, a change between them
+        made a tiler of one map image keyed by another's versions (CodeRabbit).
+
+        Args:
+            steps: The timelapse's (items carry their reveal step), kept beside the plain one.
+
+        Returns:
+            The tuple, or None without a map image.
+        """
+        slot = "_vector_steps" if steps else "_vector"
+        key = (self.model_version, self.filter_version, self.terrain_version, self.replay_token if steps else 0)
+        v = getattr(self, slot, None)
+        if v is not None and v[0] == key:
+            return v
+        with self._vector_lock, self._lock:
+            key = (self.model_version, self.filter_version, self.terrain_version, self.replay_token if steps else 0)
+            v = getattr(self, slot, None)
+            if v is not None and v[0] == key:
+                return v
+            g = self.grid
+            if g is None:
+                return None
+            layers = self.vector_layers(g, steps)
+            # the 3D view's icons and models aren't cut into tiles: the page gets them whole (scene_3d), read back
+            # from loaded tiles they were missing zoomed out, came twice at tile edges and were gathered again
+            # after every move (user: lag, popping)
+            scene = {k: layers.pop(k) for k in ("icon_rows", "solids")}
+            scene["paths"] = layers["paths"]
+            dense = max(0, g.zmax - 4)  # icons and labels are not drawn zoomed far out
+            made = (key, VectorTiler(layers, g, min_zoom={"icons": dense}), scene, g)
+            setattr(self, slot, made)
+            return made
+
+    def scene_3d(self, replay: bool = False) -> bytes:
+        """Return the 3D view's icons, paths and models as JSON, whole (what the filters show, in atlas units).
+
+        Built from the same features the vector tiles are cut from, once per model / filter / map image version.
+
+        Args:
+            replay: For the tab playing the timelapse: each item carries the step it appears at.
+
+        Returns:
+            JSON {"icons": [[x, y, id, name, slot, lift, step, node]],
+            "paths": [{"id", "strong", "abyss", "step", "pts"}],
+            "models": [{"rings", "colour", "base", "height" (metres), "ax", "ay", "step", "pick"}]} (step -1: from
+            the start; pick: what a click on it selects, "node:<i>" / "landmark:<i>" / "").
+        """
+        steps = replay and self.replay_steps() is not None
+        made = self._vector_made(steps)  # its own snapshot: the slot can be replaced meanwhile (CodeRabbit)
+        if made is None:
+            return b'{"icons": [], "paths": [], "models": []}'
+        key, _tiler, scene, g = made
+        kept = getattr(self, "_scene", None)
+        if kept is not None and kept[0] == (key, steps):
+            return kept[1]
+
+        def A(p) -> list[float]:  # world px at zmax -> atlas units
+            return [round((p[0] - g.offset) / g.scale + g.x0, 1), round((p[1] - g.offset) / g.scale + g.y0, 1)]
+
+        st = lambda pr: pr.get("step", -1)  # noqa: E731
+        icons = [
+            [*A(f["pts"][0]), f["props"]["id"], f["props"]["name"], float(f["props"]["slot"]), f["props"]["lift"],
+             st(f["props"]), f["props"]["node"]]
+            for f in scene["icon_rows"]
+        ]  # fmt: skip
+        paths = [
+            {"id": f["props"]["id"], "strong": f["props"]["strong"], "abyss": f["props"]["abyss"],
+             "step": st(f["props"]), "pts": [A(p) for p in f["pts"]]}
+            for f in scene["paths"]
+        ]  # fmt: skip
+        models = [
+            {"rings": [[A(p) for p in r] for r in f["rings"]], "colour": f["props"]["colour"],
+             "base": f["props"]["base"], "height": f["props"]["height"], "ax": f["props"]["ax"],
+             "ay": f["props"]["ay"], "step": st(f["props"]), "pick": f["props"].get("pick", "")}
+            for f in scene["solids"]
+        ]  # fmt: skip
+        import json
+
+        data = json.dumps({"icons": icons, "paths": paths, "models": models}, separators=(",", ":")).encode()
+        self._scene = ((key, steps), data)
+        return data
+
+    def vector_layers(self, grid: Grid, steps: bool = False) -> dict[str, list[dict]]:
+        """Build the vector tile features of what the filters show (world px at zmax).
+
+        Args:
+            grid: The map image's grid.
+            steps: Give items their timelapse reveal step (while one is open).
+
+        Returns:
+            Layer name -> features: land, biomes, paths, removed, maps, icons, landmarks, bookmarks, solids.
+        """
+        V, D, fl = self.V, self.D, self._flags()
+        nodes = V["nodes"]
+        W = grid.world_px
+        node_ok = [self.node_shown(n, fl) for n in nodes]
+        potential = D.get("potential", {})
+        rs = self.replay_steps() if steps else None  # the step each item appears at (the page filters)
+
+        def step(kind: str, i: int) -> dict:
+            """Return {"step": s} for an item while replaying, else {}."""
+            if rs is None or i >= len(rs[kind]):
+                return {}
+            return {"step": round(float(rs[kind][i]), 3)}
+
+        L: dict[str, list[dict]] = {k: [] for k in ("land", "biomes", "paths", "removed", "maps", "icons", "icon_rows",
+                                                     "landmarks", "bookmarks", "solids")}  # fmt: skip
+        for i, n in enumerate(nodes):
+            if n["status"] == "removed":
+                if fl["removed"] and not str(n.get("why", "")).startswith("joined"):
+                    L["removed"].append({"kind": "point", "pts": [W(n["x"], n["y"])], "id": i, "props": {"id": i}})
+                continue
+            if not node_ok[i]:
+                continue
+            icons = sorted(set(n.get("icons") or []))
+            pot = potential.get(i)
+            L["maps"].append(
+                {
+                    "kind": "point",
+                    "pts": [W(n["x"], n["y"])],
+                    "id": i,
+                    "props": {
+                        "id": i,
+                        "status": n["status"],
+                        "fill": bgr_hex(icon_col(icons[0])) if icons else "",
+                        "icons": "|" + "|".join(icons) + "|" if icons else "",
+                        "tower": bool(n.get("tower")),
+                        "biome": pot[0] if pot else "",
+                        **step("node", i),
+                    },
+                }
+            )
+        for k, p in enumerate(V["paths"]):
+            if not self.path_shown(p, node_ok, fl):
+                continue
+            a, b = nodes[p["a"]], nodes[p["b"]]
+            line = p.get("line") or [[a["x"], a["y"]], [b["x"], b["y"]]]
+            strong = p.get("seen_in", p["frames"]) >= 2 or bool(p.get("both_ends"))
+            L["paths"].append(
+                {
+                    "kind": "line",
+                    "pts": [W(x, y) for x, y in line],
+                    "id": k,
+                    "props": {
+                        "id": k,
+                        "abyss": bool(p.get("abyss")),
+                        "strong": bool(strong),
+                        **({"step": max(step("node", p["a"])["step"], step("node", p["b"])["step"])} if rs else {}),
+                    },
+                }
+            )
+        pts = D.get("icon_pts")
+        # the 3D view's icons: at their map node, with their place in its row (-2 .. 2 in halves), so the page stands
+        # them upright in a row above the node, as in the game (user: on the ground they shifted oddly and stacked)
+        slot: dict[int, float] = {}
+        rows: dict[int, list[int]] = {}
+        for i, v in D.get("icon_node", {}).items():
+            rows.setdefault(v, []).append(i)
+        for members in rows.values():
+            members.sort(key=lambda i: V["icons"][i]["x"])
+            for k, i in enumerate(members):
+                slot[i] = k - (len(members) - 1) / 2
+        node_of = D.get("icon_node", {})
+        shapes = self._solid_shapes(node_ok)
+        lift = self._model_tops(shapes)
+        for i, ic in enumerate(V["icons"]):
+            if not self.icon_visible(i, fl):
+                continue
+            v = node_of.get(i)
+            at = (nodes[v]["x"], nodes[v]["y"]) if v is not None and v < len(nodes) else (ic["x"], ic["y"])
+            L["icon_rows"].append(
+                {
+                    "kind": "point",
+                    "pts": [W(*at)],
+                    "id": i,
+                    "props": {
+                        "id": i,
+                        "name": ic["name"],
+                        "slot": f"{slot.get(i, 0.0):g}",
+                        # the top of the 3D model under it (pillar, tower, city), atlas units in steps of 10: the
+                        # page stands the icon on top when the models are shown (user: city icons sat inside)
+                        "lift": int(round(lift.get(v, 0.0) / 10) * 10) if v is not None else 0,
+                        "node": -1 if v is None else v,  # (a selected map node rings its icon in 3D)
+                        **step("icon", i),
+                    },
+                }
+            )
+            x, y = pts[i] if pts is not None and i < len(pts) else (ic["x"], ic["y"])
+            L["icons"].append(
+                {
+                    "kind": "point",
+                    "pts": [W(x, y)],
+                    "id": i,
+                    "props": {"id": i, "name": ic["name"], "label": icon_label(ic), **step("icon", i)},
+                }
+            )
+        for i, lm in enumerate(V["landmarks"]):
+            if not self.landmark_shown(i, fl):
+                continue
+            L["landmarks"].append(
+                {
+                    "kind": "point",
+                    "pts": [W(lm["x"], lm["y"])],
+                    "id": i,
+                    "props": {
+                        "id": i,
+                        "kind": lm["kind"],
+                        "name": self.landmark_name(i),
+                        "removed": lm["status"].startswith("removed"),
+                        "locked": i in D.get("locked", ()),
+                        **step("landmark", i),
+                    },
+                }
+            )
+        # (bookmarks: drawn by the page from its bookmark list, so hiding one doesn't make every tile again)
+        # the vector ground: land where screenshots show it, biome areas from the biomes and the influence icons
+        for poly in self._land():
+            L["land"].append({"kind": "polygon", "rings": [[W(x, y) for x, y in r] for r in poly], "props": {}})
+        for kind, polys in biome_polygons(nodes, potential, lambda i: nodes[i].get("icons") or []):
+            for poly in polys:
+                L["biomes"].append(
+                    {"kind": "polygon", "rings": [[W(x, y) for x, y in r] for r in poly], "props": {"kind": kind}}
+                )
+        L["solids"] = self._solids(grid, shapes, rs)
+        return L
+
+    def _land(self) -> list:
+        """Return the land polygons of the map image (webmap.shapes.land_polygons), made once per map image.
+
+        Returns:
+            Polygons in atlas units ([] without a map image).
+        """
+        if self.terrain is None:
+            return []
+        hit = getattr(self, "_land_cache", None)
+        if hit is None or hit[0] != self.terrain_version:
+            canvas, _w, origin = self.terrain
+            hit = self._land_cache = (self.terrain_version, land_polygons(canvas, origin))
+        return hit[1]
+
+    def _solid_shapes(self, node_ok: list[bool]) -> list[dict]:
+        """The 3D view's extruded shapes (webmap.solids) in atlas units, each with its anchor and pick.
+
+        Args:
+            node_ok: node_shown of every map node.
+
+        Returns:
+            Shapes ("rings", "base", "top", "colour", "anchor", "pick": ("node" | "landmark", index)).
+        """
+        V, D = self.V, self.D
+        nodes = V["nodes"]
+        fl = self._flags()
+        shapes = []
+        for i, nd in enumerate(nodes):
+            if not node_ok[i]:
+                continue
+            icons = sorted(set(nd.get("icons") or []))
+            colour = bgr_hex(icon_col(icons[0])) if icons else "#9aa0a8"
+            shapes += [
+                dict(sh, anchor=(nd["x"], nd["y"]), pick=("node", i))
+                for sh in map_pillar(nd["x"], nd["y"], icons, colour, i)
+            ]
+        ct, locked = D.get("city_type", {}), D.get("locked", set())
+        # every Tower landmark, shown or not: a map node at one is that tower (hidden by "near only", its map node
+        # drew a tower of its own in its place: CodeRabbit)
+        towers = [
+            (lm["x"], lm["y"])
+            for lm in V["landmarks"]
+            if lm["kind"] == "Tower" and not str(lm.get("status", "")).startswith("removed")
+        ]
+        for k, lm in enumerate(V["landmarks"]):
+            if str(lm.get("status", "")).startswith("removed"):
+                continue
+            if not self.landmark_shown(k, fl):  # hidden type (e.g. Tower): no model either (CodeRabbit)
+                continue
+            # a click on it selects the map node it marks (its city, hall, tower or boss map: user), else itself
+            v = D.get("landmark_node", {}).get(k)
+            pick = ("node", v) if v is not None else ("landmark", k)
+            shapes += [
+                dict(sh, anchor=(lm["x"], lm["y"]), pick=pick)
+                for sh in structure(lm["kind"], lm["x"], lm["y"], ct.get(k, ("", ""))[0], k in locked)
+            ]
+        for i, nd in enumerate(nodes):  # map nodes marked as towers with no Tower landmark: a tower too
+            if (
+                node_ok[i]
+                and "Tower" not in fl["hidden"]  # (hiding towers hid the landmark, then this one showed)
+                and nd.get("tower")
+                and all(math.hypot(nd["x"] - tx, nd["y"] - ty) > WEBMAP_TOWER_SAME for tx, ty in towers)
+            ):
+                shapes += [
+                    dict(sh, anchor=(nd["x"], nd["y"]), pick=("node", i)) for sh in structure("Tower", nd["x"], nd["y"])
+                ]
+        return shapes
+
+    def _solids(self, grid: Grid, shapes: list[dict], rs: dict | None = None) -> list[dict]:
+        """Turn the 3D view's shapes (_solid_shapes) into features with heights in the metres MapLibre extrudes by.
+
+        MapLibre extrudes in metres and a Mercator metre is smaller the further from the equator, so each shape's
+        heights are turned into metres at its own latitude: the models keep their proportions in atlas units.
+
+        Args:
+            grid: The map image's grid.
+            shapes: The shapes.
+            rs: The timelapse's steps (replay_steps), or None: each model then carries the step it appears at (the
+                models stood from the start).
+
+        Returns:
+            Polygon features (props colour, base and height in metres, node for map pillars).
+        """
+        out = []
+        for sh in shapes:
+            lat = math.radians(grid.lnglat(*sh["rings"][0][0])[1])
+            metres = 40075016.686 * math.cos(lat) / grid.world * grid.scale  # metres per atlas unit there
+            props = {
+                "colour": sh["colour"],
+                "base": round(sh["base"] * metres, 2),
+                "height": round(sh["top"] * metres, 2),
+            }
+            if "node" in sh:
+                props["node"] = sh["node"]
+            kind, idx = sh.get("pick", ("", -1))
+            if kind:
+                props["pick"] = f"{kind}:{idx}"
+                if rs is not None and idx < len(rs[kind]):
+                    props["step"] = round(float(rs[kind][idx]), 3)
+            # the structure's centre (atlas units): the page's own 3D layer sizes a model around it
+            ax, ay = sh.get("anchor", sh["rings"][0][0])
+            props["ax"], props["ay"] = round(float(ax), 1), round(float(ay), 1)
+            out.append(
+                {"kind": "polygon", "rings": [[grid.world_px(x, y) for x, y in r] for r in sh["rings"]], "props": props}
+            )
+        return out
+
+
+def _end_process(proc: subprocess.Popen) -> None:
+    """Stop a child process that won't be used, and release its pipe (left open, CodeRabbit)."""
+    proc.terminate()
+    if proc.stdout is not None:
+        proc.stdout.close()
+    try:
+        proc.wait(timeout=5)
+    except subprocess.TimeoutExpired:
+        proc.kill()

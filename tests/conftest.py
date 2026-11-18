@@ -1,7 +1,6 @@
 """Shared pytest setup for the tests: options, markers and fixtures used by several test modules.
 
     pytest                                   offline tests + those with test data (skipped without it)
-    pytest -m gui                            the viewer window test (needs a desktop)
     pytest -m slow                           the long ones (waiting islands, ~10 min)
     pytest -m ""                             everything
     pytest tests/test_drop_placement.py --runs 20 --seed 123      randomised tests: more runs / a fixed seed
@@ -53,6 +52,16 @@ def pytest_collection_modifyitems(config, items):
 
 
 # ------------------------------------------------------------------ fixtures
+@pytest.fixture(autouse=True)
+def app_settings(tmp_path, monkeypatch) -> Path:
+    """Every test keeps the app's settings in its own folder: the player's own settings are never touched."""
+    from grand_project.app import settings
+
+    f = tmp_path / "app_settings.json"
+    monkeypatch.setattr(settings, "SETTINGS", f)
+    return f
+
+
 @pytest.fixture(scope="session")
 def test_data() -> Path:
     """The test data folder (paths.TEST_DATA: local_paths.json, ATLAS_TEST_DATA or ./atlas_test_data)."""

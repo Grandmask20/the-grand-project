@@ -33,6 +33,7 @@ DUP_TOL = 26.0  # atlas units: one map found at two spots by different screensho
 SAME_SPOT = 14.0  # badges this close on one map are one badge
 
 
+ICON_LOOSE_SAME = 60.0  # a loose badge this close (its base) to a kept map with the same badge: the same badge
 ICON_TWIN = 40.0  # a map placed from a badge this close to a found map with the same badge: one map
 
 

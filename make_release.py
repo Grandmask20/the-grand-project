@@ -6,8 +6,9 @@
     py make_release.py --db       first refresh references/atlas_references.sqlite3 from the private database
                                   (keeps only badge_refs + detector_models: nothing from anyone's atlas)
 
-The player build has the program, the reference files, the launchers, LICENSE and README, and only the model
-safety test: no dev tests, tools, test data, Makefile or debug tools (channel.txt = "release").
+The player build has the program, the reference files, the launchers, LICENSE and README, the app's page built
+(frontend/dist: players need no Node.js) and only the model safety test: no dev tests, tools, test data, Makefile,
+page sources or debug tools (channel.txt = "release").
 """
 
 from __future__ import annotations
@@ -35,6 +36,7 @@ FILES = (
     "start.sh",
 )
 TESTS = ("tests/__init__.py", "tests/test_model_safety.py")
+PAGE = HERE / "frontend"  # the app's page (React); built into frontend/dist, which the release ships
 KEEP_TABLES = ("badge_refs", "detector_models")
 
 GITIGNORE = """__pycache__/
@@ -133,18 +135,40 @@ def tracked(rel: str) -> list[str]:
     return [f for f in git("ls-files", rel, cwd=HERE).splitlines() if f]
 
 
+def build_page() -> None:
+    """Build the app's page (npm install, then npm run build: type check, then Vite) into frontend/dist."""
+    npm = shutil.which("npm")
+    if npm is None:
+        raise SystemExit("npm was not found: install Node.js 20+ to build the app's page")
+    for args in (["install", "--no-audit", "--no-fund"], ["run", "build"]):
+        r = subprocess.run([npm, *args], cwd=PAGE)
+        if r.returncode:
+            raise SystemExit(f"npm {' '.join(args)} failed in {PAGE}")
+
+
+def page_files() -> list[str]:
+    """the built page's files (frontend/dist), relative to this folder"""
+    dist = PAGE / "dist"
+    return [p.relative_to(HERE).as_posix() for p in sorted(dist.rglob("*")) if p.is_file()]
+
+
 def build() -> list[str]:
     files = []
     for t in TREES:
         files += tracked(t)
     files += [f for f in FILES + TESTS if (HERE / f).exists()]
+    files += page_files()
     return sorted(files)
 
 
 def main() -> int:
     if "--db" in sys.argv:
         refresh_db()
+    if "--check" not in sys.argv:
+        build_page()
     files = build()
+    if not any(f.startswith("frontend/dist/") for f in files):
+        print("note: the page is not built (frontend/dist): the release would have no page")
     if "--check" in sys.argv:
         print("\n".join(files))
         print(f"{len(files)} files + README.md, .gitignore, .gitattributes, channel.txt, CI (release v{version()})")

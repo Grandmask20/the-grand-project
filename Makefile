@@ -1,5 +1,5 @@
 ########## PROJECT RECIPES ##########
-.PHONY: install lint test test_all evaluate_detector pr_precheck
+.PHONY: install lint test test_all evaluate_detector pr_precheck page page_test
 
 # GNU Make exposes OS=Windows_NT on Windows. On Unix-like systems, uname
 # distinguishes macOS (Darwin) from Linux; both use the same venv layout.
@@ -31,7 +31,7 @@ lint:
 	$(RUFF) format grand_project tools tests --config pyproject.toml
 	$(RUFF) clean
 
-# the tests (pytest; markers in pyproject.toml): offline + test-data ones + the viewer window, not the slow ones
+# the tests (pytest; markers in pyproject.toml): offline + test-data ones, not the slow ones
 test:
 	@echo Running tests on $(PLATFORM) with $(PYTHON)
 	$(PYTHON) -m pytest -m "not slow"
@@ -39,6 +39,13 @@ test:
 # every test, the ~10 minute waiting-islands test too
 test_all:
 	$(PYTHON) -m pytest -m ""
+
+# the app's page (frontend/, needs Node.js 20+): install, then lint, type check, test and build it into frontend/dist
+page:
+	cd frontend && npm install --no-audit --no-fund && npm run build
+
+page_test:
+	cd frontend && npm run lint && npm run typecheck && npm test
 
 # score the detector on the hand-labelled screenshots (needs the full test data; takes ~15 min).
 # Put the numbers from before and after a detector change in the pull request.

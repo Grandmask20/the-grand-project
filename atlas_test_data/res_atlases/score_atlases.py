@@ -56,8 +56,12 @@ def _import():
     have been scored instead): the repo this folder sits in (atlas_test_data/res_atlases), else the current folder.
     """
     sys.path.insert(0, str(program_root()))
+    try:
+        from grand_project.app.model import view_model  # the web app's (the viewer package is gone: CodeRabbit)
+    except ImportError:
+        from grand_project.viewer.model import view_model  # a checkout from before the web app
+
     from grand_project import core
-    from grand_project.viewer.model import view_model
 
     return core, view_model
 

@@ -10,3 +10,6 @@ local_paths.json
 atlas_test_data/detect_pairs_out/
 *.egg-info
 .ruff_cache/
+frontend/node_modules/
+frontend/dist/
+frontend/coverage/

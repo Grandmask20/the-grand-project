@@ -10,7 +10,7 @@ City types
     are known gets the type that is left ("trio"). Otherwise it takes the type of the most alike
     labelled city in city_refs.npz (colour + edge-direction look of the ground around the city,
     "look-alike"). Faridun is easy to tell by its sand; Vaal vs Ezomyte by look alone is weak, so
-    the trio rule and hand-set types (atlas.city_types, right-click in the viewer) win over it.
+    the trio rule and hand-set types (atlas.city_types, right-click on the map) win over it.
 
 Potential maps
     Maps within a few path steps of a City or a Breach stronghold may take on its biome.
@@ -935,3 +935,96 @@ def near_city(
             if w not in out and w not in blocked:
                 out[w] = (lab, 1)
     return out
+
+
+def biomes(atlas, V: dict, ground=None) -> dict:
+    """Work out the city / stronghold biomes of an atlas (the app's model and map use it).
+
+    In order (as the old window did: add_locks, rebuild_cities, apply_biome_edits): locked Breach
+    strongholds from the hand icons, city types, the maps each City or unlocked stronghold may cover, then the
+    biomes drawn by hand on top.
+
+    Args:
+        atlas: The atlas.
+        V: Its view model (app.model.view_model); not changed.
+        ground: ground_sampler of the map image, or None (biomes then ignore the look of the ground).
+
+    Returns:
+        {"potential": map node index -> (biome label, steps), "landmarks": the landmarks with a stronghold added for
+        each hand icon that had none, "locked": indices of locked strongholds in those landmarks, "city_type":
+        landmark index -> (type, how), "blocked": map node index -> why it is not a city map, "icon_node": icon
+        index -> its map node index, "near_city": map node index -> (biome label, steps) for maps on / next to a
+        city biome}.
+    """
+    import math
+
+    L = list(V["landmarks"])
+    locked: set[int] = set()
+    for k in getattr(atlas, "locks", []) or []:
+        if any(
+            math.hypot(e["x"] - k["x"], e["y"] - k["y"]) < 300 and e["kind"] != "Breach stronghold"
+            for e in atlas.landmark_edits
+        ):
+            continue  # the user deleted / changed it: leave it
+        near = [
+            (math.hypot(lm["x"] - k["x"], lm["y"] - k["y"]), i)
+            for i, lm in enumerate(L)
+            if lm["kind"] == "Breach stronghold" and not lm["status"].startswith("removed")
+        ]
+        d, i = min(near) if near else (1e9, -1)
+        if d < 300:
+            locked.add(i)
+        else:
+            L.append(
+                {
+                    "kind": "Breach stronghold",
+                    "x": k["x"],
+                    "y": k["y"],
+                    "n": k["n"],
+                    "could": k["n"],
+                    "conf": 1.0,
+                    "source": "hand badge",
+                    "status": "kept",
+                }
+            )
+            locked.add(len(L) - 1)
+    alive = [i for i, lm in enumerate(L) if not lm["status"].startswith("removed")]
+    cities = [i for i in alive if L[i]["kind"] == "City"]
+    city_type = {}
+    if cities:
+        res = city_types(atlas, [L[i] for i in cities])
+        city_type = {i: r for i, r in zip(cities, res, strict=False) if r[0]}
+    src = [(L[i]["x"], L[i]["y"], f"{city_type[i][0]} city" if i in city_type else "City") for i in cities]
+    src += [
+        (L[i]["x"], L[i]["y"], "Breach stronghold")
+        for i in alive  # locked ones show no maps
+        if L[i]["kind"] == "Breach stronghold" and i not in locked
+    ]
+    icon_node = icon_maps(V["nodes"], V["icons"])
+    live = [L[i] for i in alive if i not in locked] + [L[i] for i in locked]
+    blocked = blocked_maps(V["nodes"], V["icons"], live, icon_node)
+    potential = potential_maps(V["nodes"], V["paths"], src, ground=ground, blocked=blocked) if src else {}
+    edits = getattr(atlas, "biome_edits", []) or []
+    if edits and V["nodes"]:  # the hand-drawn biomes win: each stored map position -> the map node within 20 units
+        from scipy.spatial import cKDTree
+
+        tree = cKDTree(np.array([[n["x"], n["y"]] for n in V["nodes"]], float))
+        for e in edits:
+            for q in e["maps"]:
+                d, i = tree.query(q)
+                if d > 20:
+                    continue
+                if e["biome"]:
+                    potential[int(i)] = (e["biome"], 0)
+                else:
+                    potential.pop(int(i), None)
+    near = near_city(V["nodes"], V["paths"], potential, blocked)
+    return {
+        "potential": potential,
+        "landmarks": L,
+        "locked": locked,
+        "city_type": city_type,
+        "blocked": blocked,
+        "icon_node": icon_node,
+        "near_city": near,
+    }

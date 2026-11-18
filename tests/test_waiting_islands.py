@@ -1,4 +1,4 @@
-"""Waiting screenshots that form islands, fed through the viewer's own auto-add (AutoAddMixin) on known
+"""Waiting screenshots that form islands, fed through the app's own auto-add (AddingMixin) on known
 positions from a finished atlas (the crawl atlas). Every screenshot is detected again as a new
 one (--cached reuses the saved detections: quick).
 
@@ -17,7 +17,7 @@ other side there):
 from __future__ import annotations
 
 import hashlib
-import queue
+import itertools
 import shutil
 
 import numpy as np
@@ -26,7 +26,8 @@ from scipy.spatial import cKDTree
 
 from grand_project import builder as B
 from grand_project import core as C
-from grand_project.viewer.autoadd import AutoAddMixin
+from grand_project.app.adding import AddingMixin
+from grand_project.app.events import Events
 
 pytestmark = [pytest.mark.data, pytest.mark.slow]
 LINK_SHARE = 0.45  # shots inside one chain / island overlap at least this much (screen boxes)
@@ -34,24 +35,26 @@ STRONG = 10  # maps a bridge shares with each side
 TOL = 12.0  # atlas units: placement vs the finished atlas (relative to the main chain)
 
 
-class Feeder(AutoAddMixin):
-    """just enough of the viewer to run its auto-add placement without a window"""
+class Feeder(AddingMixin):
+    """just enough of the app's session to run its auto-add placement"""
 
     def __init__(self):
         self.atlas = C.Atlas()
+        self.events = Events()
         self._pending_watch = []
-        self._q = queue.Queue()
+        self._wait_tries = {}
+        self._pictures, self._picture_ids = {}, itertools.count(1)  # the weak-match previews
         self.asked = []
         self.log = []
 
-    def _ask(self, question: str, preview=None) -> bool:  # the viewer would ask; the test answers yes, counts it
+    def _ask(self, question: str, preview=None) -> bool:  # the app would ask the page; the test answers yes
         self.asked.append(question)
         return True
 
     def feed(self, frames):
+        n = len(self.events.log_lines)
         r = self._place_watched(list(frames))
-        while not self._q.empty():
-            self.log.append(str(self._q.get()[1]))
+        self.log += [line.split("  ", 1)[-1] for line in list(self.events.log_lines)[n:]]  # without the time
         return r
 
 

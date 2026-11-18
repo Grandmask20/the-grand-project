@@ -98,7 +98,22 @@ class Atlas:
         self.locks: list[dict] = []  # {x,y,n} hand badges = locked Breach strongholds
         self.lock_scanned: list[str] = []  # screenshots already searched for the hand badge
         self.frames: list[dict] = []  # {name,path,sha,w,h,M,stats}
-        self._images: dict[str, np.ndarray] = {}
+        self._images: dict[str, np.ndarray] = {}  # (not pickled: __getstate__)
+
+    def __getstate__(self) -> dict:
+        """Pickle without the decoded screenshot cache (up to IMAGE_CACHE pictures, ~6 MB each).
+
+        Fix seams pickles the atlas as its process's input under the session lock: the cache made that write
+        long and held everyone else up (CodeRabbit).
+        """
+        state = self.__dict__.copy()
+        state["_images"] = {}
+        return state
+
+    def __setstate__(self, state: dict) -> None:
+        """Restore a pickled atlas (its screenshot cache empty)."""
+        self.__dict__.update(state)
+        self.__dict__.setdefault("_images", {})
 
     # -------- image access
     IMAGE_CACHE = 90  # decoded screenshots kept in memory (~6 MB each; a terrain
@@ -707,6 +722,22 @@ class Atlas:
                 self._merge_icons(fr, np.array(f["M"], float))
 
     # -------- export
+    def terrain_key(self) -> str:
+        """Return the key of the stitched map image: a hash of every screenshot's name and placement.
+
+        A cached map image (map_image_files) is used only when its key matches; the viewer and the web map share it.
+
+        Returns:
+            The hex digest.
+        """
+        import hashlib
+
+        h = hashlib.sha1()
+        for f in self.frames:
+            h.update(f["name"].encode())
+            h.update(np.round(np.array(f["M"], float), 2).tobytes())
+        return h.hexdigest()
+
     def to_json(self) -> dict:
         """Return the atlas as the dict saved in atlas.json.
 

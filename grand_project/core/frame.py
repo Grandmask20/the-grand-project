@@ -175,6 +175,21 @@ def atlas_files(atlas_path) -> Path:
     return d
 
 
+def map_image_files(atlas_path) -> tuple[Path, Path]:
+    """Return the cache files of an atlas's stitched map image (written and read by the app).
+
+    Args:
+        atlas_path: Path of the atlas .json file.
+
+    Returns:
+        (<stem>_terrain.png, <stem>_terrain.npz) in the atlas's files folder: the picture, and its key, origin,
+        weight and (after Fix seams) ownership labels.
+    """
+    p = Path(atlas_path)
+    d = atlas_files(p)
+    return d / (p.stem + "_terrain.png"), d / (p.stem + "_terrain.npz")
+
+
 def png_bytes(img: np.ndarray, what: str = "output") -> bytes:
     """Encode an image as PNG with the program's text tag (GENERATED_TAG: what) right after the header.
 
