@@ -13,14 +13,16 @@ import { defineConfig, devices } from "@playwright/test";
 process.env.E2E_PORT ??= String(20000 + Math.floor(Math.random() * 20000));
 const PORT = Number(process.env.E2E_PORT);
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
-// tests/e2e_atlas.py empties it and makes the atlas (not here: this file is read again in every worker)
+// tests/e2e_atlas.py empties it and makes the atlas and the screenshots to add (not here: this file is read again in
+// every worker); the specs find it in E2E_RUN
 const work = resolve(root, "e2e-run");
+process.env.E2E_RUN = work;
 const python = process.env.PYTHON ?? "python3";
 const app = process.env.E2E_COVERAGE ? `${python} -m coverage run -m grand_project` : `${python} -m grand_project`;
 
 export default defineConfig({
 	testDir: "e2e",
-	timeout: 60_000,
+	timeout: 180_000, // adding screenshots: detection takes a while on CI's few cores
 	expect: { timeout: 15_000 },
 	fullyParallel: false,
 	workers: 1, // one app, one atlas: the tests follow each other

@@ -107,12 +107,27 @@ jobs:
           if-no-files-found: ignore
 
   # the real app in a browser (the Tk viewer test's successor): the built page against the app on a hand-made atlas,
-  # driven by Playwright; the app runs under coverage, the page's screenshots are kept
+  # driven by Playwright, screenshots added while the page is used (made-up ones, and real ones from the test data:
+  # the detection's worker processes, the job queue and auto-add beside the page); the app runs under coverage, the
+  # page's screenshots are kept
   e2e:
+    needs: testdata
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 40
     steps:
       - uses: actions/checkout@v4
+      - name: list the test data files
+        run: git lfs ls-files -l -I "atlas_test_data/**" | cut -d' ' -f1 | sort > .lfs-testdata-id
+      - uses: actions/cache/restore@v4
+        with:
+          path: .git/lfs/objects
+          key: lfs-testdata-${{ hashFiles('.lfs-testdata-id') }}
+          enableCrossOsArchive: true
+          fail-on-cache-miss: true
+      - name: put the test data in place
+        run: |
+          git lfs install --local
+          git lfs checkout atlas_test_data
       - uses: actions/setup-python@v5
         with:
           python-version: "3.13"
