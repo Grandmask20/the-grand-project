@@ -42,7 +42,8 @@ README's developer section). `tools/` are developer helpers, `tests/` regression
 - **Imports and running**: always `python -m package.module` (tests: `pytest tests/test_x.py`, tools:
   `python -m tools.x`). No `sys.path` hacks. Subpackage `__init__.py` files re-export names explicitly.
 - **Lint before every commit**: `ruff check grand_project tools tests` and `ruff format grand_project tools tests`
-  (line length 120; CI fails on unformatted code). `make lint` runs both.
+  (line length 120; CI fails on unformatted code). `make lint` runs both. Page changes: `npm run lint`,
+  `npm run typecheck`, `npm test` and `npm run build` in `frontend/`.
 - **Cross-platform**: no Windows-only APIs; paths with `pathlib`; launchers exist for both `.bat` and `.sh`.
 - **Screenshots** are read with `core.read_screenshot` (scales 1440p / 4K whole game windows to 1080p); training
   and reference images are not.
@@ -55,18 +56,27 @@ README's developer section). `tools/` are developer helpers, `tests/` regression
   (`python -m grand_project.core.seams ...`), not a thread and not `multiprocessing` (spawn re-runs the caller's
   main script). Anything that changes what the map's tiles hold bumps a version (model, map image, filters): tile
   URLs carry it, so the browser keeps tiles until they really change.
+- **The open atlas is one record** (`session.opened`: atlas, path, generation, log scope), swapped only in
+  `AtlasSession._switch`. Work that outlives a request takes the record once when it starts, uses its parts (never
+  `self.atlas` / `self.generation` read again later), checks `owns(record)` under the lock before applying a result,
+  and logs with the record's scope. A check and the claim it guards go in one locked step (a "running" flag set and
+  cleared under the same lock as the result). Changes made for an atlas no longer open raise `StaleAtlas` (409).
 - **Page** (`frontend/`): the structure of a shadcn/ui + TanStack Query app (`api/`, `domain/`, `hooks/`, `store/`,
   `logic/`, `components/`, `pages/`; PascalCase files). Server data through TanStack Query hooks (the app's events
   invalidate them), page-only state in the Zustand store, MapLibre work in `components/map/` and `logic/`. Biome
   formats it (tabs, line width 120); one test file per component / module in `__tests__/`. No new dependencies
-  without a reason.
+  without a reason. Every answer carries the atlas generation (`X-Atlas-Gen`); `api/Http.ts` drops stale ones, and
+  page work that spans an await (exports, a question after a load) checks `sameAtlas()` again after it. The 3D
+  view's WebGL layers (`logic/*Layer3D.ts`) pick through `logic/PickPass.ts` and stack by `logic/Layers3D.ts`;
+  ids and steps are worked out in the vertex shader (fragment shaders may be 16-bit).
 - **Comments** explain why, in plain words; user rules are marked as such ("user's rule").
 
 ## Tests
 
 pytest, from the program folder. `pytest` alone runs the offline tests and the ones that need the test screenshots
 (those skip themselves without the Git LFS data: marker `data`); `pytest -m slow` runs the waiting-islands test
-(~10 minutes), `pytest -m ""` everything. The page: `npm test` in `frontend/` (Vitest). Randomised tests
+(~10 minutes), `pytest -m ""` everything. The page: `npm test` in `frontend/` (Vitest; a test module can't import
+`maplibre-gl`, so keep testable logic in modules without it). Randomised tests
 take `--runs N --seed S` and print their seed. Shared fixtures and helpers live in `tests/conftest.py` (test data
 paths, the crawl atlas, `check` for scenario tests that report every failed check, `copy_cache`, `seed` / `rng`);
 use them instead of module-level setup, and `tmp_path` instead of temporary folders made by hand. Detector changes:

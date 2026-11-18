@@ -104,6 +104,7 @@ class MapImageMixin:
         """Start with no map image."""
         self._tiles = _LRU(TILE_CACHE)
         self._seams_proc = None
+        self._seams_starting = False  # Fix seams claimed, its process not registered yet
         self._seams_stopped = False
         self._terrain_job = 0
         self.filter_version = 0
@@ -380,26 +381,38 @@ class MapImageMixin:
         """
         if not self.atlas or not self.atlas.frames:
             raise ValueError("no screenshots in this atlas")
-        if self.seams_running():
-            raise ValueError("Fix seams is already running")
-        tmp = Path(tempfile.mkdtemp(prefix="grand_seams_"))
-        src, out, err = tmp / "atlas.pkl", tmp / "clean.npz", tmp / "errors.txt"
-        with self._lock:  # its input and its atlas generation together (CodeRabbit)
+        with self._lock:
+            # the check and the claim in one step: two quick clicks both passed the check and started two
+            # processes, the first one then out of stop_seams' reach (CodeRabbit)
+            if self.seams_running():
+                raise ValueError("Fix seams is already running")
+            self._seams_starting = True
+            tmp = Path(tempfile.mkdtemp(prefix="grand_seams_"))
+            src, out, err = tmp / "atlas.pkl", tmp / "clean.npz", tmp / "errors.txt"
+            # its input and its atlas generation together (CodeRabbit); the atlas pickles without its decoded
+            # screenshot cache (core.Atlas.__getstate__), so the lock is held only briefly
             src.write_bytes(pickle.dumps(self.atlas))
             gen, scope = self.opened.gen, self.opened.scope
         root = Path(__file__).resolve().parents[2]  # the folder holding the grand_project package
-        with open(err, "w", encoding="utf-8") as errf:
-            proc = subprocess.Popen(
-                [sys.executable, "-m", "grand_project.core.seams", str(src), str(out), str(TERRAIN_PIXELS)],
-                cwd=str(root),
-                stdout=subprocess.PIPE,
-                stderr=errf,
-                text=True,
-                creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0) if os.name == "nt" else 0,
-            )
+        try:
+            with open(err, "w", encoding="utf-8") as errf:
+                proc = subprocess.Popen(
+                    [sys.executable, "-m", "grand_project.core.seams", str(src), str(out), str(TERRAIN_PIXELS)],
+                    cwd=str(root),
+                    stdout=subprocess.PIPE,
+                    stderr=errf,
+                    text=True,
+                    creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0) if os.name == "nt" else 0,
+                )
+        except Exception:
+            with self._lock:
+                self._seams_starting = False
+            shutil.rmtree(tmp, ignore_errors=True)
+            raise
         with self._lock:
+            self._seams_starting = False
             if not self.owns(gen):  # another atlas opened while it started: never registered for that one
-                proc.terminate()
+                _end_process(proc)
                 shutil.rmtree(tmp, ignore_errors=True)
                 return
             self._seams_proc, self._seams_stopped, self._seams_busy = proc, False, True
@@ -445,6 +458,8 @@ class MapImageMixin:
         Returns:
             True while its process runs.
         """
+        if getattr(self, "_seams_starting", False):  # claimed, its process starting
+            return True
         p = self._seams_proc
         # also while its watcher still applies the result after the process ended (CodeRabbit)
         return p is not None and (p.poll() is None or getattr(self, "_seams_busy", False))
@@ -1053,3 +1068,14 @@ class MapImageMixin:
                 {"kind": "polygon", "rings": [[grid.world_px(x, y) for x, y in r] for r in sh["rings"]], "props": props}
             )
         return out
+
+
+def _end_process(proc: subprocess.Popen) -> None:
+    """Stop a child process that won't be used, and release its pipe (left open, CodeRabbit)."""
+    proc.terminate()
+    if proc.stdout is not None:
+        proc.stdout.close()
+    try:
+        proc.wait(timeout=5)
+    except subprocess.TimeoutExpired:
+        proc.kill()

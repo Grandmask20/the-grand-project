@@ -5,7 +5,18 @@
  */
 export function ancestors(path: string): { name: string; path: string }[] {
 	if (!path || path === "drives") return [];
-	const sep = path.includes("\\") ? "\\" : "/";
+	// Windows by its root (a drive or a share), POSIX by "/": a backslash is an ordinary character in a POSIX folder
+	// name (it was taken for the separator: CodeRabbit)
+	const windows = /^[A-Za-z]:/.test(path) || path.startsWith("\\\\");
+	const sep = windows
+		? path.includes("\\")
+			? "\\"
+			: "/"
+		: path.startsWith("/")
+			? "/"
+			: path.includes("\\")
+				? "\\"
+				: "/";
 	let root: string;
 	let rest: string;
 	const share = sep === "\\" ? /^\\\\[^\\]+\\[^\\]+\\?/.exec(path) : null;

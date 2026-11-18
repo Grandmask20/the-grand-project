@@ -3,6 +3,7 @@
 import json
 import threading
 import urllib.request
+from pathlib import Path
 from types import SimpleNamespace
 
 import cv2
@@ -268,3 +269,85 @@ def test_a_locked_stronghold_marks_no_map_node():
     lms = [{"x": 20.0, "y": 0.0, "kind": "Breach stronghold", "status": "kept"}]
     assert landmark_nodes(nodes, lms) == {0: 0}
     assert landmark_nodes(nodes, lms, {0}) == {}
+
+
+def test_a_screenshot_gone_before_handing_over_leaves_the_others_unmarked(session, monkeypatch, tmp_path):
+    keep = session.path.parent / "2694940_20250101120000_1.png"
+    gone = session.path.parent / "2694940_20250101120001_1.png"
+    for f in (keep, gone):
+        f.write_bytes(b"x" * 100)
+    session._watch_on, session._watch_seen = True, {}
+    handed = []
+    monkeypatch.setattr(session, "add_screenshots", lambda paths, **kw: handed.extend(paths))
+    session.poll_watch()  # sizes noted
+    real = session._watch_files
+    monkeypatch.setattr(session, "_watch_files", lambda: (gone.unlink(), real())[1] | {str(gone): 100})
+    session.poll_watch()  # the folder still lists it; deleted before the sort (the sort raised, both stayed marked)
+    assert keep in handed
+    session._watch_on = False
+
+
+def test_fix_seams_is_claimed_before_its_process_starts(session, monkeypatch):
+    started = []
+
+    class Proc:
+        stdout = iter(())
+        returncode = 0
+
+        def poll(self):
+            return None
+
+        def wait(self, timeout=None):
+            return 0
+
+        def terminate(self):
+            pass
+
+    def popen(*a, **kw):
+        started.append(1)
+        assert session.seams_running()  # claimed already: a second click is refused from here
+        with pytest.raises(ValueError, match="already running"):
+            session.fix_seams()
+        return Proc()
+
+    monkeypatch.setattr("grand_project.app.mapimage.subprocess.Popen", popen)
+    monkeypatch.setattr(
+        "grand_project.app.mapimage.threading.Thread", lambda target, daemon: SimpleNamespace(start=lambda: None)
+    )
+    session.fix_seams()
+    assert started == [1] and session._seams_proc is not None
+
+
+def test_an_atlas_pickles_without_its_screenshot_cache(session):
+    import pickle
+
+    session.atlas._images["x.png"] = np.zeros((1080, 1920, 3), np.uint8)
+    copy = pickle.loads(pickle.dumps(session.atlas))
+    assert copy._images == {} and len(copy.frames) == len(session.atlas.frames)
+
+
+def test_forgetting_a_closed_atlas_doesnt_bring_it_back(session):
+    p = session.path
+    session.close()
+    assert session.settings.get("last_atlas") == str(p)
+    session.forget_atlas(str(p))
+    assert "last_atlas" not in session.settings
+    assert not any(Path(a["json"]).resolve() == p.resolve() for a in session.atlases_payload())
+
+
+def test_the_stronghold_search_releases_its_flag_with_its_result(session, monkeypatch):
+    flags = []
+    real = type(session.atlas).save
+
+    def save(atlas, path):
+        flags.append(session._lock_job)  # still claimed while the searched list is saved
+        real(atlas, path)
+
+    monkeypatch.setattr(type(session.atlas), "save", save)
+    monkeypatch.setattr(
+        "grand_project.app.edits.threading.Thread", lambda target, daemon: SimpleNamespace(start=target)
+    )
+    monkeypatch.setattr(type(session), "rebuild_model", lambda self: None)
+    session.atlas.lock_scanned = []
+    session.scan_locks()
+    assert flags and flags[0] is True and session._lock_job is False

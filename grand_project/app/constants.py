@@ -344,6 +344,7 @@ REPLAY_FOG_RES = 512  # timelapse: the "revealed yet" grid has this many cells o
 
 
 ICON_DRAW_REV = 3  # bump when icon_picture draws differently: the page's picture URLs carry it (icon_art_version)
+ICON_ART_RECHECK = 2.0  # s: the icon art version (file times) is read again at most this often
 ICON_CROP_RIM = 13.5  # px: the rim's outer edge from the centre of a taught on-screen icon crop (34 px at 1080p; the
 # detector's rim reaches 12.5, detect ICON_RIM_R): the crop is cut there so it is drawn as big as the game's art
 ICON_ART_INNER = 0.72  # share of an icon's radius inside its rim (the game's Map Boss icon): poe2db's inner art goes

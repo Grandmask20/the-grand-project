@@ -179,22 +179,25 @@ class EditsMixin:
 
         def work():
             """Find the hand badges, keep them in the atlas and rebuild the model (background thread)."""
+            found = None
             try:
                 found = atlas_cities.find_locks(atlas, todo)
             except Exception as e:
                 LOG.exception("locked stronghold search failed")
                 self.events.log(f"locked stronghold search failed: {e}", scope)
-                found = None
-            finally:
-                self._lock_job = False
             with self._lock:
-                # another atlas opened meanwhile: its file is not this one's (user, CodeRabbit)
-                stale = not self.owns(gen)
-                if found is not None and not stale:
-                    atlas.locks = atlas_cities.merge_locks(atlas.locks, found)
-                    atlas.lock_scanned = sorted(set(atlas.lock_scanned) | {f["name"] for f in todo})
-                    if self.path:
-                        atlas.save(self.path)
+                try:
+                    # another atlas opened meanwhile: its file is not this one's (user, CodeRabbit)
+                    stale = not self.owns(gen)
+                    if found is not None and not stale:
+                        atlas.locks = atlas_cities.merge_locks(atlas.locks, found)
+                        atlas.lock_scanned = sorted(set(atlas.lock_scanned) | {f["name"] for f in todo})
+                        if self.path:
+                            atlas.save(self.path)
+                finally:
+                    # released with the result, in one step: released before it, a second search took the same
+                    # screenshots from the old searched list (CodeRabbit)
+                    self._lock_job = False
             if stale:
                 self.scan_locks()  # the one open now (its own search was skipped while this one ran)
                 return

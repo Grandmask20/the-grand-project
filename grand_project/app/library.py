@@ -332,6 +332,9 @@ class LibraryMixin:
         if self.path is not None and same_file(json_path, self.path) and self.working():
             raise ValueError("wait until the screenshots being added are done")
         self._close_if_open(json_path)
+        last = self.settings.get("last_atlas")
+        if last and same_file(last, json_path):  # (also when closed already: the list put it back, CodeRabbit)
+            self.settings.pop("last_atlas", None)
         L = self.known_atlases()
         L[:] = [a for a in L if not same_file(a["json"], json_path)]
         self.save_settings()

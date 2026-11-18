@@ -6,6 +6,7 @@ import contextlib
 import io
 import os
 import re
+import time
 import zipfile
 
 import cv2
@@ -14,12 +15,39 @@ from PIL import Image, ImageDraw
 
 from grand_project import paths as rc_paths
 
-from .constants import ICON_ART_INNER, ICON_CROP_RIM, ICON_DRAW_REV, ICON_INFO, ICON_ROW_DY, ICON_ROW_STEP
+from .constants import (
+    ICON_ART_INNER,
+    ICON_ART_RECHECK,
+    ICON_CROP_RIM,
+    ICON_DRAW_REV,
+    ICON_INFO,
+    ICON_ROW_DY,
+    ICON_ROW_STEP,
+)
 
 _PICTURES: dict = {}  # PNG bytes per (art version, type, size, style) (icon_png)
 
 
+_ART_VERSION: tuple[float, str] | None = None  # (when worked out, the version)
+
+
 def icon_art_version() -> str:
+    """Return the version of the icon pictures, worked out at most every ICON_ART_RECHECK seconds.
+
+    Worked out on every call, it read the poe2db folder (a file check per picture) for each icon picture asked for
+    (CodeRabbit); a taught crop or new art still shows within a couple of seconds.
+    """
+    global _ART_VERSION
+    now = time.monotonic()
+    kept = _ART_VERSION
+    if kept is not None and now - kept[0] < ICON_ART_RECHECK:
+        return kept[1]
+    version = _art_version()
+    _ART_VERSION = (now, version)
+    return version
+
+
+def _art_version() -> str:
     """Return the version of the icon pictures: of how they are drawn and of what they are drawn from.
 
     The page's picture URLs carry it, so the browser (which keeps them for a year) asks again exactly when a picture

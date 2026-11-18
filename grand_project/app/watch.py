@@ -250,15 +250,20 @@ class WatchMixin:
             if prev == -1 or f in self._known:
                 continue
             if prev is not None and prev == size and size > 0:
-                ready.append(Path(f))
-                seen[f] = -1  # handed over; a failed detection hands it back (_watch_failed)
+                if core.is_generated(Path(f)):
+                    seen[f] = -1  # (the program's own pictures: never added)
+                else:
+                    ready.append(Path(f))
             else:
                 seen[f] = size
-        ready = [q for q in ready if not core.is_generated(q)]
         if ready:
-            ready.sort(key=lambda q: q.stat().st_mtime)
-            self.events.log(f"auto-add: {len(ready)} new screenshot(s): {', '.join(q.name for q in ready)}")
             try:
+                # marked here, where a failure takes the marks back: marked before, a file deleted after the scan
+                # made the sort fail and left the others marked, never added (CodeRabbit)
+                for q in ready:
+                    seen[str(q)] = -1  # handed over; a failed detection hands it back (_watch_failed)
+                ready.sort(key=_mtime)
+                self.events.log(f"auto-add: {len(ready)} new screenshot(s): {', '.join(q.name for q in ready)}")
                 self.add_screenshots(ready, mode="watch", gen=gen)
             except Exception:
                 for q in ready:  # not queued: seen again on the next polls (CodeRabbit)
@@ -281,3 +286,11 @@ class WatchMixin:
                 )
             else:
                 self.events.log(f"auto-add: {Path(f).name} failed {WATCH_RETRIES + 1} times; left out (add it by hand)")
+
+
+def _mtime(p: Path) -> float:
+    """A file's modified time, 0 when it is gone (deleted or renamed since the folder was read)."""
+    try:
+        return p.stat().st_mtime
+    except OSError:
+        return 0.0

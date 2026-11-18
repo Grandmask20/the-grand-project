@@ -170,7 +170,10 @@ export function ReplayPanel({ meta }: { meta: Meta }) {
 				ex.add(i === count - 1 ? frameMs + END_HOLD_MS : frameMs);
 				setExportInfo(`exporting ${kind === "gif" ? "GIF" : "video"}: frame ${i + 1} / ${count}`);
 			}
-			if (live()) download(await ex.finish(), kind === "gif" ? "atlas-timelapse.gif" : "atlas-timelapse.webm");
+			const file = live() ? await ex.finish() : null;
+			// checked again after finishing: the video's flush is a wait, and a cancel or an atlas switch during it
+			// still downloaded it (CodeRabbit)
+			if (file && live()) download(file, kind === "gif" ? "atlas-timelapse.gif" : "atlas-timelapse.webm");
 			else if (!job.cancel) showError("The export stopped: the atlas changed while it ran.");
 		} catch (e) {
 			if (live())

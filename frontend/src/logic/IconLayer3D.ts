@@ -157,6 +157,14 @@ export class IconLayer3D implements CustomLayerInterface {
 	 */
 	setIcons(icons: Icon3D[]): Promise<void> {
 		const n = ++this.latest;
+		if (!icons.length) {
+			// nothing to fetch: cleared now, not after an older set's pictures (the old icons stayed: CodeRabbit);
+			// the older sets queued see they are not the latest and draw nothing
+			this.pending = [];
+			this.dirty = true;
+			this.map?.triggerRepaint();
+			return this.queue;
+		}
 		this.queue = this.queue
 			.then(() => (n === this.latest ? this.applyIcons(icons, n) : undefined))
 			.catch(() => undefined); // (one failing set never stops the ones after it)
@@ -290,7 +298,6 @@ export class IconLayer3D implements CustomLayerInterface {
 		attr("a_info", 4, 4);
 		attr("a_uv", 4, 8);
 		gl.uniform1f(gl.getUniformLocation(p, "u_sel"), this.selected);
-		if (this.picks.pending) this.pickPass(gl, p, this.map);
 		gl.uniform1f(gl.getUniformLocation(p, "u_pick"), 0);
 		gl.enable(gl.DEPTH_TEST);
 		gl.depthFunc(gl.LEQUAL);
@@ -298,6 +305,9 @@ export class IconLayer3D implements CustomLayerInterface {
 		gl.enable(gl.BLEND);
 		gl.blendFunc(gl.ONE, gl.ONE_MINUS_SRC_ALPHA);
 		gl.drawArrays(gl.TRIANGLES, 0, this.count);
+		// clicks answered after the visible draw: its depth makes the icon in front the one picked, as on screen
+		// (picked before it, the later of two overlapping icons answered: CodeRabbit), as the models do
+		if (this.picks.pending) this.pickPass(gl, p, this.map);
 		// leave WebGL as MapLibre expects it (left on, its next draw read our buffer: black frames, user)
 		for (const name of ["a_xy", "a_corner", "a_info", "a_uv"])
 			gl.disableVertexAttribArray(gl.getAttribLocation(p, name));

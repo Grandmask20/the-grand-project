@@ -530,8 +530,8 @@ class Handler(BaseHTTPRequestHandler):
 
     @route("GET", r"/api/pictures/(?P<pid>\d+)\.png")
     def get_picture(self, q, pid) -> None:
-        """A kept picture (ghost / preview)."""
-        self._bytes(self.S.picture(int(pid)), "image/png")
+        """A kept picture (ghost / preview): not cached, its id restarts with each run (CodeRabbit)."""
+        self._bytes(self.S.picture(int(pid)), "image/png", cache=False)
 
     @route("POST", "/api/place")
     def post_place(self, q) -> None:

@@ -11,5 +11,8 @@ describe("ancestors", () => {
 		]);
 		expect(ancestors("\\\\nas\\share").map((a) => a.path)).toEqual(["\\\\nas\\share\\"]);
 		expect(ancestors("drives")).toEqual([]);
+		// a backslash inside a POSIX folder name is part of the name (it was taken for the separator)
+		expect(ancestors("/home/maps\\old/atlas").map((a) => a.name)).toEqual(["/", "home", "maps\\old", "atlas"]);
+		expect(ancestors("C:/a").map((a) => a.path)).toEqual(["C:/", "C:/a"]);
 	});
 });
