@@ -135,7 +135,7 @@ def list_dir(path: str | None, files: bool = True) -> dict:
         files: List image and atlas files too (else only folders).
 
     Returns:
-        {"path", "parent", "entries": [{"name", "path", "dir", "size"}], "truncated"}.
+        {"path", "parent", "entries": [{"name", "path", "dir", "size", "mtime"}], "truncated"}.
 
     Raises:
         ValueError: When the folder can't be read.
@@ -158,8 +158,9 @@ def list_dir(path: str | None, files: bool = True) -> dict:
             is_dir = e.is_dir()
             if not is_dir and (not files or Path(e.name).suffix.lower() not in (*core.IMAGE_EXT, ".json")):
                 continue
+            st = e.stat()
             entries.append({"name": e.name, "path": str(base / e.name), "dir": is_dir,
-                            "size": 0 if is_dir else e.stat().st_size})  # fmt: skip
+                            "size": 0 if is_dir else st.st_size, "mtime": st.st_mtime})  # fmt: skip
     entries.sort(key=lambda t: (not t["dir"], t["name"].lower()))
     parent = str(base.parent) if base.parent != base else ("drives" if os.name == "nt" else None)
     return {

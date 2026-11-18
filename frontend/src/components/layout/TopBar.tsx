@@ -1,6 +1,7 @@
 import { useQueryClient } from "@tanstack/react-query";
 import { BookmarkPlusIcon, ClapperboardIcon, LassoIcon, MenuIcon, Undo2Icon } from "lucide-react";
 import { AppQueryKeys } from "@/api/AppQueryKeys";
+import tablet from "@/assets/tablet.png";
 import { Button } from "@/components/ui/button";
 import {
 	DropdownMenu,
@@ -55,7 +56,11 @@ export function TopBar() {
 
 	return (
 		<header className="flex h-11 shrink-0 items-center gap-1.5 border-b bg-card px-2">
-			<span className="mr-2 font-semibold tracking-wide text-gold">The Grand Project</span>
+			<span className="mr-2 flex shrink-0 items-center gap-1.5 font-semibold tracking-wide whitespace-nowrap text-gold">
+				{/* the in-game tablet the program is named after (user) */}
+				<img src={tablet} alt="" className="size-7" />
+				The Grand Project
+			</span>
 			<DropdownMenu>
 				<DropdownMenuTrigger asChild>
 					<Button size="sm" variant="ghost">

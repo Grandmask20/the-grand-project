@@ -20,7 +20,7 @@ import { MapTiles, vectorVersion } from "./MapTiles";
 import { PlayerMarker } from "./PlayerMarker";
 import { ReplayLayers } from "./ReplayLayers";
 
-/** The furthest latitude Web Mercator can show (MapLibre rejects bounds beyond ±90). */
+/** The furthest latitude Web Mercator can show. */
 const MERCATOR_LAT = 85.0511;
 
 interface Props {
@@ -40,9 +40,6 @@ export function AtlasMap({ info, meta }: Props) {
 	useEffect(() => {
 		if (!box.current) return;
 		const [[w, s], [e, n]] = info.bounds;
-		// room to pan well past the atlas's edges (user: the old window let you pan off the atlas); ⤢ brings it back
-		const padX = (e - w) * 1.0;
-		const padY = (n - s) * 1.0;
 		const cam = useAppStore.getState().camera;
 		const m = new MapView({
 			container: box.current,
@@ -53,18 +50,22 @@ export function AtlasMap({ info, meta }: Props) {
 			bearing: cam?.bearing ?? 0,
 			pitch: cam?.pitch ?? 0,
 			fitBoundsOptions: { padding: 30 },
-			// latitudes clamped to Web Mercator's limit: padding a big grid's bounds went past ±90 and MapLibre threw,
-			// leaving a blank page (CodeRabbit)
-			maxBounds: [
-				[w - padX, Math.max(s - padY, -MERCATOR_LAT)],
-				[e + padX, Math.min(n + padY, MERCATOR_LAT)],
-			],
 			maxZoom: info.maxzoom,
 			maxPitch: 75,
 			renderWorldCopies: false,
 			attributionControl: false,
 			doubleClickZoom: false,
 		});
+		// pan freely, well past the atlas (user: the old window let you pan off it); a center more than an atlas-width
+		// past an edge eases back. MapLibre's maxBounds kept the view in a corner beside the atlas instead (user):
+		// zoomed out, the atlas fills much of MapLibre's world and the limit forced the view into its corner.
+		const limit = () => {
+			const c = m.getCenter();
+			const lng = Math.min(Math.max(c.lng, w - (e - w)), e + (e - w));
+			const lat = Math.min(Math.max(c.lat, Math.max(s - (n - s), -MERCATOR_LAT)), Math.min(n + (n - s), MERCATOR_LAT));
+			if (lng !== c.lng || lat !== c.lat) m.easeTo({ center: [lng, lat], duration: 300 });
+		};
+		m.on("moveend", limit);
 		m.addControl(new NavigationControl({ visualizePitch: true }), "top-right");
 		m.addControl(
 			new ButtonControl("⤢", "Fit the whole atlas (0)", () => m.fitBounds(info.bounds, { padding: 30 })),

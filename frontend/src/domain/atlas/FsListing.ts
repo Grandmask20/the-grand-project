@@ -11,4 +11,6 @@ export interface FsEntry {
 	path: string;
 	dir: boolean;
 	size: number;
+	/** Last change, seconds since 1970 (missing for drives). */
+	mtime?: number;
 }
