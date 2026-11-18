@@ -1,0 +1,22 @@
+# Posts the coverage comment on pull requests from forks (their own run has a read-only token).
+# GitHub only runs this from the default branch, so it starts working once it is merged there.
+name: coverage comment
+
+on:
+  workflow_run:
+    workflows: ["tests"]
+    types: [completed]
+
+jobs:
+  comment:
+    if: github.event.workflow_run.event == 'pull_request'
+    runs-on: ubuntu-latest
+    permissions:
+      pull-requests: write
+      contents: write
+      actions: read
+    steps:
+      - uses: py-cov-action/python-coverage-comment-action@v3
+        with:
+          GITHUB_TOKEN: ${{ github.token }}
+          GITHUB_PR_RUN_ID: ${{ github.event.workflow_run.id }}

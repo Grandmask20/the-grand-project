@@ -958,6 +958,18 @@ class AppServer(ThreadingHTTPServer):
                 last = e
         raise last or OSError("no free port")
 
+    def handle_error(self, request, client_address) -> None:
+        """Print a request's error, except a browser dropping its connection (a tab closed or reloaded while it was
+        answered): that is no error, and its traceback filled the terminal (the browser tests showed dozens).
+
+        Args:
+            request: The connection.
+            client_address: Who asked.
+        """
+        if isinstance(sys.exc_info()[1], (ConnectionResetError, BrokenPipeError, ConnectionAbortedError)):
+            return
+        super().handle_error(request, client_address)
+
     @property
     def url(self) -> str:
         """Return the page's address."""

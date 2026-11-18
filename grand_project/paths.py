@@ -99,6 +99,11 @@ def need_test_data() -> None:
         sys.exit(0)
 
 
+# the browser tests (frontend/e2e) and CI keep the app's settings and log away from the player's own
+if os.environ.get("GRAND_PROJECT_USER_DATA"):
+    USER_DATA = Path(os.environ["GRAND_PROJECT_USER_DATA"]).resolve()
+
+
 # which copy this is: "internal" (the author's working copy: local_paths.json), "develop" (the GitHub develop
 # branch, channel.txt) or "release" (the player build on GitHub main, channel.txt; also the default)
 _CH = ROOT / "channel.txt"

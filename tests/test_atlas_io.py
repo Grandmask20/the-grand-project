@@ -85,3 +85,9 @@ def test_screenshot_without_a_saved_hash_finds_its_cache_by_name(tmp_path):
     _cache(frames, "old", "ff" * 32, builder.detector_stamp())  # same name, fresh: wins
     got = builder.cached_frames(tmp_path / "atlas.json", [{"name": "old"}])
     assert list(got) == ["old"] and got["old"].sha == "ff" * 32
+
+
+def test_read_screenshot_of_a_missing_or_broken_file_is_none(tmp_path):
+    assert core.read_screenshot(tmp_path / "missing.png") is None
+    (tmp_path / "broken.png").write_bytes(b"not a picture")
+    assert core.read_screenshot(tmp_path / "broken.png") is None

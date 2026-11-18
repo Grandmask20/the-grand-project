@@ -148,3 +148,18 @@ def test_the_page_is_served_and_routes_itself(app, tmp_path, monkeypatch):
     st, h, _b = call(srv, "/assets/a.js")
     assert st == 200 and "immutable" in h["Cache-Control"]
     assert call(srv, "/../../etc/passwd")[2] == b"<html>app</html>"  # never outside the page's folder
+
+
+def test_a_dropped_connection_is_not_printed_as_an_error(app, capsys):
+    server, _pts = app
+    for dropped in (ConnectionResetError, BrokenPipeError, ConnectionAbortedError):
+        try:
+            raise dropped("the tab was closed")
+        except OSError:
+            server.handle_error(None, ("127.0.0.1", 1))
+    assert capsys.readouterr().err == ""
+    try:
+        raise ValueError("a real fault")
+    except ValueError:
+        server.handle_error(None, ("127.0.0.1", 1))
+    assert "a real fault" in capsys.readouterr().err

@@ -125,9 +125,12 @@ def read_screenshot(path) -> np.ndarray | None:
         path: Image file path (non-ASCII paths work).
 
     Returns:
-        BGR image, or None when it can't be read.
+        BGR image, or None when it can't be read (missing, moved, or not a picture).
     """
-    img = cv2.imdecode(np.fromfile(str(path), np.uint8), cv2.IMREAD_COLOR)
+    try:
+        img = cv2.imdecode(np.fromfile(str(path), np.uint8), cv2.IMREAD_COLOR)
+    except (OSError, ValueError):  # missing or unreadable: said so, not raised (Screenshots of this spot: a 500)
+        return None
     if img is None or img.shape[0] == K.SCREEN_HEIGHT:
         return img
     if img.shape[0] < 720 or not 1.5 <= img.shape[1] / img.shape[0] <= 2.5:
