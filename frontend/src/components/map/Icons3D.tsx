@@ -16,6 +16,7 @@ export function Icons3D({ map, geo, info, meta }: { map: MapLibreMap; geo: Geo; 
 	const settings = useSettings();
 	const tilted = useAppStore((s) => (s.camera?.pitch ?? map.getPitch()) > 1);
 	const replayPos = useAppStore((s) => (s.replay ? s.replay.pos : null));
+	const selIcon = useAppStore((s) => (s.selected?.kind === "icon" ? s.selected.id : -1));
 	const layer = useRef<IconLayer3D | null>(null);
 	const on = tilted && settings?.layers.Icons !== false;
 	const models = settings?.layers["3D models"] !== false;
@@ -89,6 +90,7 @@ export function Icons3D({ map, geo, info, meta }: { map: MapLibreMap; geo: Geo; 
 					lng,
 					lat,
 					atlas: geo.toAtlas(lng, lat),
+					id,
 					name: String(p.name),
 					slot: Number(p.slot) || 0,
 					lift: Number(p.lift) || 0,
@@ -117,8 +119,11 @@ export function Icons3D({ map, geo, info, meta }: { map: MapLibreMap; geo: Geo; 
 		l.models = models;
 		l.pos = replayPos ?? 1e9;
 		if (pathLayer.current) pathLayer.current.pos = replayPos ?? 1e9;
+		l.selected = selIcon;
+		// the flat map's ring lies on the ground under a raised icon: the 3D icon gets its own ring
+		if (map.getLayer("selected")) map.setLayoutProperty("selected", "visibility", selIcon >= 0 ? "none" : "visible");
 		map.triggerRepaint();
-	}, [map, models, replayPos, on]);
+	}, [map, models, replayPos, on, selIcon]);
 
 	return null;
 }

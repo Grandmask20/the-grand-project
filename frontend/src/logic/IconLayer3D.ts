@@ -11,6 +11,8 @@ export interface Icon3D {
 	lat: number;
 	/** Its map node's atlas point. */
 	atlas: [number, number];
+	/** The icon's id (the app's icon index). */
+	id: number;
 	name: string;
 	slot: number;
 	lift: number;
@@ -26,14 +28,18 @@ const BASE = 11 + HALF; // atlas units from the ground to the icon's middle
 const VS = `
 attribute vec2 a_xy;
 attribute vec2 a_corner;
-attribute vec4 a_info; // slot, lift, step, unused
+attribute vec4 a_info; // slot, lift, step, icon id
 attribute vec4 a_uv;
 uniform mat4 u_m;
 uniform float u_k;
 uniform float u_models;
 uniform vec2 u_view;
 uniform float u_size;
+uniform float u_sel;
 varying vec2 v_uv;
+varying vec2 v_local;
+varying float v_id;
+varying float v_sel;
 varying float v_step;
 void main() {
 	vec3 p = vec3(a_xy, (${BASE.toFixed(1)} + a_info.y * u_models) * u_k);
@@ -41,22 +47,43 @@ void main() {
 	// screen px of half an icon at this distance: in perspective sizes go as 1 / w, so the size at the view's centre
 	// (u_size, with its w) scaled by w (measuring along one map direction changed as the map turned: user)
 	float hs = u_size / c0.w;
-	vec2 off = vec2(a_corner.x + a_info.x * ${(ROW / HALF).toFixed(4)}, a_corner.y) * hs * 2.0 / u_view;
+	// the selected icon's quad is bigger, for the ring drawn round it (the flat map's ring lay on the ground: user)
+	float grow = abs(a_info.w - u_sel) < 0.5 ? 1.35 : 1.0;
+	vec2 off = vec2(a_corner.x * grow + a_info.x * ${(ROW / HALF).toFixed(4)}, a_corner.y * grow) * hs * 2.0 / u_view;
+	v_local = a_corner * grow;
+	v_id = a_info.w;
+	v_sel = grow > 1.0 ? 1.0 : 0.0;
 	gl_Position = vec4((c0.xy / c0.w + off) * c0.w, c0.z, c0.w);
 	v_uv = mix(a_uv.xy, a_uv.zw, a_corner * 0.5 + 0.5);
 	v_step = a_info.z;
 }`;
 
 const FS = `
-precision mediump float;
+precision highp float;
 uniform sampler2D u_tex;
 uniform float u_pos;
+uniform float u_pick; // 1: draw each icon's id as its colour (clicks read it back)
 varying vec2 v_uv;
 varying float v_step;
+varying vec2 v_local;
+varying float v_id;
+varying float v_sel;
 void main() {
 	if (v_step >= u_pos) discard; // the replay hasn't reached it
+	float r = length(v_local);
+	if (v_sel > 0.5 && r > 1.05) {
+		if (r > 1.32 || u_pick > 0.5) discard;
+		gl_FragColor = vec4(1.0, 0.9, 0.35, 1.0); // the selection ring
+		return;
+	}
+	if (abs(v_local.x) > 1.0 || abs(v_local.y) > 1.0) discard;
 	vec4 c = texture2D(u_tex, v_uv);
 	if (c.a < 0.35) discard; // clear edges, so the depth test hides icons behind 3D models
+	if (u_pick > 0.5) {
+		float id = v_id + 1.0;
+		gl_FragColor = vec4(mod(id, 256.0) / 255.0, mod(floor(id / 256.0), 256.0) / 255.0, floor(id / 65536.0) / 255.0, 1.0);
+		return;
+	}
 	gl_FragColor = c;
 }`;
 
@@ -168,7 +195,7 @@ export class IconLayer3D implements CustomLayerInterface {
 			const v1 = v0 + CELL / H;
 			for (const [cx, cy] of corners) {
 				// y grows down the picture, up the screen: the top corners (cy = 1) take the picture's top (v0)
-				data.set([m.x, m.y, cx, cy, ic.slot, ic.lift, ic.step, 0, u0, v1, u1, v0], o);
+				data.set([m.x, m.y, cx, cy, ic.slot, ic.lift, ic.step, ic.id, u0, v1, u1, v0], o);
 				o += 12;
 			}
 		}
@@ -184,6 +211,24 @@ export class IconLayer3D implements CustomLayerInterface {
 		gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
 		gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
 		this.dirty = false;
+	}
+
+	/** The selected icon's id (-1: none): drawn with a ring. */
+	selected = -1;
+	private pickReq: { x: number; y: number; done: (id: number | null) => void } | null = null;
+	private fbo: { fb: WebGLFramebuffer; tex: WebGLTexture; depth: WebGLRenderbuffer; w: number; h: number } | null =
+		null;
+
+	/**
+	 * The icon drawn at screen (x, y) css px, or null: the next frame draws every icon's id as its colour into a
+	 * hidden picture and reads the pixel under the mouse, so what you see is what you click (user).
+	 */
+	pickAt(x: number, y: number): Promise<number | null> {
+		return new Promise((done) => {
+			if (!this.map || !this.count) return done(null);
+			this.pickReq = { x, y, done };
+			this.map.triggerRepaint();
+		});
 	}
 
 	/** The last frame's mercator -> clip matrix and centre size (for clicks on the 3D view: pickScreen). */
@@ -269,6 +314,9 @@ export class IconLayer3D implements CustomLayerInterface {
 		attr("a_corner", 2, 2);
 		attr("a_info", 4, 4);
 		attr("a_uv", 4, 8);
+		gl.uniform1f(gl.getUniformLocation(p, "u_sel"), this.selected);
+		if (this.pickReq) this.pickPass(gl);
+		gl.uniform1f(gl.getUniformLocation(p, "u_pick"), 0);
 		gl.enable(gl.DEPTH_TEST);
 		gl.depthFunc(gl.LEQUAL);
 		gl.depthMask(true);
@@ -279,6 +327,62 @@ export class IconLayer3D implements CustomLayerInterface {
 		for (const name of ["a_xy", "a_corner", "a_info", "a_uv"])
 			gl.disableVertexAttribArray(gl.getAttribLocation(p, name));
 		gl.bindBuffer(gl.ARRAY_BUFFER, null);
+	}
+
+	/** Draw the icons' ids into a hidden picture and answer the waiting click with the one under it. */
+	private pickPass(gl: WebGLRenderingContext | WebGL2RenderingContext): void {
+		const req = this.pickReq;
+		this.pickReq = null;
+		const map = this.map;
+		if (!req) return;
+		if (!map || !this.prog) {
+			req.done(null);
+			return;
+		}
+		const W = gl.drawingBufferWidth;
+		const H = gl.drawingBufferHeight;
+		if (!this.fbo || this.fbo.w !== W || this.fbo.h !== H) {
+			if (this.fbo) {
+				gl.deleteFramebuffer(this.fbo.fb);
+				gl.deleteTexture(this.fbo.tex);
+				gl.deleteRenderbuffer(this.fbo.depth);
+			}
+			const tex = gl.createTexture() as WebGLTexture;
+			gl.bindTexture(gl.TEXTURE_2D, tex);
+			gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, W, H, 0, gl.RGBA, gl.UNSIGNED_BYTE, null);
+			const depth = gl.createRenderbuffer() as WebGLRenderbuffer;
+			gl.bindRenderbuffer(gl.RENDERBUFFER, depth);
+			gl.renderbufferStorage(gl.RENDERBUFFER, gl.DEPTH_COMPONENT16, W, H);
+			const before = gl.getParameter(gl.FRAMEBUFFER_BINDING) as WebGLFramebuffer | null;
+			const fb = gl.createFramebuffer() as WebGLFramebuffer;
+			gl.bindFramebuffer(gl.FRAMEBUFFER, fb);
+			gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, tex, 0);
+			gl.framebufferRenderbuffer(gl.FRAMEBUFFER, gl.DEPTH_ATTACHMENT, gl.RENDERBUFFER, depth);
+			gl.bindFramebuffer(gl.FRAMEBUFFER, before);
+			gl.bindRenderbuffer(gl.RENDERBUFFER, null);
+			this.fbo = { fb, tex, depth, w: W, h: H };
+			gl.bindTexture(gl.TEXTURE_2D, this.tex);
+		}
+		const before = gl.getParameter(gl.FRAMEBUFFER_BINDING) as WebGLFramebuffer | null;
+		const viewport = gl.getParameter(gl.VIEWPORT) as Int32Array;
+		gl.bindFramebuffer(gl.FRAMEBUFFER, this.fbo.fb);
+		gl.viewport(0, 0, W, H);
+		gl.clearColor(0, 0, 0, 0);
+		gl.clearDepth(1);
+		gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
+		gl.uniform1f(gl.getUniformLocation(this.prog, "u_pick"), 1);
+		gl.enable(gl.DEPTH_TEST);
+		gl.depthFunc(gl.LEQUAL);
+		gl.depthMask(true);
+		gl.disable(gl.BLEND);
+		gl.drawArrays(gl.TRIANGLES, 0, this.count);
+		const ratio = W / map.getCanvas().clientWidth;
+		const px = new Uint8Array(4);
+		gl.readPixels(Math.round(req.x * ratio), Math.round(H - req.y * ratio), 1, 1, gl.RGBA, gl.UNSIGNED_BYTE, px);
+		gl.bindFramebuffer(gl.FRAMEBUFFER, before);
+		gl.viewport(viewport[0], viewport[1], viewport[2], viewport[3]);
+		const id = px[0] + px[1] * 256 + px[2] * 65536 - 1;
+		req.done(px[3] && id >= 0 ? id : null);
 	}
 
 	/** Half an icon in drawing px at the view's centre, times the centre's clip w (see the vertex shader). */

@@ -66,6 +66,19 @@ export function MapInteraction({ map, geo, meta }: { map: MapLibreMap; geo: Geo;
 		[app, geo, map, settings?.layers],
 	);
 
+	// tilted: the 3D icon drawn under the mouse itself (read back from the picture), else what clickAt finds
+	const pick3d = useCallback(
+		async (e: MapMouseEvent): Promise<ItemInfo | null> => {
+			if (map.getPitch() > 1) {
+				const layer = map.getLayer("icons-3d-gl") as unknown as { implementation?: IconLayer3D } | undefined;
+				const id = layer?.implementation ? await layer.implementation.pickAt(e.point.x, e.point.y) : null;
+				if (id !== null) return app.getInfo("icon", id);
+			}
+			return pick(clickAt(e));
+		},
+		[map, app, pick, clickAt],
+	);
+
 	// --- clicks
 	useEffect(() => {
 		const onClick = async (e: MapMouseEvent) => {
@@ -73,7 +86,7 @@ export function MapInteraction({ map, geo, meta }: { map: MapLibreMap; geo: Geo;
 			try {
 				switch (mode.kind) {
 					case "normal": {
-						const hit = await pick(at);
+						const hit = await pick3d(e);
 						select(hit);
 						if (hit) setTab("find");
 						break;
@@ -125,7 +138,7 @@ export function MapInteraction({ map, geo, meta }: { map: MapLibreMap; geo: Geo;
 		return () => {
 			map.off("click", onClick);
 		};
-	}, [map, mode, atlasAt, pick, select, setTab, editBookmark, setMode, graph, update, app, showError, clickAt]);
+	}, [map, mode, atlasAt, pick, select, setTab, editBookmark, setMode, graph, update, app, showError, clickAt, pick3d]);
 
 	// --- double click: place the ghost, else zoom in
 	useEffect(() => {
@@ -254,7 +267,7 @@ export function MapInteraction({ map, geo, meta }: { map: MapLibreMap; geo: Geo;
 			const at = clickAt(e);
 			let hit: ItemInfo | null = null;
 			try {
-				hit = await pick(at);
+				hit = await pick3d(e);
 			} catch {
 				hit = null;
 			}
@@ -265,7 +278,7 @@ export function MapInteraction({ map, geo, meta }: { map: MapLibreMap; geo: Geo;
 		return () => {
 			map.off("contextmenu", onMenu);
 		};
-	}, [map, mode, pick, select, clickAt]);
+	}, [map, mode, select, clickAt, pick3d]);
 
 	// --- pointer over things that can be clicked
 	useEffect(() => {
