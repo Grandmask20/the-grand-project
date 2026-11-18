@@ -1,4 +1,5 @@
 import { useQueryClient } from "@tanstack/react-query";
+import { useEffect, useRef } from "react";
 import { Section } from "@/components/common/Section";
 import { Button } from "@/components/ui/button";
 import { useAppClient } from "@/hooks/app/UseAppClient";
@@ -17,60 +18,68 @@ export function ResultList() {
 	const showError = useAppStore((s) => s.showError);
 	const items = results.filter((r) => r.kind !== "bookmark");
 
+	// a new list (a type clicked, a search): the panel scrolls down to show it (user)
+	const box = useRef<HTMLDivElement>(null);
+	useEffect(() => {
+		if (title) box.current?.scrollIntoView({ block: "nearest", behavior: "smooth" });
+	}, [title]);
+
 	if (!title) return null;
 	return (
-		<Section
-			title="Results"
-			actions={
-				items.length > 0 && (
-					<Button
-						size="xs"
-						variant="outline"
-						onClick={() =>
-							ask({
-								title: "Bookmark all",
-								label: `Bookmark all ${items.length} results into group:`,
-								value: query.trim(),
-								onOk: (group) =>
-									void app
-										.bookmarkAll(
-											items.map((r) => ({ kind: r.kind, id: r.id })),
-											group || "Other",
-										)
-										.then(() => queryClient.invalidateQueries({ queryKey: ["bookmarks"] }))
-										.catch(showError),
-							})
-						}
-					>
-						Bookmark all
-					</Button>
-				)
-			}
-		>
-			<p className="text-xs text-muted-foreground">{title}</p>
-			<ul className="max-h-64 overflow-y-auto rounded border">
-				{results.slice(0, 500).map((r) => (
-					<li key={`${r.kind}-${r.id}`}>
-						<button
-							type="button"
-							className="w-full truncate px-2 py-1 text-left hover:bg-accent"
-							onClick={async () => {
-								flyTo(r.x, r.y, 1);
-								try {
-									select(await app.getInfo(r.kind, r.id));
-								} catch (e) {
-									showError(e);
-								}
-							}}
+		<div ref={box}>
+			<Section
+				title="Results"
+				actions={
+					items.length > 0 && (
+						<Button
+							size="xs"
+							variant="outline"
+							onClick={() =>
+								ask({
+									title: "Bookmark all",
+									label: `Bookmark all ${items.length} results into group:`,
+									value: query.trim(),
+									onOk: (group) =>
+										void app
+											.bookmarkAll(
+												items.map((r) => ({ kind: r.kind, id: r.id })),
+												group || "Other",
+											)
+											.then(() => queryClient.invalidateQueries({ queryKey: ["bookmarks"] }))
+											.catch(showError),
+								})
+							}
 						>
-							{r.label}
-						</button>
-					</li>
-				))}
-				{results.length > 500 && (
-					<li className="px-2 py-1 text-muted-foreground">{results.length - 500} more: narrow the search</li>
-				)}
-			</ul>
-		</Section>
+							Bookmark all
+						</Button>
+					)
+				}
+			>
+				<p className="text-xs text-muted-foreground">{title}</p>
+				<ul className="max-h-64 overflow-y-auto rounded border">
+					{results.slice(0, 500).map((r) => (
+						<li key={`${r.kind}-${r.id}`}>
+							<button
+								type="button"
+								className="w-full truncate px-2 py-1 text-left hover:bg-accent"
+								onClick={async () => {
+									flyTo(r.x, r.y, 1);
+									try {
+										select(await app.getInfo(r.kind, r.id));
+									} catch (e) {
+										showError(e);
+									}
+								}}
+							>
+								{r.label}
+							</button>
+						</li>
+					))}
+					{results.length > 500 && (
+						<li className="px-2 py-1 text-muted-foreground">{results.length - 500} more: narrow the search</li>
+					)}
+				</ul>
+			</Section>
+		</div>
 	);
 }
