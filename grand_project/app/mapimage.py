@@ -596,7 +596,7 @@ class MapImageMixin:
             "sprite": {"size": WEBMAP_ICON_SPRITE, "units": WEBMAP_ICON_UNITS, "min_px": WEBMAP_ICON_MIN_PX},
         }
 
-    def terrain_tile(self, z: int, x: int, y: int) -> bytes | None:
+    def terrain_tile(self, z: int, x: int, y: int, wanted=None) -> bytes | None:
         """Return a ground tile as JPEG: the map image's levels, sharp ground past them.
 
         Args:
@@ -618,7 +618,9 @@ class MapImageMixin:
             if raster.pixels(raster.grid.zmax, x >> (z - raster.grid.zmax), y >> (z - raster.grid.zmax)) is None:
                 data = None  # nothing under it at all: no screenshot there
             else:
-                data = sharp.jpeg(z, x, y)
+                data = sharp.jpeg(z, x, y, wanted)
+                if data is None:  # given up by the browser: built when asked again, not cached as empty
+                    return None
         else:
             data = raster.jpeg(z, x, y)
         self._tiles.put(key, data or b"")

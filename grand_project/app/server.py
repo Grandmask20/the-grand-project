@@ -15,6 +15,8 @@ import json
 import mimetypes
 import queue
 import re
+import select
+import socket
 import sys
 import threading
 import time
@@ -148,6 +150,20 @@ class Handler(BaseHTTPRequestHandler):
         self.end_headers()
         if self.command != "HEAD":
             self.wfile.write(body)
+
+    def _still_connected(self) -> bool:
+        """Tell whether the browser still waits for this answer (it closes the connection when it gives a tile up).
+
+        Returns:
+            False when the connection was closed or reset.
+        """
+        try:
+            readable, _w, _x = select.select([self.connection], [], [], 0)
+            if not readable:
+                return True
+            return self.connection.recv(1, socket.MSG_PEEK) != b""  # readable with nothing: closed
+        except (OSError, ValueError):
+            return False
 
     def _json(self, data, status: int = 200) -> None:
         """Send JSON.
@@ -537,7 +553,7 @@ class Handler(BaseHTTPRequestHandler):
     @route("GET", r"/api/tiles/terrain/(?P<z>\d+)/(?P<x>\d+)/(?P<y>\d+)\.jpg")
     def get_terrain_tile(self, q, z, x, y) -> None:
         """A ground tile."""
-        self._bytes(self.S.terrain_tile(int(z), int(x), int(y)), "image/jpeg")
+        self._bytes(self.S.terrain_tile(int(z), int(x), int(y), self._still_connected), "image/jpeg")
 
     @route("GET", r"/api/tiles/vector/(?P<z>\d+)/(?P<x>\d+)/(?P<y>\d+)\.pbf")
     def get_vector_tile(self, q, z, x, y) -> None:
