@@ -16,7 +16,7 @@ import { MapInteraction } from "./MapInteraction";
 import { MapLabels } from "./MapLabels";
 import { MapLook } from "./MapLook";
 import { MapOverlays } from "./MapOverlays";
-import { MapTiles, vectorVersion } from "./MapTiles";
+import { MapTiles, terrainVersion, vectorVersion } from "./MapTiles";
 import { PlayerMarker } from "./PlayerMarker";
 import { ReplayLayers } from "./ReplayLayers";
 
@@ -43,7 +43,7 @@ export function AtlasMap({ info, meta }: Props) {
 		const cam = useAppStore.getState().camera;
 		const m = new MapView({
 			container: box.current,
-			style: baseStyle(info, geo, meta, app.terrainTiles(info.terrain_version), app.vectorTiles(vectorVersion(info))),
+			style: baseStyle(info, geo, meta, app.terrainTiles(terrainVersion(info)), app.vectorTiles(vectorVersion(info))),
 			bounds: cam ? undefined : info.bounds,
 			center: cam ? geo.toLngLat(cam.x, cam.y) : undefined,
 			zoom: cam ? geo.zoomFor(cam.px) : undefined,
@@ -61,8 +61,12 @@ export function AtlasMap({ info, meta }: Props) {
 		// zoomed out, the atlas fills much of MapLibre's world and the limit forced the view into its corner.
 		const limit = () => {
 			const c = m.getCenter();
-			const lng = Math.min(Math.max(c.lng, w - (e - w)), e + (e - w));
-			const lat = Math.min(Math.max(c.lat, Math.max(s - (n - s), -MERCATOR_LAT)), Math.min(n + (n - s), MERCATOR_LAT));
+			const v = m.getBounds();
+			// room: an atlas-width plus a view-width past each edge, so zoomed far out you can still move it about
+			const rx = e - w + (v.getEast() - v.getWest());
+			const ry = n - s + (v.getNorth() - v.getSouth());
+			const lng = Math.min(Math.max(c.lng, Math.max(w - rx, -180)), Math.min(e + rx, 180));
+			const lat = Math.min(Math.max(c.lat, Math.max(s - ry, -MERCATOR_LAT)), Math.min(n + ry, MERCATOR_LAT));
 			if (lng !== c.lng || lat !== c.lat) m.easeTo({ center: [lng, lat], duration: 300 });
 		};
 		m.on("moveend", limit);

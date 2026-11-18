@@ -70,7 +70,7 @@ export function createAppClient(http: Http) {
 
 		// the map
 		getMap: () => http.get<MapInfo | null>("/api/map"),
-		terrainTiles: (v: number) => `${absolute(http.url("/api/tiles/terrain/"))}{z}/{x}/{y}.jpg?v=${v}`,
+		terrainTiles: (v: string) => `${absolute(http.url("/api/tiles/terrain/"))}{z}/{x}/{y}.jpg?v=${v}`,
 		vectorTiles: (v: string) => `${absolute(http.url("/api/tiles/vector/"))}{z}/{x}/{y}.pbf?v=${v}`,
 		iconUrl: (name: string, size = 32) => http.url(`/api/icons/${encodeURIComponent(name)}.png`, { size }),
 		spriteUrl: (name: string) => http.url(`/api/icons/${encodeURIComponent(name)}.png`, { kind: "sprite" }),

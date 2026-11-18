@@ -33,6 +33,11 @@ export function FindTab() {
 		return () => clearTimeout(t);
 	}, [text, setQuery]);
 
+	// emptied elsewhere (Esc on the map): the box follows
+	useEffect(() => {
+		if (!query) setText("");
+	}, [query]);
+
 	// a new search drops the rings of the one before (user: rings of different finds piled up and never left)
 	useEffect(() => {
 		if (query.trim()) {

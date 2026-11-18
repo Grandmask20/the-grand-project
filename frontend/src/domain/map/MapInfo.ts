@@ -16,6 +16,8 @@ export interface MapInfo {
 	offset: number;
 	maxzoom: number;
 	bounds: [[number, number], [number, number]];
+	/** This run of the app and the open atlas: in every tile URL, so tiles of another run or atlas never come back from the browser's cache. */
+	tile_key: string;
 	terrain_version: number;
 	model_version: number;
 	filter_version: number;

@@ -1,5 +1,5 @@
 import type { Map as MapLibreMap } from "maplibre-gl";
-import { useEffect } from "react";
+import { useEffect, useRef } from "react";
 import type { MapInfo } from "@/domain/map/MapInfo";
 import type { Geo } from "@/logic/Geo";
 import { useAppStore } from "@/store/AppStore";
@@ -22,14 +22,22 @@ export function MapCamera({ map, geo, info }: { map: MapLibreMap; geo: Geo; info
 		};
 	}, [map, geo, setCamera]);
 
+	// each fly / fit request is carried out once: the map's info changes with every tile version (hiding a bookmark
+	// group, the replay), which flew back to the last Find result (user; CodeRabbit). Requests made before this map
+	// was made (an earlier atlas or map image) are skipped too.
+	const flown = useRef(fly?.n ?? 0);
+	const fitted = useRef(fit);
 	useEffect(() => {
-		if (!fly) return;
+		if (!fly || fly.n === flown.current) return;
+		flown.current = fly.n;
 		const zoom = Math.max(map.getZoom(), geo.zoomFor(fly.px ?? 1));
 		map.flyTo({ center: geo.toLngLat(fly.x, fly.y), zoom: Math.min(zoom, info.maxzoom), speed: 1.6 });
 	}, [map, geo, info, fly]);
 
 	useEffect(() => {
-		if (fit) map.fitBounds(info.bounds, { padding: 30 });
+		if (fit === fitted.current) return;
+		fitted.current = fit;
+		map.fitBounds(info.bounds, { padding: 30 });
 	}, [map, info, fit]);
 
 	return null;

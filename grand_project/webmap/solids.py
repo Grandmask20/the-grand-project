@@ -132,6 +132,5 @@ def structure(kind: str, x: float, y: float, city_type: str = "", locked: bool =
         for k, (px, py) in enumerate([(x, y), *_ngon(x, y, 26, 6, 10)]):
             S.append(_solid([_ngon(px, py, 11 if k == 0 else 8, 5, 18 * k)], 0, tall[k] * (0.45 if locked else 1),
                             "#5a2a66" if locked else "#b84fd6"))  # fmt: skip
-    elif kind == "Deadly boss map":
-        S += [_solid([_ngon(x, y, 10, 4)], 0, 70, "#d23c3c")]
+    # a Deadly boss map has no building in the game, only its red icon: no model (a red post stood on it: user)
     return S

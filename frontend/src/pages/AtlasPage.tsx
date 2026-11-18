@@ -55,7 +55,7 @@ export function AtlasPage() {
 			<div className="flex min-h-0 flex-1">
 				<SidePanel debug={s.debug} />
 				<main
-					className={`relative min-w-0 flex-1 bg-black ${s.settings.ui.side === "right" ? "-order-1" : ""}`}
+					className={`flex min-w-0 flex-1 flex-col bg-black ${s.settings.ui.side === "right" ? "-order-1" : ""}`}
 					onDragOver={(e) => {
 						e.preventDefault();
 						setDragging(true);
@@ -63,41 +63,43 @@ export function AtlasPage() {
 					onDragLeave={() => setDragging(false)}
 					onDrop={onDrop}
 				>
-					{map ? (
-						<AtlasMap key={mapKey} info={map} meta={meta.data} />
-					) : (
-						<div className="flex h-full flex-col items-center justify-center gap-3 text-center text-muted-foreground">
-							{s.atlas ? (
-								s.atlas.shots ? (
-									<p>Building the map image…</p>
+					<div className="relative min-h-0 flex-1">
+						{map ? (
+							<AtlasMap key={mapKey} info={map} meta={meta.data} />
+						) : (
+							<div className="flex h-full flex-col items-center justify-center gap-3 text-center text-muted-foreground">
+								{s.atlas ? (
+									s.atlas.shots ? (
+										<p>Building the map image…</p>
+									) : (
+										<>
+											<p>This atlas has no screenshots yet.</p>
+											<Button onClick={actions.askAddScreenshots}>Add screenshots…</Button>
+											<p className="text-xs">or drop screenshot files here, or turn on Auto-add</p>
+										</>
+									)
 								) : (
 									<>
-										<p>This atlas has no screenshots yet.</p>
-										<Button onClick={actions.askAddScreenshots}>Add screenshots…</Button>
-										<p className="text-xs">or drop screenshot files here, or turn on Auto-add</p>
+										<p>No atlas open.</p>
+										<div className="flex gap-2">
+											<Button onClick={actions.askOpenFolder}>Open your screenshot folder…</Button>
+											<Button variant="outline" onClick={actions.askNewAtlas}>
+												New atlas…
+											</Button>
+										</div>
 									</>
-								)
-							) : (
-								<>
-									<p>No atlas open.</p>
-									<div className="flex gap-2">
-										<Button onClick={actions.askOpenFolder}>Open your screenshot folder…</Button>
-										<Button variant="outline" onClick={actions.askNewAtlas}>
-											New atlas…
-										</Button>
-									</div>
-								</>
-							)}
-						</div>
-					)}
-					<ProgressBox text={s.progress} />
-					<ErrorBanner />
+								)}
+							</div>
+						)}
+						<ProgressBox text={s.progress} />
+						<ErrorBanner />
+						{dragging && (
+							<div className="pointer-events-none absolute inset-3 z-30 flex items-center justify-center rounded-lg border-2 border-dashed border-gold bg-black/40 text-gold">
+								Drop screenshots: one is placed by hand, several are added
+							</div>
+						)}
+					</div>
 					<ReplayPanel meta={meta.data} />
-					{dragging && (
-						<div className="pointer-events-none absolute inset-3 z-30 flex items-center justify-center rounded-lg border-2 border-dashed border-gold bg-black/40 text-gold">
-							Drop screenshots: one is placed by hand, several are added
-						</div>
-					)}
 				</main>
 			</div>
 			<StatusBar connected={connected} />

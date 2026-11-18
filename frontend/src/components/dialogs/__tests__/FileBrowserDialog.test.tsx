@@ -33,7 +33,7 @@ describe("FileBrowserDialog", () => {
 		const onPick = vi.fn();
 		const { user } = renderWithApp(<FileBrowserDialog />, { "GET /api/fs": home });
 		act(() => useAppStore.getState().pickFiles({ title: "New atlas", folders: true, save: "atlas.json", onPick }));
-		await screen.findByRole("button", { name: /shots/ });
+		await screen.findAllByRole("button", { name: /shots/ }); // in the list and unfolded in the folder tree
 		await user.click(screen.getByRole("button", { name: "Create" }));
 		expect(onPick).toHaveBeenCalledWith(["/home/me/atlas.json"]);
 	});

@@ -136,7 +136,8 @@ export function baseStyle(
 				source: "atlas",
 				"source-layer": "paths",
 				layout: { "line-cap": "round", "line-join": "round" },
-				paint: { "line-opacity": 0.9 },
+				// the starting sizes are the scaled ones too: a fixed default drew everything big for a moment (user)
+				paint: { "line-opacity": 0.9, "line-width": worldSize(geo, 2.5, 0.6, 1.6) },
 			},
 			{
 				id: "removed",
@@ -164,7 +165,13 @@ export function baseStyle(
 				layout: { "line-cap": "round", "line-join": "round" },
 				paint: { "line-color": "#7cff6b", "line-width": 5 },
 			},
-			{ id: "maps", type: "circle", source: "atlas", "source-layer": "maps", paint: { "circle-stroke-width": 2 } },
+			{
+				id: "maps",
+				type: "circle",
+				source: "atlas",
+				"source-layer": "maps",
+				paint: { "circle-radius": worldSize(geo, 8, 1.2), "circle-stroke-width": worldSize(geo, 1.25, 0.4, 1.6) },
+			},
 			{
 				id: "maps-square",
 				type: "symbol",
@@ -470,7 +477,13 @@ export function applyLook(map: MapLibreMap, geo: Geo, meta: Meta, look: Look): v
 	// the replay: only what was revealed so far
 	const step: FilterSpecification | null =
 		look.replayPos === null ? null : ["<", ["coalesce", ["get", "step"], 0], look.replayPos];
-	for (const id of STEPPED) setFilter(map, id, step);
+	for (const id of STEPPED) {
+		// the tower pictures keep their own "only Towers" filter (CodeRabbit: other landmarks got tower pictures)
+		const own: FilterSpecification | null = id === "towers" ? ["==", ["get", "kind"], "Tower"] : null;
+		setFilter(map, id, own && step ? ["all", own, step] : (own ?? step));
+	}
+	// bookmarks are not part of how the atlas was made: hidden while replaying (user: they showed from the start)
+	if (look.replayPos !== null) visible(map, "bookmarks", false);
 }
 
 /** Put a GeoJSON source's data. */

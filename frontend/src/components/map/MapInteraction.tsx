@@ -204,6 +204,13 @@ export function MapInteraction({ map, geo, meta }: { map: MapLibreMap; geo: Geo;
 				setData(map, "lasso", EMPTY);
 				setLasso(null);
 				setMode({ kind: "normal" });
+			} else if (e.key === "Escape") {
+				// with nothing to cancel, Esc takes Find's rings off the map (user: it only worked in the search box)
+				const st = useAppStore.getState();
+				st.setHighlight(null);
+				st.setGoto(null);
+				st.setQuery("");
+				st.setResults([], "");
 			} else if (e.key === "Enter" && mode.kind === "ghost") {
 				try {
 					await app.placeByHand(mode.ghost.path, mode.centre[0], mode.centre[1]);

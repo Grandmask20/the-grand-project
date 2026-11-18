@@ -168,6 +168,7 @@ export function FileBrowserDialog() {
 										e.path === here && "bg-accent text-gold",
 									)}
 									style={{ paddingLeft: 6 + depth * 10 }}
+									ref={e.path === here ? (el) => el?.scrollIntoView({ block: "nearest" }) : undefined}
 									onClick={() => go(e.path)}
 								>
 									{e.path === here ? (
@@ -177,6 +178,26 @@ export function FileBrowserDialog() {
 									)}
 									<span className="truncate">{e.name}</span>
 								</button>
+								{/* the open folder unfolds in the tree, as in Steam's picker (user: the tree didn't open) */}
+								{e.path === here && (
+									<ul>
+										{(listing.data?.entries ?? [])
+											.filter((c) => c.dir)
+											.map((c) => (
+												<li key={c.path}>
+													<button
+														type="button"
+														className="flex w-full items-center gap-1 truncate py-0.5 pr-1 text-left hover:bg-accent"
+														style={{ paddingLeft: 6 + (depth + 1) * 10 }}
+														onClick={() => go(c.path)}
+													>
+														<FolderIcon className="size-3.5 shrink-0 text-gold" />
+														<span className="truncate">{c.name}</span>
+													</button>
+												</li>
+											))}
+									</ul>
+								)}
 							</li>
 						))}
 					</ul>

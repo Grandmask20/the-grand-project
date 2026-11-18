@@ -43,6 +43,7 @@ from .constants import TERRAIN_PIXELS, TILE_CACHE
 from .icons import bgr_hex, icon_col, icon_label, icon_name
 
 LOG = atlas_log.get("app")
+SESSION_RUN = os.urandom(4).hex()  # this run of the app: part of every tile URL (map_info "tile_key")
 
 
 class _LRU:
@@ -522,6 +523,10 @@ class MapImageMixin:
             # MapLibre shows 256 px raster tiles of level z at map zoom z - 1: sharpest at zdeep - 1, then stretched
             "maxzoom": zdeep - 1 + WEBMAP_OVERZOOM,
             "bounds": g.bounds(),
+            # in every tile URL: this run of the app and the open atlas. The versions alone restart at every start
+            # and are shared by every atlas, and the browser keeps tiles for a year, so another atlas's cached tiles
+            # showed at some zooms (user; CodeRabbit)
+            "tile_key": f"{SESSION_RUN}.{self.generation}",
             "terrain_version": self.terrain_version,
             "model_version": self.model_version,
             "filter_version": self.filter_version,

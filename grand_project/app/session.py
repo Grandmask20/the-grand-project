@@ -85,6 +85,7 @@ class AtlasSession(
         self.V: dict = {"nodes": [], "paths": [], "icons": [], "landmarks": [], "final": None}
         self.D: dict = {}  # derived from V: biomes, icon rows, type counts, footprints (rebuild_model)
         self.model_version = 0
+        self.generation = 0  # bumped whenever another atlas is opened, made or closed (tile URLs carry it)
         self._closing = False
         self._extra_groups: set[str] = set()  # bookmark groups made empty (kept until the app closes)
         self._replay_on = False
@@ -171,6 +172,7 @@ class AtlasSession(
                 self._forget_session()
                 self._drop_stale_snapshots(p)
             self.atlas, self.path = atlas, p
+            self.generation += 1
         maps = len((atlas.final or {}).get("nodes", []))
         LOG.info(f"opened atlas {p}: {len(atlas.frames)} screenshots, {maps} maps")
         name = p.stem if p.stem != "atlas" else p.parent.name
@@ -217,6 +219,7 @@ class AtlasSession(
         with self._lock:
             self._forget_session()
             self.atlas, self.path = core.Atlas(), p
+            self.generation += 1
             self.atlas.save(p)
         self.settings["last_atlas"] = str(p)
         self.events.set_scope(str(p.resolve()))
@@ -237,6 +240,7 @@ class AtlasSession(
         with self._lock:
             self._forget_session()
             self.atlas, self.path = None, None
+            self.generation += 1
             self.V = {"nodes": [], "paths": [], "icons": [], "landmarks": [], "final": None}
             self.D = {}
             self.model_version += 1

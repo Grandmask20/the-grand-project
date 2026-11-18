@@ -163,7 +163,8 @@ export function ReplayPanel({ meta }: { meta: Meta }) {
 	);
 
 	return (
-		<div className="absolute right-3 bottom-3 left-3 z-20 flex flex-col gap-2 rounded-lg border bg-card/95 p-3 shadow-xl">
+		// under the map, not over it (user: the panel hid the map); the map gets the rest of the height
+		<div className="z-20 flex shrink-0 flex-col gap-2 border-t bg-card p-3">
 			<div className="flex items-center gap-2">
 				<Button size="icon-sm" variant="outline" aria-label="Step back" onClick={() => seek(stepFrom(pos, -1, plan))}>
 					<SkipBackIcon />

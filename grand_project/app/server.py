@@ -137,9 +137,14 @@ class Handler(BaseHTTPRequestHandler):
             ctype: Content-Type.
             extra: More headers.
         """
+        if not self._read_body and int(self.headers.get("Content-Length") or 0) > 0:
+            # a body nobody read (a refused request) would be taken for the next request on this connection
+            self.close_connection = True
         self.send_response(status)
         self.send_header("Content-Type", ctype)
         self.send_header("Content-Length", str(len(body)))
+        if self.close_connection:
+            self.send_header("Connection", "close")
         for k, v in (extra or {}).items():
             self.send_header(k, v)
         self.end_headers()
@@ -183,6 +188,7 @@ class Handler(BaseHTTPRequestHandler):
         if n > UPLOAD_MAX:
             raise ApiError("request too large", 413)
         raw = self.rfile.read(n) if n else b""
+        self._read_body = True
         if not raw:
             return {}
         try:
@@ -199,6 +205,7 @@ class Handler(BaseHTTPRequestHandler):
         Args:
             method: The HTTP method.
         """
+        self._read_body = False  # per request (the handler lives as long as its keep-alive connection)
         if not self._host_ok():
             self._json({"error": "wrong host"}, 403)
             return
@@ -225,7 +232,7 @@ class Handler(BaseHTTPRequestHandler):
                     self._json({"error": str(e)}, e.status)
                 except ValueError as e:
                     self._json({"error": str(e)}, 400)
-                except (BrokenPipeError, ConnectionResetError):
+                except ConnectionError:  # the browser gave up on it (tiles while zooming): nothing to report
                     pass
                 except Exception as e:
                     LOG.exception(f"{method} {path} failed")
@@ -448,6 +455,7 @@ class Handler(BaseHTTPRequestHandler):
         if n <= 0 or n > UPLOAD_MAX:
             raise ApiError("the file is empty or too large", 413)
         data = self.rfile.read(n)
+        self._read_body = True
         dest = self.S.path.parent / name
         if dest.exists() and dest.read_bytes() != data:
             dest = dest.with_name(f"{dest.stem}_{int(time.time())}{dest.suffix}")
