@@ -159,7 +159,7 @@ export function AtlasMap({ info, meta }: Props) {
 					<MapTiles map={map} />
 					<MapLook map={map} geo={geo} meta={meta} />
 					<MapIcons map={map} geo={geo} info={info} />
-					<Icons3D map={map} info={info} meta={meta} />
+					<Icons3D map={map} geo={geo} info={info} meta={meta} />
 					<MapCamera map={map} geo={geo} info={info} />
 					<MapOverlays map={map} geo={geo} />
 					<MapImages map={map} geo={geo} />

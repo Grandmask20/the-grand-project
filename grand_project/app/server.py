@@ -23,12 +23,10 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, unquote, urlparse
 
-import cv2
-
 from grand_project import core
 from grand_project import logs as atlas_log
 from grand_project import paths as rc_paths
-from grand_project.webmap.shapes import icon_sprite
+from grand_project.webmap.constants import WEBMAP_ICON_SPRITE
 
 from .constants import APP_HOST, APP_PORT, APP_PORT_TRIES, UPLOAD_MAX, VERSION
 from .debug import DEBUG_REASONS
@@ -550,11 +548,11 @@ class Handler(BaseHTTPRequestHandler):
     def get_icon(self, q, name) -> None:
         """An icon type's picture: "sprite" for the map (badge art), else the list picture."""
         size = max(8, min(256, _num(q, "size", 32, int)))
+        # the map's pictures are the list's, at the sprite size: every icon cut to its rim the same way (the badge art
+        # kept its margins, so some icons were drawn smaller than others: user)
         if q.get("kind", [""])[0] == "sprite":
-            ok, buf = cv2.imencode(".png", icon_sprite(name))
-            self._bytes(buf.tobytes() if ok else None, "image/png")
-        else:
-            self._bytes(icon_png(name, size), "image/png")
+            size = WEBMAP_ICON_SPRITE
+        self._bytes(icon_png(name, size), "image/png")
 
     @route("GET", "/api/graph")
     def get_graph(self, q) -> None:

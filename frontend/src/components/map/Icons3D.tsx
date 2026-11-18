@@ -5,12 +5,13 @@ import type { MapInfo } from "@/domain/map/MapInfo";
 import { useAppClient } from "@/hooks/app/UseAppClient";
 import { useSettings } from "@/hooks/app/UseSettings";
 import { styleColour } from "@/logic/Colours";
+import type { Geo } from "@/logic/Geo";
 import { type Icon3D, IconLayer3D } from "@/logic/IconLayer3D";
 import { type Path3D, PathLayer3D } from "@/logic/PathLayer3D";
 import { useAppStore } from "@/store/AppStore";
 
 /** Puts the 3D view's icons on the map (IconLayer3D) while it is tilted, fed from the tiles' icon_rows layer. */
-export function Icons3D({ map, info, meta }: { map: MapLibreMap; info: MapInfo; meta: Meta }) {
+export function Icons3D({ map, geo, info, meta }: { map: MapLibreMap; geo: Geo; info: MapInfo; meta: Meta }) {
 	const app = useAppClient();
 	const settings = useSettings();
 	const tilted = useAppStore((s) => (s.camera?.pitch ?? map.getPitch()) > 1);
@@ -51,15 +52,14 @@ export function Icons3D({ map, info, meta }: { map: MapLibreMap; info: MapInfo; 
 			}
 			l.setPaths(out);
 		};
-		const later = (e: { sourceId?: string }) => {
-			if (e.sourceId === "atlas" && !timer) timer = window.setTimeout(gather, 250);
+		// once the map has settled (every tile that came in while zooming rebuilt all paths: it lagged, user)
+		const later = () => {
+			if (!timer) timer = window.setTimeout(gather, 100);
 		};
-		map.on("sourcedata", later);
-		map.on("moveend", gather);
+		map.on("idle", later);
 		gather();
 		return () => {
-			map.off("sourcedata", later);
-			map.off("moveend", gather);
+			map.off("idle", later);
 			if (timer) clearTimeout(timer);
 			if (map.getLayer(l.id)) map.removeLayer(l.id);
 			pathLayer.current = null;
@@ -88,6 +88,7 @@ export function Icons3D({ map, info, meta }: { map: MapLibreMap; info: MapInfo; 
 				icons.push({
 					lng,
 					lat,
+					atlas: geo.toAtlas(lng, lat),
 					name: String(p.name),
 					slot: Number(p.slot) || 0,
 					lift: Number(p.lift) || 0,
@@ -96,20 +97,18 @@ export function Icons3D({ map, info, meta }: { map: MapLibreMap; info: MapInfo; 
 			}
 			void l.setIcons(icons);
 		};
-		const later = (e: { sourceId?: string; isSourceLoaded?: boolean }) => {
-			if (e.sourceId === "atlas" && !timer) timer = window.setTimeout(gather, 250);
+		const later = () => {
+			if (!timer) timer = window.setTimeout(gather, 100);
 		};
-		map.on("sourcedata", later);
-		map.on("moveend", gather);
+		map.on("idle", later);
 		gather();
 		return () => {
-			map.off("sourcedata", later);
-			map.off("moveend", gather);
+			map.off("idle", later);
 			if (timer) clearTimeout(timer);
 			if (map.getLayer(l.id)) map.removeLayer(l.id);
 			layer.current = null;
 		};
-	}, [map, app, info, on]);
+	}, [map, app, geo, info, on]);
 
 	// biome-ignore lint/correctness/useExhaustiveDependencies: `on` re-runs it for a newly made layer
 	useEffect(() => {

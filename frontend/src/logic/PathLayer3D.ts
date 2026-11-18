@@ -25,7 +25,10 @@ uniform float u_k;
 uniform vec2 u_view;
 uniform float u_width;
 uniform float u_far; // clip w beyond which paths aren't drawn
+uniform float u_ppuw; // screen px per atlas unit, times clip w (px per unit here = u_ppuw / w)
+uniform vec2 u_dashv;
 varying float v_dist;
+varying float v_solid;
 varying float v_step;
 varying vec3 v_col;
 void main() {
@@ -41,6 +44,9 @@ void main() {
 	vec2 px = pa + n * a_info.x * u_width * 0.5;
 	gl_Position = vec4(px / (u_view * 0.5) * ca.w, ca.z, ca.w);
 	v_dist = a_info.y;
+	// dashes smaller than a few px on screen are drawn as a line, as the old window did zoomed out (they turned into
+	// a dotted blur: user)
+	v_solid = (u_dashv.x + u_dashv.y) * u_ppuw / ca.w < 9.0 ? 1.0 : 0.0;
 	v_step = a_info.z;
 	v_col = a_col;
 }`;
@@ -52,9 +58,10 @@ uniform vec2 u_dash; // atlas units on, off (0 off: solid)
 varying float v_dist;
 varying float v_step;
 varying vec3 v_col;
+varying float v_solid;
 void main() {
 	if (v_step >= u_pos) discard;
-	if (u_dash.y > 0.0 && mod(v_dist, u_dash.x + u_dash.y) > u_dash.x) discard;
+	if (u_dash.y > 0.0 && v_solid < 0.5 && mod(v_dist, u_dash.x + u_dash.y) > u_dash.x) discard;
 	gl_FragColor = vec4(v_col, 1.0);
 }`;
 
@@ -164,6 +171,9 @@ export class PathLayer3D implements CustomLayerInterface {
 		const M = options.defaultProjectionData.mainMatrix as Float32Array;
 		gl.uniform1f(gl.getUniformLocation(p, "u_far"), FAR * (M[3] * c.x + M[7] * c.y + M[15]));
 		gl.uniform2f(gl.getUniformLocation(p, "u_dash"), this.dash[0], this.dash[1]);
+		gl.uniform2f(gl.getUniformLocation(p, "u_dashv"), this.dash[0], this.dash[1]);
+		const cw = M[3] * c.x + M[7] * c.y + M[15];
+		gl.uniform1f(gl.getUniformLocation(p, "u_ppuw"), this.k * 512 * 2 ** this.map.getZoom() * ratio * cw);
 		gl.bindBuffer(gl.ARRAY_BUFFER, this.buf);
 		const names: [string, number, number][] = [
 			["a_a", 2, 0],
