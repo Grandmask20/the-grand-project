@@ -73,7 +73,8 @@ export function createAppClient(http: Http) {
 		terrainTiles: (v: string) => `${absolute(http.url("/api/tiles/terrain/"))}{z}/{x}/{y}.jpg?v=${v}`,
 		vectorTiles: (v: string) => `${absolute(http.url("/api/tiles/vector/"))}{z}/{x}/{y}.pbf?v=${v}`,
 		iconUrl: (name: string, size = 32) => http.url(`/api/icons/${encodeURIComponent(name)}.png`, { size }),
-		spriteUrl: (name: string) => http.url(`/api/icons/${encodeURIComponent(name)}.png`, { kind: "sprite" }),
+		// v: the pictures changed (the browser keeps them a year): bumped when they change
+		spriteUrl: (name: string) => http.url(`/api/icons/${encodeURIComponent(name)}.png`, { kind: "sprite", v: 2 }),
 		getGraph: () => http.get<Graph>("/api/graph"),
 		pick: (x: number, y: number, z: number, layers?: Record<string, boolean>) =>
 			http.send<ItemInfo | null>("POST", "/api/pick", { x, y, z, layers }),

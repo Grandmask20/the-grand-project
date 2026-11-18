@@ -9,6 +9,8 @@ export interface ItemInfo {
 	x: number;
 	y: number;
 	node?: number | null;
+	/** A path's points (atlas units). */
+	line?: [number, number][];
 	icon?: string;
 	landmark_kind?: string;
 	removed?: boolean;

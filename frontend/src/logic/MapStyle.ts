@@ -23,6 +23,7 @@ export const GEOJSON_SOURCES = [
 	"route-nodes",
 	"hits",
 	"selected",
+	"selected-path",
 	"goto",
 	"marks",
 	"lasso",
@@ -295,6 +296,13 @@ export function baseStyle(
 					"circle-stroke-color": "#ff00ff",
 					"circle-stroke-width": 2,
 				},
+			},
+			{
+				id: "selected-path",
+				type: "line",
+				source: "selected-path",
+				layout: { "line-cap": "round", "line-join": "round" },
+				paint: { "line-color": "#ffffff", "line-width": 4, "line-opacity": 0.95 },
 			},
 			{
 				id: "selected",

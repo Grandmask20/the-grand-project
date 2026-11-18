@@ -120,8 +120,6 @@ export function Icons3D({ map, geo, info, meta }: { map: MapLibreMap; geo: Geo; 
 		l.pos = replayPos ?? 1e9;
 		if (pathLayer.current) pathLayer.current.pos = replayPos ?? 1e9;
 		l.selected = selIcon;
-		// the flat map's ring lies on the ground under a raised icon: the 3D icon gets its own ring
-		if (map.getLayer("selected")) map.setLayoutProperty("selected", "visibility", selIcon >= 0 ? "none" : "visible");
 		map.triggerRepaint();
 	}, [map, models, replayPos, on, selIcon]);
 

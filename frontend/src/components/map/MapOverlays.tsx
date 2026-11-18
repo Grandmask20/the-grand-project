@@ -35,7 +35,30 @@ export function MapOverlays({ map, geo }: { map: MapLibreMap; geo: Geo }) {
 
 	useEffect(() => {
 		setData(map, "selected", selected ? collection([point(geo.toLngLat(selected.x, selected.y))]) : EMPTY);
+		// a selected path: the whole path lit up, not a ring where it was clicked (as the old window)
+		setData(
+			map,
+			"selected-path",
+			selected?.kind === "path" && selected.line?.length
+				? collection([
+						{
+							type: "Feature",
+							geometry: { type: "LineString", coordinates: selected.line.map(([x, y]) => geo.toLngLat(x, y)) },
+							properties: {},
+						},
+					])
+				: EMPTY,
+		);
 	}, [map, geo, selected]);
+
+	// the flat ring: not for a path (lit up instead), nor for an icon while tilted (the 3D icon wears its own ring;
+	// it came back wrong after switching views: user)
+	const tilted = useAppStore((s) => (s.camera?.pitch ?? 0) > 1);
+	const icons3d = tilted && settings?.layers.Icons !== false;
+	useEffect(() => {
+		const hide = selected?.kind === "path" || (selected?.kind === "icon" && icons3d);
+		if (map.getLayer("selected")) map.setLayoutProperty("selected", "visibility", hide ? "none" : "visible");
+	}, [map, selected, icons3d]);
 
 	useEffect(() => {
 		setData(map, "hits", collection(results.slice(0, 2000).map((r) => point(geo.toLngLat(r.x, r.y)))));

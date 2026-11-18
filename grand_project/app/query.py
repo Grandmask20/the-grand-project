@@ -168,6 +168,8 @@ class QueryMixin:
             p = V["paths"][i]
             a, b = V["nodes"][p["a"]], V["nodes"][p["b"]]
             out["title"] = f"Path: map #{p['a']} - map #{p['b']}"
+            # the whole path, for the selection to light it up end to end as the old window did (user)
+            out["line"] = p.get("line") or [[a["x"], a["y"]], [b["x"], b["y"]]]
             lines += [
                 f"from ({a['x']:.0f}, {a['y']:.0f}) to ({b['x']:.0f}, {b['y']:.0f})",
                 {

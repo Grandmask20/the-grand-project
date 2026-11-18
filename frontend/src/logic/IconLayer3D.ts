@@ -216,8 +216,6 @@ export class IconLayer3D implements CustomLayerInterface {
 	/** The selected icon's id (-1: none): drawn with a ring. */
 	selected = -1;
 	private pickReq: { x: number; y: number; done: (id: number | null) => void } | null = null;
-	private fbo: { fb: WebGLFramebuffer; tex: WebGLTexture; depth: WebGLRenderbuffer; w: number; h: number } | null =
-		null;
 
 	/**
 	 * The icon drawn at screen (x, y) css px, or null: the next frame draws every icon's id as its colour into a
@@ -329,7 +327,10 @@ export class IconLayer3D implements CustomLayerInterface {
 		gl.bindBuffer(gl.ARRAY_BUFFER, null);
 	}
 
-	/** Draw the icons' ids into a hidden picture and answer the waiting click with the one under it. */
+	/**
+	 * Answer the waiting click: draw the icons' ids into the one pixel under the mouse of the frame being drawn, tested
+	 * against its depth (3D models in front hide icons behind them, as on screen), read it, and draw the frame again.
+	 */
 	private pickPass(gl: WebGLRenderingContext | WebGL2RenderingContext): void {
 		const req = this.pickReq;
 		this.pickReq = null;
@@ -339,50 +340,31 @@ export class IconLayer3D implements CustomLayerInterface {
 			req.done(null);
 			return;
 		}
-		const W = gl.drawingBufferWidth;
 		const H = gl.drawingBufferHeight;
-		if (!this.fbo || this.fbo.w !== W || this.fbo.h !== H) {
-			if (this.fbo) {
-				gl.deleteFramebuffer(this.fbo.fb);
-				gl.deleteTexture(this.fbo.tex);
-				gl.deleteRenderbuffer(this.fbo.depth);
-			}
-			const tex = gl.createTexture() as WebGLTexture;
-			gl.bindTexture(gl.TEXTURE_2D, tex);
-			gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, W, H, 0, gl.RGBA, gl.UNSIGNED_BYTE, null);
-			const depth = gl.createRenderbuffer() as WebGLRenderbuffer;
-			gl.bindRenderbuffer(gl.RENDERBUFFER, depth);
-			gl.renderbufferStorage(gl.RENDERBUFFER, gl.DEPTH_COMPONENT16, W, H);
-			const before = gl.getParameter(gl.FRAMEBUFFER_BINDING) as WebGLFramebuffer | null;
-			const fb = gl.createFramebuffer() as WebGLFramebuffer;
-			gl.bindFramebuffer(gl.FRAMEBUFFER, fb);
-			gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, tex, 0);
-			gl.framebufferRenderbuffer(gl.FRAMEBUFFER, gl.DEPTH_ATTACHMENT, gl.RENDERBUFFER, depth);
-			gl.bindFramebuffer(gl.FRAMEBUFFER, before);
-			gl.bindRenderbuffer(gl.RENDERBUFFER, null);
-			this.fbo = { fb, tex, depth, w: W, h: H };
-			gl.bindTexture(gl.TEXTURE_2D, this.tex);
-		}
-		const before = gl.getParameter(gl.FRAMEBUFFER_BINDING) as WebGLFramebuffer | null;
-		const viewport = gl.getParameter(gl.VIEWPORT) as Int32Array;
-		gl.bindFramebuffer(gl.FRAMEBUFFER, this.fbo.fb);
-		gl.viewport(0, 0, W, H);
+		const ratio = gl.drawingBufferWidth / map.getCanvas().clientWidth;
+		const x = Math.round(req.x * ratio);
+		const y = Math.round(H - req.y * ratio);
+		const scissor = gl.isEnabled(gl.SCISSOR_TEST);
+		const box = gl.getParameter(gl.SCISSOR_BOX) as Int32Array;
+		const clear = gl.getParameter(gl.COLOR_CLEAR_VALUE) as Float32Array;
+		gl.enable(gl.SCISSOR_TEST);
+		gl.scissor(x, y, 1, 1);
 		gl.clearColor(0, 0, 0, 0);
-		gl.clearDepth(1);
-		gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
+		gl.clear(gl.COLOR_BUFFER_BIT); // colour only: the models' depth stays
 		gl.uniform1f(gl.getUniformLocation(this.prog, "u_pick"), 1);
 		gl.enable(gl.DEPTH_TEST);
 		gl.depthFunc(gl.LEQUAL);
-		gl.depthMask(true);
+		gl.depthMask(false);
 		gl.disable(gl.BLEND);
 		gl.drawArrays(gl.TRIANGLES, 0, this.count);
-		const ratio = W / map.getCanvas().clientWidth;
 		const px = new Uint8Array(4);
-		gl.readPixels(Math.round(req.x * ratio), Math.round(H - req.y * ratio), 1, 1, gl.RGBA, gl.UNSIGNED_BYTE, px);
-		gl.bindFramebuffer(gl.FRAMEBUFFER, before);
-		gl.viewport(viewport[0], viewport[1], viewport[2], viewport[3]);
+		gl.readPixels(x, y, 1, 1, gl.RGBA, gl.UNSIGNED_BYTE, px);
+		if (!scissor) gl.disable(gl.SCISSOR_TEST);
+		gl.scissor(box[0], box[1], box[2], box[3]);
+		gl.clearColor(clear[0], clear[1], clear[2], clear[3]);
 		const id = px[0] + px[1] * 256 + px[2] * 65536 - 1;
-		req.done(px[3] && id >= 0 ? id : null);
+		req.done(id >= 0 ? id : null);
+		map.triggerRepaint(); // the pixel used for the answer is drawn again
 	}
 
 	/** Half an icon in drawing px at the view's centre, times the centre's clip w (see the vertex shader). */
