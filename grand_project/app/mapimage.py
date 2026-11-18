@@ -331,10 +331,17 @@ class MapImageMixin:
         Returns:
             One byte per cell, row by row (1 = ground), or None without a map image.
         """
-        if self.terrain is None:
+        terrain, version = self.terrain, self.terrain_version
+        if terrain is None:
             return None
         w, h = min(int(w), WEBMAP_MASK_MAX), min(int(h), WEBMAP_MASK_MAX)
-        canvas, weight, (ox, oy, sc) = self.terrain
+        # kept until the map image changes: Colour by asks again each time it is turned on, and working it out from a
+        # big map image took a while (user: the blocky tint showed every time first)
+        key = (version, float(x0), float(y0), float(cell), w, h)
+        kept = getattr(self, "_masks", {})
+        if key in kept:
+            return kept[key]
+        canvas, weight, (ox, oy, sc) = terrain
         # grid cell (c, r) -> map image px ((x0 + c * cell - ox) * sc, ...)
         A = np.array([[cell * sc, 0, (x0 - ox) * sc], [0, cell * sc, (y0 - oy) * sc]], np.float32)
         grey = canvas.mean(axis=2).astype(np.float32) if canvas.ndim == 3 else canvas.astype(np.float32)
@@ -342,7 +349,14 @@ class MapImageMixin:
         flags = cv2.INTER_AREA | cv2.WARP_INVERSE_MAP
         g = cv2.warpAffine(grey, A, (w, h), flags=flags, borderValue=0.0)
         k = cv2.warpAffine(wt, A, (w, h), flags=flags, borderValue=0.0)
-        return ((g > WEBMAP_FOG_DARK) & (k > 0.5)).astype(np.uint8).tobytes()
+        mask = ((g > WEBMAP_FOG_DARK) & (k > 0.5)).astype(np.uint8).tobytes()
+        # a few grids (plain and while replaying) of this map image only
+        kept = {k_: v for k_, v in kept.items() if k_[0] == version}
+        if len(kept) >= 4:
+            kept = {}
+        kept[key] = mask
+        self._masks = kept
+        return mask
 
     # ------------------------------------------------------------------ Fix seams
     def fix_seams(self) -> None:

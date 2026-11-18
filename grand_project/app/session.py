@@ -182,7 +182,7 @@ class AtlasSession(
                 self._drop_stale_snapshots(p)
                 self._reset_mapimage()  # the other atlas's map image never shows for this one
             self.atlas, self.path = atlas, p
-            self.generation += 1
+            self._new_generation()
         maps = len((atlas.final or {}).get("nodes", []))
         LOG.info(f"opened atlas {p}: {len(atlas.frames)} screenshots, {maps} maps")
         name = p.stem if p.stem != "atlas" else p.parent.name
@@ -234,12 +234,24 @@ class AtlasSession(
             self._forget_session()
             self._reset_mapimage()
             self.atlas, self.path = core.Atlas(), p
-            self.generation += 1
+            self._new_generation()
             self.atlas.save(p)
         self.settings["last_atlas"] = str(p)
         self.events.set_scope(str(p.resolve()))
         self._after_load()
         self.events.log(f"new atlas: {p}")
+
+    def _new_generation(self) -> None:
+        """Start a new atlas generation (call under the lock, with the new atlas set): its model starts empty.
+
+        The model (map nodes, paths, icons, screenshot outlines) is rebuilt right after, but anything asked for
+        meanwhile came from the atlas open before: the new atlas's screenshots with the old one's outlines (user:
+        the old atlas's times-seen picture blinked on the new one).
+        """
+        self.generation += 1
+        self.V = {"nodes": [], "paths": [], "icons": [], "landmarks": [], "final": None}
+        self.D = {}
+        self.model_version += 1
 
     def owns(self, gen: int) -> bool:
         """Tell whether work started under atlas generation `gen` may still change things (call under the lock).
@@ -276,10 +288,7 @@ class AtlasSession(
         with self._lock:
             self._forget_session()
             self.atlas, self.path = None, None
-            self.generation += 1
-            self.V = {"nodes": [], "paths": [], "icons": [], "landmarks": [], "final": None}
-            self.D = {}
-            self.model_version += 1
+            self._new_generation()
             self._reset_mapimage()
         if self.events.scope:
             self.events.log("closed the atlas")

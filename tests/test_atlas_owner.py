@@ -101,6 +101,24 @@ def test_switching_bumps_the_generation_and_shows_only_the_open_atlas(session, t
     assert session.generation == g + 1
 
 
+def test_nothing_of_a_shows_while_b_is_being_loaded(session, two, monkeypatch):
+    a, b = two
+    session.open_atlas(a)
+    assert any(f["corners"] for f in session.frames_payload()["frames"])
+    seen = []
+    real = session.rebuild_model
+
+    def rebuild():
+        # what the page gets if it asks between the switch and B's model: B's screenshots, no outlines of A's
+        seen.append((session.path, session.V["nodes"], [f["corners"] for f in session.frames_payload()["frames"]]))
+        real()
+
+    monkeypatch.setattr(session, "rebuild_model", rebuild)
+    session.open_atlas(b)
+    assert seen[0] == (b, [], [[]])  # (rebuilt again later: the stronghold search)
+    assert any(f["corners"] for f in session.frames_payload()["frames"])  # B's own once built
+
+
 def test_new_and_close_are_new_generations_too(session, two, tmp_path):
     a, _b = two
     session.open_atlas(a)

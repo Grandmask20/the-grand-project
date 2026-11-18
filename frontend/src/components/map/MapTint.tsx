@@ -58,8 +58,12 @@ export function MapTint({ map, geo, meta }: { map: MapLibreMap; geo: Geo; meta: 
 		queryFn: () => (box ? app.groundMask(box) : null),
 		enabled: on && !!box,
 		staleTime: Number.POSITIVE_INFINITY,
+		gcTime: Number.POSITIVE_INFINITY, // kept while Colour by is off (its key changes with the map image)
 	});
 	const mask = ground.data ?? null;
+	// drawn once the mask is here: drawn without it first, the tint showed the screenshots' blocky edges over the fog
+	// until it came (user); without a mask (none, or it failed) it is drawn as it is
+	const waitMask = on && !!box && ground.isPending && ground.fetchStatus === "fetching";
 
 	// the layer: added while Colour by is on, where the old tint layer sits (under the biomes)
 	useEffect(() => {
@@ -91,7 +95,7 @@ export function MapTint({ map, geo, meta }: { map: MapLibreMap; geo: Geo; meta: 
 	useEffect(() => {
 		const c = canvas.current;
 		const f = frames.data;
-		if (!on || !c || !f || !box) return;
+		if (!on || !c || !f || !box || waitMask) return;
 		const ctx = c.getContext("2d");
 		if (!ctx) return;
 		const pos = step ?? Number.POSITIVE_INFINITY;
@@ -175,7 +179,7 @@ export function MapTint({ map, geo, meta }: { map: MapLibreMap; geo: Geo; meta: 
 			src.play();
 			requestAnimationFrame(() => src.pause());
 		}
-	}, [map, on, mode, frames.data, box, plan, step, mask]);
+	}, [map, on, mode, frames.data, box, plan, step, mask, waitMask]);
 
 	return null;
 }
