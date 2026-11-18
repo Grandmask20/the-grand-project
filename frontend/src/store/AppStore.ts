@@ -190,7 +190,8 @@ export const useAppStore = create<AppStoreState>()((set) => ({
 	// the selection, search, highlight, route, replay, a placement or lasso waiting for a click, dialogs about one of
 	// its items and the camera all belonged to the atlas open before (user: they showed or acted on the new one; the
 	// new map opened at the old atlas's spot). Kept: the tab, the file picker and the atlas dialogs (not one atlas's).
-	resetAtlas: () =>
+	resetAtlas: () => {
+		selectSeq++; // a click's selection still loading belongs to the atlas before (CodeRabbit)
 		set({
 			camera: null,
 			selected: null,
@@ -209,7 +210,8 @@ export const useAppStore = create<AppStoreState>()((set) => ({
 			confirm: null,
 			bookmarkEdit: null,
 			sources: null,
-		}),
+		});
+	},
 }));
 
 /** Stands for "a replay is open" in useAppStoreCalm (its contents left out). */

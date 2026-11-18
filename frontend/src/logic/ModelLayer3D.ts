@@ -5,6 +5,8 @@ import {
 	MercatorCoordinate,
 } from "maplibre-gl";
 
+import { PickQueue, pickColour, pickPixel, readPickBox } from "./PickPass";
+
 export { pickCode, pickItem } from "./Pick";
 
 /** One extruded shape of the 3D view: its rings (lng, lat; outer then holes), heights in metres, colour, centre. */
@@ -30,8 +32,9 @@ uniform mat4 u_m;
 uniform float u_size;
 uniform float u_height;
 uniform float u_far;
+uniform float u_pos;
 varying vec3 v_col;
-varying float v_step;
+varying float v_show;
 varying vec3 v_pick;
 void main() {
 	v_pick = a_pick;
@@ -42,20 +45,21 @@ void main() {
 	// light from the north-west and above; tops brightest, as MapLibre's own models looked
 	float light = a_normal.z > 0.5 ? 1.0 : 0.62 + 0.3 * max(dot(normalize(a_normal.xy), normalize(vec2(-0.6, -0.8))), 0.0);
 	v_col = a_col * light;
-	v_step = a_step;
+	// the timelapse's step compared here, in the vertex shader's full precision (a mediump fragment shader holds
+	// whole numbers only to 2048: CodeRabbit)
+	v_show = a_step < u_pos ? 1.0 : 0.0;
 }`;
 
 const FS = `
 precision mediump float;
-uniform float u_pos;
 uniform float u_pick; // 1: draw each model's pick code as its colour (clicks read it back)
 uniform vec3 u_sel; // the selected map node's pick code (bytes, 0..1); its models are lit up
 uniform float u_selOn;
 varying vec3 v_col;
-varying float v_step;
+varying float v_show;
 varying vec3 v_pick;
 void main() {
-	if (v_step >= u_pos) discard;
+	if (v_show < 0.5) discard;
 	if (u_pick > 0.5) { gl_FragColor = vec4(v_pick, 1.0); return; }
 	// the selected map node's pillar or structure, in the selection's gold (its icons keep their look: a selected
 	// map node and a selected icon looked the same with the ring on the icon: user)
@@ -82,7 +86,7 @@ export class ModelLayer3D implements CustomLayerInterface {
 	private count = 0;
 	private pending: Model3D[] = [];
 	private dirty = false;
-	private pickReq: { x: number; y: number; done: (code: number) => void } | null = null;
+	private picks = new PickQueue<number>(0);
 	/** The selected map node's (or landmark's) pick code: its models are drawn lit up; 0 for none. */
 	selected = 0;
 	size = 1;
@@ -115,6 +119,7 @@ export class ModelLayer3D implements CustomLayerInterface {
 		}
 		this.map = null;
 		this.gl = null;
+		this.picks.settle();
 	}
 
 	/**
@@ -123,43 +128,22 @@ export class ModelLayer3D implements CustomLayerInterface {
 	 * the models, then from map node positions projected by hand: user).
 	 */
 	pickAt(x: number, y: number): Promise<number> {
-		return new Promise((done) => {
-			if (!this.map || !this.count) return done(0);
-			this.pickReq = { x, y, done };
-			this.map.triggerRepaint();
-		});
+		return this.picks.ask(this.map, this.count > 0, x, y);
 	}
 
-	private pickPass(gl: WebGLRenderingContext | WebGL2RenderingContext): void {
-		const req = this.pickReq;
-		this.pickReq = null;
-		const map = this.map;
-		if (!req) return;
-		if (!map || !this.prog) {
-			req.done(0);
-			return;
+	/** Answer the waiting clicks from the frame being drawn (after the models: their depth picks the front one). */
+	private pickPass(gl: WebGLRenderingContext | WebGL2RenderingContext, p: WebGLProgram, map: MapLibreMap): void {
+		gl.uniform1f(gl.getUniformLocation(p, "u_pick"), 1);
+		for (const req of this.picks.take()) {
+			const { px, py } = pickPixel(gl, map, req.x, req.y);
+			req.done(
+				pickColour(
+					readPickBox(gl, px, py, 1, 1, () => gl.drawArrays(gl.TRIANGLES, 0, this.count)),
+					0,
+				),
+			);
 		}
-		const ratio = gl.drawingBufferWidth / map.getCanvas().clientWidth;
-		const x = Math.round(req.x * ratio);
-		const y = Math.round(gl.drawingBufferHeight - req.y * ratio);
-		const scissor = gl.isEnabled(gl.SCISSOR_TEST);
-		const box = gl.getParameter(gl.SCISSOR_BOX) as Int32Array;
-		const clear = gl.getParameter(gl.COLOR_CLEAR_VALUE) as Float32Array;
-		gl.enable(gl.SCISSOR_TEST);
-		gl.scissor(x, y, 1, 1);
-		gl.clearColor(0, 0, 0, 0);
-		gl.clear(gl.COLOR_BUFFER_BIT); // colour only: the depth just drawn picks the front model
-		gl.uniform1f(gl.getUniformLocation(this.prog, "u_pick"), 1);
-		gl.depthMask(false);
-		gl.drawArrays(gl.TRIANGLES, 0, this.count);
-		gl.depthMask(true);
-		const px = new Uint8Array(4);
-		gl.readPixels(x, y, 1, 1, gl.RGBA, gl.UNSIGNED_BYTE, px);
-		if (!scissor) gl.disable(gl.SCISSOR_TEST);
-		gl.scissor(box[0], box[1], box[2], box[3]);
-		gl.clearColor(clear[0], clear[1], clear[2], clear[3]);
-		req.done(px[3] ? px[0] + px[1] * 256 + px[2] * 65536 : 0);
-		map.triggerRepaint(); // the pixel used for the answer is drawn again
+		gl.uniform1f(gl.getUniformLocation(p, "u_pick"), 0);
 	}
 
 	setModels(models: Model3D[]): void {
@@ -233,7 +217,10 @@ export class ModelLayer3D implements CustomLayerInterface {
 	render(gl: WebGLRenderingContext | WebGL2RenderingContext, options: CustomRenderMethodInput): void {
 		if (!this.prog || !this.map) return;
 		if (this.dirty) this.upload();
-		if (!this.count) return;
+		if (!this.count) {
+			this.picks.settle(); // nothing drawn: nothing clicked
+			return;
+		}
 		const p = this.prog;
 		const M = options.defaultProjectionData.mainMatrix as Float32Array;
 		const c = MercatorCoordinate.fromLngLat(this.map.getCenter());
@@ -274,7 +261,7 @@ export class ModelLayer3D implements CustomLayerInterface {
 		gl.disable(gl.CULL_FACE); // rings wind either way: both sides drawn
 		gl.uniform1f(gl.getUniformLocation(p, "u_pick"), 0);
 		gl.drawArrays(gl.TRIANGLES, 0, this.count);
-		if (this.pickReq) this.pickPass(gl);
+		if (this.picks.pending) this.pickPass(gl, p, this.map);
 		for (const [name] of attrs) gl.disableVertexAttribArray(gl.getAttribLocation(p, name));
 		gl.bindBuffer(gl.ARRAY_BUFFER, null);
 	}

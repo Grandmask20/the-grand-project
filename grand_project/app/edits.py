@@ -166,14 +166,16 @@ class EditsMixin:
 
     def scan_locks(self) -> None:
         """Search the screenshots not searched yet for the hand badge (locked strongholds), in the background."""
-        if not self.atlas or getattr(self, "_lock_job", False):
-            return
-        done = set(self.atlas.lock_scanned)
-        todo = [f for f in self.atlas.frames if f["name"] not in done]
-        if not todo:
-            return
-        self._lock_job = True
-        atlas, gen = self.atlas, self.generation
+        with self._lock:  # its screenshots, atlas and generation read together (a switch between: CodeRabbit)
+            if not self.atlas or getattr(self, "_lock_job", False):
+                return
+            done = set(self.atlas.lock_scanned)
+            todo = [f for f in self.atlas.frames if f["name"] not in done]
+            if not todo:
+                return
+            self._lock_job = True
+            job = self.opened  # (one record: its atlas, generation and log together)
+            atlas, gen, scope = job.atlas, job.gen, job.scope
 
         def work():
             """Find the hand badges, keep them in the atlas and rebuild the model (background thread)."""
@@ -181,7 +183,7 @@ class EditsMixin:
                 found = atlas_cities.find_locks(atlas, todo)
             except Exception as e:
                 LOG.exception("locked stronghold search failed")
-                self.events.log(f"locked stronghold search failed: {e}")
+                self.events.log(f"locked stronghold search failed: {e}", scope)
                 found = None
             finally:
                 self._lock_job = False
@@ -199,7 +201,7 @@ class EditsMixin:
             if found is None:
                 return
             if found:
-                self.events.log(f"{len(atlas.locks)} locked Breach stronghold(s) (hand badge)")
+                self.events.log(f"{len(atlas.locks)} locked Breach stronghold(s) (hand badge)", scope)
             self.rebuild_model()
             self.scan_locks()  # screenshots added meanwhile
 

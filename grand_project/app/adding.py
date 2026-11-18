@@ -105,6 +105,7 @@ class AddingMixin:
         self._undo: list[dict] = []
         self.recent: list[str] = []
         self._pending_watch: list = []
+        self._taken: set[str] = set()
         self._wait_tries: dict[str, int] = {}
         self.recent_pick: str | None = None
 
@@ -286,6 +287,7 @@ class AddingMixin:
             if not 0 <= index < len(self._pending_watch):
                 raise ValueError("no such waiting screenshot")
             fr = self._pending_watch.pop(index)
+            self._taken.add(fr.sha)  # (a job running meanwhile doesn't put it back: CodeRabbit)
         self.events.publish("lists", None)
         return str(fr.path)
 
@@ -606,8 +608,10 @@ class AddingMixin:
                 picked = None if mode[1] is None else set(mode[1])
                 aside = [f for f in self._pending_watch if picked is not None and str(f.path) not in picked]
                 self._pending_watch = [f for f in self._pending_watch if picked is None or str(f.path) in picked]
-                added, _ = self._place_watched([])
-                self._pending_watch += aside
+                try:
+                    added, _ = self._place_watched([])
+                finally:  # (a failing retry lost them: CodeRabbit)
+                    self._pending_watch += aside
                 refused = [Path(f.path).name for f in self._pending_watch]
             elif isinstance(mode, tuple):
                 added, refused = self._place_dropped(frames, mode[1], mode[2])
@@ -869,6 +873,7 @@ class AddingMixin:
         # the waiting list stays the list while the job runs (the page shows it, also while a question is open: it
         # read empty when the job took it out at its start, and a failure lost it); placed ones leave it one by one
         placed_now: list[str] = []  # (shas) committed in this job, not on the map yet
+        self._taken: set[str] = set()  # taken out by hand meanwhile (take_waiting, while a question is open)
         added, todo = 0, self._pending_watch + frames
         progress = True
         try:
@@ -917,5 +922,6 @@ class AddingMixin:
             placed = {f.get("sha") for f in self.atlas.frames}
             self._pending_watch = [f for f in self._pending_watch if f.sha not in placed]
             raise
+        todo = [f for f in todo if f.sha not in self._taken]
         self._pending_watch = todo
         return added, [Path(f.path).name for f in todo]

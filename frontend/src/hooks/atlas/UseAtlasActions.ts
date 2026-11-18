@@ -1,6 +1,7 @@
 import { useQueryClient } from "@tanstack/react-query";
 import { useCallback, useMemo } from "react";
 import { AppQueryKeys } from "@/api/AppQueryKeys";
+import type { AppState } from "@/domain/app/AppState";
 import { useAppClient } from "@/hooks/app/UseAppClient";
 import { useAppState } from "@/hooks/app/UseAppState";
 import { useAppStore } from "@/store/AppStore";
@@ -74,8 +75,11 @@ export function useAtlasActions() {
 					});
 					return;
 				}
-				afterOpen();
-				if (r.new.length)
+				// asked once the page has the opened atlas's state (its atlas reset cleared a question asked before it)
+				// and only while that atlas is still the open one (another opened meanwhile: CodeRabbit)
+				await queryClient.refetchQueries({ queryKey: AppQueryKeys.state });
+				const now = queryClient.getQueryData<AppState>(AppQueryKeys.state)?.atlas?.path;
+				if (r.new.length && now === r.opened)
 					useAppStore.getState().askConfirm({
 						title: "Atlas folder",
 						text: `${plural(r.new.length, "screenshot")} in this folder are not in the atlas yet. Add them now?`,
@@ -86,7 +90,7 @@ export function useAtlasActions() {
 				fail(e);
 			}
 		},
-		[app, afterOpen, addScreenshots, fail],
+		[app, queryClient, afterOpen, addScreenshots, fail],
 	);
 
 	const askOpenFolder = useCallback(

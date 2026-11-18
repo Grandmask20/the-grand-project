@@ -1,28 +1,11 @@
-import type { MapMouseEvent } from "maplibre-gl";
-import { useEffect, useState } from "react";
 import { useAppState } from "@/hooks/app/UseAppState";
-import { useGeo } from "@/hooks/map/UseGeo";
+import { useCursorAt } from "@/hooks/map/UseCursorAt";
 import { useAppStore } from "@/store/AppStore";
 
 /** The status line, the mode's hint, and where the mouse is on the atlas. */
 export function StatusBar({ connected }: { connected: boolean }) {
 	const state = useAppState().data;
-	const map = useAppStore((s) => s.map);
 	const mode = useAppStore((s) => s.mode);
-	const geo = useGeo();
-	const [at, setAt] = useState<string>("");
-
-	useEffect(() => {
-		if (!map || !geo) return;
-		const move = (e: MapMouseEvent) => {
-			const [x, y] = geo.toAtlas(e.lngLat.lng, e.lngLat.lat);
-			setAt(`x ${x.toFixed(0)}  y ${y.toFixed(0)}   zoom ${geo.pxPerUnit(map.getZoom()).toFixed(2)}`);
-		};
-		map.on("mousemove", move);
-		return () => {
-			map.off("mousemove", move);
-		};
-	}, [map, geo]);
 
 	const hint =
 		mode.kind === "lasso"
@@ -43,7 +26,12 @@ export function StatusBar({ connected }: { connected: boolean }) {
 			<span className="truncate text-foreground">{hint || state?.status}</span>
 			<span className="flex-1" />
 			{state?.busy && <span className="text-gold">working…</span>}
-			<span>{at}</span>
+			<CursorAt />
 		</footer>
 	);
+}
+
+/** The mouse's place on the atlas (redrawn alone on every mouse move). */
+function CursorAt() {
+	return <span>{useCursorAt()}</span>;
 }

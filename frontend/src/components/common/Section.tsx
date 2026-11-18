@@ -20,7 +20,12 @@ export function Section({
 		<section className={cn("flex flex-col gap-2", className)} aria-disabled={locked || undefined}>
 			<div className="flex items-center justify-between gap-2">
 				<h3 className="text-xs font-semibold tracking-wide text-gold uppercase">{title}</h3>
-				{actions}
+				{actions && (
+					// (locked with the rest: its buttons stayed usable, CodeRabbit)
+					<div className={cn(locked && "pointer-events-none opacity-45")} inert={locked}>
+						{actions}
+					</div>
+				)}
 			</div>
 			<div className={cn("flex flex-col gap-2", locked && "pointer-events-none opacity-45")} inert={locked}>
 				{children}

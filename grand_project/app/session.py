@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import math
 import threading
+from dataclasses import dataclass
 from pathlib import Path
 
 import numpy as np
@@ -62,6 +63,20 @@ LAYER_DEFAULTS = {
 }
 
 
+@dataclass(frozen=True)
+class Opened:
+    """The open atlas as one record, swapped whole when another is opened, made or closed (AtlasSession._switch).
+
+    Work takes it once when it starts, and gets every part of one atlas from it: the atlas, its file, its
+    generation (`owns`) and its log.
+    """
+
+    atlas: core.Atlas | None
+    path: Path | None
+    gen: int
+    scope: str  # its log's key in the Log tab ("" for none)
+
+
 class AtlasSession(
     LibraryMixin,
     MapImageMixin,
@@ -86,12 +101,10 @@ class AtlasSession(
         self.settings = load_settings() if settings is None else settings
         self.events = events or Events()
         self._lock = threading.RLock()
-        self.atlas: core.Atlas | None = None
-        self.path: Path | None = None
+        self.opened = Opened(None, None, 0, "")  # the open atlas (atlas, path, generation, log): one record
         self.V: dict = {"nodes": [], "paths": [], "icons": [], "landmarks": [], "final": None}
         self.D: dict = {}  # derived from V: biomes, icon rows, type counts, footprints (rebuild_model)
         self.model_version = 0
-        self.generation = 0  # bumped whenever another atlas is opened, made or closed (tile URLs carry it)
         self._closing = False
         self._extra_groups: set[str] = set()  # bookmark groups made empty (kept until the app closes)
         self._replay_on = False
@@ -189,22 +202,21 @@ class AtlasSession(
             self.stop_seams()
             self.events.log("Fix seams stopped: another atlas was opened")
         self.save()
+        name = p.stem if p.stem != "atlas" else p.parent.name
         with self._lock:
             if self.working():  # a job slipped in meanwhile
+                self._resume_watch()  # (stopped above for a switch that doesn't happen: CodeRabbit)
                 raise ValueError("wait until the screenshots being added are done")
             if switching:
                 self._forget_session()
                 self._drop_stale_snapshots(p)
                 self._reset_mapimage()  # the other atlas's map image never shows for this one
-            self.atlas, self.path = atlas, p
-            self._new_generation()
+            before, now = self.opened, self._switch(atlas, p)
+            if before.scope and before.scope != now.scope:
+                self.events.log(f"switched to atlas {name}", before.scope)
         maps = len((atlas.final or {}).get("nodes", []))
         LOG.info(f"opened atlas {p}: {len(atlas.frames)} screenshots, {maps} maps")
-        name = p.stem if p.stem != "atlas" else p.parent.name
-        if self.events.scope and self.events.scope != str(p.resolve()):
-            self.events.log(f"switched to atlas {name}")
-        self.events.set_scope(str(p.resolve()))
-        self.events.log(f"opened atlas {name} ({p}): {len(atlas.frames)} screenshots, {maps} maps")
+        self.events.log(f"opened atlas {name} ({p}): {len(atlas.frames)} screenshots, {maps} maps", now.scope)
         self.settings["last_atlas"] = str(p)
         if atlas.frames and atlas.final is None:
             self.events.log("this atlas predates the atlas-wide check: running it now")
@@ -245,45 +257,76 @@ class AtlasSession(
         p.parent.mkdir(parents=True, exist_ok=True)
         with self._lock:
             if self.working():
+                self._resume_watch()  # (stopped above for a switch that doesn't happen: CodeRabbit)
                 raise ValueError("wait until the screenshots being added are done")
             self._forget_session()
             self._reset_mapimage()
-            self.atlas, self.path = core.Atlas(), p
-            self._new_generation()
-            self.atlas.save(p)
+            now = self._switch(core.Atlas(), p)
+            now.atlas.save(p)
         self.settings["last_atlas"] = str(p)
-        self.events.set_scope(str(p.resolve()))
         self._after_load()
-        self.events.log(f"new atlas: {p}")
+        self.events.log(f"new atlas: {p}", now.scope)
         if self.settings.get("watch_on"):
             self.start_watch()  # auto-add follows the new atlas too (it was stopped above and left off)
 
-    def _new_generation(self) -> None:
-        """Start a new atlas generation (call under the lock, with the new atlas set): its model starts empty.
+    def _switch(self, atlas: core.Atlas | None, p: Path | None) -> Opened:
+        """Make `atlas` (at `p`; None: none) the open one, as a new generation (call under the lock).
 
-        The model (map nodes, paths, icons, screenshot outlines) is rebuilt right after, but anything asked for
-        meanwhile came from the atlas open before: the new atlas's screenshots with the old one's outlines (user:
-        the old atlas's times-seen picture blinked on the new one).
+        The only place the open atlas changes: its record (atlas, path, generation, log) is swapped whole, so work
+        that took the record never mixes one atlas's parts with another's. Read field by field, a switch between
+        the reads gave a job atlas A's screenshots with B's generation, or A's log lines in B's log (CodeRabbit,
+        many times over).
+
+        The model (map nodes, paths, icons, screenshot outlines) starts empty and is rebuilt right after: anything
+        asked for meanwhile came from the atlas open before (user: the old atlas's times-seen picture blinked on the
+        new one).
+
+        Returns:
+            The new record.
         """
-        self.generation += 1
+        scope = str(p.resolve()) if p is not None else ""
+        self.opened = Opened(atlas, p, self.opened.gen + 1, scope)
         self.V = {"nodes": [], "paths": [], "icons": [], "landmarks": [], "final": None}
         self.D = {}
         self.model_version += 1
+        self.events.set_scope(scope)
+        return self.opened
 
-    def owns(self, gen: int) -> bool:
-        """Tell whether work started under atlas generation `gen` may still change things (call under the lock).
+    @property
+    def atlas(self) -> core.Atlas | None:
+        """The open atlas (None: none)."""
+        return self.opened.atlas
 
-        Every background job (map image, Fix seams, saves, exports, stronghold search, replay fog) remembers the
-        generation it started under and applies its result only while that is still the open atlas: work for
-        another atlas was installed into the one opened meanwhile (user, CodeRabbit).
+    @property
+    def path(self) -> Path | None:
+        """The open atlas's file."""
+        return self.opened.path
+
+    @property
+    def generation(self) -> int:
+        """The open atlas's generation: bumped whenever another is opened, made or closed (tile URLs carry it)."""
+        return self.opened.gen
+
+    def _resume_watch(self) -> None:
+        """Start auto-add again on the open atlas when it is on (after a stop for a switch that was refused)."""
+        if self.atlas is not None and self.settings.get("watch_on"):
+            self.start_watch()
+
+    def owns(self, job: Opened | int) -> bool:
+        """Tell whether work started for an atlas may still change things (call under the lock).
+
+        Every background job (map image, Fix seams, saves, exports, stronghold search, replay fog) takes the open
+        atlas's record (`opened`) when it starts, works on that record's atlas, logs into its log, and applies its
+        result only while it is still the open one: work for another atlas was installed into the one opened
+        meanwhile (user, CodeRabbit).
 
         Args:
-            gen: The generation the work started under.
+            job: The record the work took, or its generation.
 
         Returns:
             True while that atlas is still the open one.
         """
-        return gen == self.generation
+        return (job.gen if isinstance(job, Opened) else job) == self.opened.gen
 
     def save(self) -> None:
         """Save the open atlas (if any)."""
@@ -304,12 +347,11 @@ class AtlasSession(
         self.save()
         with self._lock:
             self._forget_session()
-            self.atlas, self.path = None, None
-            self._new_generation()
+            before = self.opened
+            self._switch(None, None)
             self._reset_mapimage()
-        if self.events.scope:
-            self.events.log("closed the atlas")
-        self.events.set_scope("")
+            if before.scope:
+                self.events.log("closed the atlas", before.scope)
         self.events.publish("atlas", self.atlas_summary())
         self.events.publish("model", self.model_version)
 
@@ -384,7 +426,7 @@ class AtlasSession(
             D["node_pts"] = np.array([[n["x"], n["y"]] for n in V["nodes"]], float).reshape(-1, 2)
             D["icon_pts"] = icon_rows(V["nodes"], V["icons"], D["icon_node"]) if V["icons"] else np.zeros((0, 2))
             D["footprints"] = [core.footprint(self.atlas, f) for f in self.atlas.frames] if self.atlas else []
-            D["landmark_node"] = landmark_nodes(V["nodes"], V["landmarks"])
+            D["landmark_node"] = landmark_nodes(V["nodes"], V["landmarks"], D["locked"])
             self.V, self.D = V, D
             self.model_version += 1
         if getattr(self, "_replay_on", False) and self.atlas and self.atlas.frames:
@@ -419,6 +461,7 @@ class AtlasSession(
         Returns:
             The state dict (JSON-able).
         """
+        opened = self.opened  # read first: a switch meanwhile shows as another generation, never a mix (CodeRabbit)
         return {
             "version": VERSION,
             "atlas": self.atlas_summary(),
@@ -426,7 +469,7 @@ class AtlasSession(
             "terrain_version": self.terrain_version,
             "filter_version": self.filter_version,
             "busy": self.working(),
-            "generation": self.generation,
+            "generation": opened.gen,
             "progress": self.events.progress,
             "status": self.events.status,
             "watch": self.watch_state(),
@@ -436,7 +479,7 @@ class AtlasSession(
             "seams": self.seams_running(),
             "questions": self.events.open_questions(),
             "log": list(self.events.log_lines)[-300:],
-            "log_scope": self.events.scope,
+            "log_scope": opened.scope,
         }
 
     def _forget_session(self) -> None:
@@ -472,10 +515,10 @@ def dist(a, b) -> float:
     return math.hypot(a[0] - b[0], a[1] - b[1])
 
 
-__all__ = ["AtlasSession", "potential_kind", "dist"]
+__all__ = ["AtlasSession", "Opened", "potential_kind", "dist"]
 
 
-def landmark_nodes(nodes: list[dict], landmarks: list[dict]) -> dict[int, int]:
+def landmark_nodes(nodes: list[dict], landmarks: list[dict], locked=()) -> dict[int, int]:
     """Find the map node each landmark marks: the nearest live map node within reach (a locked stronghold has none).
 
     A click on a landmark's 3D model selects this map node (user: clicking a city's citadel didn't light up its map).
@@ -483,6 +526,7 @@ def landmark_nodes(nodes: list[dict], landmarks: list[dict]) -> dict[int, int]:
     Args:
         nodes: The view model's map nodes ("x", "y", "status").
         landmarks: The view model's landmarks ("x", "y", "kind", "status").
+        locked: Indexes of locked strongholds: they stand apart, not at a map node (one nearby was picked: CodeRabbit).
 
     Returns:
         Landmark index -> map node index.
@@ -495,7 +539,7 @@ def landmark_nodes(nodes: list[dict], landmarks: list[dict]) -> dict[int, int]:
     tree = cKDTree(np.array([[nodes[i]["x"], nodes[i]["y"]] for i in live], float))
     out = {}
     for k, lm in enumerate(landmarks):
-        if str(lm.get("status", "")).startswith("removed"):
+        if str(lm.get("status", "")).startswith("removed") or k in locked:
             continue
         reach = LANDMARK_NODE_REACH_STRONGHOLD if lm.get("kind") == "Breach stronghold" else LANDMARK_NODE_REACH
         d, j = tree.query([lm["x"], lm["y"]])

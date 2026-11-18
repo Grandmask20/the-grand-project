@@ -56,8 +56,9 @@ def _import():
     have been scored instead): the repo this folder sits in (atlas_test_data/res_atlases), else the current folder.
     """
     sys.path.insert(0, str(program_root()))
-    from grand_project import core
     from grand_project.viewer.model import view_model
+
+    from grand_project import core
 
     return core, view_model
 

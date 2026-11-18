@@ -1,4 +1,4 @@
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import type { CanvasSource, Map as MapLibreMap } from "maplibre-gl";
 import { useEffect, useMemo, useRef } from "react";
 import type { Meta } from "@/domain/app/Meta";
@@ -53,6 +53,13 @@ export function MapTint({ map, geo, meta }: { map: MapLibreMap; geo: Geo; meta: 
 	}, [frames.data, replaying]);
 
 	// where there is ground: the black fog at the screenshots' edges is left untinted (user)
+	// only the current mask is kept while Colour by is off: older map images' and boxes' go (all of them were kept for
+	// good: CodeRabbit)
+	const queryClient = useQueryClient();
+	const groundId = JSON.stringify(["ground", box, terrainVersion]);
+	useEffect(() => {
+		queryClient.removeQueries({ queryKey: ["ground"], predicate: (q) => JSON.stringify(q.queryKey) !== groundId });
+	}, [queryClient, groundId]);
 	const ground = useQuery({
 		queryKey: ["ground", box, terrainVersion],
 		queryFn: () => (box ? app.groundMask(box) : null),

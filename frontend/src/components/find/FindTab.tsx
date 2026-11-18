@@ -53,8 +53,9 @@ export function FindTab() {
 	}, [search.data, query, listed, setResults, setGoto, flyTo]);
 
 	useEffect(() => {
-		if (listed && list.data) setResults(list.data, `${list.data.length} ${listed.label}`);
-	}, [listed, list.data, setResults]);
+		// only while no search is typed (a late listing replaced its results: CodeRabbit)
+		if (listed && !query.trim() && list.data) setResults(list.data, `${list.data.length} ${listed.label}`);
+	}, [listed, list.data, query, setResults]);
 
 	const filter = (key: "multi_only" | "only_icon_maps" | "near_only", label: string) => (
 		<Label className="font-normal">

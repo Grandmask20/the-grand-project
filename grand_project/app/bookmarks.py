@@ -13,6 +13,7 @@ import time
 from grand_project import logs as atlas_log
 
 from .constants import CATEGORIES, SAME_SPOT
+from .events import StaleAtlas
 from .icons import icon_label, icon_name
 
 LOG = atlas_log.get("app")
@@ -151,7 +152,9 @@ class BookmarksMixin:
         name = icon_label(self.V["icons"][i]) if kind == "icon" else (icon_name(raw) if raw else f"Map #{i}")
         return name, cat
 
-    def add_bookmark(self, x: float, y: float, name: str, group: str = "Other", note: str = "", quiet=False) -> int:
+    def add_bookmark(
+        self, x: float, y: float, name: str, group: str = "Other", note: str = "", quiet=False, gen: int | None = None
+    ) -> int:
         """Add a bookmark unless one already sits on that spot.
 
         Args:
@@ -173,6 +176,8 @@ class BookmarksMixin:
         if not name.strip():
             raise ValueError("a bookmark needs a name")
         with self._lock:  # the spot check and the append together (CodeRabbit)
+            if gen is not None and not self.owns(gen):  # made for an atlas no longer open (CodeRabbit)
+                raise StaleAtlas()
             if self.bookmark_at(x, y) is not None:
                 return -1
             self.atlas.bookmarks.append(

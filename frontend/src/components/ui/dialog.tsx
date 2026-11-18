@@ -43,9 +43,14 @@ function DialogContent({
   ...props
 }: React.ComponentProps<typeof DialogPrimitive.Content> & { showCloseButton?: boolean; overlay?: boolean }) {
   // the control that had the focus when it opened gets it back on close (the store-opened dialogs have no trigger
-  // for Radix to return it to: CodeRabbit)
-  const opener = React.useRef<Element | null>(typeof document === "undefined" ? null : document.activeElement)
-  const { onCloseAutoFocus } = props
+  // for Radix to return it to: CodeRabbit). Taken as it opens: this wrapper stays mounted while the dialog is closed,
+  // so taken when it was first drawn it was whatever had the focus at page load (you)
+  const opener = React.useRef<Element | null>(null)
+  const { onOpenAutoFocus, onCloseAutoFocus } = props
+  const openFocus = (e: Event) => {
+    opener.current = document.activeElement
+    onOpenAutoFocus?.(e)
+  }
   const closeFocus = (e: Event) => {
     onCloseAutoFocus?.(e)
     const el = opener.current
@@ -64,6 +69,7 @@ function DialogContent({
           className
         )}
         {...props}
+        onOpenAutoFocus={openFocus}
         onCloseAutoFocus={closeFocus}
       >
         {children}

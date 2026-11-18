@@ -614,7 +614,9 @@ export function setImage(
 		if (src) map.removeSource(id);
 		return;
 	}
-	if (src) src.updateImage({ url, coordinates });
+	if (src && src.url === url)
+		src.setCoordinates(coordinates); // (moved: not loaded again, CodeRabbit)
+	else if (src) src.updateImage({ url, coordinates });
 	else map.addSource(id, { type: "image", url, coordinates });
 	if (!map.getLayer(id))
 		map.addLayer(

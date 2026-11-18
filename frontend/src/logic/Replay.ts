@@ -75,8 +75,12 @@ export function cameraTarget(meta: Meta, plan: ReplayPlan, frames: Frames, pos: 
 		const newest = plan.area
 			? (i: number) => s[i] < p && s[i] >= p - 0.05 * plan.n_steps
 			: (i: number) => s[i] === Math.max(0, Math.ceil(p - 1e-9) - 1);
-		const first = s.length ? Math.min(...s) : 0; // (once, not per screenshot: CodeRabbit)
-		const b = boxOf(frames, newest) ?? boxOf(frames, (i) => s[i] <= first);
+		const b =
+			boxOf(frames, newest) ??
+			(() => {
+				const first = s.length ? Math.min(...s) : 0; // (once, and only when needed: CodeRabbit)
+				return boxOf(frames, (i) => s[i] <= first);
+			})();
 		if (!b) return null;
 		const cx = (b[0] + b[2]) / 2;
 		const cy = (b[1] + b[3]) / 2;
@@ -112,6 +116,24 @@ function growBox(meta: Meta, plan: ReplayPlan, frames: Frames, pos: number): Box
 	const a = plan.bounds;
 	const b: Box = [Math.max(box[0], a[0]), Math.max(box[1], a[1]), Math.min(box[2], a[2]), Math.min(box[3], a[3])];
 	return b[2] > b[0] && b[3] > b[1] ? b : revealed();
+}
+
+/**
+ * The fog's cover of a spot revealed at `step` when the timelapse is at `pos` (0 shown .. 1 hidden). By time, a
+ * screenshot shows from its step on (step < pos, as the counts). By area, a soft edge of `soft` steps ahead of pos:
+ * centred on pos it left the last spots half-covered at the very end (CodeRabbit).
+ */
+export function fogCover(step: number, pos: number, area: boolean, soft: number): number {
+	return area ? Math.min(1, Math.max(0, (step - pos) / soft)) : step < pos - 1e-9 ? 0 : 1;
+}
+
+/**
+ * A fog cell's step from its stored value (0..65534 over 0..top). Steps by time are whole numbers: rounded, so step 1
+ * isn't read as 0.99996 and shown a step early (CodeRabbit); by area they are fractions of the sweep.
+ */
+export function fogStep(v: number, top: number, area: boolean): number {
+	const step = (v * top) / 65534;
+	return area ? step : Math.round(step);
 }
 
 /** Whether a screenshot is revealed at a place (Colour by while replaying counts only those). */

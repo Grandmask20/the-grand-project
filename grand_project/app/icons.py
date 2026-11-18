@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import contextlib
 import io
+import os
 import re
 import zipfile
 
@@ -38,6 +40,9 @@ def icon_art_version() -> str:
             h.update(str(p.stat().st_mtime_ns).encode())
         except OSError:
             h.update(b"-")
+    # the newest poe2db picture too: one overwritten in place changes its own time, not its folder's (CodeRabbit)
+    with contextlib.suppress(OSError), os.scandir(rc_paths.ref("poe2db_icons")) as it:
+        h.update(str(max((e.stat().st_mtime_ns for e in it if e.is_file()), default=0)).encode())
     return f"{ICON_DRAW_REV}-{h.hexdigest()}"
 
 
@@ -180,6 +185,14 @@ def _rim(size: int) -> Image.Image | None:
 def _poe2db_art(raw: str, size: int) -> Image.Image | None:
     """poe2db's sharp art of an icon type (references/poe2db_icons): the whole icon, or the inner art set in the
     game's rim (user: the db pictures had no rim), or None."""
+    try:  # a damaged picture falls through to the next source (CodeRabbit)
+        return _poe2db_art_read(raw, size)
+    except (OSError, ValueError):
+        return None
+
+
+def _poe2db_art_read(raw: str, size: int) -> Image.Image | None:
+    """Read poe2db's art of an icon type (see _poe2db_art); raises when a picture can't be read."""
     folder = rc_paths.ref("poe2db_icons")
     full = folder / f"full__{raw}.webp"
     if full.exists():
@@ -270,10 +283,11 @@ def icon_png(raw: str, size: int = 64, style: str = "game art") -> bytes:
         The PNG file's bytes.
     """
     key = (icon_art_version(), raw, size, style)  # (a taught crop or new art: drawn again)
-    if key not in _PICTURES:
+    hit = _PICTURES.get(key)  # read once: another request may clear the cache meanwhile (CodeRabbit)
+    if hit is None:
         if len(_PICTURES) > 4000:  # old versions' pictures
             _PICTURES.clear()
         buf = io.BytesIO()
         icon_picture(raw, size, style).save(buf, "PNG")
-        _PICTURES[key] = buf.getvalue()
-    return _PICTURES[key]
+        hit = _PICTURES[key] = buf.getvalue()
+    return hit

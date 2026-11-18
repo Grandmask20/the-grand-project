@@ -420,3 +420,58 @@ def test_the_times_seen_picture_is_kept_per_atlas(app, tmp_path):
 def test_the_server_knows_which_calls_belong_to_no_atlas():
     assert all(p.startswith("/api/") for p in S.GEN_FREE)
     assert not any("/api/atlas/save".startswith(p) or "/api/atlas/close".startswith(p) for p in S.GEN_FREE)
+
+
+def test_a_refused_switch_leaves_auto_add_on(session, two, monkeypatch):
+    a, b = two
+    monkeypatch.setattr(session, "detector_ready", lambda: None)
+    session.settings["watch_on"] = True
+    session.open_atlas(a)
+    real = session.working
+    calls = iter([False, True])  # free at the first check, a job slipped in before the second
+
+    monkeypatch.setattr(session, "working", lambda: next(calls, real()))
+    with pytest.raises(ValueError, match="being added"):
+        session.open_atlas(b)
+    assert session.path == a and session._watch_on  # (stopped for the switch and left off: CodeRabbit)
+    session.stop_watch()
+
+
+def test_a_job_logs_under_its_own_atlas(session, two):
+    a, b = two
+    session.open_atlas(a)
+    scope_a = session.events.scope
+    session.open_atlas(b)
+    session.events.log("A's map image could not be built", scope_a)  # a job of A's finishing after the switch
+    assert not any("A's map image" in line for line in session.events.log_lines)
+    assert any("A's map image" in line for line in session.events._logs[scope_a])
+
+
+def test_a_bookmark_made_for_a_is_refused_once_b_is_open(session, two):
+    from grand_project.app.events import StaleAtlas
+
+    a, b = two
+    session.open_atlas(a)
+    g_a = session.generation
+    session.open_atlas(b)
+    with pytest.raises(StaleAtlas):
+        session.add_bookmark(600.0, 600.0, "for A", gen=g_a)
+    assert session.add_bookmark(600.0, 600.0, "for B", gen=session.generation) >= 0
+
+
+def test_the_open_atlas_is_one_record(session, two):
+    a, b = two
+    session.open_atlas(a)
+    job = session.opened  # what a job takes when it starts
+    session.open_atlas(b)
+    # the job's atlas, file, generation and log are all A's, whatever happened since
+    assert job.path == a and job.scope == str(a.resolve()) and job.atlas is not session.atlas
+    assert not session.owns(job) and session.owns(session.opened) and session.owns(session.generation)
+    assert (session.atlas, session.path, session.generation) == (
+        session.opened.atlas,
+        session.opened.path,
+        session.opened.gen,
+    )  # (one source: no field can lag behind)
+    assert any("switched to atlas" in line for line in session.events._logs[job.scope])  # (in A's own log)
+    session.close()
+    assert session.opened.atlas is None and session.events.scope == "" and session.state()["log_scope"] == ""

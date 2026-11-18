@@ -23,6 +23,12 @@ export interface Scene3D {
 	}[];
 }
 
+/** A scene model's pick ("node:<i>", "landmark:<i>" or "") as its pick code (0: a click on it selects nothing). */
+export function scenePick(pick: string): number {
+	const [kind, id] = pick.split(":");
+	return kind === "node" || kind === "landmark" ? pickCode(kind, Number(id)) : 0;
+}
+
 /**
  * What the 3D view lights up for the selection: a selected icon wears its ring (`icon`); a selected map node, or a
  * landmark by the map node it marks, has its model (pillar, city, hall, tower) drawn in gold (`model`, a pick code).

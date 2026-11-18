@@ -261,7 +261,7 @@ class LibraryMixin:
                 LOG.warning(f"could not read atlas {jp} for its card", exc_info=True)
             with ATLAS_LIST_LOCK:
                 for a in self.known_atlases():
-                    if a["json"] == jp:
+                    if a["json"] == jp and "numbers" not in a:  # (newer counts saved meanwhile stay: CodeRabbit)
                         a["numbers"] = numbers or {"maps": 0, "icons": 0, "shots": 0}
         with ATLAS_LIST_LOCK:
             self.save_settings()

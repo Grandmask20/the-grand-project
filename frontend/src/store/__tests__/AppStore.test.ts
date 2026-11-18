@@ -61,4 +61,14 @@ describe("useAppStore", () => {
 		await a;
 		expect(useAppStore.getState().selected).toMatchObject({ id: 2 });
 	});
+
+	it("drops a click's selection still loading when another atlas opens (CodeRabbit)", async () => {
+		const s = useAppStore.getState();
+		let answer: (v: never) => void = () => undefined;
+		const loading = s.selectLoaded(new Promise((r) => (answer = r)));
+		s.resetAtlas();
+		answer({ kind: "node", id: 1 } as never);
+		await loading;
+		expect(useAppStore.getState().selected).toBeNull();
+	});
 });

@@ -21,6 +21,10 @@ from .constants import EVENT_HISTORY, LOG_KEEP
 LOG = atlas_log.get("app")
 
 
+class StaleAtlas(Exception):
+    """A change made for an atlas no longer open: refused (the page drops it as stale, 409)."""
+
+
 class Events:
     """Publishes events to every connected browser and keeps the last log lines for a page opened later."""
 
@@ -64,15 +68,17 @@ class Events:
         """Switch the Log tab to another atlas's log (key: its file path; "" for none open)."""
         self.scope = key
 
-    def log(self, text: str) -> None:
-        """Write a line to the log file and the open atlas's log in the browser's Log tab.
+    def log(self, text: str, scope: str | None = None) -> None:
+        """Write a line to the log file and an atlas's log in the browser's Log tab.
 
         Args:
             text: The line.
+            scope: The atlas it belongs to (a background job's own, captured when it started), else the open one's:
+                a job finishing after a switch logged into the other atlas's log (CodeRabbit).
         """
         LOG.info(text)
         line = f"{time.strftime('%H:%M:%S')}  {text}"
-        scope = self.scope
+        scope = self.scope if scope is None else scope
         self._logs.setdefault(scope, deque(maxlen=LOG_KEEP)).append(line)
         self.publish("log", {"scope": scope, "line": line})
 

@@ -32,7 +32,7 @@ from grand_project.webmap.constants import WEBMAP_ICON_SPRITE
 
 from .constants import APP_HOST, APP_PORT, APP_PORT_TRIES, UPLOAD_MAX, VERSION
 from .debug import DEBUG_REASONS
-from .events import sse
+from .events import StaleAtlas, sse
 from .icons import icon_png
 from .library import list_dir, thumb_file
 from .replay_data import spread_colours
@@ -258,6 +258,9 @@ class Handler(BaseHTTPRequestHandler):
         if method not in ("GET", "HEAD") and self.headers.get(HEADER) != "1":
             self._json({"error": f"missing {HEADER} header"}, 403)
             return
+        # the atlas this request was made for: its header, else the one open as it came in (a switch while it is
+        # handled refuses its change: CodeRabbit)
+        self._req_gen = int(stale) if stale is not None and stale.isdigit() else self.S.generation
         q = parse_qs(url.query)
         for m, rx, name in ROUTES:
             if m != ("GET" if method == "HEAD" else method):
@@ -268,6 +271,8 @@ class Handler(BaseHTTPRequestHandler):
                     getattr(self, name)(q, **hit.groupdict())
                 except ApiError as e:
                     self._json({"error": str(e)}, e.status)
+                except StaleAtlas:
+                    self._json({"error": "the atlas changed", "stale": True}, 409)
                 except ValueError as e:
                     self._json({"error": str(e)}, 400)
                 except ConnectionError:  # the browser gave up on it (tiles while zooming): nothing to report
@@ -492,9 +497,14 @@ class Handler(BaseHTTPRequestHandler):
         n = int(self.headers.get("Content-Length") or 0)
         if n <= 0 or n > UPLOAD_MAX:
             raise ApiError("the file is empty or too large", 413)
+        gen = self._req_gen  # (read before the body: it can take a while)
         data = self.rfile.read(n)
         self._read_body = True
-        dest = self.S.path.parent / name
+        with self.S._lock:
+            opened = self.S.opened
+            if not self.S.owns(gen) or opened.path is None:  # another atlas opened while it came in (CodeRabbit)
+                raise StaleAtlas()
+        dest = opened.path.parent / name  # (the folder of the atlas it was checked for, from its own record)
         stem, k = dest.stem, 0
         while dest.exists() and dest.read_bytes() != data:  # another picture by that name: a free name (CodeRabbit)
             k += 1
@@ -682,7 +692,7 @@ class Handler(BaseHTTPRequestHandler):
         """Add a bookmark."""
         b = self._body()
         i = self.S.add_bookmark(float(b["x"]), float(b["y"]), b.get("name", ""), b.get("group", "Other"),
-                                b.get("note", ""))  # fmt: skip
+                                b.get("note", ""), gen=self._req_gen)  # fmt: skip
         if i < 0:
             raise ApiError("there is already a bookmark on that spot", 409)
         self._json({"id": i})

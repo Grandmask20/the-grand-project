@@ -14,8 +14,10 @@ export function useAppState() {
 	// tried for about 15 s before the page says the app isn't running (a busy moment isn't a stopped app)
 	return useQuery({
 		queryKey: AppQueryKeys.state,
-		queryFn: async () => {
+		queryFn: async ({ signal }) => {
 			const st = await app.getState();
+			// replaced by a newer fetch meanwhile (an atlas event): its answer may be older, so it changes nothing
+			if (signal.aborted) throw new DOMException("replaced", "AbortError"); // (CodeRabbit)
 			const before = getAtlasGen();
 			setAtlasGen(st.generation); // answers for the atlas open before are dropped from here on
 			if (before !== null && st.generation !== undefined && st.generation !== before) {

@@ -173,7 +173,8 @@ class WatchMixin:
         self._watch_seen = {k: -1 for k in files}
         todo = [q for q in self._not_in_atlas(files) if not core.is_generated(q)]
         own = Path(folder).resolve() == Path(self.path).resolve().parent
-        atlas, gen = self.atlas, self.generation
+        opened = self.opened  # (one record: the atlas and its generation together)
+        atlas, gen = opened.atlas, opened.gen
         self._watch_gen = gen
         self._watch_on = True
         self.events.set_status(f"watching {folder} for new screenshots")
@@ -236,20 +237,23 @@ class WatchMixin:
         # the atlas this watcher was started for: a check still running when another atlas opens hands its
         # screenshots to that one's jobs, which the worker then skips (user, CodeRabbit)
         gen = getattr(self, "_watch_gen", self.generation)
+        # this watcher's own list (start_watch makes a new one): a check still running for the atlas before marks
+        # its own, not the new watcher's (CodeRabbit)
+        seen = self._watch_seen
         key = (id(self.atlas), len(self.atlas.frames))
         if self._known_key != key:
             self._known = {str(Path(f["path"]).resolve()) for f in self.atlas.frames}
             self._known_key = key
         ready = []
         for f, size in self._watch_files().items():
-            prev = self._watch_seen.get(f)
+            prev = seen.get(f)
             if prev == -1 or f in self._known:
                 continue
             if prev is not None and prev == size and size > 0:
                 ready.append(Path(f))
-                self._watch_seen[f] = -1  # handed over; a failed detection hands it back (_watch_failed)
+                seen[f] = -1  # handed over; a failed detection hands it back (_watch_failed)
             else:
-                self._watch_seen[f] = size
+                seen[f] = size
         ready = [q for q in ready if not core.is_generated(q)]
         if ready:
             ready.sort(key=lambda q: q.stat().st_mtime)
@@ -258,7 +262,7 @@ class WatchMixin:
                 self.add_screenshots(ready, mode="watch", gen=gen)
             except Exception:
                 for q in ready:  # not queued: seen again on the next polls (CodeRabbit)
-                    self._watch_seen.pop(str(q), None)
+                    seen.pop(str(q), None)
                 raise
         return ready
 

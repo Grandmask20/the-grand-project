@@ -4,6 +4,7 @@ import {
 	type Map as MapLibreMap,
 	MercatorCoordinate,
 } from "maplibre-gl";
+import { GLSL_CODE_BYTES, PickQueue, pickColour, pickPixel, readPickBox } from "./PickPass";
 
 /** An icon of the 3D view: its map node's place, picture, place in the row, the model height under it, replay step. */
 export interface Icon3D {
@@ -37,11 +38,13 @@ uniform vec2 u_view;
 uniform float u_size;
 uniform float u_sel;
 uniform float u_far; // clip w beyond which icons aren't drawn (a render distance: user)
+uniform float u_pos;
 varying vec2 v_uv;
 varying vec2 v_local;
-varying float v_id;
+varying vec3 v_code;
 varying float v_sel;
-varying float v_step;
+varying float v_show;
+${GLSL_CODE_BYTES}
 void main() {
 	vec3 p = vec3(a_xy, (${BASE.toFixed(1)} + a_info.y * u_models) * u_k);
 	vec4 c0 = u_m * vec4(p, 1.0);
@@ -53,25 +56,24 @@ void main() {
 	float grow = abs(a_info.w - u_sel) < 0.5 ? 1.35 : 1.0;
 	vec2 off = vec2(a_corner.x * grow + a_info.x * ${(ROW / HALF).toFixed(4)}, a_corner.y * grow) * hs * 2.0 / u_view;
 	v_local = a_corner * grow;
-	v_id = a_info.w;
+	v_code = codeBytes(a_info.w + 1.0); // (made here, in full precision, as the paths' and models')
 	v_sel = grow > 1.0 ? 1.0 : 0.0;
 	gl_Position = vec4((c0.xy / c0.w + off) * c0.w, c0.z, c0.w);
 	v_uv = mix(a_uv.xy, a_uv.zw, a_corner * 0.5 + 0.5);
-	v_step = a_info.z;
+	v_show = a_info.z < u_pos ? 1.0 : 0.0;
 }`;
 
 const FS = `
 precision highp float;
 uniform sampler2D u_tex;
-uniform float u_pos;
 uniform float u_pick; // 1: draw each icon's id as its colour (clicks read it back)
 varying vec2 v_uv;
-varying float v_step;
+varying float v_show;
 varying vec2 v_local;
-varying float v_id;
+varying vec3 v_code;
 varying float v_sel;
 void main() {
-	if (v_step >= u_pos) discard; // the replay hasn't reached it
+	if (v_show < 0.5) discard; // the replay hasn't reached it
 	float r = length(v_local);
 	if (v_sel > 0.5 && r > 1.05) {
 		if (r > 1.32 || u_pick > 0.5) discard;
@@ -82,8 +84,7 @@ void main() {
 	vec4 c = texture2D(u_tex, v_uv);
 	if (c.a < 0.35) discard; // clear edges, so the depth test hides icons behind 3D models
 	if (u_pick > 0.5) {
-		float id = v_id + 1.0;
-		gl_FragColor = vec4(mod(id, 256.0) / 255.0, mod(floor(id / 256.0), 256.0) / 255.0, floor(id / 65536.0) / 255.0, 1.0);
+		gl_FragColor = vec4(v_code, 1.0);
 		return;
 	}
 	gl_FragColor = c;
@@ -144,10 +145,25 @@ export class IconLayer3D implements CustomLayerInterface {
 		}
 		this.map = null;
 		this.gl = null;
+		this.picks.settle();
 	}
 
-	/** Give the icons to draw (pictures are fetched for names not seen yet). */
-	async setIcons(icons: Icon3D[]): Promise<void> {
+	private queue: Promise<void> = Promise.resolve();
+	private latest = 0;
+
+	/**
+	 * Give the icons to draw (pictures are fetched for names not seen yet). Sets are taken one after another and only
+	 * the newest is drawn: an older set whose pictures came in late replaced a newer one (CodeRabbit).
+	 */
+	setIcons(icons: Icon3D[]): Promise<void> {
+		const n = ++this.latest;
+		this.queue = this.queue
+			.then(() => (n === this.latest ? this.applyIcons(icons, n) : undefined))
+			.catch(() => undefined); // (one failing set never stops the ones after it)
+		return this.queue;
+	}
+
+	private async applyIcons(icons: Icon3D[], n: number): Promise<void> {
 		const fresh = [...new Set(icons.map((i) => i.name))].filter((n) => !this.names.includes(n));
 		if (fresh.length) {
 			const pics = await Promise.all(fresh.map((n) => this.picture(n).catch(() => null)));
@@ -168,6 +184,7 @@ export class IconLayer3D implements CustomLayerInterface {
 			}
 			this.canvas = c;
 		}
+		if (n !== this.latest) return; // a newer set came while the pictures loaded: it is drawn instead
 		this.pending = icons;
 		this.dirty = true;
 		this.map?.triggerRepaint();
@@ -222,18 +239,14 @@ export class IconLayer3D implements CustomLayerInterface {
 	/** Icons' size in 3D, and the models' height scale (View tab). */
 	sizeScale = 1;
 	liftScale = 1;
-	private pickReq: { x: number; y: number; done: (id: number | null) => void } | null = null;
+	private picks = new PickQueue<number | null>(null);
 
 	/**
 	 * The icon drawn at screen (x, y) css px, or null: the next frame draws every icon's id as its colour into a
 	 * hidden picture and reads the pixel under the mouse, so what you see is what you click (user).
 	 */
 	pickAt(x: number, y: number): Promise<number | null> {
-		return new Promise((done) => {
-			if (!this.map || !this.count) return done(null);
-			this.pickReq = { x, y, done };
-			this.map.triggerRepaint();
-		});
+		return this.picks.ask(this.map, this.count > 0, x, y);
 	}
 
 	/** The last frame's mercator -> clip matrix and centre size. */
@@ -242,7 +255,10 @@ export class IconLayer3D implements CustomLayerInterface {
 	render(gl: WebGLRenderingContext | WebGL2RenderingContext, options: CustomRenderMethodInput): void {
 		if (!this.prog) return;
 		if (this.dirty) this.upload();
-		if (!this.count) return;
+		if (!this.count || !this.map) {
+			this.picks.settle(); // nothing drawn: nothing clicked
+			return;
+		}
 		const p = this.prog;
 		// biome-ignore lint/correctness/useHookAtTopLevel: WebGL's useProgram, not a React hook
 		gl.useProgram(p);
@@ -274,7 +290,7 @@ export class IconLayer3D implements CustomLayerInterface {
 		attr("a_info", 4, 4);
 		attr("a_uv", 4, 8);
 		gl.uniform1f(gl.getUniformLocation(p, "u_sel"), this.selected);
-		if (this.pickReq) this.pickPass(gl);
+		if (this.picks.pending) this.pickPass(gl, p, this.map);
 		gl.uniform1f(gl.getUniformLocation(p, "u_pick"), 0);
 		gl.enable(gl.DEPTH_TEST);
 		gl.depthFunc(gl.LEQUAL);
@@ -289,43 +305,21 @@ export class IconLayer3D implements CustomLayerInterface {
 	}
 
 	/**
-	 * Answer the waiting click: draw the icons' ids into the one pixel under the mouse of the frame being drawn, tested
-	 * against its depth (3D models in front hide icons behind them, as on screen), read it, and draw the frame again.
+	 * Answer the waiting clicks: the icons' ids drawn into the pixel under each, tested against the frame's depth (3D
+	 * models in front hide icons behind them, as on screen), and read back.
 	 */
-	private pickPass(gl: WebGLRenderingContext | WebGL2RenderingContext): void {
-		const req = this.pickReq;
-		this.pickReq = null;
-		const map = this.map;
-		if (!req) return;
-		if (!map || !this.prog) {
-			req.done(null);
-			return;
-		}
-		const H = gl.drawingBufferHeight;
-		const ratio = gl.drawingBufferWidth / map.getCanvas().clientWidth;
-		const x = Math.round(req.x * ratio);
-		const y = Math.round(H - req.y * ratio);
-		const scissor = gl.isEnabled(gl.SCISSOR_TEST);
-		const box = gl.getParameter(gl.SCISSOR_BOX) as Int32Array;
-		const clear = gl.getParameter(gl.COLOR_CLEAR_VALUE) as Float32Array;
-		gl.enable(gl.SCISSOR_TEST);
-		gl.scissor(x, y, 1, 1);
-		gl.clearColor(0, 0, 0, 0);
-		gl.clear(gl.COLOR_BUFFER_BIT); // colour only: the models' depth stays
-		gl.uniform1f(gl.getUniformLocation(this.prog, "u_pick"), 1);
+	private pickPass(gl: WebGLRenderingContext | WebGL2RenderingContext, p: WebGLProgram, map: MapLibreMap): void {
+		gl.uniform1f(gl.getUniformLocation(p, "u_pick"), 1);
 		gl.enable(gl.DEPTH_TEST);
 		gl.depthFunc(gl.LEQUAL);
-		gl.depthMask(false);
-		gl.disable(gl.BLEND);
-		gl.drawArrays(gl.TRIANGLES, 0, this.count);
-		const px = new Uint8Array(4);
-		gl.readPixels(x, y, 1, 1, gl.RGBA, gl.UNSIGNED_BYTE, px);
-		if (!scissor) gl.disable(gl.SCISSOR_TEST);
-		gl.scissor(box[0], box[1], box[2], box[3]);
-		gl.clearColor(clear[0], clear[1], clear[2], clear[3]);
-		const id = px[0] + px[1] * 256 + px[2] * 65536 - 1;
-		req.done(id >= 0 ? id : null);
-		map.triggerRepaint(); // the pixel used for the answer is drawn again
+		for (const req of this.picks.take()) {
+			const { px, py } = pickPixel(gl, map, req.x, req.y);
+			const code = pickColour(
+				readPickBox(gl, px, py, 1, 1, () => gl.drawArrays(gl.TRIANGLES, 0, this.count)),
+				0,
+			);
+			req.done(code > 0 ? code - 1 : null);
+		}
 	}
 
 	/** The view centre's clip w (its distance from the camera, in the projection's terms). */

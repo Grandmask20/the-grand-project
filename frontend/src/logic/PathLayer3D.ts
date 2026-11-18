@@ -4,6 +4,7 @@ import {
 	type Map as MapLibreMap,
 	MercatorCoordinate,
 } from "maplibre-gl";
+import { GLSL_CODE_BYTES, PickQueue, pickBox, pickColour, pickPixel, readPickBox } from "./PickPass";
 
 /** A path piece of the 3D view: its points (lng, lat), colour and replay step. */
 export interface Path3D {
@@ -32,17 +33,21 @@ uniform float u_far; // clip w beyond which paths aren't drawn
 uniform float u_near; // the view centre's clip w
 uniform float u_ppuw; // screen px per atlas unit, times clip w (px per unit here = u_ppuw / w)
 uniform vec2 u_dashv;
+uniform float u_pos;
 varying float v_dist;
 varying float v_solid;
-varying float v_step;
+varying float v_show;
 varying vec3 v_col;
 varying float v_fade;
-varying float v_id;
+varying vec3 v_code;
+${GLSL_CODE_BYTES}
 void main() {
 	vec4 ca = u_m * vec4(a_a, u_lift * u_k, 1.0);
 	vec4 cb = u_m * vec4(a_b, u_lift * u_k, 1.0);
-	// behind the camera, or far off (far paths were a tangle of lines: user)
-	if (ca.w <= 0.0 || ca.w > u_far) { gl_Position = vec4(2.0, 2.0, 2.0, 1.0); return; }
+	// behind the camera, or far off (far paths were a tangle of lines: user); far off by either end, so a piece
+	// crossing the render distance goes whole (one end dropped, the other kept, stretched it across the screen:
+	// CodeRabbit)
+	if (ca.w <= 0.0 || max(ca.w, cb.w) > u_far) { gl_Position = vec4(2.0, 2.0, 2.0, 1.0); return; }
 	vec2 pa = ca.xy / ca.w * u_view * 0.5;
 	vec2 pb = (cb.w > 0.0 ? cb.xy / cb.w : ca.xy / ca.w + (ca.xy / ca.w - cb.xy / cb.w)) * u_view * 0.5;
 	vec2 d = pb - pa;
@@ -52,33 +57,37 @@ void main() {
 	float far = clamp((ca.w - u_near) / max(u_far - u_near, 0.0001), 0.0, 1.0);
 	v_fade = 1.0 - far;
 	vec2 px = pa + n * a_info.x * u_width * mix(1.0, u_taper, far) * 0.5;
-	v_id = a_info.w;
+	// the id's colour and the timelapse step made here, in the vertex shader's full precision (a mediump fragment
+	// shader holds whole numbers only to 2048: a click past path ~2048 picked another: CodeRabbit)
+	v_code = codeBytes(a_info.w + 1.0);
+	v_show = a_info.z < u_pos ? 1.0 : 0.0;
 	gl_Position = vec4(px / (u_view * 0.5) * ca.w, ca.z, ca.w);
 	v_dist = a_info.y;
 	// dashes smaller than a few px on screen are drawn as a line, as the old window did zoomed out (they turned into
 	// a dotted blur: user)
 	v_solid = (u_dashv.x + u_dashv.y) * u_ppuw / ca.w < u_solidpx ? 1.0 : 0.0;
-	v_step = a_info.z;
 	v_col = a_col;
 }`;
 
 const FS = `
+#ifdef GL_FRAGMENT_PRECISION_HIGH
+precision highp float; // (distances along long paths, for the dashes)
+#else
 precision mediump float;
-uniform float u_pos;
+#endif
 uniform vec2 u_dash; // atlas units on, off (0 off: solid)
 varying float v_dist;
-varying float v_step;
+varying float v_show;
 varying vec3 v_col;
 varying float v_solid;
 varying float v_fade;
-varying float v_id;
+varying vec3 v_code;
 uniform float u_pick;
 void main() {
-	if (v_step >= u_pos) discard;
+	if (v_show < 0.5) discard;
 	if (u_dash.y > 0.0 && v_solid < 0.5 && mod(v_dist, u_dash.x + u_dash.y) > u_dash.x) discard;
 	if (u_pick > 0.5) {
-		float id = v_id + 1.0;
-		gl_FragColor = vec4(mod(id, 256.0) / 255.0, mod(floor(id / 256.0), 256.0) / 255.0, floor(id / 65536.0) / 255.0, 1.0);
+		gl_FragColor = vec4(v_code, 1.0);
 		return;
 	}
 	gl_FragColor = vec4(v_col * v_fade, v_fade); // premultiplied
@@ -106,18 +115,14 @@ export class PathLayer3D implements CustomLayerInterface {
 	far = 2.2;
 	taper = 0.35;
 	solidPx = 9;
-	private pickReq: { x: number; y: number; done: (id: number | null) => void } | null = null;
+	private picks = new PickQueue<number | null>(null);
 
 	/**
 	 * The path drawn nearest screen (x, y) css px (within PICK_PX), or null: the paths' ids are drawn into the frame's
 	 * own pixels round the mouse, against its depth, and read back (clicks on the flat map missed in 3D: user).
 	 */
 	pickAt(x: number, y: number): Promise<number | null> {
-		return new Promise((done) => {
-			if (!this.map || !this.count) return done(null);
-			this.pickReq = { x, y, done };
-			this.map.triggerRepaint();
-		});
+		return this.picks.ask(this.map, this.count > 0, x, y);
 	}
 	width = 3; // css px
 	dash: [number, number] = [0, 0];
@@ -149,6 +154,7 @@ export class PathLayer3D implements CustomLayerInterface {
 		}
 		this.map = null;
 		this.gl = null;
+		this.picks.settle();
 	}
 
 	setPaths(paths: Path3D[]): void {
@@ -188,60 +194,36 @@ export class PathLayer3D implements CustomLayerInterface {
 		this.dirty = false;
 	}
 
-	private pickPass(gl: WebGLRenderingContext | WebGL2RenderingContext, p: WebGLProgram): void {
-		const req = this.pickReq;
-		this.pickReq = null;
-		const map = this.map;
-		if (!req) return;
-		if (!map) {
-			req.done(null);
-			return;
-		}
-		const H = gl.drawingBufferHeight;
-		const ratio = gl.drawingBufferWidth / map.getCanvas().clientWidth;
-		const r = Math.max(1, Math.round(PICK_PX * ratio));
-		const cx = Math.round(req.x * ratio);
-		const cy = Math.round(H - req.y * ratio);
-		const x0 = Math.max(0, cx - r);
-		const y0 = Math.max(0, cy - r);
-		const n = 2 * r + 1;
-		const scissor = gl.isEnabled(gl.SCISSOR_TEST);
-		const box = gl.getParameter(gl.SCISSOR_BOX) as Int32Array;
-		const clear = gl.getParameter(gl.COLOR_CLEAR_VALUE) as Float32Array;
-		gl.enable(gl.SCISSOR_TEST);
-		gl.scissor(x0, y0, n, n);
-		gl.clearColor(0, 0, 0, 0);
-		gl.clear(gl.COLOR_BUFFER_BIT);
+	/** Answer the waiting clicks from the frame being drawn: the path nearest each, within PICK_PX. */
+	private pickPass(gl: WebGLRenderingContext | WebGL2RenderingContext, p: WebGLProgram, map: MapLibreMap): void {
 		gl.uniform1f(gl.getUniformLocation(p, "u_pick"), 1);
-		gl.depthMask(false);
-		gl.disable(gl.BLEND);
-		gl.drawArrays(gl.TRIANGLES, 0, this.count);
-		const px = new Uint8Array(n * n * 4);
-		gl.readPixels(x0, y0, n, n, gl.RGBA, gl.UNSIGNED_BYTE, px);
-		if (!scissor) gl.disable(gl.SCISSOR_TEST);
-		gl.scissor(box[0], box[1], box[2], box[3]);
-		gl.clearColor(clear[0], clear[1], clear[2], clear[3]);
-		gl.uniform1f(gl.getUniformLocation(p, "u_pick"), 0);
-		let best: number | null = null;
-		let bestD = Number.POSITIVE_INFINITY;
-		for (let j = 0; j < n; j++)
-			for (let i = 0; i < n; i++) {
-				const k = 4 * (j * n + i);
-				const id = px[k] + px[k + 1] * 256 + px[k + 2] * 65536 - 1;
-				const d = (x0 + i - cx) ** 2 + (y0 + j - cy) ** 2;
-				if (id >= 0 && d < bestD) {
-					bestD = d;
-					best = id;
+		for (const req of this.picks.take()) {
+			const { px, py, ratio } = pickPixel(gl, map, req.x, req.y);
+			const { x0, y0, w, h } = pickBox(gl, px, py, Math.max(1, Math.round(PICK_PX * ratio)));
+			const out = readPickBox(gl, x0, y0, w, h, () => gl.drawArrays(gl.TRIANGLES, 0, this.count));
+			let best: number | null = null;
+			let bestD = Number.POSITIVE_INFINITY;
+			for (let j = 0; j < h; j++)
+				for (let i = 0; i < w; i++) {
+					const code = pickColour(out, 4 * (j * w + i));
+					const d = (x0 + i - px) ** 2 + (y0 + j - py) ** 2;
+					if (code > 0 && d < bestD) {
+						bestD = d;
+						best = code - 1;
+					}
 				}
-			}
-		req.done(best);
-		map.triggerRepaint();
+			req.done(best);
+		}
+		gl.uniform1f(gl.getUniformLocation(p, "u_pick"), 0);
 	}
 
 	render(gl: WebGLRenderingContext | WebGL2RenderingContext, options: CustomRenderMethodInput): void {
 		if (!this.prog || !this.map) return;
 		if (this.dirty) this.upload();
-		if (!this.count) return;
+		if (!this.count) {
+			this.picks.settle(); // nothing drawn: nothing clicked
+			return;
+		}
 		const p = this.prog;
 		// biome-ignore lint/correctness/useHookAtTopLevel: WebGL's useProgram, not a React hook
 		gl.useProgram(p);
@@ -283,7 +265,7 @@ export class PathLayer3D implements CustomLayerInterface {
 		gl.depthFunc(gl.LEQUAL);
 		gl.depthMask(true);
 		gl.uniform1f(gl.getUniformLocation(p, "u_pick"), 0);
-		if (this.pickReq) this.pickPass(gl, p);
+		if (this.picks.pending) this.pickPass(gl, p, this.map);
 		gl.depthMask(false); // faded far parts must not hide what lies behind them
 		gl.enable(gl.BLEND);
 		gl.blendFunc(gl.ONE, gl.ONE_MINUS_SRC_ALPHA);

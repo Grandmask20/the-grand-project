@@ -21,6 +21,26 @@ export interface Overlay {
 }
 
 /**
+ * The VP9 codec string for a video of this size and frame rate: profile 0, 8-bit, at the lowest level that holds
+ * it (level 1.0, always declared before, is for tiny pictures: CodeRabbit).
+ */
+export function vp9Codec(width: number, height: number, fps: number): string {
+	const rate = width * height * fps; // samples per second
+	const px = width * height;
+	// (level, max picture size, max samples per second) from the VP9 levels table
+	const levels: [string, number, number][] = [
+		["31", 983040, 36864000],
+		["40", 2228224, 83558400],
+		["41", 2228224, 160432128],
+		["50", 8912896, 311951360],
+		["51", 8912896, 588251136],
+		["60", 35651584, 1176502272],
+	];
+	const level = levels.find(([, p, r]) => px <= p && rate <= r)?.[0] ?? "62";
+	return `vp09.00.${level}.08`;
+}
+
+/**
  * Writes a replay frame by frame into a GIF or a WebM video. Frames are given one at a time with a fixed time each,
  * so the file lasts the replay's length whatever the preview speed or how slowly the map draws (user: recording the
  * screen made the export follow the viewer's speed).
@@ -63,7 +83,7 @@ export class ReplayExporter {
 				},
 			});
 			this.encoder.configure({
-				codec: "vp09.00.10.08",
+				codec: vp9Codec(this.width, this.height, fps),
 				width: this.width,
 				height: this.height,
 				bitrate: 8_000_000,
@@ -148,15 +168,18 @@ export class ReplayExporter {
 }
 
 /**
- * Wait until the map's tiles for its current view are in (or `ms` passes). Not the map's "idle" event: the replay's
+ * Wait until the map's tiles for its current view are in (and the timelapse's fog, with `fog`), or `ms` passes. Not the map's "idle" event: the replay's
  * fog picture is redrawn every frame, so the map is never idle and each frame waited the whole timeout.
  */
-export function mapIdle(map: MapLibreMap, ms = 3000): Promise<void> {
+export function mapIdle(map: MapLibreMap, ms = 3000, fog = false): Promise<void> {
 	return new Promise((resolve) => {
 		const t0 = performance.now();
 		const check = () => {
-			// the ground and the map's data: other sources (the fog picture) never count as loaded while animating
-			const done = ["terrain", "atlas"].every((id) => !map.getSource(id) || map.isSourceLoaded(id));
+			// the ground and the map's data: other sources (the fog picture) never count as loaded while animating;
+			// with `fog`, the fog picture must be on the map (an export's first frames went out unfogged: CodeRabbit)
+			const done =
+				["terrain", "atlas"].every((id) => !map.getSource(id) || map.isSourceLoaded(id)) &&
+				(!fog || !!map.getSource("fog-picture"));
 			if (done || performance.now() - t0 > ms) resolve();
 			else setTimeout(check, 30);
 		};
@@ -165,13 +188,27 @@ export function mapIdle(map: MapLibreMap, ms = 3000): Promise<void> {
 	});
 }
 
-/** Run `draw` with the map's canvas inside its next "render" event (its picture can only be copied then). */
+/**
+ * Run `draw` with the map's canvas inside its next "render" event (its picture can only be copied then). Fails when
+ * drawing fails or the map is removed first (an atlas switch): the wait never ended then (CodeRabbit).
+ */
 export function onNextRender(map: MapLibreMap, draw: (canvas: HTMLCanvasElement) => void): Promise<void> {
-	return new Promise((resolve) => {
-		map.once("render", () => {
-			draw(map.getCanvas());
-			resolve();
-		});
+	return new Promise((resolve, reject) => {
+		const removed = () => {
+			map.off("render", rendered);
+			reject(new Error("the map was replaced during the export"));
+		};
+		const rendered = () => {
+			map.off("remove", removed);
+			try {
+				draw(map.getCanvas());
+				resolve();
+			} catch (e) {
+				reject(e);
+			}
+		};
+		map.once("render", rendered);
+		map.once("remove", removed);
 		map.triggerRepaint();
 	});
 }

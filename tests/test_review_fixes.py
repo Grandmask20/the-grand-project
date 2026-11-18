@@ -204,3 +204,67 @@ def test_a_landmark_model_selects_the_map_node_it_marks(session):
         session.atlas.final["landmarks"].append({"kind": "Tower", "x": 9000.0, "y": 9000.0, "status": "kept"})
     session.rebuild_model()
     assert session.info("landmark", len(session.V["landmarks"]) - 1)["title"]
+
+
+def test_a_failing_retry_keeps_the_ones_set_aside(session, tmp_path, monkeypatch):
+    a, b = (SimpleNamespace(path=tmp_path / f"{n}.png", sha=f"sha-{n}") for n in "ab")
+    session._pending_watch = [a, b]
+
+    def broken(frames):
+        raise RuntimeError("placing failed")
+
+    monkeypatch.setattr(session, "_place_watched", broken)
+    monkeypatch.setattr(session, "_snapshot", lambda: tmp_path / "snap.json")
+    with pytest.raises(RuntimeError):
+        session.run_job([], ("retry", [str(b.path)]))
+    assert {f.sha for f in session._pending_watch} == {"sha-a", "sha-b"}  # (A, set aside, was lost)
+
+
+def test_one_taken_out_during_a_question_stays_out(session, tmp_path, monkeypatch):
+    a, b = (SimpleNamespace(path=tmp_path / f"{n}.png", sha=f"sha-{n}") for n in "ab")
+    session._pending_watch = [a, b]
+    monkeypatch.setattr(
+        session, "_place_one", lambda fr: SimpleNamespace(ok=fr is b, reason="no match", inliers=9, ncc=0.4)
+    )
+    monkeypatch.setattr(session, "_concerns", lambda fr, reg: ["the match is weak"])
+    monkeypatch.setattr(session, "_preview_of", lambda fr, reg: None)
+    monkeypatch.setattr(session, "_show_placed", lambda shas: None)
+
+    def ask(question, preview=None):
+        session.take_waiting(0)  # A taken out by hand while B's question is open
+        return False
+
+    session.events.ask = ask
+    session._place_watched([])
+    assert "sha-a" not in [f.sha for f in session._pending_watch]  # (A came back when the job ended)
+
+
+def test_icons_stand_on_a_tower_drawn_for_a_map_node(session):
+    with session._lock:
+        session.atlas.final["nodes"][4]["tower"] = True  # marked as a tower, with no Tower landmark
+    session.rebuild_model()
+    node_ok = [session.node_shown(n, session._flags()) for n in session.V["nodes"]]
+    shapes = session._solid_shapes(node_ok)
+    tower = max(sh["top"] for sh in shapes if sh["pick"] == ("node", 4) and sh["top"] < 300)
+    assert session._model_tops(shapes)[4] == tower > session._model_tops(shapes)[3]  # (it stood on the pillar)
+
+
+def test_a_tower_hidden_by_a_filter_isnt_drawn_by_its_map_node(session, monkeypatch):
+    n4 = session.V["nodes"][4]
+    with session._lock:
+        session.atlas.final["nodes"][4]["tower"] = True
+        session.atlas.final["landmarks"].append({"kind": "Tower", "x": n4["x"] + 30, "y": n4["y"], "status": "kept"})
+    session.rebuild_model()
+    node_ok = [session.node_shown(n, session._flags()) for n in session.V["nodes"]]
+    pillar = len([sh for sh in session._solid_shapes(node_ok) if sh["pick"] == ("node", 3)])
+    monkeypatch.setattr(type(session), "landmark_shown", lambda self, k, fl: False)  # (as "near only" hides it)
+    assert len([sh for sh in session._solid_shapes(node_ok) if sh["pick"] == ("node", 4)]) == pillar
+
+
+def test_a_locked_stronghold_marks_no_map_node():
+    from grand_project.app.session import landmark_nodes
+
+    nodes = [{"x": 0.0, "y": 0.0, "status": "kept"}]
+    lms = [{"x": 20.0, "y": 0.0, "kind": "Breach stronghold", "status": "kept"}]
+    assert landmark_nodes(nodes, lms) == {0: 0}
+    assert landmark_nodes(nodes, lms, {0}) == {}

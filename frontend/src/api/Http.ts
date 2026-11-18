@@ -33,6 +33,16 @@ export function setAtlasGen(gen: number | null | undefined): void {
 export const getAtlasGen = () => atlasGen;
 
 /**
+ * A check that the atlas open now is still the open one: work on the page that spans an atlas switch (an export, a
+ * question asked after a load) stops on it. The same generation every answer is checked against, so there is one
+ * notion of "the atlas changed" on the page.
+ */
+export function sameAtlas(): () => boolean {
+	const gen = atlasGen;
+	return () => atlasGen === gen;
+}
+
+/**
  * Calls that don't belong to one atlas: their answers are kept whichever atlas is open (switching atlas itself, the
  * state that tells the page about it, settings, the atlas list, folders, answering a question, quitting).
  */
@@ -95,7 +105,10 @@ export function createHttp(base = "", fetcher: typeof fetch = (...args) => fetch
 				throw new StaleError();
 			}
 		}
-		return read<T>(res);
+		const data = await read<T>(res);
+		// checked again once the body is in: another atlas can come into the page while it is read (CodeRabbit)
+		if (sent !== null && !genFree(path) && atlasGen !== sent) throw new StaleError();
+		return data;
 	}
 
 	const genHeader = (sent: number | null): Record<string, string> =>

@@ -18,22 +18,19 @@ export function MapIcons({ map, geo, info }: { map: MapLibreMap; geo: Geo; info:
 	const style = String(settings?.style.icon_style ?? "game art");
 	const scale = Number(settings?.style.icon_size) || 1;
 	const art = info.sprite.art;
+	const S = info.sprite.size;
 	const asked = useRef(new Set<string>()); // the pictures MapLibre asked for
-	const current = useRef({ style, art });
-	current.current = { style, art };
 
-	// the picture of `name` in the current style, into the blank (or older) one
-	// biome-ignore lint/correctness/useExhaustiveDependencies: another style or art loads every picture again
+	// the picture of `name` in the current style, into the blank (or older) one; another style or art loads every
+	// picture again (the effect anew: the older one's late pictures are dropped by `live`, not by comparing a ref
+	// made anew every render, which dropped pictures after any re-render: CodeRabbit)
 	useEffect(() => {
-		const S = info.sprite.size;
 		let live = true;
 		const load = (name: string) => {
-			const want = current.current;
 			void map
-				.loadImage(app.spriteUrl(name, want.style, want.art))
+				.loadImage(app.spriteUrl(name, style, art))
 				.then((r) => {
-					// (a newer style or art asked meanwhile: its own load replaces it)
-					if (!live || current.current !== want || !map.hasImage(name)) return;
+					if (!live || !map.hasImage(name)) return;
 					map.updateImage(name, r.data);
 				})
 				.catch(() => undefined); // no picture: it stays blank
@@ -50,7 +47,7 @@ export function MapIcons({ map, geo, info }: { map: MapLibreMap; geo: Geo; info:
 			live = false;
 			map.off("styleimagemissing", missing);
 		};
-	}, [map, app, info, style, art]);
+	}, [map, app, S, style, art]);
 
 	// their size times the View tab's setting
 	useEffect(() => {

@@ -28,7 +28,11 @@ export function MapCamera({ map, geo, info }: { map: MapLibreMap; geo: Geo; info
 	const flown = useRef(fly?.n ?? 0);
 	const fitted = useRef(fit);
 	useEffect(() => {
-		if (!fly || fly.n === flown.current) return;
+		if (!fly) {
+			flown.current = 0; // (cleared with the store: the next request starts at 1 again, CodeRabbit)
+			return;
+		}
+		if (fly.n === flown.current) return;
 		flown.current = fly.n;
 		const zoom = Math.max(map.getZoom(), geo.zoomFor(fly.px ?? 1));
 		map.flyTo({ center: geo.toLngLat(fly.x, fly.y), zoom: Math.min(zoom, info.maxzoom), speed: 1.6 });

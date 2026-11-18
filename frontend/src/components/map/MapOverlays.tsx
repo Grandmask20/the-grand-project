@@ -1,11 +1,12 @@
 import type { Map as MapLibreMap } from "maplibre-gl";
 import { useEffect } from "react";
-import { selection3d } from "@/domain/map/Scene3D";
+import { scenePick, selection3d } from "@/domain/map/Scene3D";
 import { useAppState } from "@/hooks/app/UseAppState";
 import { useSettings } from "@/hooks/app/UseSettings";
 import { useDebugMarks } from "@/hooks/debug/UseDebugMarks";
 import { useRouteGraph } from "@/hooks/map/UseGraph";
 import { useRecent } from "@/hooks/map/UseRecent";
+import { useScene3D } from "@/hooks/map/UseScene3D";
 import type { Geo } from "@/logic/Geo";
 import { EMPTY, setData } from "@/logic/MapStyle";
 import { useAppStore } from "@/store/AppStore";
@@ -56,10 +57,13 @@ export function MapOverlays({ map, geo }: { map: MapLibreMap; geo: Geo }) {
 	// (a selected icon wears its ring; a map node's model turns gold: the flat ring lay on the ground under it; it came
 	// back wrong after switching views: user)
 	const tilted = useAppStore((s) => (s.camera?.pitch ?? 0) > 1);
+	const scene = useScene3D(tilted).data;
 	const sel = selection3d(selected);
+	// (a model of it drawn: a selection without one, e.g. a lone deadly-boss landmark, lost its only mark: CodeRabbit)
+	const hasModel = sel.model > 0 && !!scene?.models.some((m) => scenePick(m.pick) === sel.model);
 	const lit3d =
 		tilted &&
-		((sel.icon >= 0 && settings?.layers.Icons !== false) || (sel.model > 0 && settings?.layers["3D models"] !== false));
+		((sel.icon >= 0 && settings?.layers.Icons !== false) || (hasModel && settings?.layers["3D models"] !== false));
 	useEffect(() => {
 		const hide = selected?.kind === "path" || lit3d;
 		if (map.getLayer("selected")) map.setLayoutProperty("selected", "visibility", hide ? "none" : "visible");

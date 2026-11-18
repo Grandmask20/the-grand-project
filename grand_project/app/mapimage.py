@@ -29,6 +29,7 @@ from grand_project import builder, core
 from grand_project import cities as atlas_cities
 from grand_project import logs as atlas_log
 from grand_project.webmap.constants import (
+    WEBMAP_BEAM_MIN,
     WEBMAP_FOG_DARK,
     WEBMAP_ICON_MIN_PX,
     WEBMAP_ICON_SPRITE,
@@ -115,6 +116,7 @@ class MapImageMixin:
         self.terrain = None  # (canvas, weight, origin)
         self.labels = None  # (ownership map, screenshot names) of the clean map
         self.terrain_version = getattr(self, "terrain_version", 0) + 1
+        self._terrain_snap = (None, self.terrain_version)  # (map image, its version): read as one
         self.grid: Grid | None = None
         self._raster: RasterTiler | None = None
         self._sharp: SharpTiles | None = None
@@ -137,6 +139,7 @@ class MapImageMixin:
         png, npz = core.map_image_files(self.path)
         key = self.atlas.terrain_key()
         try:
+            gen = self.generation  # (read for this atlas: a switch meanwhile drops it, CodeRabbit)
             with np.load(npz) as meta:
                 if str(meta["key"]) == key:
                     import cv2
@@ -146,12 +149,13 @@ class MapImageMixin:
                     origin = tuple(float(v) for v in meta["origin"])
                     labels = (meta["labels"], [str(n) for n in meta["names"]]) if "labels" in meta.files else None
                     if canvas is not None and canvas.shape[:2] == weight.shape:
-                        self.set_terrain(canvas, weight, origin, save=False, labels=labels, cities=cities)
+                        self.set_terrain(canvas, weight, origin, save=False, labels=labels, cities=cities, gen=gen)
                         return
         except Exception:
             LOG.debug("map image cache not usable, rebuilding", exc_info=True)
         self._terrain_job += 1
-        job, atlas, gen = self._terrain_job, self.atlas, self.generation
+        opened = self.opened  # (one record: its atlas, generation and log together)
+        job, atlas, gen, scope = self._terrain_job, opened.atlas, opened.gen, opened.scope
         self.events.set_progress("building the map image (first time for this atlas)…")
 
         def work():
@@ -161,10 +165,10 @@ class MapImageMixin:
                 canvas, origin, weight = atlas.composite(max_pixels=TERRAIN_PIXELS, with_weight=True)
                 if job == self._terrain_job and self.set_terrain(canvas, weight, origin, gen=gen):
                     h, w = canvas.shape[:2]
-                    self.events.log(f"map image built in {time.monotonic() - t0:.1f} s ({w} x {h} px)")
+                    self.events.log(f"map image built in {time.monotonic() - t0:.1f} s ({w} x {h} px)", scope)
             except Exception as e:
                 LOG.exception("map image could not be built")
-                self.events.log(f"map image could not be built: {e}")
+                self.events.log(f"map image could not be built: {e}", scope)
             finally:
                 self.events.set_progress(None)
 
@@ -211,6 +215,7 @@ class MapImageMixin:
             )
             self._ground = None
             self.terrain_version += 1
+            self._terrain_snap = (self.terrain, self.terrain_version)
             self._tiles.clear()
             self._vector = None
         if save and self.path:
@@ -250,7 +255,7 @@ class MapImageMixin:
 
         labels, names = self.labels
         h = hashlib.blake2b(digest_size=4)
-        h.update(np.ascontiguousarray(labels[::4, ::4]).tobytes())
+        h.update(np.ascontiguousarray(labels).tobytes())  # (every pixel: a sample missed changes, CodeRabbit)
         h.update("|".join(names).encode())
         return h.hexdigest()
 
@@ -304,38 +309,25 @@ class MapImageMixin:
             self._ground_for = self.terrain_version
         return self._ground
 
-    def _model_tops(self, nodes: list[dict]) -> dict[int, float]:
-        """The top of the 3D model standing at each map node (atlas units): its pillar, or a landmark's structure.
+    @staticmethod
+    def _model_tops(shapes: list[dict]) -> dict[int, float]:
+        """The top of the 3D models standing at each map node (atlas units): its pillar, or a structure that marks it.
+
+        Read from the very shapes the 3D view draws (_solid_shapes), so an icon stands on what is shown there: a
+        separate guess of the heights missed the towers drawn for map nodes without a Tower landmark (CodeRabbit).
 
         Args:
-            nodes: The view model's map nodes.
+            shapes: The 3D view's shapes, each with its pick ("node", i) when a click on it selects map node i.
 
         Returns:
             Map node index -> height.
         """
-        from grand_project.webmap.solids import map_pillar, structure
-
         tops: dict[int, float] = {}
-        for i, nd in enumerate(nodes):
-            sh = map_pillar(nd["x"], nd["y"], sorted(set(nd.get("icons") or [])), "#000", i)
-            tops[i] = max((x["top"] for x in sh), default=0.0)
-        P = self.D.get("node_pts")
-        if P is None or not len(P):
-            return tops
-        from scipy.spatial import cKDTree
-
-        tree = cKDTree(np.asarray(P, float))
-        ct = self.D.get("city_type", {})
-        for k, lm in enumerate(self.V["landmarks"]):
-            if str(lm.get("status", "")).startswith("removed"):
-                continue
-            sh = structure(lm["kind"], lm["x"], lm["y"], ct.get(k, ("", ""))[0])
-            # the beam of a hall is thin and tall: the icon stands on the building, not on the beam
-            top = max((x["top"] for x in sh if x["top"] < 300), default=0.0)
-            if top:
-                d, i = tree.query([lm["x"], lm["y"]])
-                if d < WEBMAP_TOWER_SAME:
-                    tops[int(i)] = max(tops.get(int(i), 0.0), top)
+        for sh in shapes:
+            kind, i = sh.get("pick", ("", -1))
+            # the beam of a hall or tower is thin and tall: the icon stands on the building, not on the beam
+            if kind == "node" and sh["top"] < WEBMAP_BEAM_MIN:
+                tops[i] = max(tops.get(i, 0.0), sh["top"])
         return tops
 
     def ground_mask(self, x0: float, y0: float, cell: float, w: int, h: int) -> bytes | None:
@@ -351,7 +343,7 @@ class MapImageMixin:
         Returns:
             One byte per cell, row by row (1 = ground), or None without a map image.
         """
-        terrain, version = self.terrain, self.terrain_version
+        terrain, version = self._terrain_snap  # one read: the image and its version together (CodeRabbit)
         if terrain is None:
             return None
         w, h = min(int(w), WEBMAP_MASK_MAX), min(int(h), WEBMAP_MASK_MAX)
@@ -392,8 +384,9 @@ class MapImageMixin:
             raise ValueError("Fix seams is already running")
         tmp = Path(tempfile.mkdtemp(prefix="grand_seams_"))
         src, out, err = tmp / "atlas.pkl", tmp / "clean.npz", tmp / "errors.txt"
-        with self._lock:
+        with self._lock:  # its input and its atlas generation together (CodeRabbit)
             src.write_bytes(pickle.dumps(self.atlas))
+            gen, scope = self.opened.gen, self.opened.scope
         root = Path(__file__).resolve().parents[2]  # the folder holding the grand_project package
         with open(err, "w", encoding="utf-8") as errf:
             proc = subprocess.Popen(
@@ -404,8 +397,13 @@ class MapImageMixin:
                 text=True,
                 creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0) if os.name == "nt" else 0,
             )
-        self._seams_proc, self._seams_stopped, self._seams_busy = proc, False, True
-        gen, t0 = self.generation, time.monotonic()
+        with self._lock:
+            if not self.owns(gen):  # another atlas opened while it started: never registered for that one
+                proc.terminate()
+                shutil.rmtree(tmp, ignore_errors=True)
+                return
+            self._seams_proc, self._seams_stopped, self._seams_busy = proc, False, True
+        t0 = time.monotonic()
         self.events.set_progress("fixing seams: building the clean map...")
         self.events.log("Fix seams: building the clean map in the background")
         self.events.publish("seams", True)
@@ -422,11 +420,12 @@ class MapImageMixin:
                         canvas, weight, labels = r["canvas"], r["weight"], r["labels"]
                         origin = tuple(float(v) for v in r["origin"])
                         names = [str(n) for n in r["names"]]
-                    if self.set_terrain(canvas, weight, origin, labels=(labels, names), gen=gen):
-                        self.events.log(f"Fix seams: clean map ready ({time.monotonic() - t0:.0f} s)")
-                        self._seams_ready(names)
+                    with self._lock:  # shown and followed up for the same atlas (a close between: CodeRabbit)
+                        if self.set_terrain(canvas, weight, origin, labels=(labels, names), gen=gen):
+                            self.events.log(f"Fix seams: clean map ready ({time.monotonic() - t0:.0f} s)", scope)
+                            self._seams_ready(names)
                 elif self._seams_stopped:
-                    self.events.log("Fix seams: stopped (its clean map was left out)")
+                    self.events.log("Fix seams: stopped (its clean map was left out)", scope)
                 elif proc.returncode != 0:
                     text = err.read_text(encoding="utf-8", errors="replace").strip().splitlines()
                     LOG.error("clean map could not be built: %s", " | ".join(text[-30:]))
@@ -694,12 +693,10 @@ class MapImageMixin:
             The tile's bytes (b"" when empty).
         """
         steps = replay and self.replay_steps() is not None
-        tiler = self._vector_tiler(steps)
-        if tiler is None:
+        made = self._vector_made(steps)
+        if made is None:
             return b""
-        made = self._vector_steps if steps else self._vector
-        if made is None or made[1] is not tiler:  # replaced meanwhile (a filter changed): made, not kept
-            return tiler.tile(z, x, y)
+        tiler = made[1]
         # kept under the versions of the tiler that made it: read again, they may name a newer one (CodeRabbit)
         key = ("v", *made[0], z, x, y)
         hit = self._tiles.get(key)
@@ -718,29 +715,44 @@ class MapImageMixin:
         Returns:
             The tiler, or None without a map image.
         """
-        key = (self.model_version, self.filter_version, self.terrain_version, self.replay_token if steps else 0)
+        made = self._vector_made(steps)
+        return made[1] if made is not None else None
+
+    def _vector_made(self, steps: bool = False) -> tuple | None:
+        """Return (versions, tiler, 3D scene features, grid) of the current model, filters and map image, made once.
+
+        Versions, grid and features are read together under the session lock: read apart, a change between them
+        made a tiler of one map image keyed by another's versions (CodeRabbit).
+
+        Args:
+            steps: The timelapse's (items carry their reveal step), kept beside the plain one.
+
+        Returns:
+            The tuple, or None without a map image.
+        """
         slot = "_vector_steps" if steps else "_vector"
+        key = (self.model_version, self.filter_version, self.terrain_version, self.replay_token if steps else 0)
         v = getattr(self, slot, None)
         if v is not None and v[0] == key:
-            return v[1]
-        with self._vector_lock:
+            return v
+        with self._vector_lock, self._lock:
+            key = (self.model_version, self.filter_version, self.terrain_version, self.replay_token if steps else 0)
             v = getattr(self, slot, None)
             if v is not None and v[0] == key:
-                return v[1]
-            if self.grid is None:
-                return None
-            with self._lock:
-                layers = self.vector_layers(self.grid, steps)
+                return v
             g = self.grid
+            if g is None:
+                return None
+            layers = self.vector_layers(g, steps)
             # the 3D view's icons and models aren't cut into tiles: the page gets them whole (scene_3d), read back
             # from loaded tiles they were missing zoomed out, came twice at tile edges and were gathered again
             # after every move (user: lag, popping)
             scene = {k: layers.pop(k) for k in ("icon_rows", "solids")}
             scene["paths"] = layers["paths"]
             dense = max(0, g.zmax - 4)  # icons and labels are not drawn zoomed far out
-            tiler = VectorTiler(layers, g, min_zoom={"icons": dense})
-            setattr(self, slot, (key, tiler, scene))
-            return tiler
+            made = (key, VectorTiler(layers, g, min_zoom={"icons": dense}), scene, g)
+            setattr(self, slot, made)
+            return made
 
     def scene_3d(self, replay: bool = False) -> bytes:
         """Return the 3D view's icons, paths and models as JSON, whole (what the filters show, in atlas units).
@@ -757,14 +769,13 @@ class MapImageMixin:
             the start; pick: what a click on it selects, "node:<i>" / "landmark:<i>" / "").
         """
         steps = replay and self.replay_steps() is not None
-        if self._vector_tiler(steps) is None:
+        made = self._vector_made(steps)  # its own snapshot: the slot can be replaced meanwhile (CodeRabbit)
+        if made is None:
             return b'{"icons": [], "paths": [], "models": []}'
-        made = self._vector_steps if steps else self._vector
-        key = made[0]
+        key, _tiler, scene, g = made
         kept = getattr(self, "_scene", None)
         if kept is not None and kept[0] == (key, steps):
             return kept[1]
-        g, scene = self.grid, made[2]
 
         def A(p) -> list[float]:  # world px at zmax -> atlas units
             return [round((p[0] - g.offset) / g.scale + g.x0, 1), round((p[1] - g.offset) / g.scale + g.y0, 1)]
@@ -873,7 +884,8 @@ class MapImageMixin:
             for k, i in enumerate(members):
                 slot[i] = k - (len(members) - 1) / 2
         node_of = D.get("icon_node", {})
-        lift = self._model_tops(nodes)
+        shapes = self._solid_shapes(node_ok)
+        lift = self._model_tops(shapes)
         for i, ic in enumerate(V["icons"]):
             if not self.icon_visible(i, fl):
                 continue
@@ -932,7 +944,7 @@ class MapImageMixin:
                 L["biomes"].append(
                     {"kind": "polygon", "rings": [[W(x, y) for x, y in r] for r in poly], "props": {"kind": kind}}
                 )
-        L["solids"] = self._solids(grid, node_ok, rs)
+        L["solids"] = self._solids(grid, shapes, rs)
         return L
 
     def _land(self) -> list:
@@ -949,20 +961,14 @@ class MapImageMixin:
             hit = self._land_cache = (self.terrain_version, land_polygons(canvas, origin))
         return hit[1]
 
-    def _solids(self, grid: Grid, node_ok: list[bool], rs: dict | None = None) -> list[dict]:
-        """Build the 3D view's extruded shapes (webmap.solids), with heights in the metres MapLibre extrudes by.
-
-        MapLibre extrudes in metres and a Mercator metre is smaller the further from the equator, so each shape's
-        heights are turned into metres at its own latitude: the models keep their proportions in atlas units.
+    def _solid_shapes(self, node_ok: list[bool]) -> list[dict]:
+        """The 3D view's extruded shapes (webmap.solids) in atlas units, each with its anchor and pick.
 
         Args:
-            grid: The map image's grid.
             node_ok: node_shown of every map node.
-            rs: The timelapse's steps (replay_steps), or None: each model then carries the step it appears at (the
-                models stood from the start).
 
         Returns:
-            Polygon features (props colour, base and height in metres, node for map pillars).
+            Shapes ("rings", "base", "top", "colour", "anchor", "pick": ("node" | "landmark", index)).
         """
         V, D = self.V, self.D
         nodes = V["nodes"]
@@ -977,15 +983,19 @@ class MapImageMixin:
                 dict(sh, anchor=(nd["x"], nd["y"]), pick=("node", i))
                 for sh in map_pillar(nd["x"], nd["y"], icons, colour, i)
             ]
-        towers = []
         ct, locked = D.get("city_type", {}), D.get("locked", set())
+        # every Tower landmark, shown or not: a map node at one is that tower (hidden by "near only", its map node
+        # drew a tower of its own in its place: CodeRabbit)
+        towers = [
+            (lm["x"], lm["y"])
+            for lm in V["landmarks"]
+            if lm["kind"] == "Tower" and not str(lm.get("status", "")).startswith("removed")
+        ]
         for k, lm in enumerate(V["landmarks"]):
             if str(lm.get("status", "")).startswith("removed"):
                 continue
             if not self.landmark_shown(k, fl):  # hidden type (e.g. Tower): no model either (CodeRabbit)
                 continue
-            if lm["kind"] == "Tower":
-                towers.append((lm["x"], lm["y"]))
             # a click on it selects the map node it marks (its city, hall, tower or boss map: user), else itself
             v = D.get("landmark_node", {}).get(k)
             pick = ("node", v) if v is not None else ("landmark", k)
@@ -1003,6 +1013,23 @@ class MapImageMixin:
                 shapes += [
                     dict(sh, anchor=(nd["x"], nd["y"]), pick=("node", i)) for sh in structure("Tower", nd["x"], nd["y"])
                 ]
+        return shapes
+
+    def _solids(self, grid: Grid, shapes: list[dict], rs: dict | None = None) -> list[dict]:
+        """Turn the 3D view's shapes (_solid_shapes) into features with heights in the metres MapLibre extrudes by.
+
+        MapLibre extrudes in metres and a Mercator metre is smaller the further from the equator, so each shape's
+        heights are turned into metres at its own latitude: the models keep their proportions in atlas units.
+
+        Args:
+            grid: The map image's grid.
+            shapes: The shapes.
+            rs: The timelapse's steps (replay_steps), or None: each model then carries the step it appears at (the
+                models stood from the start).
+
+        Returns:
+            Polygon features (props colour, base and height in metres, node for map pillars).
+        """
         out = []
         for sh in shapes:
             lat = math.radians(grid.lnglat(*sh["rings"][0][0])[1])

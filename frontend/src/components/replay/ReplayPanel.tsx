@@ -10,6 +10,7 @@ import {
 	XIcon,
 } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
+import { sameAtlas } from "@/api/Http";
 import { Button } from "@/components/ui/button";
 import {
 	DropdownMenu,
@@ -55,6 +56,7 @@ export function ReplayPanel({ meta }: { meta: Meta }) {
 	const recorder = useRef<MediaRecorder | null>(null);
 	const exporting = useRef<{ cancel: boolean } | null>(null);
 	const [exportInfo, setExportInfo] = useState("");
+	const [busy, setBusy] = useState(false); // a frame export runs: the position is its own (CodeRabbit)
 
 	// playback: move on, move the camera
 	// biome-ignore lint/correctness/useExhaustiveDependencies: restarted only when play starts / stops
@@ -101,6 +103,7 @@ export function ReplayPanel({ meta }: { meta: Meta }) {
 	}
 
 	const seek = (p: number) => {
+		if (exporting.current) return; // (a seek moved the export's frames)
 		patch({ pos: p, playing: false });
 		moveCamera(p, 1);
 	};
@@ -115,6 +118,7 @@ export function ReplayPanel({ meta }: { meta: Meta }) {
 	};
 
 	const play = () => {
+		if (exporting.current) return;
 		if (replay.playing) return patch({ playing: false });
 		patch({ pos: pos >= plan.n_steps ? 0 : pos, playing: true });
 	};
@@ -141,16 +145,21 @@ export function ReplayPanel({ meta }: { meta: Meta }) {
 		}
 		const job = { cancel: false };
 		exporting.current = job;
+		setBusy(true);
 		patch({ recording: true, playing: false });
+		// it stops when the atlas or the map changes under it (it kept drawing the old map and threw: CodeRabbit)
+		const still = sameAtlas();
+		const live = () => !job.cancel && still() && useAppStore.getState().map === map;
 		const frameMs = (st.length * 1000) / count;
 		const k = ease(meta, st.smoothing, frameMs / 1000);
 		try {
-			for (let i = 0; i < count && !job.cancel; i++) {
+			for (let i = 0; i < count && live(); i++) {
 				const p = (plan.n_steps * i) / (count - 1);
 				patch({ pos: p });
 				await nextFrames(); // the map's layers follow the new position
 				moveCamera(p, i === 0 ? 1 : k);
-				await mapIdle(map);
+				await mapIdle(map, 3000, i === 0 ? true : undefined); // (the first frame waits for the fog too)
+				if (!live()) break;
 				const cc = counts(plan, p);
 				await onNextRender(map, (canvas) =>
 					ex.draw(canvas, {
@@ -161,14 +170,18 @@ export function ReplayPanel({ meta }: { meta: Meta }) {
 				ex.add(i === count - 1 ? frameMs + END_HOLD_MS : frameMs);
 				setExportInfo(`exporting ${kind === "gif" ? "GIF" : "video"}: frame ${i + 1} / ${count}`);
 			}
-			if (!job.cancel) download(await ex.finish(), kind === "gif" ? "atlas-timelapse.gif" : "atlas-timelapse.webm");
+			if (live()) download(await ex.finish(), kind === "gif" ? "atlas-timelapse.gif" : "atlas-timelapse.webm");
+			else if (!job.cancel) showError("The export stopped: the atlas changed while it ran.");
 		} catch (e) {
-			showError(e);
+			if (live())
+				showError(e); // (a map replaced meanwhile: said above, not as an error)
+			else if (!job.cancel) showError("The export stopped: the atlas changed while it ran.");
 		} finally {
 			ex.close();
 			exporting.current = null;
+			setBusy(false);
 			setExportInfo("");
-			patch({ recording: false });
+			if (still()) patch({ recording: false });
 		}
 	};
 
@@ -256,7 +269,14 @@ export function ReplayPanel({ meta }: { meta: Meta }) {
 		<div className="z-20 flex shrink-0 flex-col gap-2 border-t bg-card p-3">
 			<div className="flex items-center gap-2">
 				{/* start, a step back, play, a step on, the end (user: there was no jump to the start) */}
-				<Button size="icon-sm" variant="outline" aria-label="To the start" title="To the start" onClick={() => seek(0)}>
+				<Button
+					size="icon-sm"
+					variant="outline"
+					aria-label="To the start"
+					title="To the start"
+					disabled={busy}
+					onClick={() => seek(0)}
+				>
 					<SkipBackIcon />
 				</Button>
 				<Button
@@ -264,11 +284,12 @@ export function ReplayPanel({ meta }: { meta: Meta }) {
 					variant="outline"
 					aria-label="Step back"
 					title="Step back"
+					disabled={busy}
 					onClick={() => seek(stepFrom(pos, -1, plan))}
 				>
 					<StepBackIcon />
 				</Button>
-				<Button size="icon-sm" aria-label={replay.playing ? "Pause" : "Play"} onClick={play}>
+				<Button size="icon-sm" aria-label={replay.playing ? "Pause" : "Play"} disabled={busy} onClick={play}>
 					{replay.playing ? <PauseIcon /> : <PlayIcon />}
 				</Button>
 				<Button
@@ -276,6 +297,7 @@ export function ReplayPanel({ meta }: { meta: Meta }) {
 					variant="outline"
 					aria-label="Step forward"
 					title="Step forward"
+					disabled={busy}
 					onClick={() => seek(stepFrom(pos, 1, plan))}
 				>
 					<StepForwardIcon />
@@ -285,6 +307,7 @@ export function ReplayPanel({ meta }: { meta: Meta }) {
 					variant="outline"
 					aria-label="To the end"
 					title="To the end"
+					disabled={busy}
 					onClick={() => seek(plan.n_steps)}
 				>
 					<SkipForwardIcon />

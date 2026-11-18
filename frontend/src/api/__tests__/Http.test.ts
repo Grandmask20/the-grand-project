@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { ApiError, createHttp, StaleError, setAtlasGen } from "@/api/Http";
+import { ApiError, createHttp, StaleError, sameAtlas, setAtlasGen } from "@/api/Http";
 
 const reply = (status: number, body: unknown, gen?: number) =>
 	new Response(body === null ? "" : JSON.stringify(body), {
@@ -76,5 +76,28 @@ describe("createHttp", () => {
 			expect(await http.send("PATCH", "/api/settings", {})).toEqual({ ok: 1 });
 			await expect(http.send("POST", "/api/atlas/save")).rejects.toBeInstanceOf(StaleError);
 		});
+
+		it("drops an answer whose body came in after the page learned of another atlas (CodeRabbit)", async () => {
+			setAtlasGen(4);
+			const res = reply(200, { rows: [] }, 4);
+			const text = res.text.bind(res);
+			res.text = async () => {
+				setAtlasGen(5); // the state said: another atlas, while the body was read
+				return text();
+			};
+			const http = createHttp("", vi.fn().mockResolvedValue(res));
+			await expect(http.get("/api/search")).rejects.toBeInstanceOf(StaleError);
+		});
+	});
+});
+
+describe("sameAtlas", () => {
+	afterEach(() => setAtlasGen(null));
+	it("tells work spanning an atlas switch that it changed", () => {
+		setAtlasGen(3);
+		const still = sameAtlas();
+		expect(still()).toBe(true);
+		setAtlasGen(4);
+		expect(still()).toBe(false);
 	});
 });

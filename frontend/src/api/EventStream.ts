@@ -66,7 +66,9 @@ export function createEventHandler(queryClient: QueryClient) {
 				patch((s) => ({ ...s, status: String(data ?? "") }));
 				break;
 			case "question":
-				void queryClient.cancelQueries({ queryKey: AppQueryKeys.state }); // an older snapshot lacks it (CodeRabbit)
+				// an older snapshot on its way lacks it: dropped, and the state asked for again once patched (also when
+				// the first load was the one cancelled, with nothing to patch yet: CodeRabbit)
+				void queryClient.cancelQueries({ queryKey: AppQueryKeys.state }).then(() => refresh("state"));
 				patch((s) => ({
 					...s,
 					questions: [...s.questions.filter((q) => q.id !== (data as Question).id), data as Question],

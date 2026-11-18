@@ -16,22 +16,7 @@ import { useFolder } from "@/hooks/atlas/UseFolder";
 import { useAppStore } from "@/store/AppStore";
 import { cn } from "@/utils/Cn";
 import { size } from "@/utils/Format";
-
-/** The folders from the top down to `path` (each a full path), for the path bar and the folder tree. */
-function ancestors(path: string): { name: string; path: string }[] {
-	if (!path || path === "drives") return [];
-	const sep = path.includes("\\") ? "\\" : "/";
-	const parts = path.split(sep).filter((p, i) => p || i === 0);
-	const out: { name: string; path: string }[] = [];
-	let acc = "";
-	for (const [i, part] of parts.entries()) {
-		if (i === 0)
-			acc = part === "" ? sep : `${part}${sep}`; // "/" or "C:\"
-		else acc = acc.endsWith(sep) ? `${acc}${part}` : `${acc}${sep}${part}`;
-		out.push({ name: i === 0 ? acc : part, path: acc });
-	}
-	return out;
-}
+import { ancestors } from "@/utils/Paths";
 
 const when = (t?: number) =>
 	t ? new Date(t * 1000).toLocaleString(undefined, { dateStyle: "short", timeStyle: "short" }) : "";

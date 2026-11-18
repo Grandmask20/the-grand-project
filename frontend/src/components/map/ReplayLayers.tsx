@@ -5,6 +5,7 @@ import { useFog } from "@/hooks/replay/UseFog";
 import { useFrames } from "@/hooks/replay/UseFrames";
 import type { Geo } from "@/logic/Geo";
 import { EMPTY, setData } from "@/logic/MapStyle";
+import { fogCover, fogStep } from "@/logic/Replay";
 
 /** The area sweep's soft edge, as a share of the whole replay (the app's REPLAY_AREA_SOFT). */
 const FOG_SOFT = 0.02;
@@ -73,15 +74,11 @@ export function ReplayLayers({ map, geo, meta }: { map: MapLibreMap; geo: Geo; m
 		if (!ctx) return;
 		const img = ctx.createImageData(field.w, field.h);
 		const px = img.data;
-		const scale = field.top / 65534;
 		const soft = Math.max(1e-6, FOG_SOFT * nSteps); // the sweep's edge fades over this many steps
 		for (let i = 0; i < cells.length; i++) {
 			const v = cells[i];
 			if (v === 65535) continue; // no ground: nothing to hide
-			const step = v * scale;
-			// a screenshot shows from its step on (step < pos, as the counts); by area, a soft edge ahead of pos
-			const a = area ? Math.min(1, Math.max(0, (step - pos) / soft + 0.5)) : step < pos - 1e-9 ? 0 : 1;
-			px[4 * i + 3] = Math.round(a * 255);
+			px[4 * i + 3] = Math.round(fogCover(fogStep(v, field.top, area), pos, area, soft) * 255);
 		}
 		ctx.putImageData(img, 0, 0);
 		const src = map.getSource("fog-picture") as CanvasSource | undefined;

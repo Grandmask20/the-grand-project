@@ -75,6 +75,9 @@ WEBMAP_SOLID = {
     "map": 12.0,  # pillar height
     "boss_map": 24.0,  # pillar height of a map with a map boss icon
 }
+WEBMAP_BEAM_MIN = (
+    300.0  # atlas units: a 3D shape this tall is a beam (hall, tower): icons stand under it, on the building
+)
 WEBMAP_TOWER_SAME = 150.0  # atlas units: a map node marked as a tower this close to a Tower landmark is that tower
 
 

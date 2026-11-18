@@ -1530,19 +1530,7 @@ def finalize(atlas, log=_log) -> dict:
             ic["label"] = f"Deadly Map Boss ({near[0]['kind']})" if near else "Deadly Map Boss"
     # badges to show: on a kept map, or seen by most screenshots that show the spot
     on_map = {k for i, nd in enumerate(nodes) if status[i] != "removed" for k in nd["icons"]}
-    # a loose badge (on no kept map) beside a kept map that already carries the same badge is that badge seen
-    # elsewhere (parallax, a revisit): one of each badge per map (user: two Delirium on -7049, -2819)
-    kept_pts = [(nd["x"], nd["y"], {icons[k]["name"] for k in nd["icons"]}) for i, nd in enumerate(nodes)
-                if status[i] != "removed" and nd["icons"]]  # fmt: skip
-    kept_grid = _Grid([[x, y] for x, y, _n in kept_pts], ICON_LOOSE_SAME)
-    for k, ic in enumerate(icons):
-        if k in on_map or k in dup_badge or ic["name"] == "Unidentified":
-            continue
-        for j in kept_grid.near((ic["bx"], ic["by"]), ICON_LOOSE_SAME):
-            x, y, names = kept_pts[j]
-            if ic["name"] in names and math.hypot(x - ic["bx"], y - ic["by"]) < ICON_LOOSE_SAME:
-                dup_badge.add(k)
-                break
+    dup_badge |= _loose_copies(nodes, status, icons, on_map | dup_badge)
     out_icons = []
     for k, ic in enumerate(icons):
         if k in dup_badge:
@@ -1560,3 +1548,45 @@ def finalize(atlas, log=_log) -> dict:
     if log:
         log("final: " + ", ".join(f"{k} {v}" for k, v in stats.items()))
     return atlas.final
+
+
+def _loose_copies(nodes: list[dict], status: list[str], icons: list[dict], skip: set[int]) -> set[int]:
+    """Find loose badges (on no kept map) that are a kept map's own badge seen elsewhere.
+
+    A loose badge beside a kept map that already carries the same badge is that badge seen elsewhere (parallax, a
+    revisit): one of each badge per map (user: two Delirium on -7049, -2819). Not when one screenshot shows both:
+    then they are two badges side by side, not one seen twice (CodeRabbit).
+
+    Args:
+        nodes: The merged map nodes ("x", "y", "icons": badge indexes).
+        status: Each map node's status ("removed" ones carry nothing).
+        icons: The merged badges ("name", "bx", "by", "frames").
+        skip: Badges not to judge (on a kept map, or dropped already).
+
+    Returns:
+        The indexes of the loose copies.
+    """
+    kept_pts = []
+    for i, nd in enumerate(nodes):
+        if status[i] == "removed" or not nd["icons"]:
+            continue
+        shots: dict[str, set] = {}
+        for k in nd["icons"]:
+            shots.setdefault(icons[k]["name"], set()).update(icons[k].get("frames", ()))
+        kept_pts.append((nd["x"], nd["y"], shots))
+    kept_grid = _Grid([[x, y] for x, y, _n in kept_pts], ICON_LOOSE_SAME)
+    out = set()
+    for k, ic in enumerate(icons):
+        if k in skip or ic["name"] == "Unidentified":
+            continue
+        for j in kept_grid.near((ic["bx"], ic["by"]), ICON_LOOSE_SAME):
+            x, y, shots = kept_pts[j]
+            same = shots.get(ic["name"])
+            if (
+                same is not None
+                and math.hypot(x - ic["bx"], y - ic["by"]) < ICON_LOOSE_SAME
+                and not same & set(ic.get("frames", ()))
+            ):
+                out.add(k)
+                break
+    return out
