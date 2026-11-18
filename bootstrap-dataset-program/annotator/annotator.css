@@ -1,0 +1,365 @@
+/* Box editor styles. Streamlit's theme variables keep it readable in light and dark themes. */
+
+.ann {
+  --ann-text: var(--st-text-color, #fafafa);
+  --ann-bg: var(--st-background-color, #0e1117);
+  --ann-panel: var(--st-secondary-background-color, #262730);
+  --ann-accent: var(--st-primary-color, #ff4b4b);
+  --ann-border: rgba(128, 128, 128, 0.35);
+  display: flex;
+  flex-direction: column;
+  width: 100%;
+  color: var(--ann-text);
+  font: 13px/1.4 var(--st-font, system-ui, -apple-system, "Segoe UI", sans-serif);
+  user-select: none;
+}
+
+.ann-main {
+  display: flex;
+  gap: 10px;
+  flex: 1;
+  min-height: 0;
+}
+
+.ann-viewport {
+  position: relative;
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  background: #000;
+  border: 1px solid var(--ann-border);
+  border-radius: 6px;
+  outline: none;
+  cursor: crosshair;
+  touch-action: none;
+}
+
+.ann-viewport:focus-visible {
+  border-color: var(--ann-accent);
+}
+
+.ann-inactive .ann-viewport {
+  opacity: 0.92;
+}
+
+.ann-stage {
+  position: absolute;
+  left: 0;
+  top: 0;
+  transform-origin: 0 0;
+  --inv: 1;
+}
+
+.ann-shot {
+  display: block;
+  width: 100%;
+  height: 100%;
+  image-rendering: auto;
+}
+
+/* Boxes never take pointer events: hit testing is done in the script (smallest box wins), and the screenshot
+   stays the element under a right-click. */
+.ann-boxes,
+.ann-boxes * {
+  pointer-events: none;
+}
+
+.ann-boxes {
+  position: absolute;
+  inset: 0;
+}
+
+.ann-box {
+  position: absolute;
+  box-sizing: border-box;
+  border: calc(1.5px * var(--inv)) solid var(--c);
+  box-shadow: 0 0 0 calc(0.75px * var(--inv)) rgba(0, 0, 0, 0.55);
+}
+
+.ann-box.manual {
+  border-style: dashed;
+}
+
+.ann-box.hover {
+  border-width: calc(2.5px * var(--inv));
+}
+
+.ann-box.selected {
+  border-width: calc(2.5px * var(--inv));
+  background: color-mix(in srgb, var(--c) 14%, transparent);
+  outline: calc(1px * var(--inv)) solid #fff;
+  outline-offset: calc(1px * var(--inv));
+}
+
+/* Small chips, shown only for the hovered and selected boxes unless L shows them all, so a chip never hides
+   the map nodes next to its box. */
+.ann-chip {
+  position: absolute;
+  left: calc(-1.5px * var(--inv));
+  bottom: 100%;
+  display: none;
+  padding: 0 calc(3px * var(--inv));
+  font-size: calc(var(--chip-px, 11px) * var(--inv));
+  line-height: 1.35;
+  white-space: nowrap;
+  color: #000;
+  background: color-mix(in srgb, var(--c) 80%, transparent);
+  border-radius: calc(2px * var(--inv));
+}
+
+.ann-box.hover .ann-chip,
+.ann-box.selected .ann-chip,
+.ann-all-chips .ann-chip {
+  display: block;
+}
+
+.ann-all-chips .ann-box:not(.hover):not(.selected) .ann-chip {
+  opacity: 0.75;
+}
+
+.ann-handle {
+  position: absolute;
+  display: none;
+  width: calc(7px * var(--inv));
+  height: calc(7px * var(--inv));
+  margin: calc(-3.5px * var(--inv)) 0 0 calc(-3.5px * var(--inv));
+  background: #fff;
+  border: calc(1px * var(--inv)) solid #000;
+  box-sizing: border-box;
+}
+
+.ann-box.selected .ann-handle,
+.ann-box.hover .ann-handle {
+  display: block;
+}
+
+.ann-handle.nw { left: 0; top: 0; }
+.ann-handle.n { left: 50%; top: 0; }
+.ann-handle.ne { left: 100%; top: 0; }
+.ann-handle.e { left: 100%; top: 50%; }
+.ann-handle.se { left: 100%; top: 100%; }
+.ann-handle.s { left: 50%; top: 100%; }
+.ann-handle.sw { left: 0; top: 100%; }
+.ann-handle.w { left: 0; top: 50%; }
+
+.ann-draw {
+  position: absolute;
+  box-sizing: border-box;
+  border: calc(1.5px * var(--inv)) dashed #fff;
+  pointer-events: none;
+}
+
+/* Side panel */
+
+.ann-side {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  width: 236px;
+  flex: none;
+  overflow-y: auto;
+  padding: 8px;
+  background: var(--ann-panel);
+  border-radius: 6px;
+}
+
+.ann-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.ann-position {
+  flex: 1;
+  text-align: center;
+  font-variant-numeric: tabular-nums;
+}
+
+.ann-heading {
+  margin-top: 6px;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  opacity: 0.7;
+}
+
+.ann-btn {
+  padding: 4px 8px;
+  color: var(--ann-text);
+  background: transparent;
+  border: 1px solid var(--ann-border);
+  border-radius: 5px;
+  font: inherit;
+  cursor: pointer;
+}
+
+.ann-btn:hover:not(:disabled) {
+  border-color: var(--ann-accent);
+}
+
+.ann-btn:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
+.ann-primary {
+  color: #fff;
+  background: var(--ann-accent);
+  border-color: var(--ann-accent);
+}
+
+.ann-tools .ann-btn {
+  flex: 1;
+  padding: 3px 4px;
+}
+
+.ann-btn.ann-off {
+  text-decoration: line-through;
+  opacity: 0.7;
+}
+
+.ann-btn.ann-on {
+  border-color: var(--ann-accent);
+}
+
+.ann-status {
+  font-size: 12px;
+  opacity: 0.8;
+}
+
+.ann-ok {
+  color: #3dd56d;
+}
+
+.ann-muted {
+  margin: 0;
+  font-size: 12px;
+  opacity: 0.7;
+}
+
+.ann-legend {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+
+.ann-label {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 2px 4px;
+  color: var(--ann-text);
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 4px;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.ann-label:hover {
+  border-color: var(--ann-border);
+}
+
+.ann-label.current {
+  border-color: var(--ann-accent);
+}
+
+.ann-key {
+  min-width: 1.2em;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 12px;
+  opacity: 0.75;
+}
+
+.ann-swatch {
+  width: 10px;
+  height: 10px;
+  flex: none;
+  border-radius: 2px;
+}
+
+.ann-name {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ann-count {
+  font-variant-numeric: tabular-nums;
+  opacity: 0.7;
+}
+
+.ann-inspector {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.ann-select,
+.ann-grid input {
+  width: 100%;
+  box-sizing: border-box;
+  padding: 3px 4px;
+  color: var(--ann-text);
+  background: var(--ann-bg);
+  border: 1px solid var(--ann-border);
+  border-radius: 4px;
+  font: inherit;
+}
+
+.ann-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 4px;
+}
+
+.ann-grid label {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.ann-grid span {
+  width: 1em;
+  opacity: 0.7;
+}
+
+/* Help overlay */
+
+.ann-help {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(0, 0, 0, 0.55);
+}
+
+.ann-help[hidden] {
+  display: none;
+}
+
+.ann-help-card {
+  max-height: 90%;
+  overflow-y: auto;
+  padding: 12px 16px;
+  background: var(--ann-panel);
+  border-radius: 8px;
+}
+
+.ann-help-card h3 {
+  margin: 0 0 8px;
+  font-size: 15px;
+}
+
+.ann-help-card td {
+  padding: 2px 10px 2px 0;
+  vertical-align: top;
+}
+
+.ann-help-card .ann-key {
+  white-space: nowrap;
+}

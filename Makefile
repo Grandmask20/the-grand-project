@@ -1,5 +1,5 @@
 ########## PROJECT RECIPES ##########
-.PHONY: install install_training lint test test_all evaluate_detector prepare_rf_detr_data train_rf_detr pr_precheck
+.PHONY: install install_training install_bootstrap bootstrap_dataset lint test test_all evaluate_detector prepare_rf_detr_data train_rf_detr pr_precheck
 
 # GNU Make exposes OS=Windows_NT on Windows. On Unix-like systems, uname
 # distinguishes macOS (Darwin) from Linux; both use the same venv layout.
@@ -28,7 +28,9 @@ RF_DETR_OUTPUT_DIR ?= runs/rf-detr-small
 RF_DETR_DATASET_DIR ?= $(RF_DETR_OUTPUT_DIR)/dataset
 RF_DETR_DATA_ROOT ?=
 RF_DETR_OPTIONS ?=
+RF_DETR_BOOTSTRAP_MANIFEST ?=
 RF_DETR_DATA_ARGS = $(if $(strip $(RF_DETR_DATA_ROOT)),--data-root "$(RF_DETR_DATA_ROOT)",)
+RF_DETR_BOOTSTRAP_ARGS = $(if $(strip $(RF_DETR_BOOTSTRAP_MANIFEST)),--bootstrap-manifest "$(RF_DETR_BOOTSTRAP_MANIFEST)",)
 
 install:
 	$(PYTHON) -m pip install -e ".[dev]"
@@ -36,15 +38,21 @@ install:
 install_training:
 	$(PYTHON) -m pip install -e ".[training]"
 
+install_bootstrap:
+	$(PYTHON) -m pip install -e ".[bootstrap]"
+
+bootstrap_dataset:
+	$(PYTHON) -m streamlit run bootstrap-dataset-program/app.py
+
 prepare_rf_detr_data:
-	$(PYTHON) -m tools.train_rf_detr $(RF_DETR_DATA_ARGS) --output-dir "$(RF_DETR_OUTPUT_DIR)" --dataset-dir "$(RF_DETR_DATASET_DIR)" --dataset-only --overwrite-dataset $(RF_DETR_OPTIONS)
+	$(PYTHON) -m tools.train_rf_detr $(RF_DETR_DATA_ARGS) $(RF_DETR_BOOTSTRAP_ARGS) --output-dir "$(RF_DETR_OUTPUT_DIR)" --dataset-dir "$(RF_DETR_DATASET_DIR)" --dataset-only --overwrite-dataset $(RF_DETR_OPTIONS)
 
 train_rf_detr: prepare_rf_detr_data
-	$(PYTHON) -m tools.train_rf_detr $(RF_DETR_DATA_ARGS) --output-dir "$(RF_DETR_OUTPUT_DIR)" --dataset-dir "$(RF_DETR_DATASET_DIR)" --reuse-dataset $(RF_DETR_OPTIONS)
+	$(PYTHON) -m tools.train_rf_detr $(RF_DETR_DATA_ARGS) $(RF_DETR_BOOTSTRAP_ARGS) --output-dir "$(RF_DETR_OUTPUT_DIR)" --dataset-dir "$(RF_DETR_DATASET_DIR)" --reuse-dataset $(RF_DETR_OPTIONS)
 
 lint:
-	$(RUFF) check grand_project tools tests --fix --config pyproject.toml
-	$(RUFF) format grand_project tools tests --config pyproject.toml
+	$(RUFF) check grand_project tools tests bootstrap-dataset-program --fix --config pyproject.toml
+	$(RUFF) format grand_project tools tests bootstrap-dataset-program --config pyproject.toml
 	$(RUFF) clean
 
 # the tests (pytest; markers in pyproject.toml): offline + test-data ones + the viewer window, not the slow ones

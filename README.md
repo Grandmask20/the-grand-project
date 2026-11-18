@@ -1,4 +1,4 @@
-# The Grand Project — v1.16
+# The Grand Project — v1.17
 
 Builds one big map of your Path of Exile 2 atlas from your screenshots. Named after the in-game tablet, *The Grand Project*. It finds maps, paths, icons, towers and cities, and lets you search and bookmark them.
 
@@ -17,6 +17,22 @@ Builds one big map of your Path of Exile 2 atlas from your screenshots. Named af
 On macOS the shortcuts use **Cmd** instead of Ctrl, and right-click is a two-finger click (or Ctrl+click).
 
 On first start the viewer opens the empty atlas **`atlases/default`**.
+
+## Bootstrap RF-DETR training data
+
+Install the optional Streamlit UI and start it from the project folder with:
+
+```sh
+make install_bootstrap
+make bootstrap_dataset
+```
+
+The bootstrapper recursively discovers screenshots in `atlas_test_data/res_atlases`, `atlas_test_data/roa-atlas`, and
+`atlas_test_data/screenshots`. It shows the established classical detector's boxes over each screenshot in a
+keyboard-driven editor (draw, move, resize, relabel and delete boxes; edits save themselves; press `?` for the
+shortcuts), lets you mark screenshots reviewed, and hides reviewed screenshots. Screenshots are never changed. Exported reviewed
+annotations include COCO `annotations.json` and a project-native `manifest.json`; use the latter with
+`make prepare_rf_detr_data RF_DETR_BOOTSTRAP_MANIFEST=runs/rf-detr-bootstrap/manifest.json`.
 
 ---
 

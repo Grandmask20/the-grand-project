@@ -716,6 +716,70 @@ def load_records(
     return records, label_map
 
 
+def load_bootstrap_manifest(manifest_path: Path, max_images: int | None = None) -> tuple[list[Record], dict[str, str]]:
+    """Load reviewed annotations exported by ``bootstrap-dataset-program``.
+
+    The manifest keeps source image paths and editable ``xywh`` boxes, so it can be converted to the same Record
+    objects as the hand-labelled truth without importing Streamlit or copying the screenshots.
+    """
+    manifest_path = Path(manifest_path)
+    data = json.loads(manifest_path.read_text(encoding="utf-8"))
+    if data.get("format") != "the-grand-project-rf-detr-manifest":
+        raise ValueError(f"Not a bootstrap RF-DETR manifest: {manifest_path}")
+    labels = {str(index): str(name) for index, name in data.get("labels", {}).items()}
+    if not labels:
+        raise ValueError(f"Bootstrap manifest has no labels: {manifest_path}")
+    label_names = [labels[str(index)] for index in range(len(labels))]
+    name_to_id = {name: index for index, name in enumerate(label_names)}
+    records: list[Record] = []
+    for item in data.get("images", []):
+        image_path = Path(str(item.get("path", "")))
+        if not image_path.is_absolute():
+            image_path = manifest_path.parent / image_path
+        if not image_path.is_file():
+            continue
+        annotations = []
+        for annotation in item.get("annotations", []):
+            label = str(annotation.get("label", ""))
+            if label not in name_to_id:
+                raise ValueError(f"Bootstrap annotation uses unknown label {label!r}: {manifest_path}")
+            try:
+                bbox = tuple(float(value) for value in annotation["bbox"])
+            except (KeyError, TypeError, ValueError) as exc:
+                raise ValueError(f"Invalid bootstrap bbox in {manifest_path}") from exc
+            if len(bbox) != 4 or bbox[2] <= 0 or bbox[3] <= 0:
+                raise ValueError(f"Invalid bootstrap bbox in {manifest_path}: {bbox}")
+            annotations.append(
+                {
+                    "category_name": label,
+                    "category_id": name_to_id[label],
+                    "bbox": bbox,
+                    "area": float(annotation.get("area", bbox[2] * bbox[3])),
+                    "iscrowd": int(annotation.get("iscrowd", 0)),
+                    "provenance": str(annotation.get("source", "bootstrap_reviewed")),
+                }
+            )
+        records.append(
+            Record(
+                image_id=int(item.get("image_id", len(records))),
+                path=image_path,
+                source=str(item.get("source", image_path.name)),
+                source_type=str(item.get("source_type", "bootstrap_reviewed")),
+                source_group=str(item.get("source_group", "bootstrap")),
+                width=int(item["width"]),
+                height=int(item["height"]),
+                annotations=tuple(annotations),
+            )
+        )
+    if max_images is not None:
+        if max_images < 1:
+            raise ValueError("max_images must be positive")
+        records = records[:max_images]
+    if not records:
+        raise FileNotFoundError(f"No usable images in bootstrap manifest: {manifest_path}")
+    return records, {str(index): name for index, name in enumerate(label_names)}
+
+
 def split_records(
     records: list[Record], val_fraction: float, seed: int, *, by_source: bool = False
 ) -> tuple[list[Record], list[Record]]:

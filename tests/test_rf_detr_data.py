@@ -1,5 +1,6 @@
 """Offline checks for the RF-DETR dataset schema helpers."""
 
+import json
 import random
 from pathlib import Path
 
@@ -7,7 +8,14 @@ from PIL import Image
 
 from grand_project.detect import constants as K
 from grand_project.detect.constants import RF_DETR_CORE_LABELS
-from grand_project.detect.rf_detr import Record, _box, augment_detection_example, slug, split_records
+from grand_project.detect.rf_detr import (
+    Record,
+    _box,
+    augment_detection_example,
+    load_bootstrap_manifest,
+    slug,
+    split_records,
+)
 
 
 def _record(index: int, group: str = "truth") -> Record:
@@ -22,6 +30,41 @@ def test_box_is_clipped_to_the_source_image() -> None:
 def test_category_slug_is_stable_and_safe() -> None:
     assert slug("Map Boss Special") == "map_boss_special"
     assert slug("!!!") == "unknown"
+
+
+def test_bootstrap_manifest_loads_source_paths_and_labels(tmp_path: Path) -> None:
+    image = tmp_path / "shot.png"
+    image.write_bytes(b"placeholder")
+    manifest = tmp_path / "manifest.json"
+    manifest.write_text(
+        json.dumps(
+            {
+                "format": "the-grand-project-rf-detr-manifest",
+                "labels": {"0": "map_node", "1": "icon"},
+                "images": [
+                    {
+                        "image_id": 7,
+                        "path": str(image),
+                        "source": "screenshots/shot.png",
+                        "source_type": "bootstrap_reviewed",
+                        "source_group": "screenshots",
+                        "width": 1920,
+                        "height": 1080,
+                        "annotations": [{"label": "icon", "bbox": [10, 20, 34, 34], "source": "manual"}],
+                    }
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    records, labels = load_bootstrap_manifest(manifest)
+
+    assert labels == {"0": "map_node", "1": "icon"}
+    assert len(records) == 1
+    assert records[0].path == image
+    assert records[0].annotations[0]["category_id"] == 1
+    assert records[0].annotations[0]["bbox"] == (10.0, 20.0, 34.0, 34.0)
 
 
 def test_core_labels_leave_derived_geometry_out_of_training() -> None:

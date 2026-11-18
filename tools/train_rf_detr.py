@@ -47,6 +47,7 @@ from grand_project.detect.constants import (
 )
 from grand_project.detect.rf_detr import (
     build_dataset,
+    load_bootstrap_manifest,
     load_records,
     processor_transform,
 )
@@ -161,6 +162,12 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
         "--data-root", type=Path, default=None, help="dataset root; defaults to ATLAS_TEST_DATA or project test data"
+    )
+    parser.add_argument(
+        "--bootstrap-manifest",
+        type=Path,
+        default=None,
+        help="reviewed manifest.json exported by bootstrap-dataset-program; overrides --data-root labels",
     )
     parser.add_argument("--output-dir", type=Path, default=Path("runs/rf-detr-small"))
     parser.add_argument(
@@ -286,22 +293,25 @@ def _load_or_build_dataset(args: argparse.Namespace, data_root: Path):
             raise FileNotFoundError(f"reused dataset has no labels.json: {label_file}")
         return dataset, json.loads(label_file.read_text(encoding="utf-8")), dataset_dir, None
 
-    records, label_map = load_records(
-        data_root,
-        map_box=args.map_box,
-        icon_box=args.icon_box,
-        landmark_box=args.landmark_box,
-        tower_width=args.tower_width,
-        tower_height=args.tower_height,
-        stronghold_box=args.stronghold_box,
-        include_soft=args.include_soft,
-        badge_granularity=args.badge_granularity,
-        include_paths=args.include_paths,
-        include_path_dashes=args.include_path_dashes,
-        include_cached=args.include_cached,
-        include_walls=args.include_walls,
-        max_images=args.max_images,
-    )
+    if args.bootstrap_manifest is not None:
+        records, label_map = load_bootstrap_manifest(args.bootstrap_manifest, max_images=args.max_images)
+    else:
+        records, label_map = load_records(
+            data_root,
+            map_box=args.map_box,
+            icon_box=args.icon_box,
+            landmark_box=args.landmark_box,
+            tower_width=args.tower_width,
+            tower_height=args.tower_height,
+            stronghold_box=args.stronghold_box,
+            include_soft=args.include_soft,
+            badge_granularity=args.badge_granularity,
+            include_paths=args.include_paths,
+            include_path_dashes=args.include_path_dashes,
+            include_cached=args.include_cached,
+            include_walls=args.include_walls,
+            max_images=args.max_images,
+        )
     _validate_target_count(max(len(record.annotations) for record in records))
     if args.overwrite_dataset and dataset_dir.exists():
         if dataset_dir.is_file():

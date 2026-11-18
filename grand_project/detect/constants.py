@@ -19,7 +19,8 @@ RF_DETR_DEFAULT_MODEL_DIR = rc_paths.ROOT / "runs" / "rf-detr-small" / "best"
 RF_DETR_SCORE_THRESHOLD = 0.35  # confidence: tuned as a safe starting point for the small fine-tuned checkpoint
 RF_DETR_NMS_IOU = 0.50  # overlap: remove duplicate predictions of the same RF-DETR class
 RF_DETR_MAX_TARGETS = 300  # objects/image: RF-DETR Small's default decoder query count; path dashes can exceed it
-RF_DETR_MAP_BOX = 48.0  # px: square around a map node's centre, measured from the 1080p map-base glow
+RF_DETR_MAP_BOX = 43.0  # px: square around a map node's centre: the 1080p map-base glow measured 48, which reviewers
+# found too large; 43 is 20% less area (48 * sqrt(0.8))
 RF_DETR_ICON_BOX = 34.0  # px: square around an icon centre, inside the standard icon rim
 RF_DETR_LANDMARK_BOX = 80.0  # px: square around a city / hall / deadly-boss map point
 RF_DETR_TOWER_WIDTH = 80.0  # px: tower box width around its map node
