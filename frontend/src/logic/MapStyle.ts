@@ -29,6 +29,8 @@ export const GEOJSON_SOURCES = [
 	"lasso",
 	"outline",
 	"ghost-line",
+	"preview-line",
+	"preview-agree",
 	"bookmarks",
 ] as const;
 export type GeoJsonSourceId = (typeof GEOJSON_SOURCES)[number];
@@ -48,8 +50,27 @@ export const LAYER_GROUPS: Record<string, string[]> = {
 	"Debug marks": ["marks-line", "marks-dashed", "marks-point"],
 };
 
-/** Layers whose features carry the replay's "step" (hidden until the replay reaches them). */
-export const STEPPED = ["maps", "maps-square", "maps-icon", "paths", "icons", "landmarks", "towers", "solids"] as const;
+/** Pictures the map adds itself (AtlasMap); every other missing picture is an icon's (MapIcons). */
+export const OWN_IMAGES = new Set(["node-square", "node-square-solid", "node-picture"]);
+
+/** The tower picture over Tower landmarks (View: Pictures on the map). */
+const TOWER = "LostTower";
+
+/** The zoom from which icons are drawn: from where one is sprite.min_px across. */
+export const iconMinZoom = (geo: Geo, info: MapInfo) =>
+	Math.min(info.maxzoom - 0.5, geo.zoomFor(info.sprite.min_px / info.sprite.units));
+
+/** An icon's size: the game's pictures at their own size on the ground (sprite.units atlas units), times `scale`. */
+export function iconSize(geo: Geo, info: MapInfo, scale: number): ExpressionSpecification {
+	const sp = info.sprite;
+	const at = (z: number) => (scale * sp.units * geo.pxPerUnit(z)) / sp.size;
+	const z0 = iconMinZoom(geo, info);
+	return ["interpolate", ["exponential", 2], ["zoom"], z0, at(z0), info.maxzoom, at(info.maxzoom)];
+}
+
+/** How many screen px an icon spans at this zoom (MapLabels: their names show once they are big enough). */
+export const iconPx = (geo: Geo, info: MapInfo, zoom: number, scale: number) =>
+	scale * info.sprite.units * geo.pxPerUnit(zoom);
 
 const NONE: FilterSpecification = ["==", ["get", "id"], -1];
 
@@ -170,6 +191,20 @@ export function baseStyle(
 				paint: { "line-color": "#7cff6b", "line-width": 5 },
 			},
 			{
+				// the map content icons: the game's pictures on the ground (MapIcons hands MapLibre the pictures)
+				id: "icons",
+				type: "symbol",
+				source: "atlas",
+				"source-layer": "icons",
+				minzoom: iconMinZoom(geo, info),
+				layout: {
+					"icon-image": ["get", "name"],
+					"icon-size": iconSize(geo, info, 1),
+					"icon-allow-overlap": true,
+					"icon-ignore-placement": true,
+				},
+			},
+			{
 				id: "maps",
 				type: "circle",
 				source: "atlas",
@@ -248,17 +283,20 @@ export function baseStyle(
 				},
 			},
 			{
-				id: "solids",
-				type: "fill-extrusion",
+				// the tower picture over Towers (View: Pictures on the map; off by default)
+				id: "towers",
+				type: "symbol",
 				source: "atlas",
-				"source-layer": "solids",
-				layout: { visibility: "none" },
-				paint: {
-					"fill-extrusion-color": ["get", "colour"],
-					"fill-extrusion-base": ["get", "base"],
-					"fill-extrusion-height": ["get", "height"],
-					"fill-extrusion-opacity": 0.95,
-					"fill-extrusion-vertical-gradient": true,
+				"source-layer": "landmarks",
+				filter: ["==", ["get", "kind"], "Tower"],
+				minzoom: iconMinZoom(geo, info),
+				layout: {
+					visibility: "none",
+					"icon-image": TOWER,
+					"icon-size": iconSize(geo, info, 2),
+					"icon-allow-overlap": true,
+					"icon-ignore-placement": true,
+					"icon-anchor": "bottom",
 				},
 			},
 			{
@@ -337,6 +375,25 @@ export function baseStyle(
 				paint: { "line-color": "#ffdc00", "line-width": 2 },
 			},
 			{
+				// the screenshot a question is about: outlined (the dialog says so; only its picture was drawn)
+				id: "preview-line",
+				type: "line",
+				source: "preview-line",
+				paint: { "line-color": "#ffdc00", "line-width": 2, "line-dasharray": [3, 2] },
+			},
+			{
+				// the maps it agrees with: what it would join (user: it wasn't visible what it connected to)
+				id: "preview-agree",
+				type: "circle",
+				source: "preview-agree",
+				paint: {
+					"circle-radius": 9,
+					"circle-color": "rgba(0,0,0,0)",
+					"circle-stroke-color": "#ffdc00",
+					"circle-stroke-width": 2.5,
+				},
+			},
+			{
 				id: "lasso-fill",
 				type: "fill",
 				source: "lasso",
@@ -400,39 +457,6 @@ export function nodeRadius(geo: Geo, size: number): ExpressionSpecification {
 	// the dots: 2.2 px radius (1.5 with soft edges looked like 1 px and vanished into the ground: user)
 	if (zCap <= z + 0.02) return ["step", ["zoom"], 2.2, z, 13 * size];
 	return ["interpolate", ["exponential", 2], ["zoom"], z, 2.2, z + 0.01, Math.max(r, 2.2), zCap, 13 * size];
-}
-
-/** The beams' colours in the 3D models (webmap.solids: the hall's beam, the tower's beacon). */
-const BEAM_COLOURS = ["#ff8c1a", "#9fe8ff"];
-
-/** Icons in a row: their place (-2 .. 2 in halves). Model heights: 0 .. 440 atlas units in steps of 10. */
-const ICON_SLOTS = ["-2", "-1.5", "-1", "-0.5", "0", "0.5", "1", "1.5", "2"];
-const ICON_LIFTS = Array.from({ length: 45 }, (_, k) => k * 10);
-/** How tall a height looks next to the same length across the screen, at the game's camera angle (sin 59 deg). */
-const UPRIGHT = 0.857;
-
-/**
- * Where a 3D view icon is drawn, in its picture's px (64 px = 26 units): its place in the row (36 units apart) and
- * its bottom 11 units above the map node, on top of the 3D model under it while models are shown (user: city icons
- * sat inside the city).
- */
-function iconOffset(geo: Geo, models: boolean): ExpressionSpecification {
-	void geo;
-	const px = 64 / 26;
-	const at = (slot: string, lift: number) => ["literal", [Number(slot) * 36 * px, -(11 + lift * UPRIGHT) * px]];
-	if (!models)
-		return [
-			"match",
-			["get", "slot"],
-			...ICON_SLOTS.flatMap((k) => [k, at(k, 0)]),
-			at("0", 0),
-		] as unknown as ExpressionSpecification;
-	return [
-		"match",
-		["concat", ["get", "slot"], "|", ["to-string", ["get", "lift"]]],
-		...ICON_SLOTS.flatMap((k) => ICON_LIFTS.flatMap((l) => [`${k}|${l}`, at(k, l)])),
-		at("0", 0),
-	] as unknown as ExpressionSpecification;
 }
 
 /** Apply the settings to the map's layers (visibility, colours, sizes, filters). */
@@ -552,13 +576,9 @@ export function applyLook(map: MapLibreMap, geo: Geo, meta: Meta, look: Look): v
 
 	visible(map, "towers", !!st.ov_towers && on("Landmarks"));
 
-	// 3D models while tilted; icons above them then
-	visible(map, "solids", false); // the 3D models are drawn by ModelLayer3D (its data still comes from this layer's tiles)
-	// icons: on the ground when flat, standing in rows above their map nodes when tilted
+	// icons: on the ground when flat; tilted, IconLayer3D stands them in rows above their map nodes
 	visible(map, "icons", on("Icons") && !look.tilted);
-	visible(map, "icons-3d", false); // the 3D view's icons are drawn by IconLayer3D
 	const models = look.tilted && on("3D models");
-	if (map.getLayer("icons-3d")) map.setLayoutProperty("icons-3d", "icon-offset", iconOffset(geo, models));
 	// the flat map node dots would show through the bottom of the 3D pillars (user)
 	if (models) for (const id of ["maps", "maps-square", "maps-icon"]) visible(map, id, false);
 	// paths tilted: drawn by PathLayer3D (raised, one width on screen)
@@ -569,20 +589,7 @@ export function applyLook(map: MapLibreMap, geo: Geo, meta: Meta, look: Look): v
 
 	// the replay: what isn't revealed yet lies under the fog, which is drawn over the map's layers while replaying
 	// (ReplayLayers). Per-item opacity or filters by step made MapLibre redo every feature (13k paths) each frame:
-	// the page fell seconds behind and kept going after a pause (user). The 3D models stand above the fog, so they
-	// keep a filter by step (only while tilted).
-	const pos = look.replayPos;
-	const beams: FilterSpecification | null =
-		st.d3_beams === false ? ["!", ["in", ["get", "colour"], ["literal", BEAM_COLOURS]]] : null;
-	const reveal: FilterSpecification | null =
-		pos === null || !look.tilted ? null : ["<", ["coalesce", ["get", "step"], 0], pos];
-	setFilter(map, "solids", beams && reveal ? ["all", beams, reveal] : (beams ?? reveal));
-	// models' heights by the 3D view setting
-	const hk = Number(st.d3_model_height) || 1;
-	setPaint(map, "solids", "fill-extrusion-height", ["*", ["get", "height"], hk]);
-	setPaint(map, "solids", "fill-extrusion-base", ["*", ["get", "base"], hk]);
-	// the tower pictures only on Towers, always (CodeRabbit: the replay filter replaced it)
-	setFilter(map, "towers", ["==", ["get", "kind"], "Tower"]);
+	// the page fell seconds behind and kept going after a pause (user). The 3D layers reveal by step themselves.
 	// bookmarks are not part of how the atlas was made: hidden while replaying (user: they showed from the start)
 	if (look.replayPos !== null) visible(map, "bookmarks", false);
 }

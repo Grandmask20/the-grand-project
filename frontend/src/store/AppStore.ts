@@ -67,8 +67,17 @@ export interface AppStoreState {
 	results: ResultRow[];
 	resultsTitle: string;
 	setResults: (rows: ResultRow[], title: string) => void;
+	/** Find: the search box's text, the search made from it, and a type listed from the type list. */
+	findText: string;
+	setFindText: (t: string) => void;
 	query: string;
+	/** Search: a new search takes the rings of the one before off the map (user: different finds piled up). */
 	setQuery: (q: string) => void;
+	listed: { label: string; icon: string | null } | null;
+	/** List a type's items (its icon lit up on the map), in place of a search. */
+	listType: (label: string, icon: string | null) => void;
+	/** Empty Find: the box, the results and every ring it put on the map (the x button, Esc in the box or on the map). */
+	clearFind: () => void;
 	highlight: string | null;
 	setHighlight: (type: string | null) => void;
 	mode: MapMode;
@@ -103,9 +112,6 @@ export interface AppStoreState {
 	/** Bookmark groups folded shut in the Bookmarks tab (user: as in the old window). */
 	foldedGroups: string[];
 	foldGroup: (name: string, folded: boolean) => void;
-	/** Bumped when a layer was added late (the icons): the look is applied again. */
-	lookTick: number;
-	bumpLook: () => void;
 	/** Forget what belonged to the atlas open before (another atlas was opened, made or closed). */
 	resetAtlas: () => void;
 }
@@ -133,8 +139,14 @@ export const useAppStore = create<AppStoreState>()((set) => ({
 	results: [],
 	resultsTitle: "",
 	setResults: (results, resultsTitle) => set({ results, resultsTitle }),
+	findText: "",
+	setFindText: (findText) => set({ findText }),
 	query: "",
-	setQuery: (query) => set({ query }),
+	setQuery: (query) => set(query.trim() ? { query, highlight: null, goto: null } : { query }),
+	listed: null,
+	listType: (label, icon) => set({ findText: "", query: "", listed: { label, icon }, highlight: icon, goto: null }),
+	clearFind: () =>
+		set({ findText: "", query: "", listed: null, highlight: null, goto: null, results: [], resultsTitle: "" }),
 	highlight: null,
 	setHighlight: (highlight) => set({ highlight }),
 	mode: { kind: "normal" },
@@ -175,17 +187,18 @@ export const useAppStore = create<AppStoreState>()((set) => ({
 		set((s) => ({
 			foldedGroups: folded ? [...new Set([...s.foldedGroups, name])] : s.foldedGroups.filter((g) => g !== name),
 		})),
-	lookTick: 0,
-	bumpLook: () => set((s) => ({ lookTick: s.lookTick + 1 })),
-	// the selection, search, highlight, route, replay, a placement or lasso waiting for a click, and dialogs about
-	// one of its items all belonged to the atlas open before (user: they showed or acted on the new one). Kept: the
-	// tab, the camera (a new map fits itself), the file picker and the atlas dialogs (not about one atlas).
+	// the selection, search, highlight, route, replay, a placement or lasso waiting for a click, dialogs about one of
+	// its items and the camera all belonged to the atlas open before (user: they showed or acted on the new one; the
+	// new map opened at the old atlas's spot). Kept: the tab, the file picker and the atlas dialogs (not one atlas's).
 	resetAtlas: () =>
 		set({
+			camera: null,
 			selected: null,
 			results: [],
 			resultsTitle: "",
 			query: "",
+			findText: "",
+			listed: null,
 			highlight: null,
 			mode: { kind: "normal" },
 			fly: null,

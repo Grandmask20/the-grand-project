@@ -343,7 +343,14 @@ FS_LIST_MAX = 5000  # entries listed by the folder browser at most
 REPLAY_FOG_RES = 512  # timelapse: the "revealed yet" grid has this many cells on the atlas's long side
 
 
+ICON_DRAW_REV = 3  # bump when icon_picture draws differently: the page's picture URLs carry it (icon_art_version)
 ICON_CROP_RIM = 13.5  # px: the rim's outer edge from the centre of a taught on-screen icon crop (34 px at 1080p; the
 # detector's rim reaches 12.5, detect ICON_RIM_R): the crop is cut there so it is drawn as big as the game's art
 ICON_ART_INNER = 0.72  # share of an icon's radius inside its rim (the game's Map Boss icon): poe2db's inner art goes
 # there, inside the game's rim
+
+# --- weak-match previews and hand placement (app.adding)
+PREVIEW_AGREE_TOL = 8  # atlas units: a weak match's map node on an atlas one counts as agreeing (core REFINE_TOLS)
+PREVIEW_NEAR = 3  # a weak match's preview is shown with this many placed screenshots nearest to it
+PICTURE_SIDE = 1600  # px: longest side of a flattened screenshot picture (ghost / weak-match preview)
+PICTURES_KEPT = 8  # ghost / preview pictures kept for the page to fetch (the newest)

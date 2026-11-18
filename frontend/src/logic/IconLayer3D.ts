@@ -236,55 +236,8 @@ export class IconLayer3D implements CustomLayerInterface {
 		});
 	}
 
-	/** The last frame's mercator -> clip matrix and centre size (for clicks on the 3D view: pickScreen). */
+	/** The last frame's mercator -> clip matrix and centre size. */
 	last: { M: Float32Array; size: number } | null = null;
-
-	/**
-	 * The atlas point a click at screen (x, y) css px means in the 3D view: the icon or map node pillar drawn nearest
-	 * to it (within 24 px), else null. Clicks were read on the flat map under the 3D models (user).
-	 */
-	pickScreen(x: number, y: number, nodes: { x: number; y: number; ax: number; ay: number }[]): [number, number] | null {
-		const map = this.map;
-		const L = this.last;
-		if (!map || !L) return null;
-		const W = map.getCanvas().clientWidth;
-		const H = map.getCanvas().clientHeight;
-		const M = L.M;
-		const proj = (mx: number, my: number, z: number): [number, number, number] | null => {
-			const cw = M[3] * mx + M[7] * my + M[11] * z + M[15];
-			if (cw <= 0) return null;
-			const cx = (M[0] * mx + M[4] * my + M[8] * z + M[12]) / cw;
-			const cy = (M[1] * mx + M[5] * my + M[9] * z + M[13]) / cw;
-			return [((cx + 1) / 2) * W, ((1 - cy) / 2) * H, cw];
-		};
-		const ratio = map.getCanvas().width / W;
-		let best: [number, number] | null = null;
-		let bestD = 24;
-		for (const ic of this.pending) {
-			const m = MercatorCoordinate.fromLngLat([ic.lng, ic.lat]);
-			const s = proj(m.x, m.y, (BASE + (this.models ? ic.lift : 0)) * this.k);
-			if (!s) continue;
-			const half = L.size / s[2] / ratio; // css px of half an icon there
-			const sx = s[0] + ic.slot * (ROW / HALF) * half;
-			const d = Math.hypot(sx - x, s[1] - y);
-			if (d < Math.max(bestD, half * 1.1)) {
-				bestD = d;
-				// the icon's place on the flat map: its row above the node, as the app keeps it
-				best = [ic.atlas[0] + ic.slot * ROW, ic.atlas[1] - 24];
-			}
-		}
-		if (best) return best;
-		for (const n of nodes) {
-			const s = proj(n.x, n.y, 12 * this.k);
-			if (!s) continue;
-			const d = Math.hypot(s[0] - x, s[1] - y);
-			if (d < bestD) {
-				bestD = d;
-				best = [n.ax, n.ay];
-			}
-		}
-		return best;
-	}
 
 	render(gl: WebGLRenderingContext | WebGL2RenderingContext, options: CustomRenderMethodInput): void {
 		if (!this.prog) return;

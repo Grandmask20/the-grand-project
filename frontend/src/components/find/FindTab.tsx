@@ -1,5 +1,5 @@
 import { SearchIcon, XIcon } from "lucide-react";
-import { useEffect, useState } from "react";
+import { useEffect } from "react";
 import { Section } from "@/components/common/Section";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Input } from "@/components/ui/input";
@@ -14,14 +14,17 @@ import { TypeList } from "./TypeList";
 
 /** Find: search, the type list (what the map shows), the results and the selected item's details. */
 export function FindTab() {
+	// Find's state lives in the store (one owner: the map's Esc clears it too, and it outlasts this tab: CodeRabbit)
+	const text = useAppStore((s) => s.findText);
+	const setText = useAppStore((s) => s.setFindText);
 	const query = useAppStore((s) => s.query);
 	const setQuery = useAppStore((s) => s.setQuery);
+	const listed = useAppStore((s) => s.listed);
+	const listType = useAppStore((s) => s.listType);
+	const clear = useAppStore((s) => s.clearFind);
 	const setResults = useAppStore((s) => s.setResults);
 	const flyTo = useAppStore((s) => s.flyTo);
 	const setGoto = useAppStore((s) => s.setGoto);
-	const setHighlight = useAppStore((s) => s.setHighlight);
-	const [text, setText] = useState(query);
-	const [listed, setListed] = useState<{ label: string; icon: string | null } | null>(null);
 	const search = useSearch(query);
 	const list = useListType(listed?.label ?? null);
 	const settings = useSettings();
@@ -29,32 +32,10 @@ export function FindTab() {
 
 	// typing settles for a moment before searching
 	useEffect(() => {
+		if (text === useAppStore.getState().query) return;
 		const t = setTimeout(() => setQuery(text), 250);
 		return () => clearTimeout(t);
 	}, [text, setQuery]);
-
-	// emptied elsewhere (Esc on the map): the box follows
-	useEffect(() => {
-		if (!query) setText("");
-	}, [query]);
-
-	// a new search drops the rings of the one before (user: rings of different finds piled up and never left)
-	useEffect(() => {
-		if (query.trim()) {
-			setHighlight(null);
-			setGoto(null);
-		}
-	}, [query, setHighlight, setGoto]);
-
-	/** The x button: empty the search and take every find ring off the map. */
-	const clear = () => {
-		setText("");
-		setQuery("");
-		setListed(null);
-		setHighlight(null);
-		setGoto(null);
-		setResults([], "");
-	};
 
 	useEffect(() => {
 		const d = search.data;
@@ -63,7 +44,6 @@ export function FindTab() {
 			return;
 		}
 		if (!d) return;
-		setListed(null);
 		if ("goto" in d) {
 			const [x, y] = d.goto;
 			setGoto([x, y]);
@@ -115,14 +95,7 @@ export function FindTab() {
 				{filter("near_only", "only potential city maps")}
 			</div>
 			<Section title="Types">
-				<TypeList
-					onList={(label, icon) => {
-						setText("");
-						setQuery("");
-						setListed({ label, icon });
-						setHighlight(icon);
-					}}
-				/>
+				<TypeList onList={listType} />
 			</Section>
 			<ResultList />
 			<SelectedBox />

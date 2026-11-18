@@ -1,4 +1,4 @@
-import { FullscreenControl, type Map as MapLibreMap, Map as MapView, NavigationControl } from "maplibre-gl";
+import { FullscreenControl, LngLat, type Map as MapLibreMap, Map as MapView, NavigationControl } from "maplibre-gl";
 import { useEffect, useRef, useState } from "react";
 import nodePicture from "@/assets/map_node_icon.webp";
 import type { Meta } from "@/domain/app/Meta";
@@ -30,6 +30,9 @@ import { ReplayLayers } from "./ReplayLayers";
  */
 const GAME_PITCH = 59;
 
+/** Web Mercator's last latitude: a centre further north or south has no place on the map. */
+const MAX_LAT = 85.051129;
+
 interface Props {
 	info: MapInfo;
 	meta: Meta;
@@ -47,7 +50,29 @@ export function AtlasMap({ info, meta }: Props) {
 	useEffect(() => {
 		if (!box.current) return;
 		const cam = useAppStore.getState().camera;
+		// pan freely, well past the atlas (user: the old window let you pan off it), but the centre stays within half
+		// an atlas past its edges (MapLibre's world was too small a limit on a big atlas, and tilted the view reaches
+		// the horizon: it panned off endlessly, user). Part of MapLibre's own constraint, so every camera change keeps
+		// to it: corrected afterwards from move events, the two limits fought (a jump far out overflowed the stack)
+		const ax0 = info.grid.x0;
+		const ay0 = info.grid.y0;
+		const ax1 = ax0 + info.grid.width / info.grid.scale;
+		const ay1 = ay0 + info.grid.height / info.grid.scale;
+		const mx = (ax1 - ax0) * 0.5;
+		const my = (ay1 - ay0) * 0.5;
+		const constrain = (c: LngLat, zoom: number) => {
+			const [x, y] = geo.toAtlas(c.lng, c.lat);
+			const [lng, lat] = geo.toLngLat(
+				Math.min(Math.max(x, ax0 - mx), ax1 + mx),
+				Math.min(Math.max(y, ay0 - my), ay1 + my),
+			);
+			return {
+				center: new LngLat(Math.min(Math.max(lng, -180), 180), Math.min(Math.max(lat, -MAX_LAT), MAX_LAT)),
+				zoom,
+			};
+		};
 		const m = new MapView({
+			transformConstrain: constrain,
 			container: box.current,
 			style: baseStyle(info, geo, meta, app.terrainTiles(terrainVersion(info)), app.vectorTiles(vectorVersion(info))),
 			bounds: cam ? undefined : info.bounds,
@@ -68,38 +93,9 @@ export function AtlasMap({ info, meta }: Props) {
 			// centre once the mouse is 100 px above or below it and flips direction across it, so turning jumped and
 			// reversed near the middle (user: too sensitive at some points, as if it turned a full circle). Passed on to
 			// its rotate handler; not in MapOptions' type
-			...({ aroundCenter: false } as object),
+			// and at half MapLibre's speed (0.8 degrees per px was too fast: user)
+			...({ aroundCenter: false, rotateDegreesPerPixelMoved: 0.4 } as object),
 		});
-		// pan freely, well past the atlas (user: the old window let you pan off it); a center more than an atlas-width
-		// past an edge eases back. MapLibre's maxBounds kept the view in a corner beside the atlas instead (user):
-		// zoomed out, the atlas fills much of MapLibre's world and the limit forced the view into its corner.
-		// pan limit in atlas units: the centre stays within half an atlas past its edges (MapLibre's world was too
-		// small a limit on a big atlas, and tilted the view reaches the horizon: it panned off endlessly, user)
-		const ax0 = info.grid.x0;
-		const ay0 = info.grid.y0;
-		const ax1 = ax0 + info.grid.width / info.grid.scale;
-		const ay1 = ay0 + info.grid.height / info.grid.scale;
-		const mx = (ax1 - ax0) * 0.5;
-		const my = (ay1 - ay0) * 0.5;
-		// once per move: setCenter fires another move, and where MapLibre's own limits (its world's latitudes) keep
-		// the centre a hair off ours, the two corrected each other forever (a jump far out: stack overflow)
-		let limiting = false;
-		const limit = () => {
-			if (limiting) return;
-			const c = m.getCenter();
-			const [x, y] = geo.toAtlas(c.lng, c.lat);
-			const cx = Math.min(Math.max(x, ax0 - mx), ax1 + mx);
-			const cy = Math.min(Math.max(y, ay0 - my), ay1 + my);
-			if (Math.abs(cx - x) + Math.abs(cy - y) < 1e-3) return;
-			limiting = true;
-			try {
-				m.setCenter(geo.toLngLat(cx, cy));
-			} finally {
-				limiting = false;
-			}
-		};
-		m.on("drag", limit);
-		m.on("move", limit);
 		// panning: the mouse's movement in px moves the map at the scale of the view's centre. MapLibre's own drag
 		// keeps the grabbed ground point under the mouse, which near the horizon moved further and further with
 		// every px (user: it sped up endlessly)
@@ -127,13 +123,6 @@ export function AtlasMap({ info, meta }: Props) {
 		canvas.addEventListener("mousedown", down);
 		window.addEventListener("mousemove", move);
 		window.addEventListener("mouseup", up);
-		m.on("moveend", limit);
-		// after the map is removed (another atlas opened) its layers and sources are simply gone: the parts of the page
-		// that tidy up after it (the replay's fog) asked a removed map and threw, which blanked the page (user)
-		const getLayer = m.getLayer.bind(m);
-		const getSource = m.getSource.bind(m);
-		m.getLayer = ((id: string) => (m.style ? getLayer(id) : undefined)) as typeof m.getLayer;
-		m.getSource = ((id: string) => (m.style ? getSource(id) : undefined)) as typeof m.getSource;
 		m.addControl(new NavigationControl({ visualizePitch: true }), "top-right");
 		m.addControl(
 			new ButtonControl("⤢", "Fit the whole atlas (0)", () => m.fitBounds(info.bounds, { padding: 30 })),
@@ -164,7 +153,10 @@ export function AtlasMap({ info, meta }: Props) {
 			window.removeEventListener("mouseup", up);
 			setStoreMap(null);
 			setMap(null);
-			m.remove();
+			// removed once the parts drawn on it have taken their layers off: React runs a removed tree's clean-ups
+			// from the top, so this one ran first and they asked a map already gone (the timelapse fog threw and
+			// blanked the page when another atlas opened: user)
+			queueMicrotask(() => m.remove());
 		};
 	}, []);
 
@@ -185,7 +177,7 @@ export function AtlasMap({ info, meta }: Props) {
 					<MapImages map={map} geo={geo} />
 					<ReplayLayers map={map} geo={geo} meta={meta} />
 					<MapInteraction map={map} geo={geo} meta={meta} />
-					<MapLabels map={map} meta={meta} />
+					<MapLabels map={map} geo={geo} info={info} meta={meta} />
 					<PlayerMarker map={map} geo={geo} />
 					<FrameRecorder map={map} />
 				</>

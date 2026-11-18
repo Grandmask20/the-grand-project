@@ -10,7 +10,6 @@ import { useAppStore } from "@/store/AppStore";
 export function MapLook({ map, geo, meta }: { map: MapLibreMap; geo: Geo; meta: Meta }) {
 	const settings = useSettings();
 	const highlight = useAppStore((s) => s.highlight);
-	const lookTick = useAppStore((s) => s.lookTick);
 	const [tilted, setTilted] = useState(() => map.getPitch() > 1);
 	// the replay's position matters to the layers only for the 3D models (tilted): the fog hides the rest, so flat
 	// the look isn't applied again every frame (that redid every layer and the page fell behind: user)
@@ -24,7 +23,6 @@ export function MapLook({ map, geo, meta }: { map: MapLibreMap; geo: Geo; meta: 
 		};
 	}, [map]);
 
-	// biome-ignore lint/correctness/useExhaustiveDependencies: lookTick: applied again when a layer was added late
 	useEffect(() => {
 		if (!settings) return;
 		const tint = settings.style.age_tint;
@@ -36,7 +34,7 @@ export function MapLook({ map, geo, meta }: { map: MapLibreMap; geo: Geo; meta: 
 			replayPos,
 			tint: tint === "by session" || tint === "oldest to newest" ? "frames" : tint === "times seen" ? "heat" : "off",
 		});
-	}, [map, geo, meta, settings, tilted, highlight, replayPos, lookTick]);
+	}, [map, geo, meta, settings, tilted, highlight, replayPos]);
 
 	return null;
 }

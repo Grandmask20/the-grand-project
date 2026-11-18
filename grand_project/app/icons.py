@@ -12,9 +12,33 @@ from PIL import Image, ImageDraw
 
 from grand_project import paths as rc_paths
 
-from .constants import ICON_ART_INNER, ICON_CROP_RIM, ICON_INFO, ICON_ROW_DY, ICON_ROW_STEP
+from .constants import ICON_ART_INNER, ICON_CROP_RIM, ICON_DRAW_REV, ICON_INFO, ICON_ROW_DY, ICON_ROW_STEP
 
-_PICTURES: dict = {}  # PNG bytes per (type, size) (icon_png)
+_PICTURES: dict = {}  # PNG bytes per (art version, type, size, style) (icon_png)
+
+
+def icon_art_version() -> str:
+    """Return the version of the icon pictures: of how they are drawn and of what they are drawn from.
+
+    The page's picture URLs carry it, so the browser (which keeps them for a year) asks again exactly when a picture
+    can have changed: the drawing code (ICON_DRAW_REV), the game's art, poe2db's art, or the taught crops of the
+    icon database ("from screenshots" changed with every icon taught, and stayed old: the page had a hand-bumped
+    version instead).
+
+    Returns:
+        Short text, e.g. "3-1a2b3c4d".
+    """
+    import hashlib
+
+    from grand_project import icon_refs
+
+    h = hashlib.blake2b(digest_size=4)
+    for p in (rc_paths.ref("atlas_icons.zip"), rc_paths.ref("poe2db_icons"), icon_refs.DB_PATH):
+        try:
+            h.update(str(p.stat().st_mtime_ns).encode())
+        except OSError:
+            h.update(b"-")
+    return f"{ICON_DRAW_REV}-{h.hexdigest()}"
 
 
 def hex_bgr(h: str, default):
@@ -245,8 +269,10 @@ def icon_png(raw: str, size: int = 64, style: str = "game art") -> bytes:
     Returns:
         The PNG file's bytes.
     """
-    key = (raw, size, style)
+    key = (icon_art_version(), raw, size, style)  # (a taught crop or new art: drawn again)
     if key not in _PICTURES:
+        if len(_PICTURES) > 4000:  # old versions' pictures
+            _PICTURES.clear()
         buf = io.BytesIO()
         icon_picture(raw, size, style).save(buf, "PNG")
         _PICTURES[key] = buf.getvalue()

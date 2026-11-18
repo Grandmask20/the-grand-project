@@ -5,6 +5,8 @@ import {
 	MercatorCoordinate,
 } from "maplibre-gl";
 
+export { pickCode, pickItem } from "./Pick";
+
 /** One extruded shape of the 3D view: its rings (lng, lat; outer then holes), heights in metres, colour, centre. */
 export interface Model3D {
 	rings: [number, number][][];
@@ -13,6 +15,8 @@ export interface Model3D {
 	colour: [number, number, number];
 	anchor: [number, number]; // lng, lat of its structure's centre
 	step: number;
+	/** What a click on it selects (pickCode), 0 for nothing. */
+	pick: number;
 }
 
 const VS = `
@@ -21,13 +25,16 @@ attribute vec2 a_anchor; // the structure's centre
 attribute vec3 a_col;
 attribute vec3 a_normal; // x, y, z (a top face: 0, 0, 1)
 attribute float a_step;
+attribute vec3 a_pick; // the pick code's three bytes, 0..1
 uniform mat4 u_m;
 uniform float u_size;
 uniform float u_height;
 uniform float u_far;
 varying vec3 v_col;
 varying float v_step;
+varying vec3 v_pick;
 void main() {
+	v_pick = a_pick;
 	vec4 ca = u_m * vec4(a_anchor, 0.0, 1.0);
 	if (ca.w > u_far) { gl_Position = vec4(2.0, 2.0, 2.0, 1.0); return; } // past the render distance
 	vec2 xy = a_anchor + (a_pos.xy - a_anchor) * u_size;
@@ -41,14 +48,16 @@ void main() {
 const FS = `
 precision mediump float;
 uniform float u_pos;
+uniform float u_pick; // 1: draw each model's pick code as its colour (clicks read it back)
 varying vec3 v_col;
 varying float v_step;
+varying vec3 v_pick;
 void main() {
 	if (v_step >= u_pos) discard;
-	gl_FragColor = vec4(v_col, 1.0);
+	gl_FragColor = u_pick > 0.5 ? vec4(v_pick, 1.0) : vec4(v_col, 1.0);
 }`;
 
-const STRIDE = 12; // floats per vertex
+const STRIDE = 15; // floats per vertex
 
 /**
  * The 3D view's models (map node pillars, towers, cities, halls, strongholds) as a WebGL layer of our own: a size
@@ -67,6 +76,7 @@ export class ModelLayer3D implements CustomLayerInterface {
 	private count = 0;
 	private pending: Model3D[] = [];
 	private dirty = false;
+	private pickReq: { x: number; y: number; done: (code: number) => void } | null = null;
 	size = 1;
 	height = 1;
 	far = 3;
@@ -99,6 +109,51 @@ export class ModelLayer3D implements CustomLayerInterface {
 		this.gl = null;
 	}
 
+	/**
+	 * The model drawn at screen (x, y) css px (its pick code, 0 for none): the next frame draws each model's code as
+	 * its colour into the pixel under the mouse, nearest in front as on screen (clicks were read on the flat map under
+	 * the models, then from map node positions projected by hand: user).
+	 */
+	pickAt(x: number, y: number): Promise<number> {
+		return new Promise((done) => {
+			if (!this.map || !this.count) return done(0);
+			this.pickReq = { x, y, done };
+			this.map.triggerRepaint();
+		});
+	}
+
+	private pickPass(gl: WebGLRenderingContext | WebGL2RenderingContext): void {
+		const req = this.pickReq;
+		this.pickReq = null;
+		const map = this.map;
+		if (!req) return;
+		if (!map || !this.prog) {
+			req.done(0);
+			return;
+		}
+		const ratio = gl.drawingBufferWidth / map.getCanvas().clientWidth;
+		const x = Math.round(req.x * ratio);
+		const y = Math.round(gl.drawingBufferHeight - req.y * ratio);
+		const scissor = gl.isEnabled(gl.SCISSOR_TEST);
+		const box = gl.getParameter(gl.SCISSOR_BOX) as Int32Array;
+		const clear = gl.getParameter(gl.COLOR_CLEAR_VALUE) as Float32Array;
+		gl.enable(gl.SCISSOR_TEST);
+		gl.scissor(x, y, 1, 1);
+		gl.clearColor(0, 0, 0, 0);
+		gl.clear(gl.COLOR_BUFFER_BIT); // colour only: the depth just drawn picks the front model
+		gl.uniform1f(gl.getUniformLocation(this.prog, "u_pick"), 1);
+		gl.depthMask(false);
+		gl.drawArrays(gl.TRIANGLES, 0, this.count);
+		gl.depthMask(true);
+		const px = new Uint8Array(4);
+		gl.readPixels(x, y, 1, 1, gl.RGBA, gl.UNSIGNED_BYTE, px);
+		if (!scissor) gl.disable(gl.SCISSOR_TEST);
+		gl.scissor(box[0], box[1], box[2], box[3]);
+		gl.clearColor(clear[0], clear[1], clear[2], clear[3]);
+		req.done(px[3] ? px[0] + px[1] * 256 + px[2] * 65536 : 0);
+		map.triggerRepaint(); // the pixel used for the answer is drawn again
+	}
+
 	setModels(models: Model3D[]): void {
 		this.pending = models;
 		this.dirty = true;
@@ -115,6 +170,7 @@ export class ModelLayer3D implements CustomLayerInterface {
 			const z0 = m.base * toZ;
 			const z1 = m.height * toZ;
 			const [r, g, b] = m.colour;
+			const pk = [m.pick & 255, (m.pick >> 8) & 255, (m.pick >> 16) & 255].map((v) => v / 255);
 			const rings = m.rings.map((ring) => {
 				const pts = ring.map((p) => MercatorCoordinate.fromLngLat(p));
 				// drop the closing point
@@ -122,7 +178,7 @@ export class ModelLayer3D implements CustomLayerInterface {
 				return pts;
 			});
 			const v = (p: MercatorCoordinate, z: number, n: [number, number, number]) =>
-				out.push(p.x, p.y, z, a.x, a.y, r, g, b, n[0], n[1], n[2], m.step);
+				out.push(p.x, p.y, z, a.x, a.y, r, g, b, n[0], n[1], n[2], m.step, pk[0], pk[1], pk[2]);
 			// walls of every ring
 			for (const pts of rings)
 				for (let i = 0; i < pts.length; i++) {
@@ -188,6 +244,7 @@ export class ModelLayer3D implements CustomLayerInterface {
 			["a_col", 3, 5],
 			["a_normal", 3, 8],
 			["a_step", 1, 11],
+			["a_pick", 3, 12],
 		];
 		for (const [name, size, off] of attrs) {
 			const loc = gl.getAttribLocation(p, name);
@@ -199,7 +256,9 @@ export class ModelLayer3D implements CustomLayerInterface {
 		gl.depthMask(true);
 		gl.disable(gl.BLEND);
 		gl.disable(gl.CULL_FACE); // rings wind either way: both sides drawn
+		gl.uniform1f(gl.getUniformLocation(p, "u_pick"), 0);
 		gl.drawArrays(gl.TRIANGLES, 0, this.count);
+		if (this.pickReq) this.pickPass(gl);
 		for (const [name] of attrs) gl.disableVertexAttribArray(gl.getAttribLocation(p, name));
 		gl.bindBuffer(gl.ARRAY_BUFFER, null);
 	}

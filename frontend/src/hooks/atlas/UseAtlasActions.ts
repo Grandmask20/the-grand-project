@@ -14,17 +14,13 @@ export function useAtlasActions() {
 	const atlasFolder = state?.atlas ? state.atlas.path.replace(/[\\/][^\\/]*$/, "") : "";
 
 	const fail = useCallback((e: unknown) => useAppStore.getState().showError(e), []);
-	const refreshAll = useCallback(() => queryClient.invalidateQueries(), [queryClient]);
 
-	const afterOpen = useCallback(() => {
-		const s = useAppStore.getState();
-		s.select(null);
-		s.setResults([], "");
-		s.setRoute(null);
-		s.setCamera(null);
-		s.setGoto(null);
-		void refreshAll();
-	}, [refreshAll]);
+	// what belonged to the atlas before is cleared when the state says another one is open (useAppState: also when
+	// another tab opened it); here only the state is asked for at once
+	const afterOpen = useCallback(
+		() => void queryClient.invalidateQueries({ queryKey: AppQueryKeys.state }),
+		[queryClient],
+	);
 
 	const openAtlas = useCallback(
 		(path: string) => app.openAtlas(path).then(afterOpen).catch(fail),

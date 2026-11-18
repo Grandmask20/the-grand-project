@@ -587,6 +587,12 @@ class Handler(BaseHTTPRequestHandler):
         replay = bool(q.get("r", [""])[0])  # the tab playing the timelapse
         self._bytes(self.S.vector_tile(int(z), int(x), int(y), replay), "application/x-protobuf")
 
+    @route("GET", "/api/scene3d")
+    def get_scene_3d(self, q) -> None:
+        """The 3D view's icons, paths and models, whole (versioned URL: kept by the browser)."""
+        replay = bool(q.get("r", [""])[0])  # the tab playing the timelapse
+        self._bytes(self.S.scene_3d(replay), "application/json")
+
     @route("GET", r"/api/icons/(?P<name>[^/]+)\.png")
     def get_icon(self, q, name) -> None:
         """An icon type's picture: "sprite" for the map (badge art), else the list picture."""

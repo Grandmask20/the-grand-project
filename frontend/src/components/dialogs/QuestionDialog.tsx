@@ -40,7 +40,10 @@ export function QuestionDialog() {
 					<DialogTitle>Check this screenshot</DialogTitle>
 					<DialogDescription className="whitespace-pre-wrap text-foreground">
 						{q?.question}
-						{q?.preview && "\n\n(It is shown and outlined on the map.)"}
+						{q?.preview &&
+							(q.preview.agree?.length
+								? "\n\n(It is shown and outlined on the map, the maps it agrees with ringed.)"
+								: "\n\n(It is shown and outlined on the map.)")}
 					</DialogDescription>
 				</DialogHeader>
 				<DialogFooter>

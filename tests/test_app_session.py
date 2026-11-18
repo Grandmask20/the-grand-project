@@ -90,9 +90,11 @@ def test_biomes_ground_icons_and_models(session, tmp_path):
     assert all(g == 3 for g, *_ in features(session, "land"))
     icons = points(session, "icons")
     assert sorted(p["name"] for *_xy, p in icons.values()) == sorted(ic["name"] for ic in at.final["icons"])
-    solids = features(session, "solids")
-    assert solids and all(g == 3 and p["base"] < p["height"] for g, _pts, p, _id in solids)
-    assert {p["node"] for _g, _pts, p, _id in solids if "node" in p} == set(range(80))
+    # the 3D view's models come whole from scene_3d (not cut into the tiles), each saying what a click on it selects
+    models = json.loads(session.scene_3d())["models"]
+    assert models and all(m["base"] < m["height"] and len(m["rings"][0]) >= 3 for m in models)
+    assert {int(m["pick"][5:]) for m in models if m["pick"].startswith("node:")} == set(range(80))
+    assert not features(session, "solids") and not features(session, "icon_rows")
     # the session's biomes are the cities module's own
     got = cities.biomes(at, view_model(at), ground=session.ground())
     assert got["potential"] == session.D["potential"] and got["city_type"] == session.D["city_type"]
@@ -197,6 +199,11 @@ def test_replay_and_colour_by(session, tmp_path):
     assert [f["session"] for f in frames["frames"]] == [0, 0, 1, 1] and len(frames["ramp"]) == 256
     png, box = session.heat_png(upto=2)
     assert png[:4] == b"\x89PNG" and box[0] <= 480 and box[2] >= 1440
+    # the 3D scene too: the playing tab's models come in with their map node's step (they stood from the start)
+    scene = json.loads(session.scene_3d(replay=True))
+    pillars = [m for m in scene["models"] if m["pick"].startswith("node:")]
+    assert pillars and all(m["step"] == steps[int(m["pick"][5:])] for m in pillars)
+    assert all(m["step"] == -1 for m in json.loads(session.scene_3d())["models"])  # other tabs: no steps
     session.replay_close()
     assert all("step" not in p for *_xy, p in points(session, "maps", replay=True).values())  # closed: none
 

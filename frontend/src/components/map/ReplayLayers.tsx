@@ -1,4 +1,4 @@
-import type { Map as MapLibreMap } from "maplibre-gl";
+import type { CanvasSource, Map as MapLibreMap } from "maplibre-gl";
 import { useEffect, useMemo, useRef } from "react";
 import type { Meta } from "@/domain/app/Meta";
 import { useFog } from "@/hooks/replay/UseFog";
@@ -15,9 +15,8 @@ import { MapTint } from "./MapTint";
 /** The replay on the map: the ground not revealed yet under fog, and the screenshots coming in outlined. */
 export function ReplayLayers({ map, geo, meta }: { map: MapLibreMap; geo: Geo; meta: Meta }) {
 	const replay = useAppStore((s) => s.replay);
-	const planKey = replay
-		? `${replay.plan.kind}-${replay.plan.n_steps}-${replay.plan.settings.per_step}-${replay.plan.area}`
-		: null;
+	// the fog belongs to its plan: the plan's token (a replan with the same kind and count of steps kept the old fog)
+	const planKey = replay ? String(replay.plan.token ?? 0) : null;
 	const fog = useFog(planKey);
 	const frames = useFrames(!!replay);
 
@@ -43,7 +42,9 @@ export function ReplayLayers({ map, geo, meta }: { map: MapLibreMap; geo: Geo; m
 		c.width = field.w;
 		c.height = field.h;
 		canvas.current = c;
-		map.addSource("fog-picture", { type: "canvas", canvas: c, coordinates: field.corners, animate: true });
+		// a still picture, put on the map again only when it was drawn anew (animated, MapLibre read it every frame,
+		// also while paused)
+		map.addSource("fog-picture", { type: "canvas", canvas: c, coordinates: field.corners, animate: false });
 		map.addLayer(
 			{
 				id: "fog-picture",
@@ -83,7 +84,12 @@ export function ReplayLayers({ map, geo, meta }: { map: MapLibreMap; geo: Geo; m
 			px[4 * i + 3] = Math.round(a * 255);
 		}
 		ctx.putImageData(img, 0, 0);
-	}, [field, cells, pos, area, nSteps]);
+		const src = map.getSource("fog-picture") as CanvasSource | undefined;
+		if (src) {
+			src.play(); // read for one frame
+			requestAnimationFrame(() => src.pause());
+		}
+	}, [map, field, cells, pos, area, nSteps]);
 
 	// the screenshots of the step coming in, outlined (not when revealing by area): every outline is put on the map
 	// once with its step, and only the current step's is shown (by opacity, at once). Setting new outline data on

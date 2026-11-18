@@ -2,6 +2,7 @@ import nodePicture from "@/assets/map_node_icon.webp";
 import type { Meta } from "@/domain/app/Meta";
 import type { Style } from "@/domain/app/Style";
 import { useAppClient } from "@/hooks/app/UseAppClient";
+import { useIconArt } from "@/hooks/app/UseIconArt";
 import { useTypes } from "@/hooks/find/UseTypes";
 import { styleColour } from "@/logic/Colours";
 
@@ -150,6 +151,7 @@ export function Path3DPreview({ st, meta }: { st: Style; meta: Meta }) {
 /** The icon style's preview (user): a few of this atlas's icon types in the chosen style and size. */
 export function IconPreview({ style, size }: { style: string; size: number }) {
 	const app = useAppClient();
+	const art = useIconArt();
 	const types = useTypes();
 	const icons = (types.data?.sections.find((s) => s.title === "Map icons")?.rows ?? [])
 		.filter((r) => r.icon && r.icon !== "Unidentified")
@@ -164,7 +166,7 @@ export function IconPreview({ style, size }: { style: string; size: number }) {
 			aria-label="Icon style preview"
 		>
 			{icons.map((n) => (
-				<img key={n} src={app.spriteUrl(n, style)} alt={n} title={n} width={px} height={px} />
+				<img key={n} src={app.spriteUrl(n, style, art)} alt={n} title={n} width={px} height={px} />
 			))}
 		</div>
 	);

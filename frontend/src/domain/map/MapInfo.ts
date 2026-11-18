@@ -21,5 +21,6 @@ export interface MapInfo {
 	terrain_version: number;
 	model_version: number;
 	filter_version: number;
-	sprite: { size: number; units: number; min_px: number };
+	/** The icon pictures: px, atlas units across, smallest px drawn, and their art version (in their URLs). */
+	sprite: { size: number; units: number; min_px: number; art?: string };
 }

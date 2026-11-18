@@ -249,6 +249,8 @@ class AtlasSession(
         self.events.set_scope(str(p.resolve()))
         self._after_load()
         self.events.log(f"new atlas: {p}")
+        if self.settings.get("watch_on"):
+            self.start_watch()  # auto-add follows the new atlas too (it was stopped above and left off)
 
     def _new_generation(self) -> None:
         """Start a new atlas generation (call under the lock, with the new atlas set): its model starts empty.

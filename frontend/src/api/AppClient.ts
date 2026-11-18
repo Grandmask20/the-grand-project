@@ -17,6 +17,7 @@ import type { Graph } from "@/domain/map/Graph";
 import type { ItemInfo } from "@/domain/map/ItemInfo";
 import type { ItemKind, ItemRef } from "@/domain/map/ItemKind";
 import type { MapInfo } from "@/domain/map/MapInfo";
+import type { Scene3D } from "@/domain/map/Scene3D";
 import type { Frames } from "@/domain/replay/Frames";
 import type { ReplayFog, ReplayPlan } from "@/domain/replay/ReplayPlan";
 import type { Http } from "./Http";
@@ -71,12 +72,15 @@ export function createAppClient(http: Http) {
 		// the map
 		getMap: () => http.get<MapInfo | null>("/api/map"),
 		terrainTiles: (v: string) => `${absolute(http.url("/api/tiles/terrain/"))}{z}/{x}/{y}.jpg?v=${v}`,
+		getScene3d: (v: string, replay?: number) => http.get<Scene3D>("/api/scene3d", { v, r: replay || undefined }),
 		vectorTiles: (v: string, replay?: number) =>
 			`${absolute(http.url("/api/tiles/vector/"))}{z}/{x}/{y}.pbf?v=${v}${replay ? `&r=${replay}` : ""}`,
-		iconUrl: (name: string, size = 32) => http.url(`/api/icons/${encodeURIComponent(name)}.png`, { size }),
+		iconUrl: (name: string, size = 32, art?: string) =>
+			http.url(`/api/icons/${encodeURIComponent(name)}.png`, { size, a: art }),
 		// v: the pictures changed (the browser keeps them a year): bumped when they change
-		spriteUrl: (name: string, style = "game art") =>
-			http.url(`/api/icons/${encodeURIComponent(name)}.png`, { kind: "sprite", v: 2, style }),
+		// a: the icon art version (map info's sprite.art): a picture is asked for again only when it can have changed
+		spriteUrl: (name: string, style = "game art", art?: string) =>
+			http.url(`/api/icons/${encodeURIComponent(name)}.png`, { kind: "sprite", style, a: art }),
 		getGraph: () => http.get<Graph>("/api/graph"),
 		pick: (x: number, y: number, z: number, layers?: Record<string, boolean>) =>
 			http.send<ItemInfo | null>("POST", "/api/pick", { x, y, z, layers }),

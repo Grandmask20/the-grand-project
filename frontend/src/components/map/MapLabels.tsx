@@ -1,16 +1,19 @@
 import type { MapGeoJSONFeature, Map as MapLibreMap } from "maplibre-gl";
 import { useEffect, useRef, useState } from "react";
 import type { Meta } from "@/domain/app/Meta";
+import type { MapInfo } from "@/domain/map/MapInfo";
 import { useSettings } from "@/hooks/app/UseSettings";
 import { landmarkColours } from "@/logic/Colours";
+import type { Geo } from "@/logic/Geo";
 import { type PlacedLabel, placeLabels } from "@/logic/Labels";
+import { iconPx } from "@/logic/MapStyle";
 import { useAppStore } from "@/store/AppStore";
 
 const ICON_LABEL_ZOOM_PX = 18; // icon names show once an icon is this many px across on screen
 
 /** Names on the map (landmarks, bookmarks, debug marks; icon names zoomed in), drawn as page text over the map so
  * no font server is needed. Labels that would overlap are left out, the most important kept. */
-export function MapLabels({ map, meta }: { map: MapLibreMap; meta: Meta }) {
+export function MapLabels({ map, geo, info, meta }: { map: MapLibreMap; geo: Geo; info: MapInfo; meta: Meta }) {
 	const settings = useSettings();
 	const on = settings?.layers.Labels !== false;
 	const [labels, setLabels] = useState<PlacedLabel[]>([]);
@@ -35,8 +38,7 @@ export function MapLabels({ map, meta }: { map: MapLibreMap; meta: Meta }) {
 			const want = ["landmarks", "bookmarks", "marks-point", "icons"].filter((id) => {
 				if (!map.getLayer(id) || map.getLayoutProperty(id, "visibility") === "none") return false;
 				if (id !== "icons") return true;
-				const size = map.getLayoutProperty("icons", "icon-size");
-				return Array.isArray(size) && iconPx(map) >= ICON_LABEL_ZOOM_PX;
+				return iconPx(geo, info, map.getZoom(), Number(style.icon_size) || 1) >= ICON_LABEL_ZOOM_PX;
 			});
 			const feats: MapGeoJSONFeature[] = want.length ? map.queryRenderedFeatures({ layers: want }) : [];
 			const seen = new Set<string>();
@@ -90,7 +92,7 @@ export function MapLabels({ map, meta }: { map: MapLibreMap; meta: Meta }) {
 			if (frame.current) cancelAnimationFrame(frame.current);
 			frame.current = 0;
 		};
-	}, [map, meta, on, style]);
+	}, [map, geo, info, meta, on, style]);
 
 	if (!on || moving) return null;
 	return (
@@ -102,15 +104,4 @@ export function MapLabels({ map, meta }: { map: MapLibreMap; meta: Meta }) {
 			))}
 		</div>
 	);
-}
-
-/** How many screen px an icon spans now (from the icons layer's size at this zoom). */
-function iconPx(map: MapLibreMap): number {
-	const size = map.getLayoutProperty("icons", "icon-size") as unknown[];
-	// ["interpolate", ["exponential", 2], ["zoom"], z0, s0, z1, s1]: sprites are 64 px
-	const [z0, s0, z1, s1] = size.slice(3) as number[];
-	const z = map.getZoom();
-	if (z <= z0) return s0 * 64;
-	const t = (z - z0) / Math.max(1e-6, z1 - z0);
-	return s0 * (s1 / s0) ** t * 64;
 }

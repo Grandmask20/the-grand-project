@@ -5,6 +5,7 @@ import threading
 import urllib.request
 from types import SimpleNamespace
 
+import cv2
 import numpy as np
 import pytest
 
@@ -12,7 +13,6 @@ from grand_project import cities
 from grand_project.app.events import Events
 from grand_project.app.server import AppServer
 from grand_project.app.session import AtlasSession
-from tests.test_app_session import features
 from tests.webmap_data import make_atlas
 
 
@@ -62,10 +62,15 @@ def test_a_hidden_landmark_type_has_no_3d_model(session):
     with session._lock:
         session.atlas.final["landmarks"].append({"kind": "Tower", "x": 700.0, "y": 300.0, "status": "kept"})
     session.rebuild_model()
-    towers = lambda: [f for f in features(session, "solids") if f[2].get("kind") == "Tower"]  # noqa: E731
-    shown = len(features(session, "solids"))
+    k = len(session.V["landmarks"]) - 1  # the tower
+
+    def models():
+        return json.loads(session.scene_3d())["models"]
+
+    assert any(m["pick"] == f"landmark:{k}" for m in models())
+    shown = len(models())
     session.set_ui_settings({"hidden_types": ["Tower"]})
-    assert len(features(session, "solids")) < shown and not towers()  # (its model stayed with the type hidden)
+    assert len(models()) < shown and not any(m["pick"] == f"landmark:{k}" for m in models())
 
 
 def test_another_clean_map_is_another_sharp_tile_folder(session):
@@ -118,3 +123,65 @@ def test_different_uploads_of_one_name_get_their_own_files(session):
         srv.stopping = True
         srv.shutdown()
         srv.server_close()
+
+
+def test_a_failing_job_keeps_the_waiting_island(session, tmp_path, monkeypatch):
+    island = [SimpleNamespace(path=tmp_path / f"{n}.png", sha=f"sha-{n}") for n in "abc"]
+    session._pending_watch = list(island)
+
+    def broken(fr):
+        raise RuntimeError("a preview failed")
+
+    monkeypatch.setattr(session, "_place_one", broken)
+    with pytest.raises(RuntimeError):
+        session._place_watched([])
+    assert session._pending_watch == island  # (emptied at the start, a failure lost them for good)
+
+
+def test_a_weak_match_preview_shows_what_it_joins(session, tmp_path):
+    shot = tmp_path / "shot.png"
+    cv2.imwrite(str(shot), np.full((1080, 1920, 3), 90, np.uint8))
+    # the atlas's map nodes, as placement pairs against them (Atlas.points)
+    session.atlas.nodes = [{"x": n["x"], "y": n["y"]} for n in session.atlas.final["nodes"][:15]]
+    pts = session.atlas.points()[:6]
+    frame = SimpleNamespace(path=shot, R=np.eye(3), pts=pts, usable=np.ones(len(pts), bool))
+    reg = SimpleNamespace(M=np.array([[1.0, 0, 0], [0, 1.0, 0]]), ref_frame="a")  # its maps on the atlas's own
+    pv = session._preview_of(frame, reg)
+    assert len(pv["agree"]) == 6  # the maps it agrees with, ringed on the map
+    near = pv["near"]
+    assert all(near[0] <= x <= near[2] and near[1] <= y <= near[3] for x, y in pv["agree"])
+
+
+def test_a_question_lets_go_of_the_session_lock_while_open(session):
+    free = []
+
+    def ask(question, preview=None):  # the page's side: another request needs the lock meanwhile
+        t = threading.Thread(target=lambda: free.append(session._lock.acquire(timeout=2) and session._lock.release()))
+        t.start()
+        t.join()
+        return True
+
+    session.events.ask = ask
+    with session._lock:  # as the job holds it
+        assert session._ask("add it?") is True
+        assert session._lock._is_owned()  # taken back for the rest of the job
+    assert free == [None]  # (acquired: the request didn't wait for the answer)
+
+
+def test_the_waiting_list_stays_shown_while_a_question_is_open(session, tmp_path, monkeypatch):
+    island = [SimpleNamespace(path=tmp_path / f"{n}.png", sha=f"sha-{n}") for n in "abc"]
+    session._pending_watch = list(island)
+    seen = []
+    monkeypatch.setattr(session, "_place_one", lambda fr: SimpleNamespace(ok=True, reason="", inliers=9, ncc=0.4))
+    monkeypatch.setattr(session, "_concerns", lambda fr, reg: ["the match is weak"])
+    monkeypatch.setattr(session, "_preview_of", lambda fr, reg: None)
+    monkeypatch.setattr(session, "_show_placed", lambda shas: None)
+    monkeypatch.setattr(session.atlas, "commit_frame", lambda fr, reg: None)
+
+    def ask(question, preview=None):
+        seen.append([f.sha for f in session._pending_watch])  # what the page shows meanwhile
+        return False  # No: left out
+
+    session.events.ask = ask
+    session._place_watched([])
+    assert seen[0] == ["sha-a", "sha-b", "sha-c"]  # (it read empty while the question was open)

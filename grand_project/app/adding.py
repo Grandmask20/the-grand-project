@@ -23,13 +23,24 @@ from grand_project import finalize as atlas_finalize
 from grand_project import logs as atlas_log
 from grand_project import paths as rc_paths
 from grand_project.core import islands
+from grand_project.core.geometry import apply as apply_affine
+from grand_project.core.register import mutual_pairs
 
-from .constants import DETECT_LOG_EVERY, RECENT_FADE, RECENT_KEEP, UNDO_KEEP, WATCH_BATCH, WEAK_INLIERS, WEAK_NCC
+from .constants import (
+    DETECT_LOG_EVERY,
+    PICTURE_SIDE,
+    PICTURES_KEPT,
+    PREVIEW_AGREE_TOL,
+    PREVIEW_NEAR,
+    RECENT_FADE,
+    RECENT_KEEP,
+    UNDO_KEEP,
+    WATCH_BATCH,
+    WEAK_INLIERS,
+    WEAK_NCC,
+)
 
 LOG = atlas_log.get("app")
-
-PICTURE_SIDE = 1600  # px: longest side of a flattened screenshot picture (ghost / weak-match preview)
-PICTURES_KEPT = 8
 
 
 def outline(atlas, f: dict) -> np.ndarray:
@@ -385,14 +396,36 @@ class AddingMixin:
             reg: Its proposed placement.
 
         Returns:
-            {"picture", "box"}, or None when it can't be read.
+            {"picture", "box", "agree", "near"}, or None when it can't be read. "agree": the atlas map nodes its own
+            map nodes land on ([x, y] each: the maps the question says agree); "near": the box round what it joins:
+            those maps and the screenshot its terrain was compared with (else the PREVIEW_NEAR placed screenshots
+            nearest to it), or None in an empty atlas. Shown alone, a weak match couldn't be judged: what it
+            connected to was off screen or under the dialog (user).
         """
         img = core.read_screenshot(str(frame.path))
         if img is None:
             return None
-        H = core.screen_to_atlas(np.array(reg.M, float), frame.R)
-        data, box = flat_picture(img, H)
-        return {"picture": self._keep_picture(data), "box": box}
+        M = np.array(reg.M, float)
+        data, box = flat_picture(img, core.screen_to_atlas(M, frame.R))
+        agree: list[list[float]] = []
+        near = None
+        if self.atlas.frames:
+            atlas_pts = self.atlas.points()
+            src = np.asarray(frame.pts, float)[np.asarray(frame.usable, bool)] if len(frame.pts) else np.zeros((0, 2))
+            if len(src) and len(atlas_pts):  # paired as the placement pairs them (core.register)
+                pairs = mutual_pairs(apply_affine(M, src), atlas_pts, PREVIEW_AGREE_TOL)
+                agree = [[round(float(v), 1) for v in atlas_pts[j]] for _i, j, _d in pairs]
+            ref = [f for f in self.atlas.frames if f["name"] == reg.ref_frame]
+            if ref:
+                corners = [np.asarray(core.footprint(self.atlas, ref[0])[0], float)]
+            else:
+                cx, cy = (box[0] + box[2]) / 2, (box[1] + box[3]) / 2
+                corners = [np.asarray(core.footprint(self.atlas, f)[0], float) for f in self.atlas.frames]
+                corners.sort(key=lambda c: float(np.hypot(*(c.mean(axis=0) - (cx, cy)))))
+                corners = corners[:PREVIEW_NEAR]
+            pts = np.vstack([*corners, np.asarray(agree, float).reshape(-1, 2)])
+            near = [float(v) for v in (*pts.min(axis=0), *pts.max(axis=0))]
+        return {"picture": self._keep_picture(data), "box": box, "agree": agree, "near": near}
 
     def _ask(self, question: str, preview: dict | None = None) -> bool:
         """Ask the page a yes / no question and wait for the answer (worker thread).
@@ -404,7 +437,17 @@ class AddingMixin:
         Returns:
             The answer (No when no page is open).
         """
-        return self.events.ask(question, preview=preview)
+        # the session lock is let go while the question is open (the job holds it): the page's requests that need it
+        # (new tiles, the ground just pasted) waited until the answer, minutes maybe. The job's atlas stays this
+        # atlas: another can't be opened while it runs (working()).
+        try:
+            self._lock.release()
+        except RuntimeError:  # not held (a job run outside the lock)
+            return self.events.ask(question, preview=preview)
+        try:
+            return self.events.ask(question, preview=preview)
+        finally:
+            self._lock.acquire()
 
     # ------------------------------------------------------------------ the worker
     def _tally(self) -> dict[str, int]:
@@ -554,6 +597,8 @@ class AddingMixin:
         if failed and mode == "watch":
             self._watch_failed(failed)
         self.events.set_progress("placing")
+        self._shown_early = set()  # (screenshots pasted while a question was open: _show_placed)
+        self._rebuilt_early = False
         with self._lock:
             before = len(self.atlas.frames)
             snapshot = self._snapshot()
@@ -577,7 +622,11 @@ class AddingMixin:
             if added:
                 new = self.atlas.frames[-added:]
                 self._remember_add([f["name"] for f in new], snapshot)
-                if before == 0 or not self.paste_terrain(new):
+                shown = self.__dict__.pop("_shown_early", set())  # pasted while a question was open
+                rest = [f for f in new if f.get("sha") not in shown]
+                # built again when an early build ran (it lacks what came after, and would replace the map image
+                # when done: the newer build supersedes it), else the rest pasted
+                if before == 0 or self._rebuilt_early or (rest and not self.paste_terrain(rest)):
                     self.load_terrain(cities=False)  # first screenshots, or outside the map image: build it
                 if mode != "manual":
                     self.events.set_progress("updating maps and paths around the new screenshot")
@@ -790,6 +839,23 @@ class AddingMixin:
         hints = [f["name"] for f in self.atlas.frames[-6:]][::-1]
         return self.atlas.add_frame(fr, hints=hints, commit=False)
 
+    def _show_placed(self, shas: list[str]) -> None:
+        """Paste screenshots placed in the running job into the map image now (not at the job's end).
+
+        Args:
+            shas: The screenshots (their sha) committed in this job; those pasted already are skipped.
+        """
+        shown = self.__dict__.setdefault("_shown_early", set())
+        new = [f for f in self.atlas.frames if f.get("sha") in set(shas) and f.get("sha") not in shown]
+        if not new:
+            return
+        if not self.paste_terrain(new):
+            # outside the map image (new ground past its edge): built again in the background, with them in it (the
+            # paste alone left them black, which is where a bridge's ground usually is)
+            self.load_terrain(cities=False)
+            self._rebuilt_early = True  # (the job's end builds it again: this build doesn't know what comes after)
+        shown.update(f["sha"] for f in new)
+
     def _place_watched(self, frames) -> tuple[int, list[str]]:
         """Place screenshots one at a time; earlier ones that did not fit are retried, and waiting ones joined to
         each other may fit as a group (islands). A weak match is asked about first.
@@ -800,40 +866,56 @@ class AddingMixin:
         Returns:
             (number added, names still waiting).
         """
+        # the waiting list stays the list while the job runs (the page shows it, also while a question is open: it
+        # read empty when the job took it out at its start, and a failure lost it); placed ones leave it one by one
+        placed_now: list[str] = []  # (shas) committed in this job, not on the map yet
         added, todo = 0, self._pending_watch + frames
-        self._pending_watch = []
         progress = True
-        while progress and todo:
-            progress, left = False, []
-            for fr in todo:
-                reg = self._place_one(fr)
-                name = Path(fr.path).name
-                if not reg.ok:
-                    if "already in the atlas" not in reg.reason:
-                        left.append(fr)
-                        self._wait_tries[name] = self._wait_tries.get(name, 0) + 1
-                        self.events.log(f"{name}: no place found yet ({reg.reason}); will retry")
-                    continue
-                worry = self._concerns(fr, reg) if self.atlas.frames else []
-                if worry:
-                    q = (
-                        f"{name} would be added, but " + "; and ".join(worry) + ".\n\n"
-                        "Add it anyway? (No = leave it out; you can add it later with Add screenshots.)"
-                    )
-                    if not self._ask(q, preview=self._preview_of(fr, reg)):
-                        self.events.log(f"{name}: left out by you")
+        try:
+            while progress and todo:
+                progress, left = False, []
+                for fr in todo:
+                    reg = self._place_one(fr)
+                    name = Path(fr.path).name
+                    if not reg.ok:
+                        if "already in the atlas" not in reg.reason:
+                            left.append(fr)
+                            self._wait_tries[name] = self._wait_tries.get(name, 0) + 1
+                            self.events.log(f"{name}: no place found yet ({reg.reason}); will retry")
                         continue
-                self.atlas.commit_frame(fr, reg)
-                added += 1
-                progress = True
-                self.events.log(f"{name}: added ({reg.inliers} maps agree, terrain {reg.ncc:.2f})")
-            todo = left
-            if not progress and len(todo) >= islands.ISLAND_MIN:
-                joined = islands.merge_waiting(self.atlas, todo, log=self.events.log)
-                if joined:
-                    added += len(joined)
+                    worry = self._concerns(fr, reg) if self.atlas.frames else []
+                    if worry:
+                        # the screenshots placed so far in this job onto the map first: the question shows what this
+                        # one would join (user: it sat in black fog, the ground it joins wasn't drawn yet)
+                        self._show_placed(placed_now)
+                        q = (
+                            f"{name} would be added, but " + "; and ".join(worry) + ".\n\n"
+                            "Add it anyway? (No = leave it out; you can add it later with Add screenshots.)"
+                        )
+                        if not self._ask(q, preview=self._preview_of(fr, reg)):
+                            self.events.log(f"{name}: left out by you")
+                            continue
+                    self.atlas.commit_frame(fr, reg)
+                    placed_now.append(fr.sha)
+                    self._pending_watch = [f for f in self._pending_watch if f.sha != fr.sha]
+                    added += 1
                     progress = True
-                    shas = {f.sha for f in joined}
-                    todo = [f for f in todo if f.sha not in shas]
+                    self.events.log(f"{name}: added ({reg.inliers} maps agree, terrain {reg.ncc:.2f})")
+                todo = left
+                if not progress and len(todo) >= islands.ISLAND_MIN:
+                    joined = islands.merge_waiting(self.atlas, todo, log=self.events.log)
+                    if joined:
+                        added += len(joined)
+                        progress = True
+                        shas = {f.sha for f in joined}
+                        todo = [f for f in todo if f.sha not in shas]
+                        self._pending_watch = [f for f in self._pending_watch if f.sha not in shas]
+        except BaseException:
+            # a failure mid-job (a preview, a question, the island search) leaves the waiting ones waiting (taken out
+            # at the start, a failure once lost a 9-screenshot island); the new ones go back to auto-add
+            # (_watch_failed)
+            placed = {f.get("sha") for f in self.atlas.frames}
+            self._pending_watch = [f for f in self._pending_watch if f.sha not in placed]
+            raise
         self._pending_watch = todo
         return added, [Path(f.path).name for f in todo]

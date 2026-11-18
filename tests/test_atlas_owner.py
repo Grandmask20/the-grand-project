@@ -308,6 +308,8 @@ def test_auto_add_follows_the_atlas(session, two, monkeypatch):
     first.join(3)
     assert not first.is_alive()  # A's watcher stopped
     assert session._watch_on and session.watch_dir() == str(b.parent) and session._watch_gen == session.generation
+    session.new_atlas(b.parent.parent / "c")  # a new atlas too (auto-add was stopped and left off)
+    assert session._watch_on and session.watch_dir() == str(b.parent.parent / "c")
     session.stop_watch()
 
 

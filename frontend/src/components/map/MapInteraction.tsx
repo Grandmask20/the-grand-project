@@ -1,5 +1,5 @@
 import { useQueryClient } from "@tanstack/react-query";
-import { type MapLayerMouseEvent, type Map as MapLibreMap, type MapMouseEvent, MercatorCoordinate } from "maplibre-gl";
+import type { MapLayerMouseEvent, Map as MapLibreMap, MapMouseEvent } from "maplibre-gl";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { AppQueryKeys } from "@/api/AppQueryKeys";
 import type { Meta } from "@/domain/app/Meta";
@@ -11,12 +11,14 @@ import { useRouteGraph } from "@/hooks/map/UseGraph";
 import type { Geo, Point } from "@/logic/Geo";
 import type { IconLayer3D } from "@/logic/IconLayer3D";
 import { EMPTY, setData } from "@/logic/MapStyle";
+import type { ModelLayer3D } from "@/logic/ModelLayer3D";
 import type { PathLayer3D } from "@/logic/PathLayer3D";
+import { pickItem } from "@/logic/Pick";
 import { useAppStore } from "@/store/AppStore";
 import { BiomeMenu } from "./BiomeMenu";
 import { MapMenu } from "./MapMenu";
 
-const HOVER = ["maps", "landmarks", "bookmarks", "icons", "solids", "paths"];
+const HOVER = ["maps", "landmarks", "bookmarks", "icons", "paths"];
 
 /** Clicks, drags and keys on the map, by mode: select, draw a city biome, add a bookmark, place a screenshot by
  * hand, set your position, link two maps for a debug mark; and the right-click menu. */
@@ -41,44 +43,29 @@ export function MapInteraction({ map, geo, meta }: { map: MapLibreMap; geo: Geo;
 	const drag = useRef<{ start: Point; centre: Point } | null>(null);
 
 	const atlasAt = useCallback((e: MapMouseEvent): Point => geo.toAtlas(e.lngLat.lng, e.lngLat.lat), [geo]);
-	// a click in the 3D view: what is drawn under the mouse (icons above their map node, pillars), not the flat map
-	// under the models (user)
-	const clickAt = useCallback(
-		(e: MapMouseEvent): Point => {
-			if (map.getPitch() > 1) {
-				const layer = map.getLayer("icons-3d-gl") as unknown as { implementation?: IconLayer3D } | undefined;
-				const impl = layer?.implementation;
-				if (impl) {
-					const nodes = map.querySourceFeatures("atlas", { sourceLayer: "maps" }).flatMap((f) => {
-						if (f.geometry.type !== "Point") return [];
-						const [lng, lat] = f.geometry.coordinates as [number, number];
-						const mc = MercatorCoordinate.fromLngLat([lng, lat]);
-						const [ax, ay] = geo.toAtlas(lng, lat);
-						return [{ x: mc.x, y: mc.y, ax, ay }];
-					});
-					const hit = impl.pickScreen(e.point.x, e.point.y, nodes);
-					if (hit) return hit;
-				}
-			}
-			return atlasAt(e);
-		},
-		[map, geo, atlasAt],
-	);
+	// the ground point under the mouse (in 3D, whatever stands there is picked from the picture first: pick3d)
+	const clickAt = atlasAt;
 	const pick = useCallback(
 		(at: Point) => app.pick(at[0], at[1], geo.pxPerUnit(map.getZoom()), settings?.layers),
 		[app, geo, map, settings?.layers],
 	);
 
-	// tilted: the 3D icon drawn under the mouse itself (read back from the picture), else what clickAt finds
+	// tilted: what is drawn under the mouse, read back from the picture (the icon in front, then a path, then a
+	// model: a map node's pillar or a landmark's structure), else what lies on the ground there
 	const pick3d = useCallback(
 		async (e: MapMouseEvent): Promise<ItemInfo | null> => {
 			if (map.getPitch() > 1) {
-				const layer = map.getLayer("icons-3d-gl") as unknown as { implementation?: IconLayer3D } | undefined;
-				const id = layer?.implementation ? await layer.implementation.pickAt(e.point.x, e.point.y) : null;
+				const impl = <T,>(id: string) =>
+					(map.getLayer(id) as unknown as { implementation?: T } | undefined)?.implementation;
+				const icons = impl<IconLayer3D>("icons-3d-gl");
+				const id = icons ? await icons.pickAt(e.point.x, e.point.y) : null;
 				if (id !== null) return app.getInfo("icon", id);
-				const paths = map.getLayer("paths-3d-gl") as unknown as { implementation?: PathLayer3D } | undefined;
-				const pid = paths?.implementation ? await paths.implementation.pickAt(e.point.x, e.point.y) : null;
+				const paths = impl<PathLayer3D>("paths-3d-gl");
+				const pid = paths ? await paths.pickAt(e.point.x, e.point.y) : null;
 				if (pid !== null) return app.getInfo("path", pid);
+				const models = impl<ModelLayer3D>("models-3d-gl");
+				const hit = models ? pickItem(await models.pickAt(e.point.x, e.point.y)) : null;
+				if (hit) return app.getInfo(hit.kind, hit.id);
 			}
 			return pick(clickAt(e));
 		},
@@ -267,12 +254,8 @@ export function MapInteraction({ map, geo, meta }: { map: MapLibreMap; geo: Geo;
 				setLasso(null);
 				setMode({ kind: "normal" });
 			} else if (e.key === "Escape") {
-				// with nothing to cancel, Esc takes Find's rings off the map (user: it only worked in the search box)
-				const st = useAppStore.getState();
-				st.setHighlight(null);
-				st.setGoto(null);
-				st.setQuery("");
-				st.setResults([], "");
+				// with nothing to cancel, Esc empties Find and takes its rings off the map (user: it only worked in the box)
+				useAppStore.getState().clearFind();
 			} else if (e.key === "Enter" && mode.kind === "ghost") {
 				try {
 					await app.placeByHand(mode.ghost.path, mode.centre[0], mode.centre[1]);

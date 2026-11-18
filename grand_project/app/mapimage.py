@@ -44,7 +44,7 @@ from grand_project.webmap.solids import map_pillar, structure
 from grand_project.webmap.tiles import Grid, RasterTiler, VectorTiler
 
 from .constants import TERRAIN_PIXELS, TILE_CACHE
-from .icons import bgr_hex, icon_col, icon_label, icon_name
+from .icons import bgr_hex, icon_art_version, icon_col, icon_label, icon_name
 
 LOG = atlas_log.get("app")
 SESSION_RUN = os.urandom(4).hex()  # this run of the app: part of every tile URL (map_info "tile_key")
@@ -641,7 +641,12 @@ class MapImageMixin:
             "terrain_version": self.terrain_version,
             "model_version": self.model_version,
             "filter_version": self.filter_version,
-            "sprite": {"size": WEBMAP_ICON_SPRITE, "units": WEBMAP_ICON_UNITS, "min_px": WEBMAP_ICON_MIN_PX},
+            "sprite": {
+                "size": WEBMAP_ICON_SPRITE,
+                "units": WEBMAP_ICON_UNITS,
+                "min_px": WEBMAP_ICON_MIN_PX,
+                "art": icon_art_version(),  # (in the pictures' URLs)
+            },
         }
 
     def terrain_tile(self, z: int, x: int, y: int, wanted=None) -> bytes | None:
@@ -727,10 +732,64 @@ class MapImageMixin:
             with self._lock:
                 layers = self.vector_layers(self.grid, steps)
             g = self.grid
-            dense = max(0, g.zmax - 4)  # icons, models and labels are not drawn zoomed far out
-            tiler = VectorTiler(layers, g, min_zoom={"icons": dense, "icon_rows": dense, "solids": dense})
-            setattr(self, slot, (key, tiler))
+            # the 3D view's icons and models aren't cut into tiles: the page gets them whole (scene_3d), read back
+            # from loaded tiles they were missing zoomed out, came twice at tile edges and were gathered again
+            # after every move (user: lag, popping)
+            scene = {k: layers.pop(k) for k in ("icon_rows", "solids")}
+            scene["paths"] = layers["paths"]
+            dense = max(0, g.zmax - 4)  # icons and labels are not drawn zoomed far out
+            tiler = VectorTiler(layers, g, min_zoom={"icons": dense})
+            setattr(self, slot, (key, tiler, scene))
             return tiler
+
+    def scene_3d(self, replay: bool = False) -> bytes:
+        """Return the 3D view's icons, paths and models as JSON, whole (what the filters show, in atlas units).
+
+        Built from the same features the vector tiles are cut from, once per model / filter / map image version.
+
+        Args:
+            replay: For the tab playing the timelapse: each item carries the step it appears at.
+
+        Returns:
+            JSON {"icons": [[x, y, id, name, slot, lift, step]], "paths": [{"id", "strong", "abyss", "step", "pts"}],
+            "models": [{"rings", "colour", "base", "height" (metres), "ax", "ay", "step", "pick"}]} (step -1: from
+            the start; pick: what a click on it selects, "node:<i>" / "landmark:<i>" / "").
+        """
+        steps = replay and self.replay_steps() is not None
+        if self._vector_tiler(steps) is None:
+            return b'{"icons": [], "paths": [], "models": []}'
+        made = self._vector_steps if steps else self._vector
+        key = made[0]
+        kept = getattr(self, "_scene", None)
+        if kept is not None and kept[0] == (key, steps):
+            return kept[1]
+        g, scene = self.grid, made[2]
+
+        def A(p) -> list[float]:  # world px at zmax -> atlas units
+            return [round((p[0] - g.offset) / g.scale + g.x0, 1), round((p[1] - g.offset) / g.scale + g.y0, 1)]
+
+        st = lambda pr: pr.get("step", -1)  # noqa: E731
+        icons = [
+            [*A(f["pts"][0]), f["props"]["id"], f["props"]["name"], float(f["props"]["slot"]), f["props"]["lift"],
+             st(f["props"])]
+            for f in scene["icon_rows"]
+        ]  # fmt: skip
+        paths = [
+            {"id": f["props"]["id"], "strong": f["props"]["strong"], "abyss": f["props"]["abyss"],
+             "step": st(f["props"]), "pts": [A(p) for p in f["pts"]]}
+            for f in scene["paths"]
+        ]  # fmt: skip
+        models = [
+            {"rings": [[A(p) for p in r] for r in f["rings"]], "colour": f["props"]["colour"],
+             "base": f["props"]["base"], "height": f["props"]["height"], "ax": f["props"]["ax"],
+             "ay": f["props"]["ay"], "step": st(f["props"]), "pick": f["props"].get("pick", "")}
+            for f in scene["solids"]
+        ]  # fmt: skip
+        import json
+
+        data = json.dumps({"icons": icons, "paths": paths, "models": models}, separators=(",", ":")).encode()
+        self._scene = ((key, steps), data)
+        return data
 
     def vector_layers(self, grid: Grid, steps: bool = False) -> dict[str, list[dict]]:
         """Build the vector tile features of what the filters show (world px at zmax).
@@ -871,7 +930,7 @@ class MapImageMixin:
                 L["biomes"].append(
                     {"kind": "polygon", "rings": [[W(x, y) for x, y in r] for r in poly], "props": {"kind": kind}}
                 )
-        L["solids"] = self._solids(grid, node_ok)
+        L["solids"] = self._solids(grid, node_ok, rs)
         return L
 
     def _land(self) -> list:
@@ -888,7 +947,7 @@ class MapImageMixin:
             hit = self._land_cache = (self.terrain_version, land_polygons(canvas, origin))
         return hit[1]
 
-    def _solids(self, grid: Grid, node_ok: list[bool]) -> list[dict]:
+    def _solids(self, grid: Grid, node_ok: list[bool], rs: dict | None = None) -> list[dict]:
         """Build the 3D view's extruded shapes (webmap.solids), with heights in the metres MapLibre extrudes by.
 
         MapLibre extrudes in metres and a Mercator metre is smaller the further from the equator, so each shape's
@@ -897,6 +956,8 @@ class MapImageMixin:
         Args:
             grid: The map image's grid.
             node_ok: node_shown of every map node.
+            rs: The timelapse's steps (replay_steps), or None: each model then carries the step it appears at (the
+                models stood from the start).
 
         Returns:
             Polygon features (props colour, base and height in metres, node for map pillars).
@@ -910,7 +971,10 @@ class MapImageMixin:
                 continue
             icons = sorted(set(nd.get("icons") or []))
             colour = bgr_hex(icon_col(icons[0])) if icons else "#9aa0a8"
-            shapes += [dict(sh, anchor=(nd["x"], nd["y"])) for sh in map_pillar(nd["x"], nd["y"], icons, colour, i)]
+            shapes += [
+                dict(sh, anchor=(nd["x"], nd["y"]), pick=("node", i))
+                for sh in map_pillar(nd["x"], nd["y"], icons, colour, i)
+            ]
         towers = []
         ct, locked = D.get("city_type", {}), D.get("locked", set())
         for k, lm in enumerate(V["landmarks"]):
@@ -921,7 +985,7 @@ class MapImageMixin:
             if lm["kind"] == "Tower":
                 towers.append((lm["x"], lm["y"]))
             shapes += [
-                dict(sh, anchor=(lm["x"], lm["y"]))
+                dict(sh, anchor=(lm["x"], lm["y"]), pick=("landmark", k))
                 for sh in structure(lm["kind"], lm["x"], lm["y"], ct.get(k, ("", ""))[0], k in locked)
             ]
         for i, nd in enumerate(nodes):  # map nodes marked as towers with no Tower landmark: a tower too
@@ -931,7 +995,9 @@ class MapImageMixin:
                 and nd.get("tower")
                 and all(math.hypot(nd["x"] - tx, nd["y"] - ty) > WEBMAP_TOWER_SAME for tx, ty in towers)
             ):
-                shapes += [dict(sh, anchor=(nd["x"], nd["y"])) for sh in structure("Tower", nd["x"], nd["y"])]
+                shapes += [
+                    dict(sh, anchor=(nd["x"], nd["y"]), pick=("node", i)) for sh in structure("Tower", nd["x"], nd["y"])
+                ]
         out = []
         for sh in shapes:
             lat = math.radians(grid.lnglat(*sh["rings"][0][0])[1])
@@ -943,6 +1009,11 @@ class MapImageMixin:
             }
             if "node" in sh:
                 props["node"] = sh["node"]
+            kind, idx = sh.get("pick", ("", -1))
+            if kind:
+                props["pick"] = f"{kind}:{idx}"
+                if rs is not None and idx < len(rs[kind]):
+                    props["step"] = round(float(rs[kind][idx]), 3)
             # the structure's centre (atlas units): the page's own 3D layer sizes a model around it
             ax, ay = sh.get("anchor", sh["rings"][0][0])
             props["ax"], props["ay"] = round(float(ax), 1), round(float(ay), 1)
