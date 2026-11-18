@@ -102,21 +102,21 @@ export function ViewTab() {
 				<Section title="Paths">
 					<Path3DPreview st={st} meta={meta} />
 					{slider("height", "d3_path_lift", 0, 30, 1, 3, (v) => `${v}`)}
-					{slider("reach", "d3_path_far", 1, 6, 0.1, 2.2, times)}
-					{slider("far thickness", "d3_path_taper", 0.1, 1, 0.05, 0.35, (v) => `${Math.round(v * 100)}%`)}
-					{slider("dashes to line", "d3_solid_px", 0, 30, 1, 9, (v) => `${v} px`)}
+					{slider("reach", "d3_path_far", 1, 6, 0.1, 2.6, times)}
+					{slider("far thickness", "d3_path_taper", 0.1, 1, 0.05, 0.2, (v) => `${Math.round(v * 100)}%`)}
+					{slider("dashes to line", "d3_solid_px", 0, 30, 1, 8, (v) => `${v} px`)}
 				</Section>
 				<Section title="Icons">
-					{slider("reach", "d3_icon_far", 1, 8, 0.1, 2.6, times)}
-					{slider("size", "d3_icon_size", 0.5, 2.5, 0.1, 1, times)}
+					{slider("reach", "d3_icon_far", 1, 8, 0.1, 2.5, times)}
+					{slider("size", "d3_icon_size", 0.5, 2.5, 0.1, 1.5, times)}
 				</Section>
 				<Section title="Ground">
-					{slider("fades out at", "d3_ground_far", 0, 6, 0.1, 0, (v) => (v ? times(v) : "never"))}
+					{slider("fades out at", "d3_ground_far", 0, 6, 0.1, 2.4, (v) => (v ? times(v) : "never"))}
 				</Section>
 				<Section title="3D models">
-					{slider("reach", "d3_model_far", 1, 8, 0.1, 3, times)}
+					{slider("reach", "d3_model_far", 1, 8, 0.1, 2.4, times)}
 					{slider("size", "d3_model_size", 0.3, 3, 0.1, 1, times)}
-					{slider("height", "d3_model_height", 0.2, 3, 0.1, 1, times)}
+					{slider("height", "d3_model_height", 0.2, 3, 0.1, 0.8, times)}
 					<Label className="font-normal">
 						<input
 							type="checkbox"
@@ -222,6 +222,16 @@ export function ViewTab() {
 					<span className="w-10 text-xs">{Math.round((Number(st.path_freq) || 0) * 100)}%</span>
 				</div>
 				<p className="text-xs text-muted-foreground">of the screenshots that show both maps</p>
+			</Section>
+
+			<Section title="Icons">
+				{choice(
+					"style",
+					String(st.icon_style ?? "game art"),
+					["game art", "poe2db art", "from screenshots", "flat colour", "outline"],
+					(v) => set({ icon_style: v }),
+				)}
+				{slider("size", "icon_size", 0.5, 2.5, 0.1, 1, times)}
 			</Section>
 
 			<Section title="Maps">

@@ -85,16 +85,21 @@ STYLE_DEFAULT = {
     # and icons reach (times the view centre's distance), how thin paths get far away (share of their width), and
     # below how many screen px a dash pattern turns into a line
     "d3_path_lift": 3.0,
-    "d3_path_far": 2.2,
-    "d3_path_taper": 0.35,
-    "d3_solid_px": 9.0,
-    "d3_icon_far": 2.6,
-    "d3_icon_size": 1.0,  # icons' size in 3D (times their size on the ground)
-    "d3_ground_far": 0.0,  # the ground fades into black from this many times the centre's distance (0: never)
+    "d3_path_far": 2.6,
+    "d3_path_taper": 0.2,
+    "d3_solid_px": 8.0,
+    "d3_icon_far": 2.5,
+    "d3_icon_size": 1.5,  # icons' size in 3D (times their size on the ground)
+    "d3_ground_far": 2.4,  # the ground fades into black from this many times the centre's distance (0: never)
+    # (the d3 defaults: the user's, about what the game's own camera leaves on screen)
     "d3_model_size": 1.0,  # 3D models' size (width and height) times this
-    "d3_model_height": 1.0,  # ...and their height times this again
-    "d3_model_far": 3.0,  # 3D models are drawn out to this many times the centre's distance
+    "d3_model_height": 0.8,  # ...and their height times this again
+    "d3_model_far": 2.4,  # 3D models are drawn out to this many times the centre's distance
     "d3_beams": True,  # the beams over halls and towers
+    # icons on the flat map (View tab): size (times their in-game size) and picture style: "game art" (the game's own
+    # icons), "poe2db art", "from screenshots" (taught crops), "flat colour" (a disc in the type's colour) or "outline"
+    "icon_size": 1.0,
+    "icon_style": "game art",
 }  # View tab
 
 

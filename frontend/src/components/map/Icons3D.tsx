@@ -27,6 +27,7 @@ export function Icons3D({ map, geo, info, meta }: { map: MapLibreMap; geo: Geo; 
 	const models = settings?.layers["3D models"] !== false;
 	const pathsOn = tilted && settings?.layers.Paths !== false;
 	const st = settings?.style;
+	const iconStyle = String(st?.icon_style ?? "game art");
 	const pathLayer = useRef<PathLayer3D | null>(null);
 	const strong = st ? styleColour(st, "path_col", meta.colours.path_multi) : meta.colours.path_multi;
 	const weak = st ? styleColour(st, "path_col1", meta.colours.path_single) : meta.colours.path_single;
@@ -85,7 +86,7 @@ export function Icons3D({ map, geo, info, meta }: { map: MapLibreMap; geo: Geo; 
 	}, [map, geo, modelsOn, beams]);
 
 	// the ground fading into black far off (View: 3D view settings, Ground)
-	const groundFar = tilted ? Number(st?.d3_ground_far) || 0 : 0;
+	const groundFar = tilted ? Number(st?.d3_ground_far ?? 2.4) : 0;
 	useEffect(() => {
 		if (!groundFar) return;
 		const fade = new GroundFade(groundFar);
@@ -138,7 +139,7 @@ export function Icons3D({ map, geo, info, meta }: { map: MapLibreMap; geo: Geo; 
 	useEffect(() => {
 		if (!on) return;
 		const l = new IconLayer3D(info.grid.scale / info.world, async (name) => {
-			const r = await map.loadImage(app.spriteUrl(name));
+			const r = await map.loadImage(app.spriteUrl(name, iconStyle));
 			return r.data as CanvasImageSource;
 		});
 		layer.current = l;
@@ -178,7 +179,7 @@ export function Icons3D({ map, geo, info, meta }: { map: MapLibreMap; geo: Geo; 
 			if (map.getLayer(l.id)) map.removeLayer(l.id);
 			layer.current = null;
 		};
-	}, [map, app, geo, info, on]);
+	}, [map, app, geo, info, on, iconStyle]);
 
 	// biome-ignore lint/correctness/useExhaustiveDependencies: `on` re-runs it for a newly made layer
 	useEffect(() => {
@@ -188,22 +189,22 @@ export function Icons3D({ map, geo, info, meta }: { map: MapLibreMap; geo: Geo; 
 		l.pos = replayPos ?? 1e9;
 		if (pathLayer.current) pathLayer.current.pos = replayPos ?? 1e9;
 		l.selected = selIcon;
-		l.far = Number(st?.d3_icon_far) || 2.6;
-		l.sizeScale = Number(st?.d3_icon_size) || 1;
+		l.far = Number(st?.d3_icon_far) || 2.5;
+		l.sizeScale = Number(st?.d3_icon_size) || 1.5;
 		l.liftScale = (Number(st?.d3_model_size) || 1) * (Number(st?.d3_model_height) || 1);
 		const ml = modelLayer.current;
 		if (ml) {
 			ml.size = Number(st?.d3_model_size) || 1;
-			ml.height = Number(st?.d3_model_height) || 1;
-			ml.far = Number(st?.d3_model_far) || 3;
+			ml.height = Number(st?.d3_model_height) || 0.8;
+			ml.far = Number(st?.d3_model_far) || 2.4;
 			ml.pos = replayPos ?? 1e9;
 		}
 		const pl = pathLayer.current;
 		if (pl) {
 			pl.lift = Number(st?.d3_path_lift) || 0;
-			pl.far = Number(st?.d3_path_far) || 2.2;
-			pl.taper = Number(st?.d3_path_taper ?? 0.35);
-			pl.solidPx = Number(st?.d3_solid_px ?? 9);
+			pl.far = Number(st?.d3_path_far) || 2.6;
+			pl.taper = Number(st?.d3_path_taper ?? 0.2);
+			pl.solidPx = Number(st?.d3_solid_px ?? 8);
 		}
 		map.triggerRepaint();
 	}, [map, models, replayPos, on, selIcon, st, pathsOn, modelsOn]);

@@ -178,7 +178,7 @@ def _poe2db_art(raw: str, size: int) -> Image.Image | None:
     return out
 
 
-def icon_picture(raw: str, size: int) -> Image.Image:
+def icon_picture(raw: str, size: int, style: str = "game art") -> Image.Image:
     """Return the picture of an icon type, every source drawn to the same size (rim to the edge).
 
     In order: the game's own icon from atlas_icons.zip; poe2db's sharp art (references/poe2db_icons, inner art put
@@ -192,8 +192,22 @@ def icon_picture(raw: str, size: int) -> Image.Image:
     Returns:
         PIL RGBA image of size (size, size).
     """
-    img = _zip_art(raw)
-    if img is None:
+    if style in ("flat colour", "outline"):  # drawn from the type's colour (View tab: icon style)
+        b, g, r = icon_col(raw)
+        S = size * 4
+        img = Image.new("RGBA", (S, S), (0, 0, 0, 0))
+        d = ImageDraw.Draw(img)
+        if style == "flat colour":
+            d.ellipse((2, 2, S - 3, S - 3), fill=(r, g, b, 255), outline=(15, 15, 15, 255), width=S // 16)
+        else:
+            d.ellipse((S // 10, S // 10, S - S // 10 - 1, S - S // 10 - 1), outline=(r, g, b, 255), width=S // 8)
+        return img.resize((size, size), Image.LANCZOS)
+    img = None
+    if style == "poe2db art":
+        img = _poe2db_art(raw, size)
+    if img is None and style != "from screenshots":
+        img = _zip_art(raw)
+    if img is None and style != "from screenshots":
         img = _poe2db_art(raw, size)
     if img is None:
         from grand_project import icon_refs as atlas_icon_refs
@@ -212,6 +226,8 @@ def icon_picture(raw: str, size: int) -> Image.Image:
             yy, xx = np.mgrid[:hh, :ww]
             alpha = (np.hypot(xx - ww / 2 + 0.5, yy - hh / 2 + 0.5) <= min(hh, ww) / 2).astype(np.uint8) * 255
             img = Image.fromarray(np.dstack([c, alpha]), "RGBA")
+    if img is None and style == "from screenshots":  # no taught picture of this type: the game's art
+        img = _zip_art(raw) or _poe2db_art(raw, size)
     if img is None:  # no picture: a dot in the type's colour
         b, g, r = icon_col(raw)
         img = Image.new("RGBA", (size, size), (0, 0, 0, 0))
@@ -219,7 +235,7 @@ def icon_picture(raw: str, size: int) -> Image.Image:
     return img.resize((size, size), Image.LANCZOS)
 
 
-def icon_png(raw: str, size: int = 64) -> bytes:
+def icon_png(raw: str, size: int = 64, style: str = "game art") -> bytes:
     """Return an icon type's picture as PNG bytes, cached per type and size.
 
     Args:
@@ -229,9 +245,9 @@ def icon_png(raw: str, size: int = 64) -> bytes:
     Returns:
         The PNG file's bytes.
     """
-    key = (raw, size)
+    key = (raw, size, style)
     if key not in _PICTURES:
         buf = io.BytesIO()
-        icon_picture(raw, size).save(buf, "PNG")
+        icon_picture(raw, size, style).save(buf, "PNG")
         _PICTURES[key] = buf.getvalue()
     return _PICTURES[key]

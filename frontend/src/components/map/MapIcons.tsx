@@ -1,7 +1,8 @@
 import type { Map as MapLibreMap } from "maplibre-gl";
-import { useEffect, useMemo } from "react";
+import { useEffect, useMemo, useRef } from "react";
 import type { MapInfo } from "@/domain/map/MapInfo";
 import { useAppClient } from "@/hooks/app/UseAppClient";
+import { useSettings } from "@/hooks/app/UseSettings";
 import { useTypes } from "@/hooks/find/UseTypes";
 import type { Geo } from "@/logic/Geo";
 import { useAppStore } from "@/store/AppStore";
@@ -16,6 +17,10 @@ export function MapIcons({ map, geo, info }: { map: MapLibreMap; geo: Geo; info:
 	const app = useAppClient();
 	const types = useTypes();
 	const bumpLook = useAppStore((s) => s.bumpLook);
+	const settings = useSettings();
+	const iconStyle = String(settings?.style.icon_style ?? "game art");
+	const iconSize = Number(settings?.style.icon_size) || 1;
+	const loadedStyle = useRef(iconStyle);
 	const names = useMemo(() => {
 		const icons = types.data?.sections.find((s) => s.title === "Map icons")?.rows ?? [];
 		return [...new Set([...icons.map((r) => r.icon), TOWER])].sort();
@@ -24,20 +29,26 @@ export function MapIcons({ map, geo, info }: { map: MapLibreMap; geo: Geo; info:
 	useEffect(() => {
 		let live = true;
 		const sp = info.sprite;
-		const missing = names.filter((n) => !map.hasImage(n));
+		// another picture style: every picture again (same size: replaced in place)
+		const restyle = loadedStyle.current !== iconStyle;
+		loadedStyle.current = iconStyle;
+		const missing = restyle ? names : names.filter((n) => !map.hasImage(n));
 		Promise.all(
 			missing.map((n) =>
 				map
-					.loadImage(app.spriteUrl(n))
+					.loadImage(app.spriteUrl(n, iconStyle))
 					.then((r) => {
-						if (live && !map.hasImage(n)) map.addImage(n, r.data);
+						if (!live) return;
+						if (map.hasImage(n)) map.updateImage(n, r.data);
+						else map.addImage(n, r.data);
 					})
 					.catch(() => undefined),
 			),
 		).then(() => {
 			if (!live) return;
 			// screen px per atlas unit at zoom z is geo.pxPerUnit(z): an icon spans sp.units atlas units
-			const size = (z: number) => (sp.units * geo.pxPerUnit(z)) / sp.size;
+			// icon size times the View tab's setting
+			const size = (z: number) => (iconSize * sp.units * geo.pxPerUnit(z)) / sp.size;
 			const zMin = Math.min(info.maxzoom - 0.5, geo.zoomFor(sp.min_px / sp.units));
 			if (!map.getLayer("icons")) {
 				map.addLayer(
@@ -124,14 +135,25 @@ export function MapIcons({ map, geo, info }: { map: MapLibreMap; geo: Geo; info:
 						"bookmarks",
 					);
 				bumpLook(); // their visibility and the replay's filter
-			} else if (missing.length) {
+			} else {
+				map.setLayoutProperty("icons", "icon-size", [
+					"interpolate",
+					["exponential", 2],
+					["zoom"],
+					zMin,
+					size(zMin),
+					info.maxzoom,
+					size(info.maxzoom),
+				]);
+			}
+			if (missing.length && map.getLayer("icons")) {
 				map.setLayoutProperty("icons", "icon-image", ["get", "name"]); // laid out again with the new pictures
 			}
 		});
 		return () => {
 			live = false;
 		};
-	}, [map, app, geo, info, names, bumpLook]);
+	}, [map, app, geo, info, names, bumpLook, iconStyle, iconSize]);
 
 	return null;
 }

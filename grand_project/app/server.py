@@ -552,7 +552,7 @@ class Handler(BaseHTTPRequestHandler):
         # kept its margins, so some icons were drawn smaller than others: user)
         if q.get("kind", [""])[0] == "sprite":
             size = WEBMAP_ICON_SPRITE
-        self._bytes(icon_png(name, size), "image/png")
+        self._bytes(icon_png(name, size, q.get("style", ["game art"])[0]), "image/png")
 
     @route("GET", "/api/graph")
     def get_graph(self, q) -> None:
