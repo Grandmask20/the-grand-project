@@ -4,6 +4,7 @@ import json
 import threading
 import urllib.error
 import urllib.request
+from pathlib import Path
 
 import pytest
 
@@ -182,6 +183,7 @@ def test_an_older_running_copy_is_closed_for_the_update(monkeypatch):
         return None if state["gone"] else {"app": S.HELLO_APP}
 
     monkeypatch.setattr(S, "_local", fake)
+    monkeypatch.setattr(S, "_in_use", lambda host, port: not state["gone"])  # (gone: nothing listens there)
     state["obeys"] = True
     assert S.reuse_running(1, None, browser=False) == S.START and state["quits"] == 1  # it quit: the update starts
     state.update(gone=False, obeys=False)  # still closing after the wait: no second copy writing the same atlas
@@ -199,7 +201,7 @@ def test_a_refused_atlas_hand_over_is_reported(app, monkeypatch, tmp_path):
     assert S.main(["--port", str(srv.server_address[1]), str(tmp_path / "x.json")]) == 1  # (it said success)
 
 
-def test_the_start_doesnt_replace_an_atlas_opened_meanwhile(tmp_path):
+def test_the_start_doesnt_replace_an_atlas_opened_meanwhile(tmp_path, monkeypatch):
     (tmp_path / "a").mkdir()
     (tmp_path / "b").mkdir()
     a, _p, _i = make_atlas(tmp_path / "a")
@@ -207,9 +209,28 @@ def test_the_start_doesnt_replace_an_atlas_opened_meanwhile(tmp_path):
     session = AtlasSession(settings={}, worker=False)
     try:
         start = session.generation
-        session.open_atlas(b)  # opened on the page while the start's atlas was still loading
+        session.open_atlas(b)  # opened on the page before the start's atlas began loading
         S.open_first_atlas(session, str(a), start)
         assert session.path == b  # (it switched back to the start's atlas)
+        # opened on the page while the start's atlas is being read: the start stops none of its work
+        start = session.generation
+        real_load, stopped = S.core.Atlas.load, []
+
+        def load_while_b_opens(path):
+            atlas = real_load(path)
+            if Path(path) == a:
+                session.open_atlas(b)
+            return atlas
+
+        monkeypatch.setattr(S.core.Atlas, "load", staticmethod(load_while_b_opens))
+        monkeypatch.setattr(session, "stop_seams", lambda: stopped.append("seams"))
+        monkeypatch.setattr(session, "stop_watch", lambda: stopped.append("watch"))
+        monkeypatch.setattr(session, "seams_running", lambda: True)
+        stopped.clear()
+        session.settings["last_atlas"] = str(b)
+        S.open_first_atlas(session, str(a), start)
+        assert session.path == b and session.settings["last_atlas"] == str(b)
+        assert stopped == ["watch", "seams"]  # B's own open only: the start stopped nothing of B's (it did, twice)
     finally:
         session.shutdown()
 

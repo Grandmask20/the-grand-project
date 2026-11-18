@@ -1088,9 +1088,12 @@ def reuse_running(port: int, atlas: str | None, browser: bool) -> str:
         _say(f"An older copy (v{version}) is running: closing it to start v{VERSION}")
         _local(url + "api/quit", {})
         t0 = time.monotonic()
+        old_port = int(url.rstrip("/").rsplit(":", 1)[1])
         while time.monotonic() - t0 < APP_QUIT_WAIT:
-            if not _local(url + "api/hello"):
-                return START  # gone: this start takes over
+            # gone only when nothing listens there any more: a slow answer while it saves was taken for gone, and
+            # the new copy started beside it (CodeRabbit)
+            if not _in_use(APP_HOST, old_port):
+                return START
             time.sleep(0.25)
         # still there (saving or finishing work): two copies would write the same atlas
         _say(f"The older copy at {url} is still closing: start the app again in a moment.")

@@ -201,16 +201,18 @@ class AtlasSession(
             raise ValueError(f"could not read {p}: {e}") from e
         switching = self.path is None or p.resolve() != self.path.resolve()
         # the open atlas's background work stops first (auto-add restarts below; Fix seams' result would be for the
-        # atlas object read before, also when the same file is opened again)
-        self.stop_watch()
-        if self.seams_running():
-            self.stop_seams()
-            self.events.log("Fix seams stopped: another atlas was opened")
-        self.save()
+        # atlas object read before, also when the same file is opened again). Not for the app's start (expect_gen):
+        # nothing of its own is open yet, so any work running belongs to an atlas opened on the page meanwhile, and
+        # stopping it there cancelled that atlas's Fix seams (CodeRabbit)
+        if expect_gen is None:
+            self.stop_watch()
+            if self.seams_running():
+                self.stop_seams()
+                self.events.log("Fix seams stopped: another atlas was opened")
+            self.save()
         name = p.stem if p.stem != "atlas" else p.parent.name
         with self._lock:
             if expect_gen is not None and not self.owns(expect_gen):  # another atlas opened while this one loaded
-                self._resume_watch()
                 return
             if self.working():  # a job slipped in meanwhile
                 self._resume_watch()  # (stopped above for a switch that doesn't happen: CodeRabbit)
@@ -220,12 +222,14 @@ class AtlasSession(
                 self._drop_stale_snapshots(p)
                 self._reset_mapimage()  # the other atlas's map image never shows for this one
             before, now = self.opened, self._switch(atlas, p)
+            # in the same step as the switch: set after it, an older load finishing late made itself the atlas
+            # opened at the next start (CodeRabbit)
+            self.settings["last_atlas"] = str(p)
             if before.scope and before.scope != now.scope:
                 self.events.log(f"switched to atlas {name}", before.scope)
         maps = len((atlas.final or {}).get("nodes", []))
         LOG.info(f"opened atlas {p}: {len(atlas.frames)} screenshots, {maps} maps")
         self.events.log(f"opened atlas {name} ({p}): {len(atlas.frames)} screenshots, {maps} maps", now.scope)
-        self.settings["last_atlas"] = str(p)
         if atlas.frames and atlas.final is None:
             self.events.log("this atlas predates the atlas-wide check: running it now")
             try:

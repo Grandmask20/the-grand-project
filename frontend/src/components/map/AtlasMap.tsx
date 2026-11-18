@@ -56,10 +56,14 @@ export function AtlasMap({ info, meta }: Props) {
 	// nodes, paths, icons, landmarks, biomes) for the view have loaded. Shown as each came, the map image was up
 	// seconds before the rest on a big atlas (user). Only this map's first draw waits; moving around afterwards loads
 	// as before. MAP_SHOW_WAIT ms at most, so a slow or failing part never keeps the map hidden.
+	// one limit from when the cover appears (started only once the map had loaded, and again when the model became
+	// ready, the cover could stay ~40 s: CodeRabbit)
 	useEffect(() => {
-		if (!map || shown) return;
 		const timer = window.setTimeout(() => setShown(true), MAP_SHOW_WAIT);
-		if (!modelReady) return () => window.clearTimeout(timer);
+		return () => window.clearTimeout(timer);
+	}, []);
+	useEffect(() => {
+		if (!map || shown || !modelReady) return;
 		// only what is shown is waited for: a source none of whose layers is ticked loads nothing (MapLibre skips it),
 		// so with Ground off the map image isn't waited for (user: what isn't ticked mustn't slow the loading)
 		const ticked = (id: string) =>
@@ -76,7 +80,6 @@ export function AtlasMap({ info, meta }: Props) {
 		map.on("idle", check);
 		check();
 		return () => {
-			window.clearTimeout(timer);
 			map.off("idle", check);
 		};
 	}, [map, modelReady, shown]);
