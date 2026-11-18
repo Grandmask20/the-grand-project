@@ -1,10 +1,10 @@
 """Build the player release (GitHub main) from this working copy (GitHub develop).
 
-    py make_release.py            build into ../1.0 on a new branch release/v<version> from origin/main,
+    py -m tools.make_release            build into ../1.0 on a new branch release/v<version> from origin/main,
                                   commit and push it; then open a pull request into main (main is protected)
-    py make_release.py --check    only list what the release would contain
-    py make_release.py --notes    only print the release notes (also written next to ../1.0 on a release)
-    py make_release.py --db       first refresh references/atlas_references.sqlite3 from the private database
+    py -m tools.make_release --check    only list what the release would contain
+    py -m tools.make_release --notes    only print the release notes (also written next to ../1.0 on a release)
+    py -m tools.make_release --db       first refresh references/atlas_references.sqlite3 from the private database
                                   (keeps only badge_refs + detector_models: nothing from anyone's atlas)
 
 The player build has the program, the reference files, the launchers, LICENSE and README, the app's page built
@@ -21,7 +21,7 @@ import subprocess
 import sys
 from pathlib import Path
 
-HERE = Path(__file__).resolve().parent
+HERE = Path(__file__).resolve().parents[1]  # the repo (this file is in tools/)
 TARGET = HERE.parent / "1.0"
 REPO = "https://github.com/Grandmask20/the-grand-project"
 
@@ -31,7 +31,7 @@ FILES = (
     "LICENSE",
     "requirements.txt",
     "pyproject.toml",
-    "Start Atlas Viewer.bat",
+    "Start The Grand Project.bat",
     "Install (run once).bat",
     "install.sh",
     "start.sh",
@@ -48,6 +48,7 @@ atlases/*
 atlases/default/*
 !atlases/default/.gitkeep
 local_paths.json
+The Grand Project.lnk
 .venv/
 *.egg-info
 """

@@ -10,7 +10,7 @@ The app runs in your web browser: starting it opens a page served by the program
 
 | | Once, to install | Every time, to start |
 |---|---|---|
-| **Windows** | `Install (run once).bat` | `Start Atlas Viewer.bat` |
+| **Windows** | `Install (run once).bat` | the **The Grand Project** shortcut (made by the install), or `Start The Grand Project.bat` |
 | **macOS / Linux** | `./install.sh` | `./start.sh` |
 
 ### Get it
@@ -22,7 +22,7 @@ Download the newest release from the [Releases page](https://github.com/Grandmas
 **Windows:**
 
 1. Install Python 3.11 or newer from [python.org](https://www.python.org/downloads/). In the installer, tick **"Add python.exe to PATH"**.
-2. Double-click **`Install (run once).bat`**. It installs the Python packages the app needs, then says *Done*.
+2. Double-click **`Install (run once).bat`**. It installs the Python packages the app needs and makes a **The Grand Project** shortcut with the tablet icon in this folder (copy it to your desktop or pin it to Start if you like), then says *Done*.
 
 **macOS / Linux:**
 
@@ -31,7 +31,7 @@ Download the newest release from the [Releases page](https://github.com/Grandmas
 
 ### Every time
 
-- **Windows:** double-click **`Start Atlas Viewer.bat`**. No window opens: the app runs in the background and your browser opens its page.
+- **Windows:** double-click the **The Grand Project** shortcut (or **`Start The Grand Project.bat`**). No window opens: the app runs in the background and your browser opens its page.
 - **macOS / Linux:** run **`./start.sh`** in a terminal and keep the terminal open. (On macOS right-click is a two-finger click, or Ctrl+click.)
 
 The page is **`http://127.0.0.1:8765`**: bookmark it. Closing the browser tab doesn't stop the app: open the page again any time. Starting it again while it runs just opens its page. To stop it: **File ▾ → Quit the app** (or Ctrl+C in the terminal).
@@ -40,7 +40,7 @@ On first start the app opens the empty atlas **`atlases/default`**.
 
 ### Updating
 
-Download the new release and unzip it over your current folder, replacing the files: your atlases (`atlases/`) and settings (`user_data/`) stay. Then run the install file again (**`Install (run once).bat`** or **`./install.sh`**): a new version can need new packages.
+Download the new release and unzip it over your current folder, replacing the files: your atlases (`atlases/`) and settings (`user_data/`) stay. Then run the install file again (**`Install (run once).bat`** or **`./install.sh`**): a new version can need new packages. (From 1.18 the Windows start file is `Start The Grand Project.bat`: an old `Start Atlas Viewer.bat` left in the folder can be deleted.)
 
 ### If it doesn't start
 
@@ -155,7 +155,7 @@ A screenshot that might be placed wrong is shown on the map, see-through and out
 | `atlases/` | Your atlases. `default/` opens on first start. |
 | `grand_project/` | The program, a Python package (see *Code layout* below). |
 | `references/` | Every file the program reads: the database copy, HUD mask, icons and tower / city templates. |
-| `tools/` | Helpers for improving the detector (mark checks, icon teaching, badge sheets, coverage). |
+| `tools/` | Developer helpers: improving the detector (mark checks, icon teaching, badge sheets, coverage), and making releases and the test pack (`make_release.py`, `make_test_pack.py`). |
 | `tests/` | Regression tests. Their screenshots and hand-made truth are not included (see below). |
 | `user_data/` | Settings and the log, created on first run. |
 | `atlas_test_data/` | Trimmed test data, in Git LFS and not downloaded by default (see below). |

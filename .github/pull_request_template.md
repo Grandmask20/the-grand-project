@@ -1,4 +1,4 @@
-<!-- Pull requests go to `develop`, not `main` (see CONTRIBUTING.md). -->
+<!-- Pull requests go to `develop`, not `main` (see .github/CONTRIBUTING.md). -->
 
 ## What this changes
 

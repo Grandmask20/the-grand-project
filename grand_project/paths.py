@@ -1,7 +1,7 @@
 """Where everything lives (one place, so the folders can be found and changed easily).
 
 <program folder>/
-  Start Atlas Viewer.bat      double-click to run
+  Start The Grand Project.bat double-click to run
   atlases/default/            the atlas opened on first start (screenshots + atlas.json)
   references/                 the reference database + every picture / data file the program reads
   program/                    the program (this folder)
