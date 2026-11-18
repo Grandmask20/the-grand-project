@@ -15,8 +15,6 @@ export interface Path3D {
 }
 
 const PICK_PX = 6; // css px round the mouse a path click looks
-const FAR = 2.2; // paths are drawn out to this many times the view centre's distance from the camera
-const LIFT = 3; // atlas units above the ground: clear of the ground picture, under the map node pillars' caps
 
 const VS = `
 attribute vec2 a_a;
@@ -27,6 +25,9 @@ uniform mat4 u_m;
 uniform float u_k;
 uniform vec2 u_view;
 uniform float u_width;
+uniform float u_lift; // atlas units above the ground
+uniform float u_taper; // width share left at the far limit
+uniform float u_solidpx; // dashes under this many px drawn as a line
 uniform float u_far; // clip w beyond which paths aren't drawn
 uniform float u_near; // the view centre's clip w
 uniform float u_ppuw; // screen px per atlas unit, times clip w (px per unit here = u_ppuw / w)
@@ -38,8 +39,8 @@ varying vec3 v_col;
 varying float v_fade;
 varying float v_id;
 void main() {
-	vec4 ca = u_m * vec4(a_a, ${LIFT.toFixed(1)} * u_k, 1.0);
-	vec4 cb = u_m * vec4(a_b, ${LIFT.toFixed(1)} * u_k, 1.0);
+	vec4 ca = u_m * vec4(a_a, u_lift * u_k, 1.0);
+	vec4 cb = u_m * vec4(a_b, u_lift * u_k, 1.0);
 	// behind the camera, or far off (far paths were a tangle of lines: user)
 	if (ca.w <= 0.0 || ca.w > u_far) { gl_Position = vec4(2.0, 2.0, 2.0, 1.0); return; }
 	vec2 pa = ca.xy / ca.w * u_view * 0.5;
@@ -50,13 +51,13 @@ void main() {
 	// thinner and fainter with distance past the view's centre (far off they were a bright tangle: user)
 	float far = clamp((ca.w - u_near) / max(u_far - u_near, 0.0001), 0.0, 1.0);
 	v_fade = 1.0 - far;
-	vec2 px = pa + n * a_info.x * u_width * mix(1.0, 0.35, far) * 0.5;
+	vec2 px = pa + n * a_info.x * u_width * mix(1.0, u_taper, far) * 0.5;
 	v_id = a_info.w;
 	gl_Position = vec4(px / (u_view * 0.5) * ca.w, ca.z, ca.w);
 	v_dist = a_info.y;
 	// dashes smaller than a few px on screen are drawn as a line, as the old window did zoomed out (they turned into
 	// a dotted blur: user)
-	v_solid = (u_dashv.x + u_dashv.y) * u_ppuw / ca.w < 9.0 ? 1.0 : 0.0;
+	v_solid = (u_dashv.x + u_dashv.y) * u_ppuw / ca.w < u_solidpx ? 1.0 : 0.0;
 	v_step = a_info.z;
 	v_col = a_col;
 }`;
@@ -99,6 +100,12 @@ export class PathLayer3D implements CustomLayerInterface {
 	private pending: Path3D[] = [];
 	private dirty = false;
 	pos = 1e9;
+	/** The View tab's 3D settings (STYLE_DEFAULT d3_*): height, reach (times the centre's distance), far width share,
+	 * dash-to-line px. */
+	lift = 3;
+	far = 2.2;
+	taper = 0.35;
+	solidPx = 9;
 	private pickReq: { x: number; y: number; done: (id: number | null) => void } | null = null;
 
 	/**
@@ -251,7 +258,10 @@ export class PathLayer3D implements CustomLayerInterface {
 		const c = MercatorCoordinate.fromLngLat(this.map.getCenter());
 		const M = options.defaultProjectionData.mainMatrix as Float32Array;
 		const cw0 = M[3] * c.x + M[7] * c.y + M[15];
-		gl.uniform1f(gl.getUniformLocation(p, "u_far"), FAR * cw0);
+		gl.uniform1f(gl.getUniformLocation(p, "u_far"), this.far * cw0);
+		gl.uniform1f(gl.getUniformLocation(p, "u_lift"), this.lift);
+		gl.uniform1f(gl.getUniformLocation(p, "u_taper"), this.taper);
+		gl.uniform1f(gl.getUniformLocation(p, "u_solidpx"), this.solidPx * ratio);
 		gl.uniform1f(gl.getUniformLocation(p, "u_near"), cw0);
 		gl.uniform2f(gl.getUniformLocation(p, "u_dash"), this.dash[0], this.dash[1]);
 		gl.uniform2f(gl.getUniformLocation(p, "u_dashv"), this.dash[0], this.dash[1]);

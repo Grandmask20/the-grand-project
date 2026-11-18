@@ -83,3 +83,64 @@ export function MapPreview({ st, meta }: { st: Style; meta: Meta }) {
 		</svg>
 	);
 }
+
+/**
+ * The 3D view's path preview (user): left, a path from map node to map node as up close; right, a path going off
+ * into the distance, turning as it goes, getting thinner and fainter by the taper and its dashes becoming a line.
+ */
+export function Path3DPreview({ st, meta }: { st: Style; meta: Meta }) {
+	const strong = styleColour(st, "path_col", meta.colours.path_multi);
+	const w = Number(st.path_width) || 3;
+	const taper = Number(st.d3_path_taper ?? 0.35);
+	const solidPx = Number(st.d3_solid_px ?? 9);
+	const dashed = st.path_style === "dashed" || st.path_style === "dotted";
+	const on = st.path_style === "dotted" ? 1.5 : 6;
+	const off = st.path_style === "dotted" ? 4.5 : 4;
+	// the far path: a zigzag going up the box, its scale shrinking with distance (k from 1 near to 0.15 far)
+	const steps = 24;
+	const pts = Array.from({ length: steps + 1 }, (_, i) => {
+		const t = i / steps;
+		const k = 1 - 0.85 * t;
+		return { x: 200 + Math.sin(t * 7) * 26 * k, y: 42 - t * 40, k, t };
+	});
+	let along = 0; // length so far, at the near scale: the dashes run on along the path
+	return (
+		<svg viewBox="0 0 240 44" className="h-11 w-full rounded border bg-black" aria-label="3D path preview">
+			<polyline
+				points="14,32 54,14 94,30 132,16"
+				fill="none"
+				stroke={strong}
+				strokeWidth={w}
+				strokeDasharray={dashed ? `${on * w * 0.5} ${off * w * 0.5}` : undefined}
+				strokeLinecap="round"
+			/>
+			{[14, 54, 94, 132].map((x, i) => (
+				<circle key={x} cx={x} cy={[32, 14, 30, 16][i]} r={3} fill="#777" />
+			))}
+			{pts.slice(1).map((b, i) => {
+				const a = pts[i];
+				const pattern = (on + off) * w * 0.5 * b.k; // the dash pattern's size on screen there
+				const solid = !dashed || pattern < solidPx * 0.5;
+				const len = Math.hypot(b.x - a.x, b.y - a.y);
+				const offset = along;
+				along += len;
+				const width = w * (1 - (1 - taper) * b.t) * b.k + 0.5;
+				return (
+					<line
+						key={b.y}
+						x1={a.x}
+						y1={a.y}
+						x2={b.x}
+						y2={b.y}
+						stroke={strong}
+						strokeOpacity={1 - b.t * 0.85}
+						strokeWidth={width}
+						strokeDasharray={solid ? undefined : `${on * w * 0.5 * b.k} ${off * w * 0.5 * b.k}`}
+						strokeDashoffset={solid ? undefined : offset}
+						strokeLinecap="round"
+					/>
+				);
+			})}
+		</svg>
+	);
+}

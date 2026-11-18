@@ -19,7 +19,6 @@ export interface Icon3D {
 	step: number;
 }
 
-const ICON_FAR = 2.6; // icons are drawn out to this many times the view centre's distance
 const CELL = 64; // px per picture in the texture
 const COLS = 32;
 const HALF = 13; // atlas units: half an icon (an icon is 26 units across)
@@ -218,6 +217,8 @@ export class IconLayer3D implements CustomLayerInterface {
 
 	/** The selected icon's id (-1: none): drawn with a ring. */
 	selected = -1;
+	/** Icons are drawn out to this many times the view centre's distance (View tab). */
+	far = 2.6;
 	private pickReq: { x: number; y: number; done: (id: number | null) => void } | null = null;
 
 	/**
@@ -302,7 +303,7 @@ export class IconLayer3D implements CustomLayerInterface {
 		const size = this.centreSize(options.defaultProjectionData.mainMatrix as Float32Array, gl);
 		this.last = { M: Float32Array.from(options.defaultProjectionData.mainMatrix as Float32Array), size };
 		gl.uniform1f(gl.getUniformLocation(p, "u_size"), size);
-		gl.uniform1f(gl.getUniformLocation(p, "u_far"), ICON_FAR * this.centreW());
+		gl.uniform1f(gl.getUniformLocation(p, "u_far"), this.far * this.centreW());
 		gl.activeTexture(gl.TEXTURE0);
 		gl.bindTexture(gl.TEXTURE_2D, this.tex);
 		gl.uniform1i(gl.getUniformLocation(p, "u_tex"), 0);

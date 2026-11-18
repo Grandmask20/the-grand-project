@@ -121,8 +121,16 @@ export function Icons3D({ map, geo, info, meta }: { map: MapLibreMap; geo: Geo; 
 		l.pos = replayPos ?? 1e9;
 		if (pathLayer.current) pathLayer.current.pos = replayPos ?? 1e9;
 		l.selected = selIcon;
+		l.far = Number(st?.d3_icon_far) || 2.6;
+		const pl = pathLayer.current;
+		if (pl) {
+			pl.lift = Number(st?.d3_path_lift) || 0;
+			pl.far = Number(st?.d3_path_far) || 2.2;
+			pl.taper = Number(st?.d3_path_taper ?? 0.35);
+			pl.solidPx = Number(st?.d3_solid_px ?? 9);
+		}
 		map.triggerRepaint();
-	}, [map, models, replayPos, on, selIcon]);
+	}, [map, models, replayPos, on, selIcon, st, pathsOn]);
 
 	return null;
 }

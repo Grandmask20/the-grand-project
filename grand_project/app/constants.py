@@ -81,6 +81,14 @@ STYLE_DEFAULT = {
     "ov_towers": False,
     "age_tint": "off",  # View tab "Colour by": one of COLOUR_BY
     "colour_spread": "plasma",  # ...its colours for oldest to newest / times seen: one of COLOUR_SPREADS
+    # the 3D view (View tab, while tilted; user): paths' height above the ground (atlas units), how far they reach
+    # and icons reach (times the view centre's distance), how thin paths get far away (share of their width), and
+    # below how many screen px a dash pattern turns into a line
+    "d3_path_lift": 3.0,
+    "d3_path_far": 2.2,
+    "d3_path_taper": 0.35,
+    "d3_solid_px": 9.0,
+    "d3_icon_far": 2.6,
 }  # View tab
 
 

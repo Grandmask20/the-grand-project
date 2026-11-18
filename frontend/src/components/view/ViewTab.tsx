@@ -8,8 +8,9 @@ import { useMeta } from "@/hooks/app/UseMeta";
 import { useSettings, useUpdateSettings } from "@/hooks/app/UseSettings";
 import { useFrames } from "@/hooks/replay/UseFrames";
 import { cityColours, landmarkColours, styleColour } from "@/logic/Colours";
+import { useAppStore } from "@/store/AppStore";
 import { ColourSwatch } from "./ColourSwatch";
-import { MapPreview, PathPreview } from "./StylePreview";
+import { MapPreview, Path3DPreview, PathPreview } from "./StylePreview";
 
 /** View: what the map shows and how (background, layers, paths, maps, colours, "Colour by"). */
 export function ViewTab() {
@@ -17,6 +18,7 @@ export function ViewTab() {
 	const settings = useSettings();
 	const update = useUpdateSettings();
 	const tint = settings?.style.age_tint ?? "off";
+	const tilted = useAppStore((s) => (s.camera?.pitch ?? 0) > 1);
 	const frames = useFrames(tint !== "off");
 	if (!meta || !settings) return null;
 	const st = settings.style;
@@ -79,6 +81,41 @@ export function ViewTab() {
 					Drag the panel's edge to resize it (double-click: back to normal).
 				</p>
 			</Section>
+
+			{tilted && (
+				<Section title="3D view">
+					<Path3DPreview st={st} meta={meta} />
+					{(
+						[
+							["path height", "d3_path_lift", 0, 30, 1, 3, (v: number) => `${v}`],
+							["path reach", "d3_path_far", 1, 6, 0.1, 2.2, (v: number) => `${v.toFixed(1)}x`],
+							["far thickness", "d3_path_taper", 0.1, 1, 0.05, 0.35, (v: number) => `${Math.round(v * 100)}%`],
+							["dashes to line", "d3_solid_px", 0, 30, 1, 9, (v: number) => `${v} px`],
+							["icon reach", "d3_icon_far", 1, 8, 0.1, 2.6, (v: number) => `${v.toFixed(1)}x`],
+						] as [string, string, number, number, number, number, (v: number) => string][]
+					).map(([label, key, lo, hi, stepv, dflt, fmt]) => {
+						const v = Number(st[key] ?? dflt);
+						return (
+							<div key={key} className="flex items-center gap-2">
+								<span className="w-24 text-xs text-muted-foreground">{label}</span>
+								<Slider
+									min={lo}
+									max={hi}
+									step={stepv}
+									value={[v]}
+									onValueChange={([x]) => set({ [key]: x })}
+									className="w-36"
+									aria-label={label}
+								/>
+								<span className="w-12 text-xs">{fmt(v)}</span>
+							</div>
+						);
+					})}
+					<p className="text-xs text-muted-foreground">
+						Reach: how far paths and icons are drawn, in times the distance to the middle of the view.
+					</p>
+				</Section>
+			)}
 
 			<Section title="Paths">
 				<PathPreview st={st} meta={meta} />
