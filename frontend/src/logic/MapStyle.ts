@@ -541,7 +541,7 @@ export function applyLook(map: MapLibreMap, geo: Geo, meta: Meta, look: Look): v
 	visible(map, "solids", look.tilted && on("3D models"));
 	// icons: on the ground when flat, standing in rows above their map nodes when tilted
 	visible(map, "icons", on("Icons") && !look.tilted);
-	visible(map, "icons-3d", on("Icons") && look.tilted);
+	visible(map, "icons-3d", false); // the 3D view's icons are drawn by IconLayer3D
 	const models = look.tilted && on("3D models");
 	if (map.getLayer("icons-3d")) map.setLayoutProperty("icons-3d", "icon-offset", iconOffset(geo, models));
 	// the flat map node dots would show through the bottom of the 3D pillars (user)

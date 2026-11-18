@@ -9,6 +9,7 @@ import { baseStyle, squareImage } from "@/logic/MapStyle";
 import { useAppStore } from "@/store/AppStore";
 import { ButtonControl } from "./ButtonControl";
 import { FrameRecorder } from "./FrameRecorder";
+import { Icons3D } from "./Icons3D";
 import { MapCamera } from "./MapCamera";
 import { MapIcons } from "./MapIcons";
 import { MapImages } from "./MapImages";
@@ -70,14 +71,17 @@ export function AtlasMap({ info, meta }: Props) {
 		const limit = () => {
 			const c = m.getCenter();
 			const v = m.getBounds();
-			// room: an atlas-width plus a view-width past each edge, so zoomed far out you can still move it about
-			const rx = e - w + (v.getEast() - v.getWest());
-			const ry = n - s + (v.getNorth() - v.getSouth());
+			// room: an atlas-width plus a view-width past each edge, so zoomed far out you can still move it about; the
+			// view-width counted at most once more (tilted, the view reaches the horizon: dragging towards it ran off
+			// to infinity: user)
+			const rx = e - w + Math.min(v.getEast() - v.getWest(), e - w);
+			const ry = n - s + Math.min(v.getNorth() - v.getSouth(), n - s);
 			const lng = Math.min(Math.max(c.lng, Math.max(w - rx, -180)), Math.min(e + rx, 180));
 			const lat = Math.min(Math.max(c.lat, Math.max(s - ry, -MERCATOR_LAT)), Math.min(n + ry, MERCATOR_LAT));
 			if (lng !== c.lng || lat !== c.lat) m.easeTo({ center: [lng, lat], duration: 300 });
 		};
 		m.on("moveend", limit);
+		m.on("dragend", limit);
 		// after the map is removed (another atlas opened) its layers and sources are simply gone: the parts of the page
 		// that tidy up after it (the replay's fog) asked a removed map and threw, which blanked the page (user)
 		const getLayer = m.getLayer.bind(m);
@@ -125,6 +129,7 @@ export function AtlasMap({ info, meta }: Props) {
 					<MapTiles map={map} />
 					<MapLook map={map} geo={geo} meta={meta} />
 					<MapIcons map={map} geo={geo} info={info} />
+					<Icons3D map={map} info={info} />
 					<MapCamera map={map} geo={geo} info={info} />
 					<MapOverlays map={map} geo={geo} />
 					<MapImages map={map} geo={geo} />
