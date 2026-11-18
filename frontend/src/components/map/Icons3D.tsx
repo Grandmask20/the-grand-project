@@ -2,7 +2,7 @@ import type { Map as MapLibreMap } from "maplibre-gl";
 import { useEffect, useRef } from "react";
 import type { Meta } from "@/domain/app/Meta";
 import type { MapInfo } from "@/domain/map/MapInfo";
-import { ringedIcon } from "@/domain/map/Scene3D";
+import { selection3d } from "@/domain/map/Scene3D";
 import { useAppClient } from "@/hooks/app/UseAppClient";
 import { useSettings } from "@/hooks/app/UseSettings";
 import { useScene3D } from "@/hooks/map/UseScene3D";
@@ -42,7 +42,7 @@ export function Icons3D({ map, geo, info, meta }: { map: MapLibreMap; geo: Geo; 
 	const pathsOn = tilted && layers?.Paths !== false;
 	const modelsOn = tilted && layers?.["3D models"] !== false;
 	const scene = useScene3D(tilted).data;
-	const selIcon = ringedIcon(selected, scene);
+	const sel = selection3d(selected);
 	const iconStyle = String(st?.icon_style ?? "game art");
 	const beams = st?.d3_beams !== false;
 	const strong = st ? styleColour(st, "path_col", meta.colours.path_multi) : meta.colours.path_multi;
@@ -160,7 +160,7 @@ export function Icons3D({ map, geo, info, meta }: { map: MapLibreMap; geo: Geo; 
 		if (il) {
 			il.models = modelsOn;
 			il.pos = pos;
-			il.selected = selIcon;
+			il.selected = sel.icon;
 			il.far = Number(st?.d3_icon_far) || 2.5;
 			il.sizeScale = Number(st?.d3_icon_size) || 1.5;
 			il.liftScale = (Number(st?.d3_model_size) || 1) * (Number(st?.d3_model_height) || 1);
@@ -171,6 +171,7 @@ export function Icons3D({ map, geo, info, meta }: { map: MapLibreMap; geo: Geo; 
 			ml.height = Number(st?.d3_model_height) || 0.8;
 			ml.far = Number(st?.d3_model_far) || 2.4;
 			ml.pos = pos;
+			ml.selected = sel.model;
 		}
 		const pl = pathLayer.current;
 		if (pl) {
@@ -184,7 +185,7 @@ export function Icons3D({ map, geo, info, meta }: { map: MapLibreMap; geo: Geo; 
 			pl.solidPx = Number(st?.d3_solid_px ?? 8);
 		}
 		map.triggerRepaint();
-	}, [map, replayPos, selIcon, st, iconsOn, pathsOn, modelsOn]);
+	}, [map, replayPos, sel.icon, sel.model, st, iconsOn, pathsOn, modelsOn]);
 
 	return null;
 }

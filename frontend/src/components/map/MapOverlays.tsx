@@ -1,12 +1,11 @@
 import type { Map as MapLibreMap } from "maplibre-gl";
 import { useEffect } from "react";
-import { ringedIcon } from "@/domain/map/Scene3D";
+import { selection3d } from "@/domain/map/Scene3D";
 import { useAppState } from "@/hooks/app/UseAppState";
 import { useSettings } from "@/hooks/app/UseSettings";
 import { useDebugMarks } from "@/hooks/debug/UseDebugMarks";
 import { useRouteGraph } from "@/hooks/map/UseGraph";
 import { useRecent } from "@/hooks/map/UseRecent";
-import { useScene3D } from "@/hooks/map/UseScene3D";
 import type { Geo } from "@/logic/Geo";
 import { EMPTY, setData } from "@/logic/MapStyle";
 import { useAppStore } from "@/store/AppStore";
@@ -53,17 +52,18 @@ export function MapOverlays({ map, geo }: { map: MapLibreMap; geo: Geo }) {
 		);
 	}, [map, geo, selected]);
 
-	// the flat ring: not for a path (lit up instead), nor while tilted when a 3D icon wears the ring (the selected
-	// icon, or the icon on the selected map node: the flat ring lay on the ground under its model; it came back wrong
-	// after switching views: user)
+	// the flat ring: not for a path (lit up instead), nor while tilted when the 3D view lights the selection up itself
+	// (a selected icon wears its ring; a map node's model turns gold: the flat ring lay on the ground under it; it came
+	// back wrong after switching views: user)
 	const tilted = useAppStore((s) => (s.camera?.pitch ?? 0) > 1);
-	const icons3d = tilted && settings?.layers.Icons !== false;
-	const scene = useScene3D(icons3d).data;
-	const ringed3d = icons3d && ringedIcon(selected, scene) >= 0;
+	const sel = selection3d(selected);
+	const lit3d =
+		tilted &&
+		((sel.icon >= 0 && settings?.layers.Icons !== false) || (sel.model > 0 && settings?.layers["3D models"] !== false));
 	useEffect(() => {
-		const hide = selected?.kind === "path" || ringed3d;
+		const hide = selected?.kind === "path" || lit3d;
 		if (map.getLayer("selected")) map.setLayoutProperty("selected", "visibility", hide ? "none" : "visible");
-	}, [map, selected, ringed3d]);
+	}, [map, selected, lit3d]);
 
 	useEffect(() => {
 		setData(map, "hits", collection(results.slice(0, 2000).map((r) => point(geo.toLngLat(r.x, r.y)))));

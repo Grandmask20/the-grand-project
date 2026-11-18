@@ -1,3 +1,5 @@
+import { pickCode } from "@/logic/Pick";
+
 /**
  * GET /api/scene3d: the 3D view's icons, paths and models, whole (what the filters show, atlas units). Made from the
  * same features as the vector tiles, once per model / filter / map image version (and timelapse plan).
@@ -22,17 +24,21 @@ export interface Scene3D {
 }
 
 /**
- * The 3D icon that wears the selection ring: a selected icon itself, or for a selected map node (or a landmark, by the
- * map node it marks) the first icon standing on it, the part of a map node seen in 3D (user: clicking a city's
- * citadel lit up nothing of its map; its ring lay on the ground under the model). -1 for none.
+ * What the 3D view lights up for the selection: a selected icon wears its ring (`icon`); a selected map node, or a
+ * landmark by the map node it marks, has its model (pillar, city, hall, tower) drawn in gold (`model`, a pick code).
+ * Ringing the icon on a selected map node made it look like the icon was selected (user).
  */
-export function ringedIcon(
-	selected: { kind: string; id: number; node?: number | null } | null,
-	scene: Scene3D | undefined,
-): number {
-	if (!selected) return -1;
-	if (selected.kind === "icon") return selected.id;
-	const node = selected.kind === "node" ? selected.id : selected.kind === "landmark" ? selected.node : null;
-	if (node == null || !scene) return -1;
-	return scene.icons.find((ic) => ic[7] === node)?.[2] ?? -1;
+export function selection3d(selected: { kind: string; id: number; node?: number | null } | null): {
+	icon: number;
+	model: number;
+} {
+	if (!selected) return { icon: -1, model: 0 };
+	if (selected.kind === "icon") return { icon: selected.id, model: 0 };
+	if (selected.kind === "node") return { icon: -1, model: pickCode("node", selected.id) };
+	if (selected.kind === "landmark")
+		return {
+			icon: -1,
+			model: selected.node != null ? pickCode("node", selected.node) : pickCode("landmark", selected.id),
+		};
+	return { icon: -1, model: 0 };
 }

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { ringedIcon, type Scene3D } from "@/domain/map/Scene3D";
+import { selection3d } from "@/domain/map/Scene3D";
 import { pickCode, pickItem } from "@/logic/Pick";
 
 describe("model pick codes", () => {
@@ -13,20 +13,15 @@ describe("model pick codes", () => {
 	});
 });
 
-describe("ringedIcon", () => {
-	const scene = {
-		icons: [
-			[0, 0, 7, "Breach", 0, 0, -1, 3],
-			[0, 0, 9, "MapBoss", 0, 0, -1, 4],
-		],
-		paths: [],
-		models: [],
-	} as unknown as Scene3D;
-	it("rings the selected icon, or the icon on the selected map node or a landmark's map node", () => {
-		expect(ringedIcon({ kind: "icon", id: 7 }, scene)).toBe(7);
-		expect(ringedIcon({ kind: "node", id: 4 }, scene)).toBe(9);
-		expect(ringedIcon({ kind: "landmark", id: 12, node: 4 }, scene)).toBe(9);
-		expect(ringedIcon({ kind: "node", id: 5 }, scene)).toBe(-1); // no icon on it: the flat ring
-		expect(ringedIcon(null, scene)).toBe(-1);
+describe("selection3d", () => {
+	it("rings a selected icon, lights up a selected map node's model (a landmark's by its map node)", () => {
+		expect(selection3d({ kind: "icon", id: 7 })).toEqual({ icon: 7, model: 0 });
+		expect(selection3d({ kind: "node", id: 4 })).toEqual({ icon: -1, model: pickCode("node", 4) });
+		expect(selection3d({ kind: "landmark", id: 12, node: 4 })).toEqual({ icon: -1, model: pickCode("node", 4) });
+		expect(selection3d({ kind: "landmark", id: 12, node: null })).toEqual({
+			icon: -1,
+			model: pickCode("landmark", 12),
+		});
+		expect(selection3d(null)).toEqual({ icon: -1, model: 0 });
 	});
 });

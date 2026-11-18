@@ -49,12 +49,18 @@ const FS = `
 precision mediump float;
 uniform float u_pos;
 uniform float u_pick; // 1: draw each model's pick code as its colour (clicks read it back)
+uniform vec3 u_sel; // the selected map node's pick code (bytes, 0..1); its models are lit up
+uniform float u_selOn;
 varying vec3 v_col;
 varying float v_step;
 varying vec3 v_pick;
 void main() {
 	if (v_step >= u_pos) discard;
-	gl_FragColor = u_pick > 0.5 ? vec4(v_pick, 1.0) : vec4(v_col, 1.0);
+	if (u_pick > 0.5) { gl_FragColor = vec4(v_pick, 1.0); return; }
+	// the selected map node's pillar or structure, in the selection's gold (its icons keep their look: a selected
+	// map node and a selected icon looked the same with the ring on the icon: user)
+	bool sel = u_selOn > 0.5 && all(lessThan(abs(v_pick - u_sel), vec3(0.002)));
+	gl_FragColor = vec4(sel ? mix(v_col, vec3(1.0, 0.8, 0.2), 0.6) : v_col, 1.0);
 }`;
 
 const STRIDE = 15; // floats per vertex
@@ -77,6 +83,8 @@ export class ModelLayer3D implements CustomLayerInterface {
 	private pending: Model3D[] = [];
 	private dirty = false;
 	private pickReq: { x: number; y: number; done: (code: number) => void } | null = null;
+	/** The selected map node's (or landmark's) pick code: its models are drawn lit up; 0 for none. */
+	selected = 0;
 	size = 1;
 	height = 1;
 	far = 3;
@@ -237,6 +245,14 @@ export class ModelLayer3D implements CustomLayerInterface {
 		gl.uniform1f(gl.getUniformLocation(p, "u_height"), this.height);
 		gl.uniform1f(gl.getUniformLocation(p, "u_far"), this.far * w0);
 		gl.uniform1f(gl.getUniformLocation(p, "u_pos"), this.pos);
+		const sel = this.selected;
+		gl.uniform3f(
+			gl.getUniformLocation(p, "u_sel"),
+			(sel & 255) / 255,
+			((sel >> 8) & 255) / 255,
+			((sel >> 16) & 255) / 255,
+		);
+		gl.uniform1f(gl.getUniformLocation(p, "u_selOn"), sel > 0 ? 1 : 0);
 		gl.bindBuffer(gl.ARRAY_BUFFER, this.buf);
 		const attrs: [string, number, number][] = [
 			["a_pos", 3, 0],
