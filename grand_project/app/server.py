@@ -39,6 +39,7 @@ from .constants import (
     APP_PORT,
     APP_PORT_TRIES,
     APP_QUIT_WAIT,
+    APP_STOP_PROBE,
     HELLO_APP,
     UPLOAD_MAX,
     VERSION,
@@ -1035,6 +1036,31 @@ def _in_use(host: str, port: int) -> bool:
     return False
 
 
+def _stopped(host: str, port: int) -> bool:
+    """Tell whether nothing listens on a port any more (a copy that was asked to quit has gone).
+
+    The port binds again (quick, also on Windows, where a refused connection takes ~2 s), or a connection to it is
+    refused: on Linux / macOS a closed port can stay unbindable for a while (connections in TIME_WAIT), which kept
+    a quit copy "running" until the start gave up (CodeRabbit). Anything else (accepted, timed out) is not gone.
+
+    Args:
+        host: The address.
+        port: The port.
+
+    Returns:
+        True when nothing listens there.
+    """
+    if not _in_use(host, port):
+        return True
+    try:
+        with socket.create_connection((host, port), timeout=APP_STOP_PROBE):
+            return False  # still accepting
+    except ConnectionRefusedError:
+        return True
+    except OSError:
+        return False
+
+
 def running_app(port: int, host: str = APP_HOST, root: Path | None = None) -> tuple[str, str] | None:
     """Find this program's own copy already running on one of the ports it would take.
 
@@ -1092,7 +1118,7 @@ def reuse_running(port: int, atlas: str | None, browser: bool) -> str:
         while time.monotonic() - t0 < APP_QUIT_WAIT:
             # gone only when nothing listens there any more: a slow answer while it saves was taken for gone, and
             # the new copy started beside it (CodeRabbit)
-            if not _in_use(APP_HOST, old_port):
+            if _stopped(APP_HOST, old_port):
                 return START
             time.sleep(0.25)
         # still there (saving or finishing work): two copies would write the same atlas

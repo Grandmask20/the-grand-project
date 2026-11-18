@@ -183,7 +183,7 @@ def test_an_older_running_copy_is_closed_for_the_update(monkeypatch):
         return None if state["gone"] else {"app": S.HELLO_APP}
 
     monkeypatch.setattr(S, "_local", fake)
-    monkeypatch.setattr(S, "_in_use", lambda host, port: not state["gone"])  # (gone: nothing listens there)
+    monkeypatch.setattr(S, "_stopped", lambda host, port: state["gone"])  # (gone: nothing listens there)
     state["obeys"] = True
     assert S.reuse_running(1, None, browser=False) == S.START and state["quits"] == 1  # it quit: the update starts
     state.update(gone=False, obeys=False)  # still closing after the wait: no second copy writing the same atlas
@@ -261,3 +261,18 @@ def test_looking_for_a_running_copy_is_quick_on_free_ports():
     t0 = time.perf_counter()
     assert S.running_app(S.APP_PORT + 500) is None
     assert time.perf_counter() - t0 < 1.0  # (a refused connection takes ~2 s on Windows: 20 ports made starts ~10 s)
+
+
+def test_a_quit_copy_counts_as_gone_though_its_port_wont_bind_yet(monkeypatch):
+    import socket
+
+    monkeypatch.setattr(S, "_in_use", lambda host, port: True)  # (Linux / macOS: TIME_WAIT keeps it unbindable)
+    with socket.socket() as s:
+        s.bind(("127.0.0.1", 0))
+        port = s.getsockname()[1]
+        s.listen(1)
+        assert not S._stopped("127.0.0.1", port)  # still listening: not gone
+    assert S._stopped("127.0.0.1", port)  # closed: the connection is refused, so it is gone (it waited out 40 s)
+    monkeypatch.setattr(S, "running_app", lambda p: (f"http://127.0.0.1:{port}/", "1.0"))  # an older copy...
+    monkeypatch.setattr(S, "_local", lambda url, data=None, timeout=0: {"ok": True})  # ...asked to quit
+    assert S.reuse_running(port, None, browser=False) == S.START

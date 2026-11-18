@@ -336,6 +336,11 @@ def test_forgetting_a_closed_atlas_doesnt_bring_it_back(session):
 
 
 def test_the_stronghold_search_releases_its_flag_with_its_result(session, monkeypatch):
+    import time
+
+    t0 = time.monotonic()  # the search opening the atlas started is done first (running, it refused this one)
+    while getattr(session, "_lock_job", False) and time.monotonic() - t0 < 10:
+        time.sleep(0.02)
     flags = []
     real = type(session.atlas).save
 
