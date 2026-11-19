@@ -67,7 +67,8 @@ README's developer section). `tools/` are developer helpers, `tests/` regression
   what it draws are components under it, each a `<Source>` and its layers (`components/map/layers/`), whose looks are
   plain functions in `logic/map/` (testable without a map); every layer has a place in `logic/map/LayerOrder.ts` and goes
   in under its slot (`MapLayer`). What react-map-gl has no component for (events, the camera, canvas pictures, custom
-  WebGL layers) goes through `useMapLibre()` in a component of its own. Biome
+  WebGL layers) goes through `useMapLibre()` in a component of its own. Drawing on the map (the City biome lasso)
+  is Terra Draw's (`components/map/draw/`), its layers in their slot too. Biome
   formats it (tabs, line width 120); one test file per component / module in `__tests__/`. No new dependencies
   without a reason. Every answer carries the atlas generation (`X-Atlas-Gen`); `api/Http.ts` drops stale ones, and
   page work that spans an await (exports, a question after a load) checks `sameAtlas()` again after it. The 3D

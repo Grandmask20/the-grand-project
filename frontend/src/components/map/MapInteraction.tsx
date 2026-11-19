@@ -17,7 +17,7 @@ import type { PathLayer3D } from "@/logic/PathLayer3D";
 import { pickItem } from "@/logic/Pick";
 import { useAppStore } from "@/store/AppStore";
 import { BiomeMenu } from "./BiomeMenu";
-import { LassoLayers } from "./layers/LassoLayers";
+import { LassoDraw } from "./draw/LassoDraw";
 import { MapMenu } from "./MapMenu";
 
 const HOVER = ["maps", "landmarks", "bookmarks", "icons", "paths"];
@@ -43,17 +43,6 @@ export function MapInteraction() {
 	const [menu, setMenu] = useState<{ x: number; y: number; at: Point; hit: ItemInfo | null } | null>(null);
 	const lassoSeq = useRef(0);
 	const [lasso, setLasso] = useState<{ polygon: Point[]; x: number; y: number; maps: number } | null>(null);
-	const drawing = useRef<Point[] | null>(null);
-	const [shape, setShape] = useState<Point[] | null>(null); // the lasso as drawn so far
-	// the lasso's drawing on the map follows the mouse at most once a frame: every point is kept (the polygon sent is
-	// whole), but each mouse move copied the whole lasso and drew it again (CodeRabbit)
-	const shapeFrame = useRef(0);
-	const showShape = useCallback((points: Point[] | null) => {
-		cancelAnimationFrame(shapeFrame.current);
-		shapeFrame.current = 0;
-		setShape(points);
-	}, []);
-	useEffect(() => () => cancelAnimationFrame(shapeFrame.current), []);
 	const drag = useRef<{ start: Point; centre: Point } | null>(null);
 
 	const atlasAt = useCallback((e: MapMouseEvent): Point => geo.toAtlas(e.lngLat.lng, e.lngLat.lat), [geo]);
@@ -188,48 +177,13 @@ export function MapInteraction() {
 		};
 	}, [map, mode, app, setMode, showError]);
 
-	// --- drags: the lasso, the ghost
-	useEffect(() => {
-		const dragging = mode.kind === "lasso" || mode.kind === "ghost";
-		void dragging; // panning is AtlasMap's own drag (it stays off in these modes)
-		map.getCanvas().style.cursor =
-			mode.kind === "lasso" ? "crosshair" : mode.kind === "ghost" ? "move" : mode.kind === "normal" ? "" : "copy";
-
-		const down = (e: MapMouseEvent) => {
-			if (e.originalEvent.button !== 0) return;
-			if (mode.kind === "lasso") {
-				drawing.current = [atlasAt(e)];
-				setLasso(null);
-			} else if (mode.kind === "ghost") drag.current = { start: atlasAt(e), centre: mode.centre };
-		};
-		const move = (e: MapMouseEvent) => {
-			if (mode.kind === "lasso" && drawing.current) {
-				drawing.current.push(atlasAt(e));
-				if (!shapeFrame.current)
-					shapeFrame.current = requestAnimationFrame(() => {
-						shapeFrame.current = 0;
-						if (drawing.current) setShape([...drawing.current]);
-					});
-			} else if (mode.kind === "ghost" && drag.current) {
-				const [x, y] = atlasAt(e);
-				const { start, centre } = drag.current;
-				setMode({ ...mode, centre: [centre[0] + x - start[0], centre[1] + y - start[1]] });
-			}
-		};
-		const up = async (e: MapMouseEvent) => {
-			if (mode.kind === "ghost") {
-				drag.current = null;
-				return;
-			}
-			if (mode.kind !== "lasso" || !drawing.current) return;
-			const polygon = drawing.current;
-			drawing.current = null;
+	// --- the lasso (drawn by LassoDraw): how many maps it holds, then their biome is picked
+	const lassoDrawn = useCallback(
+		async (polygon: Point[], at: { x: number; y: number }) => {
 			if (polygon.length < 3) {
-				showShape(null);
 				setMode({ kind: "normal" });
 				return;
 			}
-			showShape(polygon); // the whole lasso while its biome is picked
 			const mine = ++lassoSeq.current;
 			// another lasso drawn meanwhile, or another atlas opened (its answer can be accepted before the switch
 			// shows: CodeRabbit)
@@ -240,14 +194,38 @@ export function MapInteraction() {
 				if (!current()) return;
 				if (!maps) {
 					showError("No maps inside the lasso.");
-					showShape(null);
 					setMode({ kind: "normal" });
 					return;
 				}
-				setLasso({ polygon, x: e.point.x, y: e.point.y, maps });
+				setLasso({ polygon, x: at.x, y: at.y, maps });
 			} catch (err) {
 				if (current()) showError(err);
 			}
+		},
+		[app, setMode, showError],
+	);
+	const lassoStarted = useCallback(() => {
+		lassoSeq.current++; // the one before's count, still coming, is dropped
+		setLasso(null);
+	}, []);
+
+	// --- drags: the ghost (panning is MapPan's, off in these modes)
+	useEffect(() => {
+		map.getCanvas().style.cursor =
+			mode.kind === "lasso" ? "crosshair" : mode.kind === "ghost" ? "move" : mode.kind === "normal" ? "" : "copy";
+		if (mode.kind !== "ghost") return;
+
+		const down = (e: MapMouseEvent) => {
+			if (e.originalEvent.button === 0) drag.current = { start: atlasAt(e), centre: mode.centre };
+		};
+		const move = (e: MapMouseEvent) => {
+			if (!drag.current) return;
+			const [x, y] = atlasAt(e);
+			const { start, centre } = drag.current;
+			setMode({ ...mode, centre: [centre[0] + x - start[0], centre[1] + y - start[1]] });
+		};
+		const up = () => {
+			drag.current = null;
 		};
 		map.on("mousedown", down);
 		map.on("mousemove", move);
@@ -257,7 +235,7 @@ export function MapInteraction() {
 			map.off("mousemove", move);
 			map.off("mouseup", up);
 		};
-	}, [map, mode, atlasAt, setMode, app, showError, showShape]);
+	}, [map, mode, atlasAt, setMode]);
 
 	// --- keys: Esc cancels, Enter places the ghost
 	useEffect(() => {
@@ -265,10 +243,8 @@ export function MapInteraction() {
 			const t = e.target as HTMLElement | null;
 			if (t && (t.tagName === "INPUT" || t.tagName === "TEXTAREA" || t.isContentEditable)) return;
 			if (e.key === "Escape" && mode.kind !== "normal") {
-				drawing.current = null;
 				drag.current = null; // a ghost drag ends too (it moved the next ghost: CodeRabbit)
 				lassoSeq.current++;
-				showShape(null);
 				setLasso(null);
 				setMode({ kind: "normal" });
 			} else if (e.key === "Escape") {
@@ -285,7 +261,7 @@ export function MapInteraction() {
 		};
 		window.addEventListener("keydown", onKey);
 		return () => window.removeEventListener("keydown", onKey);
-	}, [mode, setMode, app, showError, showShape]);
+	}, [mode, setMode, app, showError]);
 
 	// --- right click
 	useEffect(() => {
@@ -331,7 +307,6 @@ export function MapInteraction() {
 	const chooseBiome = async (biome: string | null) => {
 		const l = lasso;
 		setLasso(null);
-		showShape(null);
 		setMode({ kind: "normal" });
 		if (!l || biome === null) return;
 		try {
@@ -343,7 +318,7 @@ export function MapInteraction() {
 
 	return (
 		<>
-			<LassoLayers points={shape} />
+			{mode.kind === "lasso" && <LassoDraw onStart={lassoStarted} onDrawn={lassoDrawn} />}
 			{menu && (
 				<MapMenu
 					x={menu.x}

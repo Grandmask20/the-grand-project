@@ -160,17 +160,6 @@ export const previewLayers = (): Spec[] => [
 	},
 ];
 
-/** The lasso being drawn round the maps of a city biome. */
-export const lassoLayers = (): Spec[] => [
-	{ id: "lasso-fill", type: "fill", source: "lasso", paint: { "fill-color": "#c8a45c", "fill-opacity": 0.12 } },
-	{
-		id: "lasso",
-		type: "line",
-		source: "lasso",
-		paint: { "line-color": "#c8a45c", "line-width": 2, "line-dasharray": [2, 1] },
-	},
-];
-
 /** The screenshots coming in while the timelapse plays: only the current step's outline shows (by opacity, at once:
  * setting new outline data on every step was handled in the background and trailed the replay, user). */
 export const outlineLayer = (step: number | null): Spec => ({

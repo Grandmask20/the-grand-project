@@ -47,8 +47,7 @@ export const LAYER_ORDER = [
 	"ghost-line",
 	"preview-line",
 	"preview-agree",
-	"lasso-fill",
-	"lasso",
+	"lasso", // Terra Draw's layers (LassoDraw): on top
 ] as const;
 
 export type LayerId = (typeof LAYER_ORDER)[number];

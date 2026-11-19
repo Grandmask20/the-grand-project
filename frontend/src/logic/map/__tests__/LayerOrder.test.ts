@@ -8,7 +8,6 @@ import {
 	ghostLineLayer,
 	gotoLayer,
 	hitLayers,
-	lassoLayers,
 	markLayers,
 	outlineLayer,
 	previewLayers,
@@ -36,10 +35,9 @@ function everyLayer(): string[] {
 		...markLayers(true),
 		ghostLineLayer(),
 		...previewLayers(),
-		...lassoLayers(),
 		outlineLayer(0),
 	];
-	const byHand = ["terrain", "tint-picture", "fog-picture", "ghost-picture", "preview"];
+	const byHand = ["terrain", "tint-picture", "fog-picture", "ghost-picture", "preview", "lasso"];
 	const gl = ["ground-fade-gl", "models-3d-gl", "paths-3d-gl", "icons-3d-gl"];
 	return [...specs.map((s) => s.id), ...byHand, ...gl];
 }

@@ -1,4 +1,4 @@
-import type { Geo, LngLat, Point } from "@/logic/Geo";
+import type { Geo, LngLat } from "@/logic/Geo";
 
 /** GeoJSON for the layers the page fills itself. */
 export const EMPTY: GeoJSON.FeatureCollection = { type: "FeatureCollection", features: [] };
@@ -30,13 +30,3 @@ export const boxLine = (geo: Geo, [x0, y0, x1, y1]: [number, number, number, num
 			[x0, y1],
 		]),
 	);
-
-/** A polygon drawn by hand (the lasso): closed, and still a valid ring with too few points to enclose anything. */
-export function polygon(geo: Geo, points: Point[]): GeoJSON.Feature {
-	const ring = geo.ring(points);
-	return {
-		type: "Feature",
-		geometry: { type: "Polygon", coordinates: [ring.length > 3 ? ring : [...ring, ...ring]] },
-		properties: {},
-	};
-}
