@@ -67,30 +67,51 @@ describe("saved routes", () => {
 		expect(addMap(main, 9, graph)).toBe("No known path from the route to map #9.");
 	});
 
-	it("takes a map off with the rest of its leg and the branches off them", () => {
+	it("takes a map off with its shorter side, and the branches off the maps taken off", () => {
 		const legs = [
 			[1, 2, 3, 5, 6],
 			[3, 4, 8],
 		];
+		// a branch: toward its tip
 		expect(removeMap(legs, 8)).toEqual([
 			[1, 2, 3, 5, 6],
 			[3, 4],
 		]);
 		expect(removeMap(legs, 4)).toEqual([[1, 2, 3, 5, 6]]);
+		// the main leg's end: the map alone
 		expect(removeMap(legs, 6)).toEqual([
 			[1, 2, 3, 5],
 			[3, 4, 8],
 		]);
-		// the main leg cut back to where the branch starts: it goes on along the branch
+		// nearer the end: that side; the main leg cut back to where the branch starts goes on along the branch
 		expect(removeMap(legs, 5)).toEqual([[1, 2, 3, 4, 8]]);
-		expect(removeMap(legs, 3)).toEqual([[1, 2]]);
+		// nearer the start: that side (user: the route's first maps couldn't be taken off)
+		expect(removeMap(legs, 1)).toEqual([
+			[2, 3, 5, 6],
+			[3, 4, 8],
+		]);
+		expect(removeMap(legs, 2)).toEqual([
+			[3, 5, 6],
+			[3, 4, 8],
+		]);
 	});
 
-	it("takes the first map off only when the route still has two and nothing branches there", () => {
-		expect(removeMap(main, 1)).toEqual([[2, 3, 5, 6]]);
-		expect(removeMap([[1, 2]], 1)).toBe("The route's first map stays: delete the route to start it again.");
+	it("your case: two maps added past the end, then the first two taken off one by one", () => {
+		const added = [[1, 2, 3, 5]];
+		const once = removeMap(added, 1);
+		expect(once).toEqual([[2, 3, 5]]);
+		expect(removeMap(once as number[][], 2)).toEqual([[3, 5]]);
+	});
+
+	it("keeps at least two maps", () => {
+		expect(removeMap([[1, 2]], 1)).toBe("A route needs two maps: delete it instead.");
 		expect(removeMap([[1, 2, 3]], 2)).toBe("A route needs two maps: delete it instead.");
 		expect(removeMap(main, 9)).toBe("Map #9 isn't on the route.");
+	});
+
+	it("a map before the route's first map: the route starts there (it made a branch)", () => {
+		// 7 hangs off 6; a route 6 - 5 - 3 starts on 6
+		expect(addMap([[6, 5, 3]], 7, graph)).toEqual([[7, 6, 5, 3]]);
 	});
 
 	it("takes the route's map nearest a click, when near enough (an icon beside it can belong to another map)", () => {

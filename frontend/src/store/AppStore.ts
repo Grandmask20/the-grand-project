@@ -89,9 +89,10 @@ export interface AppStoreState {
 	pages: Record<string, string>;
 	setPage: (tab: string, page: string) => void;
 	/** Layers shown because you changed one of their View settings (cleared when you leave the tab). */
-	/** The layers shown because a View setting of theirs is in use (RevealWhileUsed). */
+	/** The layers shown because a View setting of theirs is in use (RevealWhileUsed), and notices (VIEW_NOTICE). */
 	editing: string[];
-	/** A layer's setting is in use: it shows until the returned release, and a moment after. */
+	/** A layer's setting is in use: it shows until the returned release (user: only while a slider is held or a
+	 * dropdown open; no timer). */
 	hold: (layer: string) => () => void;
 	selected: ItemInfo | null;
 	select: (info: ItemInfo | null) => void;
@@ -121,7 +122,11 @@ export interface AppStoreState {
 	highlight: string | null;
 	setHighlight: (type: string | null) => void;
 	mode: MapMode;
+	/** A map mode starts or ends; none starts while the timelapse is open (user: Route, then the timelapse, and a
+	 * click in it took a map). */
 	setMode: (mode: MapMode) => void;
+	/** Biome select's menu is up (its note would still say to draw). */
+	lassoAsked: boolean;
 	fly: { x: number; y: number; px?: number; n: number } | null;
 	flyTo: (x: number, y: number, px?: number) => void;
 	fitAtlas: number;
@@ -181,9 +186,6 @@ function letGoAll(): { editing: string[] } {
 	return { editing: [] };
 }
 
-/** How long a layer stays shown after its setting was let go (ms): a click's change can be seen. */
-export const REVEAL_LINGER_MS = 1200;
-
 /** Counts selections: a click's answer that comes back after a newer selection is dropped. */
 let selectSeq = 0;
 
@@ -216,15 +218,12 @@ export const useAppStore = create<AppStoreState>()((set) => ({
 		set({ editing: [...holds.keys()] });
 		let done = false;
 		return () => {
-			if (done) return;
+			if (done || era !== holdEra) return; // (let go twice, or all let go meanwhile: the tab changed)
 			done = true;
-			setTimeout(() => {
-				if (era !== holdEra) return; // (all let go meanwhile: the tab changed)
-				const n = (holds.get(layer) ?? 1) - 1;
-				if (n > 0) holds.set(layer, n);
-				else holds.delete(layer);
-				useAppStore.setState({ editing: [...holds.keys()] });
-			}, REVEAL_LINGER_MS);
+			const n = (holds.get(layer) ?? 1) - 1;
+			if (n > 0) holds.set(layer, n);
+			else holds.delete(layer);
+			useAppStore.setState({ editing: [...holds.keys()] });
 		};
 	},
 	selected: null,
@@ -262,7 +261,8 @@ export const useAppStore = create<AppStoreState>()((set) => ({
 	highlight: null,
 	setHighlight: (highlight) => set({ highlight }),
 	mode: { kind: "normal" },
-	setMode: (mode) => set({ mode }),
+	setMode: (mode) => set((st) => (st.replay && mode.kind !== "normal" ? {} : { mode })),
+	lassoAsked: false,
 	fly: null,
 	flyTo: (x, y, px) => set((s) => ({ fly: { x, y, px, n: (s.fly?.n ?? 0) + 1 } })),
 	fitAtlas: 0,
@@ -276,7 +276,12 @@ export const useAppStore = create<AppStoreState>()((set) => ({
 	routeDraft: null,
 	setRouteDraft: (routeDraft) => set({ routeDraft }),
 	replay: null,
-	setReplay: (replay) => set({ replay }),
+	// opening the timelapse ends a map mode and Route's picked maps: it takes the map (user)
+	setReplay: (replay) =>
+		set((st) => ({
+			replay,
+			...(replay && !st.replay ? { mode: { kind: "normal" } as MapMode, routeDraft: null } : {}),
+		})),
 	patchReplay: (r) => set((s) => (s.replay ? { replay: { ...s.replay, ...r } } : {})),
 	filePick: null,
 	pickFiles: (filePick) => set({ filePick }),

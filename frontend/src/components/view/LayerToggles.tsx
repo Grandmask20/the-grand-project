@@ -1,7 +1,8 @@
+import { RouteIcon } from "lucide-react";
 import { useSettings, useUpdateSettings } from "@/hooks/app/UseSettings";
 import { cn } from "@/utils/Cn";
 
-/** "Show on the map": one toggle per layer. Doubtful and Removed change what the app puts in the tiles. */
+/** "Show on the map": one toggle per layer. Removed changes what the app puts in the tiles. */
 export const LAYERS: [string, string][] = [
 	["Terrain", "Ground"],
 	["Paths", "Paths"],
@@ -12,7 +13,6 @@ export const LAYERS: [string, string][] = [
 	["Labels", "Names"],
 	["City & stronghold biomes", "Biomes"],
 	["Recent additions", "Recent"],
-	["Doubtful", "Doubtful"],
 	["Removed", "Removed"],
 	["3D models", "3D models"],
 	["Route", "Routes"], // (one button for the route shown and the saved ones: routesButton)
@@ -21,18 +21,41 @@ export const LAYERS: [string, string][] = [
 
 export const OFF_BY_DEFAULT = new Set(["Doubtful", "Removed"]);
 
-/** The Routes button (user): one press goes on -> saved only -> off -> on. "Route" is the route found or tracked,
- * "Saved routes" the routes saved with the bookmarks. */
+/** The Routes button (user): one press goes on (all) -> saved only (the bookmarked ones) -> off -> on. "Route" is the
+ * route found or tracked, "Saved routes" the routes saved with the bookmarks. `state` / `short`: its words, whole and
+ * for a narrow panel. */
 export function routesButton(layers: Record<string, boolean>): {
 	label: string;
+	state: string;
+	short: string;
 	pressed: boolean | "mixed";
 	next: Record<string, boolean>;
 } {
 	const route = layers.Route !== false;
 	const saved = layers["Saved routes"] !== false;
-	if (route) return { label: "Routes: on", pressed: true, next: { Route: false, "Saved routes": true } };
-	if (saved) return { label: "Routes: saved only", pressed: "mixed", next: { Route: false, "Saved routes": false } };
-	return { label: "Routes: off", pressed: false, next: { Route: true, "Saved routes": true } };
+	const out = (state: string, short: string, pressed: boolean | "mixed", next: Record<string, boolean>) => ({
+		label: `Routes: ${state}`,
+		state,
+		short,
+		pressed,
+		next,
+	});
+	if (route) return out("on", "on", true, { Route: false, "Saved routes": true });
+	if (saved) return out("saved only", "saved", "mixed", { Route: false, "Saved routes": false });
+	return out("off", "off", false, { Route: true, "Saved routes": true });
+}
+
+/** The Routes button's words in its cell: "Routes: saved only" when it fits, "Routes: saved" narrower, the route
+ * symbol and "saved" narrowest (user: it took two cells). The panel's width decides (a container query). */
+export function RoutesLabel({ r }: { r: ReturnType<typeof routesButton> }) {
+	return (
+		<>
+			<RouteIcon className="inline size-3.5 align-[-2px] @min-[21rem]:hidden" aria-hidden />
+			<span className="hidden @min-[21rem]:inline">Routes: </span>
+			<span className="@min-[27rem]:hidden">{r.short}</span>
+			<span className="hidden @min-[27rem]:inline">{r.state}</span>
+		</>
+	);
 }
 
 export function LayerToggles() {
@@ -40,7 +63,7 @@ export function LayerToggles() {
 	const update = useUpdateSettings();
 	const layers = settings?.layers ?? {};
 	return (
-		<div className="grid grid-cols-3 gap-1">
+		<div className="@container grid grid-cols-3 gap-1">
 			{LAYERS.map(([key, label]) => {
 				if (key === "Route") {
 					const r = routesButton(layers);
@@ -49,13 +72,15 @@ export function LayerToggles() {
 							key={key}
 							type="button"
 							aria-pressed={r.pressed}
+							aria-label={r.label}
+							title={r.label}
 							onClick={() => update.mutate({ layers: r.next })}
 							className={cn(
-								"col-span-2 rounded border px-1.5 py-1 text-xs",
+								"truncate rounded border px-1.5 py-1 text-xs",
 								r.pressed ? "border-gold/70 bg-accent text-foreground" : "text-muted-foreground hover:bg-accent/50",
 							)}
 						>
-							{r.label}
+							<RoutesLabel r={r} />
 						</button>
 					);
 				}

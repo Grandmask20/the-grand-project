@@ -2,7 +2,8 @@ import { XIcon } from "lucide-react";
 import { useEffect } from "react";
 import { useAppStore } from "@/store/AppStore";
 
-/** The last error, over the map until closed (or 12 s); a brief one also closes on the next click anywhere. */
+/** The last error, over the map until closed (or 12 s); a brief one also closes on the next click anywhere. It sits in
+ * the notes' column (MapNotes), under them. */
 export function ErrorBanner() {
 	const error = useAppStore((s) => s.error);
 	const brief = useAppStore((s) => s.errorBrief);
@@ -30,7 +31,7 @@ export function ErrorBanner() {
 	return (
 		<div
 			role="alert"
-			className="absolute top-3 left-1/2 z-40 flex max-w-[70%] -translate-x-1/2 items-start gap-3 rounded-md border border-destructive/60 bg-card px-3 py-2 shadow-lg"
+			className="pointer-events-auto flex items-start gap-3 rounded-md border border-destructive/60 bg-card px-3 py-2 shadow-lg"
 		>
 			<span className="whitespace-pre-wrap">{error}</span>
 			<button type="button" aria-label="Close" className="opacity-70 hover:opacity-100" onClick={() => showError(null)}>

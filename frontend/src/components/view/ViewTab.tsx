@@ -7,7 +7,6 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import type { Background } from "@/domain/app/UiSettings";
 import { useMeta } from "@/hooks/app/UseMeta";
 import { usePreviewSettings, useSettings, useUpdateSettings } from "@/hooks/app/UseSettings";
-import { layerOfStyle } from "@/hooks/app/UseShownSettings";
 import { useFrames } from "@/hooks/replay/UseFrames";
 import { cityColours, landmarkColours, styleColour } from "@/logic/Colours";
 import { useAppStore } from "@/store/AppStore";
@@ -56,24 +55,13 @@ export function ViewTab() {
 		</p>
 	);
 	const frames = useFrames(tint !== "off");
-	const hold = useAppStore((s) => s.hold);
 	if (!meta || !settings) return null;
 	const st = settings.style;
-	// a change shows the layer it shapes for a moment, even if its switch is off (a key press, a colour picked; held
-	// controls show it longer: RevealWhileUsed)
-	const showing = (style: Record<string, unknown>) => {
-		for (const k of Object.keys(style)) {
-			const layer = layerOfStyle(k);
-			if (layer) hold(layer)();
-		}
-	};
 	const set = (style: Record<string, string | number | boolean>) => {
-		showing(style);
 		update.mutate({ style });
 	};
 	// a look shown while its slider is dragged, saved when let go
 	const look = (style: Record<string, number>) => {
-		showing(style);
 		preview({ style });
 	};
 	const bg = settings.ui.background ?? "picture";
@@ -146,7 +134,7 @@ export function ViewTab() {
 				{!tilted && (
 					<p className="text-xs text-gold">These apply in the 3D view (the 3D button, or right-drag to tilt).</p>
 				)}
-				<RevealWhileUsed layer="Paths">
+				<RevealWhileUsed layer="Paths" view="3d">
 					<Section title="Paths" locked={lock}>
 						<Path3DPreview st={st} meta={meta} />
 						{slider("height", "d3_path_lift", 0, 30, 1, 3, (v) => `${v}`)}
@@ -155,7 +143,7 @@ export function ViewTab() {
 						{slider("dashes to line", "d3_solid_px", 0, 30, 1, 8, (v) => `${v} px`)}
 					</Section>
 				</RevealWhileUsed>
-				<RevealWhileUsed layer="Icons">
+				<RevealWhileUsed layer="Icons" view="3d">
 					<Section title="Icons" locked={lock}>
 						{slider("reach", "d3_icon_far", 1, 8, 0.1, 2.5, times)}
 						{slider("size", "d3_icon_size", 0.5, 2.5, 0.1, 1.5, times)}
@@ -164,7 +152,7 @@ export function ViewTab() {
 				<Section title="Ground" locked={lock}>
 					{slider("fades out at", "d3_ground_far", 0, 6, 0.1, 2.4, (v) => (v ? times(v) : "never"))}
 				</Section>
-				<RevealWhileUsed layer="3D models">
+				<RevealWhileUsed layer="3D models" view="3d">
 					<Section title="3D models" locked={lock}>
 						{slider("reach", "d3_model_far", 1, 8, 0.1, 2.4, times)}
 						{slider("size", "d3_model_size", 0.3, 3, 0.1, 1, times)}
@@ -235,7 +223,7 @@ export function ViewTab() {
 				</p>
 			</Section>
 
-			<RevealWhileUsed layer="Paths">
+			<RevealWhileUsed layer="Paths" view="2d">
 				<Section title="Paths" locked={lock}>
 					<PathPreview st={st} meta={meta} />
 					<div className="flex flex-wrap items-center gap-3">
@@ -284,7 +272,7 @@ export function ViewTab() {
 				</Section>
 			</RevealWhileUsed>
 
-			<RevealWhileUsed layer="Icons">
+			<RevealWhileUsed layer="Icons" view="2d">
 				<Section title="Icons" locked={lock}>
 					<IconPreview style={iconStyle} size={Number(st.icon_size) || 1} />
 					{choice(
@@ -298,7 +286,7 @@ export function ViewTab() {
 				</Section>
 			</RevealWhileUsed>
 
-			<RevealWhileUsed layer="Nodes">
+			<RevealWhileUsed layer="Nodes" view="2d">
 				<Section title="Maps" locked={lock}>
 					<MapPreview st={st} meta={meta} />
 					<ColourSwatch

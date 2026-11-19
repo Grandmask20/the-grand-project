@@ -100,7 +100,7 @@ A screenshot that might be placed wrong is shown on the map, see-through and out
 - **The side panel** has five tabs: Find, View, Bookmarks (with Route), Atlases (with Auto-add) and Log. A narrow panel shows their icons only.
 - **View tab:**
   - **Background:** *Picture* (the stitched screenshots), *Vector* (flat land with the city / stronghold / ground biomes as areas) or *Off*.
-  - **Show on the map:** Ground, Paths, Maps, Icons, Landmarks, Bookmarks, Names, Biomes, Recent additions, Doubtful, Removed, 3D models, Route and Debug marks.
+  - **Show on the map:** Ground, Paths, Maps, Icons, Landmarks, Bookmarks, Names, Biomes, Recent additions, Removed, 3D models, Routes (on, saved only, off) and Debug marks.
   - **Paths:** colour (click the square), width, style (solid / dashed / dotted), and *drawn by at least N%* of the screenshots that show both maps.
   - **Maps:** colour, size and style (circles / squares / hidden).
   - **City biomes and landmarks:** their colours.
@@ -112,7 +112,7 @@ A screenshot that might be placed wrong is shown on the map, see-through and out
   - *Only what 2+ screenshots show*, *only maps with a ticked icon* and *only potential city maps* narrow the view.
 - **Screenshots** (Find tab), or right-click → *Screenshots of this spot*, lists the source screenshots for a spot.
 - **Route** (Bookmarks tab → Route): set where you are (or right-click a map → *I'm here*; *I'm not here* / *Forget my position* takes it back), then right-click a map → *Route here*, or route to the nearest map with an icon. Routes take the fewest maps.
-- **Route** (top bar): click the map it starts from, then the one it goes to; then *Track now* (the Route page counts the maps left, *Next map* moves you on) or *Save route…* (a bookmark: a click lights it up and fits it in view). Right-click a saved route: *Start tracking now*, or *Adjust route*: click a map to add it (past an end the route goes on; off its side it gets a branch, run where it splits off), right-click one to take it off with the rest of its leg. Tracking marks the map you are on; your position stays as it is. The **Routes** layer button goes on → saved only → off.
+- **Route** (top bar): click the map it starts from, then the one it goes to; then *Track now* (the Route page counts the maps left, *Next map* moves you on) or *Save route…* (a bookmark: a click lights it up and fits it in view). Right-click a saved route: *Start tracking now*, or *Adjust route*: click a map to add it (past an end the route goes on; off its side it gets a branch, run where it splits off), right-click one to take it off (at an end alone, else with its shorter side). *End* on the note over the map, or Esc, ends a map mode. Tracking marks the map you are on; your position stays as it is. The **Routes** layer button goes on → saved only → off.
 - **Replay** (top bar): the atlas being made as a timelapse, by time or swept out from where you started (spiral / distance / scan lines), with a camera that follows. **Record video** saves it as a `.webm` file.
 
 ## 4. Manage the atlas

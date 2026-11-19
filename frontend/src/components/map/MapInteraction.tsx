@@ -16,9 +16,8 @@ import { savedRoute, useRoutes } from "@/hooks/map/UseRoutes";
 import { bookmarkOf, newBookmark } from "@/logic/BookmarkOf";
 import type { Point } from "@/logic/Geo";
 import type { IconLayer3D } from "@/logic/IconLayer3D";
-import { modeCursor, modeHint } from "@/logic/ModeHint";
+import { modeCursor } from "@/logic/ModeHint";
 import type { ModelLayer3D } from "@/logic/ModelLayer3D";
-import { layerOn } from "@/logic/map/AtlasLayers";
 import { wasDrag } from "@/logic/map/PanGuard";
 import type { PathLayer3D } from "@/logic/PathLayer3D";
 import { pickItem } from "@/logic/Pick";
@@ -43,7 +42,6 @@ export function MapInteraction() {
 	const select = useAppStore((s) => s.select);
 	const setTab = useAppStore((s) => s.setTab);
 	const editBookmark = useAppStore((s) => s.editBookmark);
-	const tab = useAppStore((s) => s.tab);
 	const setRouteDraft = useAppStore((s) => s.setRouteDraft);
 	const bookmarks = useBookmarks();
 	const showError = useAppStore((s) => s.showError);
@@ -94,7 +92,7 @@ export function MapInteraction() {
 	);
 
 	// Adjust route (a saved route's right-click menu in Bookmarks): a map clicked goes on the route (past an end, or a
-	// branch off its side), a map right-clicked comes off it with the rest of its leg (user)
+	// branch off its side), a map right-clicked comes off it (removeMap) (user)
 	const adjustRoute = useCallback(
 		async (at: Point, add: boolean, started: MapMode) => {
 			if (started.kind !== "route-edit" || !graph) return;
@@ -254,10 +252,28 @@ export function MapInteraction() {
 		if (mode.kind !== "route-edit" || editedRoute.current?.id !== mode.id) editedRoute.current = null;
 	}, [mode]);
 
-	// Route left another way than its menu (another mode, another tab's button): its picked maps go
+	// a mode ended, however (Esc, End, its button, another mode, the timelapse): what it left goes. Route's picked maps
+	// (a route tracked stays), a lasso drawn and its count still coming, a ghost drag (it moved the next ghost:
+	// CodeRabbit)
 	useEffect(() => {
 		if (mode.kind !== "route" && !routeMenu) setRouteDraft(null);
+		if (mode.kind !== "lasso") {
+			lassoSeq.current++;
+			setLasso(null);
+		}
+		if (mode.kind !== "ghost") drag.current = null;
 	}, [mode, routeMenu, setRouteDraft]);
+
+	// the timelapse opened: Route's menu goes (no route is made in it)
+	const replaying = useAppStore((s) => s.replay !== null);
+	useEffect(() => {
+		if (replaying) setRouteMenu(null);
+	}, [replaying]);
+
+	// Biome select's menu up: its note would still say to draw (MapNotes)
+	useEffect(() => {
+		useAppStore.setState({ lassoAsked: lasso !== null });
+	}, [lasso]);
 
 	// a saved route deleted (its row, its group, Delete with it ticked): what was going on with it ends: tracking it,
 	// lighting it up, adjusting it (user: deleting a route while adjusting it left the mode on, and a click went to it)
@@ -356,11 +372,7 @@ export function MapInteraction() {
 			const t = e.target as HTMLElement | null;
 			if (t && (t.tagName === "INPUT" || t.tagName === "TEXTAREA" || t.isContentEditable)) return;
 			if (e.key === "Escape" && mode.kind !== "normal") {
-				if (mode.kind === "route") setRouteDraft(null); // (its first map's ring goes too; a route tracked stays)
-				drag.current = null; // a ghost drag ends too (it moved the next ghost: CodeRabbit)
-				lassoSeq.current++;
-				setLasso(null);
-				setMode({ kind: "normal" });
+				setMode({ kind: "normal" }); // (what the mode left behind goes: the effect below)
 			} else if (e.key === "Escape") {
 				// with nothing to cancel, Esc empties Find and takes its rings off the map (user: it only worked in the box)
 				useAppStore.getState().clearFind();
@@ -375,7 +387,7 @@ export function MapInteraction() {
 		};
 		window.addEventListener("keydown", onKey);
 		return () => window.removeEventListener("keydown", onKey);
-	}, [mode, setMode, app, showError, setRouteDraft]);
+	}, [mode, setMode, app, showError]);
 
 	// --- right click
 	useEffect(() => {
@@ -490,31 +502,6 @@ export function MapInteraction() {
 					onChoose={chooseRoute}
 				/>
 			)}
-			{/* what a click does now, over the map itself (user: Add bookmark only said so in the side panel) */}
-			{/* the notes over the map: what a click does now, and that bookmarks are hidden while their tab is open
-			    (they have their own switch: a lasting notice, user) */}
-			<div className="pointer-events-none absolute top-2 left-1/2 z-10 flex -translate-x-1/2 flex-col items-center gap-1.5">
-				{mode.kind !== "normal" && !lasso && (
-					<div className="rounded-md border border-gold/60 bg-card/95 px-3 py-1.5 text-sm text-gold shadow">
-						{modeHint(mode)}
-					</div>
-				)}
-				{tab === "bookmarks" && settings && !layerOn(settings, "Bookmarks") && (
-					<div
-						role="status"
-						className="pointer-events-auto flex items-center gap-3 rounded-md border bg-card/95 px-3 py-1.5 text-sm shadow"
-					>
-						Bookmarks are currently hidden
-						<button
-							type="button"
-							className="text-gold hover:underline"
-							onClick={() => update.mutate({ layers: { Bookmarks: true } })}
-						>
-							Show them
-						</button>
-					</div>
-				)}
-			</div>
 		</>
 	);
 }

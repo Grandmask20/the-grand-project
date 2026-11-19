@@ -77,8 +77,9 @@ export function mapsRun(legs: Legs): number {
 	return new Set(legs.flat()).size - 1;
 }
 
-/** A route with a map added: past an end of the route, that leg goes on to it; off its side, a branch from the
- * route's map nearest to it (fewest maps). A message when it can't be. */
+/** A route with a map added: past an end of a leg, that leg goes on to it; before the route's first map, the route
+ * starts there instead (user: it made a branch); off its side, a branch from the route's map nearest to it (fewest
+ * maps). A message when it can't be. */
 export function addMap(legs: Legs, node: number, graph: RouteGraph): Legs | string {
 	const on = new Set(legs.flat());
 	if (on.has(node)) return `Map #${node} is on the route already.`;
@@ -88,23 +89,25 @@ export function addMap(legs: Legs, node: number, graph: RouteGraph): Legs | stri
 	const at = way[0];
 	const leg = legs.findIndex((l) => l[l.length - 1] === at);
 	if (leg >= 0) return legs.map((l, i) => (i === leg ? [...l, ...way.slice(1)] : l));
+	if (legs[0][0] === at) return [[...way.reverse(), ...legs[0].slice(1)], ...legs.slice(1)];
 	return [...legs, way];
 }
 
-/** A route with a map taken off: it and the rest of its leg go, with the branches off them (the route's first map
- * alone, when nothing branches there). A message when it can't be. */
+/** A route with a map taken off, with the maps on its shorter side: on the main leg, toward the nearer end (at an
+ * end, the map alone: user: the route's first maps couldn't be taken off); on a branch, toward its tip. The branches
+ * off the maps taken off go too. A message when it can't be. */
 export function removeMap(legs: Legs, node: number): Legs | string {
 	// the leg the map is on (a branch's first map belongs to the leg it splits off)
 	const i = legs.findIndex((l, k) => l.indexOf(node) >= (k === 0 ? 0 : 1));
 	if (i < 0) return `Map #${node} isn't on the route.`;
-	const j = legs[i].indexOf(node);
-	if (i === 0 && j === 0) {
-		if (legs[0].length > 2 && !legs.some((l, k) => k > 0 && l[0] === node)) return [legs[0].slice(1), ...legs.slice(1)];
-		return "The route's first map stays: delete the route to start it again.";
-	}
-	if (i === 0 && j < 2) return "A route needs two maps: delete it instead.";
-	const gone = new Set(legs[i].slice(j));
-	const kept = legs.map((l, k) => (k === i ? l.slice(0, j) : l));
+	const leg = legs[i];
+	const j = leg.indexOf(node);
+	// the main leg: the start's side when it is the shorter (a tie: the end's side, as on a branch)
+	const startSide = i === 0 && j + 1 < leg.length - j;
+	const keep = startSide ? leg.slice(j + 1) : leg.slice(0, j);
+	if (i === 0 && keep.length < 2) return "A route needs two maps: delete it instead.";
+	const gone = new Set(startSide ? leg.slice(0, j + 1) : leg.slice(j));
+	const kept = legs.map((l, k) => (k === i ? keep : l));
 	// branches off the maps taken off go too, and branches off theirs
 	const dropped = new Set<number>();
 	for (let changed = true; changed; ) {

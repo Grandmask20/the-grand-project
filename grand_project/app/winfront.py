@@ -43,28 +43,28 @@ def _text(get, h) -> str:
     return buf.value
 
 
-def explorer_windows(name: str) -> list[int]:
-    """The visible Explorer windows showing a folder named `name` ("name" or "name - File Explorer").
-
-    Args:
-        name: The folder's name.
+def explorer_titles() -> dict[int, str]:
+    """The visible Explorer windows and their titles (the folder shown: "name" or "name - File Explorer").
 
     Returns:
-        Their window handles.
+        {window handle: title}.
     """
     u = _user32()
-    found: list[int] = []
+    found: dict[int, str] = {}
 
     @ctypes.WINFUNCTYPE(wt.BOOL, wt.HWND, wt.LPARAM)
     def each(h, _l):
         if u.IsWindowVisible(h) and _text(u.GetClassNameW, h) == "CabinetWClass":
-            t = _text(u.GetWindowTextW, h)
-            if t == name or t.startswith(name + " - "):
-                found.append(h)
+            found[h] = _text(u.GetWindowTextW, h)
         return True
 
     u.EnumWindows(each, 0)
     return found
+
+
+def shows(title: str, name: str) -> bool:
+    """Whether an Explorer window's title is that of a folder named `name`."""
+    return title == name or title.startswith(name + " - ")
 
 
 def onto_monitor_of(h: int, other: int) -> bool:
@@ -119,7 +119,13 @@ def to_front(h: int) -> bool:
 
 
 def open_folder_in_front(folder: Path) -> bool:
-    """Open a folder in Explorer, on the monitor of the window in front, and bring it forward.
+    """Bring a folder's Explorer window forward, on the monitor of the window in front: the one already showing it,
+    else the one it opens in.
+
+    A window already showing it is brought as it is, without opening it again: Explorer then made no new window (it
+    reused its own, or opened a tab in another), so waiting for one took the whole wait, and a window of another
+    folder blinked (user). Opened, its window is the one whose title turns to the folder's: a new window, or one that
+    showed something else (a tab opened in it).
 
     Args:
         folder: The folder.
@@ -129,18 +135,14 @@ def open_folder_in_front(folder: Path) -> bool:
     """
     u = _user32()
     front = u.GetForegroundWindow()
-    before = set(explorer_windows(folder.name))
-    os.startfile(folder)  # type: ignore[attr-defined]  # noqa: S606 (a known atlas folder, no shell)
-    win = None
-    end = time.monotonic() + K.FOLDER_FRONT_WAIT
-    while win is None and time.monotonic() < end:
-        time.sleep(K.FOLDER_FRONT_POLL)
-        win = next((w for w in explorer_windows(folder.name) if w not in before), None)
-    # no new window: Explorer showed the folder in one it had open. Only then is an open one taken (it was taken at
-    # once before, before the new window came, and moved while the new one opened where Explorer put it: user)
+    before = explorer_titles()
+    win = next((h for h, t in before.items() if shows(t, folder.name)), None)
     if win is None:
-        now = explorer_windows(folder.name)
-        win = now[0] if now else None
+        os.startfile(folder)  # type: ignore[attr-defined]  # noqa: S606 (a known atlas folder, no shell)
+        end = time.monotonic() + K.FOLDER_FRONT_WAIT
+        while win is None and time.monotonic() < end:
+            time.sleep(K.FOLDER_FRONT_POLL)
+            win = next((h for h, t in explorer_titles().items() if shows(t, folder.name) and before.get(h) != t), None)
     if win is None:
         return False
     onto_monitor_of(win, front)

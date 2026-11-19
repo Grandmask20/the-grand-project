@@ -135,6 +135,9 @@ class AtlasSession(
             # the Maps switch off, kept from the next save on
             s["style"]["map_style"] = "circles"
             s.setdefault("layers", {})["Nodes"] = False
+        if s.get("layers", {}).get("Doubtful"):
+            # Doubtful left the layer buttons (user: room for Routes): saved on, it would stay on with no way off
+            s["layers"]["Doubtful"] = False
         return {
             "layers": {**LAYER_DEFAULTS, **s.get("layers", {})},
             "multi_only": bool(s.get("multi_only", False)),

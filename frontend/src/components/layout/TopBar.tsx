@@ -1,5 +1,5 @@
 import { useQueryClient } from "@tanstack/react-query";
-import { ClapperboardIcon, LassoIcon, MenuIcon, RouteIcon, Undo2Icon } from "lucide-react";
+import { ClapperboardIcon, LassoIcon, MenuIcon, RouteIcon, Undo2Icon, XIcon } from "lucide-react";
 import { AppQueryKeys } from "@/api/AppQueryKeys";
 import tablet from "@/assets/tablet.png";
 import { Button } from "@/components/ui/button";
@@ -166,16 +166,17 @@ export function TopBar() {
 				<Undo2Icon />
 				Undo
 			</Button>
+			{/* on: the button ends it (user: only Esc did, nothing on screen said so); none while the timelapse is open */}
 			<Button
 				size="sm"
 				variant={s.mode.kind === "lasso" ? "default" : "ghost"}
-				disabled={!open}
+				disabled={!open || !!s.replay}
 				onClick={() => s.setMode(s.mode.kind === "lasso" ? { kind: "normal" } : { kind: "lasso" })}
 				title="Set the biome of maps (a city type, a Breach stronghold, or none): draw around them"
 			>
-				<LassoIcon />
+				{s.mode.kind === "lasso" ? <XIcon /> : <LassoIcon />}
 				{/* (not "City biome": strongholds aren't cities, user) */}
-				Biome select
+				{s.mode.kind === "lasso" ? "End biome select" : "Biome select"}
 			</Button>
 			<Button
 				size="sm"
@@ -191,12 +192,12 @@ export function TopBar() {
 			<Button
 				size="sm"
 				variant={s.mode.kind === "route" ? "default" : "ghost"}
-				disabled={!state?.atlas}
+				disabled={!state?.atlas || !!s.replay}
 				onClick={() => s.setMode(s.mode.kind === "route" ? { kind: "normal" } : { kind: "route", from: null })}
 				title="Route: click the map it starts from, then the one it goes to"
 			>
-				<RouteIcon />
-				Route
+				{s.mode.kind === "route" ? <XIcon /> : <RouteIcon />}
+				{s.mode.kind === "route" ? "End route" : "Route"}
 			</Button>
 			<span className="flex-1" />
 			{state?.atlas && (

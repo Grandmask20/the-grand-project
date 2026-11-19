@@ -288,6 +288,11 @@ def test_your_position_reads_in_words_in_the_log():
     assert settings_change_text({"ui": {"player": None}}, set()) == "your position forgotten"
 
 
+def test_doubtful_saved_on_goes_off_now_that_it_has_no_button(session):
+    session.settings["layers"] = {"Doubtful": True}
+    assert session.ui_settings()["layers"]["Doubtful"] is False
+
+
 def test_a_hidden_map_style_saved_before_becomes_the_maps_switch_off():
     from grand_project.app.session import AtlasSession
 
