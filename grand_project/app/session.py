@@ -110,7 +110,6 @@ class AtlasSession(
         self.opening: str | None = None  # the atlas being opened at start (its name), shown on the page meanwhile
         self._closing = False
         self._extra_groups: set[str] = set()  # bookmark groups made empty (kept until the app closes)
-        self._last_bookmark_uid = -1  # the last bookmark id given out: a deleted one's id isn't given again
         self._replay_on = False
         self._plan = None
         self._replay_steps = None

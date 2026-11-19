@@ -51,15 +51,15 @@ class BookmarksMixin:
         """
         if not self.atlas:
             return []
-        marks = self.atlas.bookmarks
-        if any("uid" not in b for b in marks):
-            with self._lock:
-                top = max((int(b["uid"]) for b in marks if "uid" in b), default=-1)
-                for b in marks:
-                    if "uid" not in b:
-                        top += 1
-                        b["uid"] = top
-        return [(int(b["uid"]), b) for b in marks]
+        at = self.atlas
+        with self._lock:
+            # the next id is past every id read (an atlas from before keeps none), so no deletion lowers it
+            at.bookmark_next_uid = max([at.bookmark_next_uid] + [int(b["uid"]) + 1 for b in at.bookmarks if "uid" in b])
+            for b in at.bookmarks:
+                if "uid" not in b:
+                    b["uid"] = at.bookmark_next_uid
+                    at.bookmark_next_uid += 1
+            return [(int(b["uid"]), b) for b in at.bookmarks]
 
     def _bookmark(self, uid: int) -> dict:
         """Return a bookmark.
@@ -201,9 +201,10 @@ class BookmarksMixin:
                 raise StaleAtlas()
             if self.bookmark_at(x, y) is not None:
                 return -1
-            # one past every id this atlas has had (a deleted one's id is not given again while the app runs)
-            i = max([u for u, _b in self.bookmarks_by_id()] + [self._last_bookmark_uid]) + 1
-            self._last_bookmark_uid = i
+            # one past every id this atlas has had, kept in the atlas (a deleted one's id is never given again)
+            self.bookmarks_by_id()
+            i = self.atlas.bookmark_next_uid
+            self.atlas.bookmark_next_uid += 1
             self.atlas.bookmarks.append(
                 {
                     "uid": i,
@@ -377,7 +378,7 @@ class BookmarksMixin:
         bookmark of it.
 
         Args:
-            i: Its index.
+            i: Its id.
         """
         b = self._bookmark(i)
         g = bm_group(b)
@@ -386,9 +387,9 @@ class BookmarksMixin:
             hg = self.settings.setdefault("hidden_groups", {})
             hg[key] = sorted(set(hg.get(key, [])) - {g})
             self.save_settings()
-            for k, o in enumerate(self.atlas.bookmarks):
+            for o in self.atlas.bookmarks:
                 if bm_group(o) == g:
-                    o["hidden"] = k != i
+                    o["hidden"] = o is not b  # (the bookmark itself: a list place isn't its id, CodeRabbit)
         else:
             b["hidden"] = not b.get("hidden")
         self._bookmarks_changed()

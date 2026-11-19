@@ -133,3 +133,31 @@ def test_an_atlas_from_before_gets_ids_and_a_map_carries_its_bookmark(opened):
     # the bookmark's own name, group and note come with the map (no guess while the list loads: CodeRabbit)
     assert info["bookmark_of"] == {"id": info["bookmark"], "name": "here", "group": "Boss", "note": "a note"}
     assert i >= 0
+
+
+def test_a_deleted_id_is_not_given_again_after_a_restart(opened):
+    # the "last id" counter started anew each session: the highest saved id deleted, the next add got it again
+    # (CodeRabbit); it lives in the atlas now
+    s, path, pts = opened
+    before = {u for u, _b in s.bookmarks_by_id()}  # (the test atlas has one of its own)
+    a = s.add_bookmark(pts[1][0], pts[1][1], "a")
+    b = s.add_bookmark(pts[2][0], pts[2][1], "b")
+    s.open_atlas(path)  # as after a restart: read from the file
+    s.delete_bookmarks([b])
+    c = s.add_bookmark(pts[3][0], pts[3][1], "c")
+    assert c not in (a, b)
+    s.open_atlas(path)
+    assert {u for u, _b in s.bookmarks_by_id()} == before | {a, c}
+
+
+def test_showing_one_bookmark_of_a_hidden_group_after_a_deletion(opened):
+    # it compared list places with the id: after a deletion it showed or hid the wrong ones (CodeRabbit)
+    s, _path, pts = opened
+    first = s.add_bookmark(pts[1][0], pts[1][1], "first", "G")
+    keep = s.add_bookmark(pts[2][0], pts[2][1], "keep", "G")
+    other = s.add_bookmark(pts[3][0], pts[3][1], "other", "G")
+    s.delete_bookmarks([first])
+    s.toggle_group("G")
+    s.toggle_bookmark(keep)
+    shown = {b["name"] for _u, b in s.bookmarks_by_id() if b["group"] == "G" and s.bookmark_shown(b)}
+    assert shown == {"keep"} and other != keep

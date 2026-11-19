@@ -115,7 +115,10 @@ class Events:
         m = re.search(r"(\d+)\s*/\s*(\d+)", text)
         tenth = min(10, 10 * int(m[1]) // max(1, int(m[2]))) if m else None
         with self._lock:  # (set from several threads: the worker, Fix seams, the map image build)
-            key = (self.scope if scope is None else scope, task)
+            # the atlas log looked up once, for the "already written" record and the line: looked up again by log(),
+            # an atlas switch between wrote the line into the other atlas's log (CodeRabbit)
+            scope = self.scope if scope is None else scope
+            key = (scope, task)
             if key in self._progress_logged and self._progress_logged[key] == tenth:
                 return
             if len(self._progress_logged) > 200:  # steps with names in them (one per screenshot)
