@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { routeBox, routeTitle, savedRoute, tracking } from "@/hooks/map/UseRoutes";
+import { nextNew, routeBox, routeTitle, savedRoute, tracking } from "@/hooks/map/UseRoutes";
 import { RouteGraph } from "@/logic/Routes";
 
 const graph = new RouteGraph({
@@ -21,19 +21,23 @@ describe("routes", () => {
 		expect(tracking([252, 253, 262], 2)).toMatch(/You're there/);
 	});
 
+	it("a branch run there and back: the maps on the way back aren't counted or stopped on again", () => {
+		const walk = [1, 2, 3, 4, 3, 5, 6]; // 4 is a branch off 3
+		expect(tracking(walk, 2)).toBe("3 maps left");
+		expect(nextNew(walk, 3)).toBe(5); // from 4 on to 5, past 3
+		expect(tracking(walk, 3)).toBe("2 maps left");
+		expect(nextNew(walk, 6)).toBeNull();
+	});
+
 	it("a saved route keeps its ends, its map count and its line", () => {
 		const path = graph.shortest(252, (u) => u === 262) ?? [];
 		const r = savedRoute(graph, path);
-		expect(r).toEqual({
-			from: 252,
-			to: 262,
-			maps: 2,
-			line: [
-				[0, 0],
-				[100, 0],
-				[100, 300],
-			],
-		});
+		const spots: [number, number][] = [
+			[0, 0],
+			[100, 0],
+			[100, 300],
+		];
+		expect(r).toEqual({ from: 252, to: 262, maps: 2, legs: [{ maps: spots, line: spots }] });
 		// (user's format: name, then its ends)
 		expect(routeTitle("route1", r)).toBe("route1 (map #252 -> map #262)");
 	});

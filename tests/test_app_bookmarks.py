@@ -165,15 +165,37 @@ def test_showing_one_bookmark_of_a_hidden_group_after_a_deletion(opened):
     assert shown == {"keep"} and other != keep
 
 
-def test_a_saved_route_is_a_bookmark_with_its_line_and_no_pin(opened):
+def test_a_saved_route_is_a_bookmark_with_its_maps_and_line_and_no_pin(opened):
     s, path, pts = opened
     line = [[pts[1][0], pts[1][1]], [pts[2][0], pts[2][1]], [pts[3][0], pts[3][1]]]
-    r = s.add_bookmark(pts[1][0], pts[1][1], "route1", "Routes", route={"from": 1, "to": 3, "maps": 2, "line": line})
+    leg = {"maps": line, "line": line}
+    r = s.add_bookmark(pts[1][0], pts[1][1], "route1", "Routes", route={"from": 1, "to": 3, "maps": 2, "legs": [leg]})
     # no pin: the map it starts on can still be bookmarked, and a click there picks the map, not the route
     assert s.add_bookmark(pts[1][0], pts[1][1], "the map") >= 0
     assert s.pick(pts[1][0], pts[1][1], 1.0)[0] != "bookmark" or s.pick(pts[1][0], pts[1][1], 1.0)[1] != r
     item = next(b for g in s.bookmarks_payload()["groups"] for b in g["items"] if b["id"] == r)
-    assert item["route"] == {"from": 1, "to": 3, "maps": 2, "line": [[round(x, 1), round(y, 1)] for x, y in line]}
+    kept = [[round(x, 1), round(y, 1)] for x, y in line]
+    assert item["route"] == {"from": 1, "to": 3, "maps": 2, "legs": [{"maps": kept, "line": kept}]}
     assert core.Atlas.load(path).bookmarks[-2]["route"]["to"] == 3  # kept in the atlas
-    with pytest.raises(ValueError):
-        s.add_bookmark(0, 0, "bad", route={"from": 1, "to": 2, "line": [[0, 0]]})  # one point: no route
+    with pytest.raises(ValueError):  # one point: no route
+        s.add_bookmark(0, 0, "bad", route={"from": 1, "to": 2, "legs": [{"maps": line, "line": [[0, 0]]}]})
+    with pytest.raises(ValueError):  # no legs
+        s.add_bookmark(0, 0, "bad", route={"from": 1, "to": 2, "legs": []})
+
+
+def test_a_saved_routes_maps_change_with_a_branch(opened):
+    # Add maps off the route's side makes a branch (user); the log says what it is now
+    s, path, pts = opened
+    main = [[pts[1][0], pts[1][1]], [pts[2][0], pts[2][1]]]
+    branch = [[pts[2][0], pts[2][1]], [pts[4][0], pts[4][1]]]
+    legs = [{"maps": main, "line": main}]
+    r = s.add_bookmark(0, 0, "route1", route={"from": 1, "to": 2, "maps": 1, "legs": legs})
+    s.set_bookmark_route(r, {"from": 1, "to": 2, "maps": 2, "legs": [*legs, {"maps": branch, "line": branch}]})
+    assert len(core.Atlas.load(path).bookmarks[-1]["route"]["legs"]) == 2
+    assert LOGGED in s.events.log_lines[-1]
+    plain = s.add_bookmark(pts[5][0], pts[5][1], "a map")
+    with pytest.raises(ValueError):  # not a route
+        s.set_bookmark_route(plain, {"from": 1, "to": 2, "legs": legs})
+
+
+LOGGED = "Route route1 changed: map #1 to map #2, 2 maps, 1 branch"

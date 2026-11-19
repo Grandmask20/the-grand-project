@@ -781,6 +781,15 @@ class Handler(BaseHTTPRequestHandler):
         self.S.edit_bookmark(int(i), b.get("name", ""), b.get("group", "Other"), b.get("note", ""))
         self._json({"ok": True})
 
+    @route("POST", "/api/bookmarks/route")
+    def post_bookmark_route(self, q) -> None:
+        """Change a saved route's maps."""
+        b = self._body()
+        if not isinstance(b.get("route"), dict):
+            raise ApiError("a route is needed", 400)
+        self.S.set_bookmark_route(int(b["id"]), b["route"])
+        self._json({"ok": True})
+
     @route("POST", "/api/bookmarks/delete")
     def post_delete_bookmarks(self, q) -> None:
         """Delete bookmarks."""

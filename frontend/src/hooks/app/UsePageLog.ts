@@ -24,6 +24,7 @@ const MODES: Record<MapMode["kind"], string> = {
 	ghost: "Placing a screenshot by hand",
 	"debug-link": "Debug: missing path (click the second map)",
 	route: "Route (click two maps)",
+	"route-edit": "Changing a saved route's maps",
 };
 
 /** What you did on the page between two store states, as log lines anyone can read ("Opened the Bookmarks tab",

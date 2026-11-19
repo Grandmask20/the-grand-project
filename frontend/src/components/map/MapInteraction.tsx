@@ -3,6 +3,7 @@ import type { MapLayerMouseEvent, MapMouseEvent } from "maplibre-gl";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { AppQueryKeys } from "@/api/AppQueryKeys";
 import { sameAtlas } from "@/api/Http";
+import type { Bookmarks, SavedRoute } from "@/domain/bookmarks/Bookmarks";
 import type { ItemInfo } from "@/domain/map/ItemInfo";
 import { useAppClient } from "@/hooks/app/UseAppClient";
 import { useAppState } from "@/hooks/app/UseAppState";
@@ -20,6 +21,7 @@ import type { ModelLayer3D } from "@/logic/ModelLayer3D";
 import { layerOn } from "@/logic/map/AtlasLayers";
 import type { PathLayer3D } from "@/logic/PathLayer3D";
 import { pickItem } from "@/logic/Pick";
+import { addMap, legsOf, nearestOn, removeMap, savedRouteOf } from "@/logic/SavedRoutes";
 import { useAppStore } from "@/store/AppStore";
 import { plural } from "@/utils/Format";
 import { BiomeMenu } from "./BiomeMenu";
@@ -49,7 +51,10 @@ export function MapInteraction() {
 	const update = useUpdateSettings();
 	const atlasFile = usePlayer().atlas; // your position is kept with the atlas it was set in
 	const debug = !!useAppState().data?.debug;
-	const graph = useRouteGraph(mode.kind === "player" || mode.kind === "route");
+	const graph = useRouteGraph(mode.kind === "player" || mode.kind === "route" || mode.kind === "route-edit");
+	// a saved route being changed (Add / Remove maps): as it is after the last click, so a click before the list
+	// came back builds on it
+	const editedRoute = useRef<{ id: number; route: SavedRoute } | null>(null);
 	const routes = useRoutes();
 	const [menu, setMenu] = useState<{ x: number; y: number; at: Point; hit: ItemInfo | null } | null>(null);
 	const lassoSeq = useRef(0);
@@ -148,6 +153,47 @@ export function MapInteraction() {
 						setRouteMenu({ path, x: e.point.x, y: e.point.y });
 						break;
 					}
+					case "route-edit": {
+						// a map clicked goes on the saved route (past an end, or a branch off its side) or comes off it,
+						// with the rest of its leg (user)
+						const still = await pickHere();
+						if (!still || !graph) break;
+						const { hit } = still;
+						const picked = hit?.kind === "node" ? hit.id : (hit?.node ?? graph.nearest(at[0], at[1]));
+						const listed = queryClient
+							.getQueryData<Bookmarks>(AppQueryKeys.bookmarks)
+							?.groups.flatMap((g) => g.items)
+							.find((b) => b.id === mode.id)?.route;
+						const before = editedRoute.current?.id === mode.id ? editedRoute.current.route : listed;
+						if (!before) {
+							setMode({ kind: "normal" });
+							break;
+						}
+						const legs = legsOf(before, graph);
+						if (!legs) {
+							showError("This route's maps aren't on this atlas any more.", true);
+							break;
+						}
+						// taking maps off: the route's own map nearest the click, near enough (an icon beside it can
+						// belong to another map)
+						const reach = ROUTE_EDIT_REACH_PX / geo.pxPerUnit(map.getZoom());
+						const node = mode.add ? picked : (nearestOn(legs, graph, at, reach) ?? picked);
+						if (node === null) break;
+						const next = mode.add ? addMap(legs, node, graph) : removeMap(legs, node);
+						if (typeof next === "string") {
+							showError(next, true);
+							break;
+						}
+						const route = savedRouteOf(next, graph);
+						editedRoute.current = { id: mode.id, route };
+						try {
+							await app.setBookmarkRoute(mode.id, route);
+						} catch (err) {
+							editedRoute.current = null; // (the list holds what was saved)
+							throw err;
+						}
+						break;
+					}
 					case "debug-link": {
 						const still = await pickHere();
 						if (!still) break;
@@ -192,7 +238,14 @@ export function MapInteraction() {
 		clickAt,
 		pick3d,
 		atlasFile,
+		queryClient,
+		geo,
 	]);
+
+	// another mode, or another route: what was changed is in the list now
+	useEffect(() => {
+		if (mode.kind !== "route-edit" || editedRoute.current?.id !== mode.id) editedRoute.current = null;
+	}, [mode]);
 
 	// --- double click: place the ghost, else zoom in
 	useEffect(() => {
@@ -436,3 +489,5 @@ export function MapInteraction() {
 		</>
 	);
 }
+
+const ROUTE_EDIT_REACH_PX = 24; // Remove maps: a click this near (screen px) to a map of the route takes that map

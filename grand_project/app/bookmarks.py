@@ -1,9 +1,11 @@
 """app.bookmarks: part of AtlasSession (a mixin; see app/session.py): bookmarks and their groups.
 
 Bookmarks are kept in the atlas file ({uid, name, group, note, x, y, created, hidden?, route?}). A saved route is a
-bookmark with a "route" ({from, to, maps, line}: its first and last map's numbers when saved, how many maps it runs,
-and the line along its paths in atlas units, kept so it draws and fits after the atlas is rebuilt); it has no pin on
-the map and doesn't hold its spot. A bookmark's id is its uid,
+bookmark with a "route" ({from, to, maps, legs}: its first and last map's numbers, how many maps it runs, and its legs:
+the main one, then a branch for each map added off its side, each {maps, line}: its maps' spots and the line along its
+paths, in atlas units, kept so it draws, fits and is tracked after the atlas is rebuilt; a branch starts on a map of
+the route). Routes saved before branches held one "line" and no maps. A route has no pin on the map and doesn't hold
+its spot. A bookmark's id is its uid,
 which stays when others are deleted (it was its place in the list: a page still holding an old number deleted or
 edited the bookmark that moved into that place, CodeRabbit); atlases from before get uids when first read.
 Groups hidden on the map are kept per atlas in the settings (settings["hidden_groups"][atlas path]). Empty groups
@@ -17,7 +19,7 @@ import time
 
 from grand_project import logs as atlas_log
 
-from .constants import CATEGORIES, ROUTE_POINTS_MAX, SAME_SPOT
+from .constants import CATEGORIES, ROUTE_LEGS_MAX, ROUTE_POINTS_MAX, SAME_SPOT
 from .events import StaleAtlas
 from .icons import icon_label, icon_name
 
@@ -36,23 +38,31 @@ def bm_group(b: dict) -> str:
     return b.get("group") or b.get("category") or "Other"
 
 
+def _points(pts, least: int, what: str) -> list[list[float]]:
+    if not isinstance(pts, list) or len(pts) < least:
+        raise ValueError(f"a route's {what} needs {least} points or more")
+    return [[round(float(p[0]), 1), round(float(p[1]), 1)] for p in pts]
+
+
 def clean_route(route: dict) -> dict:
     """Check a route sent to be saved and keep only what a saved route holds.
 
     Args:
-        route: {"from", "to", "maps", "line": [[x, y], ...]} from the page.
+        route: {"from", "to", "maps", "legs": [{"maps": [[x, y], ...], "line": [[x, y], ...]}, ...]} from the page.
 
     Returns:
         The route, with plain numbers.
 
     Raises:
-        ValueError: When it isn't a route (no line of at least two points, or too long).
+        ValueError: When it isn't a route (no legs, a leg without two maps or its line, or too long).
     """
-    line = route.get("line")
-    if not isinstance(line, list) or not 2 <= len(line) <= ROUTE_POINTS_MAX:
-        raise ValueError("a route needs its line (2 points or more)")
-    pts = [[round(float(p[0]), 1), round(float(p[1]), 1)] for p in line]
-    return {"from": int(route["from"]), "to": int(route["to"]), "maps": int(route.get("maps", 0)), "line": pts}
+    legs = route.get("legs")
+    if not isinstance(legs, list) or not 1 <= len(legs) <= ROUTE_LEGS_MAX:
+        raise ValueError(f"a route needs 1 to {ROUTE_LEGS_MAX} legs")
+    if sum(len(g.get("line") or []) + len(g.get("maps") or []) for g in legs if isinstance(g, dict)) > ROUTE_POINTS_MAX:
+        raise ValueError("that route is too long to save")
+    out = [{"maps": _points(g.get("maps"), 2, "leg"), "line": _points(g.get("line"), 2, "line")} for g in legs]
+    return {"from": int(route["from"]), "to": int(route["to"]), "maps": int(route.get("maps", 0)), "legs": out}
 
 
 class BookmarksMixin:
@@ -300,6 +310,29 @@ class BookmarksMixin:
         b.update(name=name.strip(), group=group.strip() or "Other", note=note)
         b.pop("category", None)
         self._bookmarks_changed()
+
+    def set_bookmark_route(self, i: int, route: dict) -> None:
+        """Change a saved route's maps (Add maps / Remove maps on it in Bookmarks).
+
+        Args:
+            i: The route bookmark's id.
+            route: The route as it is now (see clean_route).
+
+        Raises:
+            ValueError: With no such bookmark, one that isn't a route, or no route.
+        """
+        route = clean_route(route)
+        with self._lock:
+            b = self._bookmark(i)
+            if "route" not in b:
+                raise ValueError(f"{b['name']} isn't a route")
+            b["route"] = route
+        self._bookmarks_changed()
+        branches = len(route["legs"]) - 1
+        self.events.log(
+            f"Route {b['name']} changed: map #{route['from']} to map #{route['to']}, {route['maps']} maps"
+            + (f", {branches} branch{'es' if branches != 1 else ''}" if branches else "")
+        )
 
     def delete_bookmarks(self, ids: list[int]) -> list[str]:
         """Delete bookmarks.

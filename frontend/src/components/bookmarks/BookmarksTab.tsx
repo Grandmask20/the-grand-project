@@ -10,11 +10,14 @@ import {
 import { useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
+import type { Bookmark, SavedRoute } from "@/domain/bookmarks/Bookmarks";
 import { useAppClient } from "@/hooks/app/UseAppClient";
 import { useBookmarks } from "@/hooks/bookmarks/UseBookmarks";
 import { routeBox, routeTitle } from "@/hooks/map/UseRoutes";
 import { useAppStoreCalm } from "@/store/AppStore";
+import { cn } from "@/utils/Cn";
 import { plural } from "@/utils/Format";
+import { SavedRouteMenu } from "./SavedRouteMenu";
 
 /** Bookmarks by group: show / hide on the map, go to, edit, move, delete; groups made, renamed, hidden. */
 export function BookmarksTab() {
@@ -25,6 +28,11 @@ export function BookmarksTab() {
 	// an empty group)
 	const [pickedGroups, setPickedGroups] = useState<Set<string>>(new Set());
 	const s = useAppStoreCalm();
+	const [routeMenu, setRouteMenu] = useState<{
+		x: number;
+		y: number;
+		bookmark: Bookmark & { route: SavedRoute };
+	} | null>(null);
 	const groups = bookmarks.data?.groups ?? [];
 	const fail = (e: unknown) => s.showError(e);
 	// only bookmarks still in the list: a picked one deleted meanwhile (by another step, or a group delete that failed
@@ -276,11 +284,24 @@ export function BookmarksTab() {
 									</button>
 									<button
 										type="button"
-										className="flex-1 truncate text-left hover:text-gold"
+										className={cn(
+											"flex-1 truncate text-left hover:text-gold",
+											b.route && s.routeLit === b.id && "text-gold",
+										)}
 										title={b.note || (b.route ? routeTitle(b.name, b.route) : b.name)}
+										onContextMenu={(e) => {
+											// a route's menu: track it, add maps, remove maps (user)
+											const route = b.route;
+											if (!route) return;
+											e.preventDefault();
+											setRouteMenu({ x: e.clientX, y: e.clientY, bookmark: { ...b, route } });
+										}}
 										onClick={async () => {
-											// a route: the whole of it in view, with room round it (user)
-											if (b.route) return s.fitArea(routeBox(b.route));
+											// a route: lit up as a selected bookmark is, the whole of it in view with room round it (user)
+											if (b.route) {
+												s.lightRoute(b.id);
+												return s.fitArea(routeBox(b.route));
+											}
 											s.flyTo(b.x, b.y, 1);
 											try {
 												await s.selectLoaded(app.getInfo("bookmark", b.id));
@@ -309,6 +330,14 @@ export function BookmarksTab() {
 					</div>
 				);
 			})}
+			{routeMenu && (
+				<SavedRouteMenu
+					x={routeMenu.x}
+					y={routeMenu.y}
+					bookmark={routeMenu.bookmark}
+					onClose={() => setRouteMenu(null)}
+				/>
+			)}
 		</div>
 	);
 }

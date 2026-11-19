@@ -103,15 +103,50 @@ export const bookmarkLayer = (geo: Geo, meta: Meta, on: boolean): Spec => ({
 	},
 });
 
-/** The saved routes shown (Bookmarks: a route's eye): their lines, dashed in the bookmarks' colour, under the route
+/** The saved routes shown (Bookmarks: a route's eye): their lines, dashed in the bookmarks' colour, a branch (a map
+ * added off a route's side) in its own colour (user's sketch: the branch apart from the main path), under the route
  * being tracked. */
 export const savedRouteLayer = (meta: Meta, on: boolean): Spec => ({
 	id: "saved-routes",
 	type: "line",
 	source: "saved-routes",
 	layout: { visibility: visibility(on), "line-cap": "round", "line-join": "round" },
-	paint: { "line-color": meta.colours.bookmark, "line-width": 3, "line-opacity": 0.85, "line-dasharray": [2, 1.5] },
+	paint: {
+		"line-color": ["case", ["get", "branch"], ROUTE_BRANCH, meta.colours.bookmark],
+		"line-width": 3,
+		"line-opacity": 0.85,
+		"line-dasharray": [2, 1.5],
+	},
 });
+
+/** A saved route's branches on the map. */
+export const ROUTE_BRANCH = "#4dff6a"; // green, as in the user's sketch (a light blue was lost among the paths)
+
+/** The saved route lit up (clicked in Bookmarks, or its maps being changed): its lines in the selection's colour and
+ * its maps ringed, as a selection is, whatever the switches and its eye say. */
+export function litRouteLayers(geo: Geo, meta: Meta): Spec[] {
+	return [
+		{
+			id: "route-lit",
+			type: "line",
+			source: "route-lit",
+			filter: ["==", ["geometry-type"], "LineString"],
+			layout: { "line-cap": "round", "line-join": "round" },
+			paint: {
+				"line-color": ["case", ["get", "branch"], ROUTE_BRANCH, meta.colours.select],
+				"line-width": 4,
+				"line-opacity": 0.95,
+			},
+		},
+		{
+			id: "route-lit-maps",
+			type: "circle",
+			source: "route-lit",
+			filter: ["==", ["geometry-type"], "Point"],
+			paint: { "circle-radius": ringRadius(geo, 7), ...hollow(meta.colours.select, 2) },
+		},
+	];
+}
 
 /** The debug marks: lines between two maps (dashed for a missing path) and rings on the spot. */
 export function markLayers(on: boolean): Spec[] {

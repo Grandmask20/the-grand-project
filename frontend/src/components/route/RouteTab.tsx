@@ -2,13 +2,15 @@ import { Section } from "@/components/common/Section";
 import { Button } from "@/components/ui/button";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { useTypes } from "@/hooks/find/UseTypes";
-import { useRoutes } from "@/hooks/map/UseRoutes";
+import { nextNew, useRoutes } from "@/hooks/map/UseRoutes";
 import { useAppStore } from "@/store/AppStore";
 
 /** Directions: where you are, the fewest maps to a map or to the nearest map with an icon. */
 export function RouteTab() {
 	const routes = useRoutes();
 	const route = useAppStore((s) => s.route);
+	// the next map not run yet (a branch is run there and back: the maps on the way back are run already)
+	const next = route?.at !== undefined ? nextNew(route.path, route.at) : null;
 	const mode = useAppStore((s) => s.mode);
 	const setMode = useAppStore((s) => s.setMode);
 	const flyTo = useAppStore((s) => s.flyTo);
@@ -69,10 +71,10 @@ export function RouteTab() {
 					<p className="font-medium">{route.message}</p>
 					<p className="text-xs text-muted-foreground">
 						On map #{route.path[route.at]}
-						{route.at + 1 < route.path.length && <>, next: map #{route.path[route.at + 1]}</>}
+						{next !== null && <>, next: map #{route.path[next]}</>}
 					</p>
 					<div className="flex gap-1.5">
-						<Button size="xs" disabled={route.at + 1 >= route.path.length} onClick={routes.nextMap}>
+						<Button size="xs" disabled={next === null} onClick={routes.nextMap}>
 							Next map
 						</Button>
 						<Button size="xs" variant="outline" onClick={routes.clear}>

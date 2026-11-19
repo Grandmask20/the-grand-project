@@ -26,7 +26,9 @@ export type MapMode =
 	| { kind: "ghost"; ghost: Ghost; centre: Point }
 	| { kind: "debug-link"; from: number; note: string }
 	// Route (top bar): the first map picked, then the last
-	| { kind: "route"; from: number | null };
+	| { kind: "route"; from: number | null }
+	// Add maps / Remove maps on a saved route (Bookmarks, right-click): each map clicked changes it
+	| { kind: "route-edit"; id: number; add: boolean };
 
 export type FilePick = {
 	title: string;
@@ -91,6 +93,10 @@ export interface AppStoreState {
 	reveal: (layer: string) => void;
 	selected: ItemInfo | null;
 	select: (info: ItemInfo | null) => void;
+	/** The saved route lit up on the map (its bookmark id): clicked in Bookmarks, or being changed (user: it didn't
+	 * light up as a bookmark does). Selecting anything else puts it out. */
+	routeLit: number | null;
+	lightRoute: (id: number | null) => void;
 	/** Select what a click loads, unless something else was selected (or clicked) meanwhile (CodeRabbit). */
 	selectLoaded: (load: Promise<ItemInfo>) => Promise<void>;
 	results: ResultRow[];
@@ -169,7 +175,9 @@ export const useAppStore = create<AppStoreState>()((set) => ({
 				// leaving the View tab: the layers its settings showed go back to their switches
 				...(tab !== st.tab && st.editing.length ? { editing: [] } : {}),
 				...(page ? { pages: { ...st.pages, [tab]: page } } : {}),
-				...(st.mode.kind === "bookmark" && tab !== "bookmarks" ? { mode: { kind: "normal" } as MapMode } : {}),
+				...((st.mode.kind === "bookmark" || st.mode.kind === "route-edit") && tab !== "bookmarks"
+					? { mode: { kind: "normal" } as MapMode }
+					: {}),
 			};
 		}),
 	pages: {},
@@ -179,12 +187,17 @@ export const useAppStore = create<AppStoreState>()((set) => ({
 	selected: null,
 	select: (selected) => {
 		selectSeq++;
-		set({ selected });
+		set({ selected, routeLit: null });
 	},
 	selectLoaded: async (load) => {
 		const mine = ++selectSeq;
 		const info = await load;
-		if (mine === selectSeq) set({ selected: info });
+		if (mine === selectSeq) set({ selected: info, routeLit: null });
+	},
+	routeLit: null,
+	lightRoute: (routeLit) => {
+		selectSeq++;
+		set({ routeLit, ...(routeLit !== null ? { selected: null } : {}) });
 	},
 	results: [],
 	resultsTitle: "",
@@ -248,6 +261,7 @@ export const useAppStore = create<AppStoreState>()((set) => ({
 		set({
 			camera: null,
 			selected: null,
+			routeLit: null,
 			results: [],
 			resultsTitle: "",
 			query: "",

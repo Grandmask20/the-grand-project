@@ -9,13 +9,21 @@ export interface BookmarkGroup {
 	items: Bookmark[];
 }
 
-/** A saved route: its first and last map's numbers when saved, how many maps it runs, and the line along its paths
- * (atlas units), kept so it draws and fits after the atlas is rebuilt. */
+/** A leg of a saved route: its maps' spots and the line along its paths (atlas units). */
+export interface RouteLeg {
+	maps: [number, number][];
+	line: [number, number][];
+}
+
+/** A saved route: its first and last map's numbers, how many maps it runs, and its legs (the main one, then a branch
+ * for each map added off its side), kept by spot so it draws, fits and is tracked after the atlas is rebuilt. One
+ * saved before branches has its one `line` instead. */
 export interface SavedRoute {
 	from: number;
 	to: number;
 	maps: number;
-	line: [number, number][];
+	legs?: RouteLeg[];
+	line?: [number, number][];
 }
 
 export interface Bookmark {

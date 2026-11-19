@@ -39,6 +39,8 @@ export const LAYER_ORDER = [
 	"marks-line",
 	"marks-dashed",
 	"marks-point",
+	"route-lit", // a saved route clicked in Bookmarks: lit up as a selection
+	"route-lit-maps",
 	"selected-path",
 	"ghost-picture", // the screenshot placed by hand and a question's: under the selection ring
 	"preview",

@@ -12,6 +12,19 @@ describe("useAppStore", () => {
 		expect(useAppStore.getState().fitAtlas).toBe(1);
 	});
 
+	it("a saved route lit up and a selection put each other out; leaving Bookmarks ends changing a route", () => {
+		const s = useAppStore.getState();
+		s.select({ kind: "node", id: 1, x: 0, y: 0 } as never);
+		s.lightRoute(5);
+		expect(useAppStore.getState()).toMatchObject({ routeLit: 5, selected: null });
+		s.select(null);
+		expect(useAppStore.getState().routeLit).toBeNull();
+		s.setTab("bookmarks");
+		s.setMode({ kind: "route-edit", id: 5, add: true });
+		s.setTab("find");
+		expect(useAppStore.getState().mode).toEqual({ kind: "normal" });
+	});
+
 	it("patches the replay only while one is open", () => {
 		const s = useAppStore.getState();
 		s.patchReplay({ pos: 3 });

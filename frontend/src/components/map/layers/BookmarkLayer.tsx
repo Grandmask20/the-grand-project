@@ -4,10 +4,11 @@ import { useSettings } from "@/hooks/app/UseSettings";
 import { useBookmarks } from "@/hooks/bookmarks/UseBookmarks";
 import { useMapView } from "@/hooks/map/UseMapView";
 import { layerOn } from "@/logic/map/AtlasLayers";
-import { collection, line } from "@/logic/map/Features";
-import { bookmarkLayer, savedRouteLayer } from "@/logic/map/OverlayLayers";
+import { collection, EMPTY, line, point } from "@/logic/map/Features";
+import { bookmarkLayer, litRouteLayers, savedRouteLayer } from "@/logic/map/OverlayLayers";
+import { routeLines } from "@/logic/SavedRoutes";
 import { useAppStore } from "@/store/AppStore";
-import { MapLayer } from "./MapLayer";
+import { MapLayer, MapLayers } from "./MapLayer";
 
 /**
  * The bookmarks, from the page's bookmark list: the ones neither hidden nor in a hidden group. Hiding a group or a
@@ -27,12 +28,14 @@ export function BookmarkLayer() {
 		for (const g of bookmarks?.groups ?? [])
 			for (const b of g.items) {
 				if (!b.shown) continue;
-				// a saved route: its line, no pin (it isn't a spot)
+				// a saved route: its lines, no pin (it isn't a spot)
 				if (b.route)
 					routes.push(
-						line(
-							b.route.line.map(([x, y]) => geo.toLngLat(x, y)),
-							{ id: b.id },
+						...routeLines(b.route).map((l, i) =>
+							line(
+								l.map(([x, y]) => geo.toLngLat(x, y)),
+								{ id: b.id, branch: i > 0 },
+							),
 						),
 					);
 				else
@@ -48,6 +51,20 @@ export function BookmarkLayer() {
 	const spec = useMemo(() => bookmarkLayer(geo, meta, on), [geo, meta, on]);
 	const routeSpec = useMemo(() => savedRouteLayer(meta, on), [meta, on]);
 
+	// the route lit up: clicked in Bookmarks, or its maps being changed (user: it didn't light up as a bookmark
+	// does); its maps ringed, branches in their colour
+	const litId = useAppStore((s) => (s.mode.kind === "route-edit" ? s.mode.id : s.routeLit));
+	const lit = useMemo(() => {
+		const r = bookmarks?.groups.flatMap((g) => g.items).find((b) => b.id === litId)?.route;
+		if (!r || replaying) return EMPTY;
+		const at = ([x, y]: [number, number]) => geo.toLngLat(x, y);
+		return collection([
+			...routeLines(r).map((l, i) => line(l.map(at), { branch: i > 0 })),
+			...(r.legs ?? []).flatMap((l) => l.maps.map((p) => point(at(p)))),
+		]);
+	}, [geo, bookmarks, litId, replaying]);
+	const litSpecs = useMemo(() => litRouteLayers(geo, meta), [geo, meta]);
+
 	return (
 		<>
 			<Source id="bookmarks" type="geojson" data={pins}>
@@ -55,6 +72,9 @@ export function BookmarkLayer() {
 			</Source>
 			<Source id="saved-routes" type="geojson" data={routes}>
 				<MapLayer spec={routeSpec} />
+			</Source>
+			<Source id="route-lit" type="geojson" data={lit}>
+				<MapLayers specs={litSpecs} />
 			</Source>
 		</>
 	);
