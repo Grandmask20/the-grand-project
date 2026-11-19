@@ -1,7 +1,7 @@
 import { act, renderHook } from "@testing-library/react";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { layerOfStyle, useRevealedLayers } from "@/hooks/app/UseShownSettings";
-import { useAppStore } from "@/store/AppStore";
+import { REVEAL_LINGER_MS, useAppStore } from "@/store/AppStore";
 import { resetStore } from "@/test/RenderWithApp";
 
 describe("layerOfStyle", () => {
@@ -42,15 +42,33 @@ describe("useRevealedLayers", () => {
 		expect(result.current).toEqual(["Route"]);
 	});
 
-	it("keeps a layer you restyled shown until you leave the tab", () => {
-		const { result } = renderHook(() => useRevealedLayers());
-		act(() => {
-			useAppStore.getState().setTab("view");
-			useAppStore.getState().reveal("Icons");
-			useAppStore.getState().reveal("Icons");
-		});
-		expect(result.current).toEqual(["Icons"]);
-		act(() => useAppStore.getState().setTab("find"));
-		expect(result.current).toEqual([]);
+	it("shows a layer while its setting is held, a moment after, and not after you leave the tab", () => {
+		vi.useFakeTimers();
+		try {
+			const { result } = renderHook(() => useRevealedLayers());
+			let release = () => {};
+			act(() => {
+				useAppStore.getState().setTab("view");
+				release = useAppStore.getState().hold("Icons");
+				useAppStore.getState().hold("Icons")(); // (a click: let go at once)
+			});
+			expect(result.current).toEqual(["Icons"]);
+			act(() => vi.advanceTimersByTime(REVEAL_LINGER_MS + 10));
+			expect(result.current).toEqual(["Icons"]); // still held
+			act(() => {
+				release();
+				release(); // (let go twice: counted once)
+			});
+			expect(result.current).toEqual(["Icons"]); // a moment after
+			act(() => vi.advanceTimersByTime(REVEAL_LINGER_MS + 10));
+			expect(result.current).toEqual([]);
+			act(() => {
+				useAppStore.getState().hold("Paths");
+				useAppStore.getState().setTab("find");
+			});
+			expect(result.current).toEqual([]);
+		} finally {
+			vi.useRealTimers();
+		}
 	});
 });

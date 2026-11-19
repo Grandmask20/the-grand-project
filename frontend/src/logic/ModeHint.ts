@@ -18,9 +18,7 @@ export function modeHint(mode: MapMode): string {
 				? "Route: click the map it starts from; Esc cancels"
 				: `Route from map #${mode.from}: now click the map it goes to; Esc cancels`;
 		case "route-edit":
-			return mode.add
-				? "Add maps: click a map past the route's end to go on, or off its side for a branch; Esc when done"
-				: "Remove maps: click a map; it and the rest of its leg go; Esc when done";
+			return "Adjust route: click a map to add it (off the route's side: a branch), right-click one to take it off with the rest of its leg; Esc when done";
 		default:
 			return "";
 	}

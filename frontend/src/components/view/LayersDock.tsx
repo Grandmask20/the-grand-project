@@ -4,7 +4,7 @@ import { useSettings, useUpdateSettings } from "@/hooks/app/UseSettings";
 import { cityColours, styleColour } from "@/logic/Colours";
 import { useAppStore } from "@/store/AppStore";
 import { cn } from "@/utils/Cn";
-import { LAYERS, OFF_BY_DEFAULT } from "./LayerToggles";
+import { LAYERS, OFF_BY_DEFAULT, routesButton } from "./LayerToggles";
 
 /** Layers only the 3D view uses: listed while the map is tilted (user). */
 const ONLY_3D = new Set(["3D models"]);
@@ -52,6 +52,27 @@ export function LayersDock() {
 					{/* toggle buttons: lit when shown (user: this layout reads better than checkboxes) */}
 					<div className="mt-1.5 grid grid-cols-3 gap-1.5">
 						{shown.map(([key, label]) => {
+							if (key === "Route") {
+								// on -> saved only -> off (user: the saved routes had no switch)
+								const r = routesButton(layers);
+								return (
+									<button
+										key={key}
+										type="button"
+										aria-pressed={r.pressed}
+										disabled={recording}
+										onClick={() => update.mutate({ layers: r.next })}
+										className={cn(
+											"col-span-2 truncate rounded-md border px-1.5 py-1 text-xs",
+											r.pressed
+												? "border-gold/70 bg-accent text-foreground"
+												: "border-border text-muted-foreground hover:bg-accent/50",
+										)}
+									>
+										{r.label}
+									</button>
+								);
+							}
 							const on = layers[key] ?? !OFF_BY_DEFAULT.has(key);
 							return (
 								<button

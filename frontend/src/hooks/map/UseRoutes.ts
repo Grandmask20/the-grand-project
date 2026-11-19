@@ -72,44 +72,43 @@ export function useRoutes() {
 	const flyTo = useAppStore((s) => s.flyTo);
 	const setTab = useAppStore((s) => s.setTab);
 
-	/** Track a route (Route in the top bar, Track now): you are on its first map, the Route page shows how many maps
-	 * are left, and Next map moves you on one (user). */
+	/** Track a route (Route in the top bar, Track now): it starts on its first map, the Route page shows how many maps
+	 * are left, and Next map moves on one (user). The route marks where you are on it; your position (I'm here) stays
+	 * as it is. `saved`: the saved route's bookmark, when it is one. */
 	const trackRoute = useCallback(
-		(path: number[]) => {
+		(path: number[], saved?: number) => {
 			if (path.length < 1) return;
-			setRoute({ path, message: tracking(path, 0), at: 0 });
-			setPlayer(path[0]);
+			setRoute({ path, message: tracking(path, 0), at: 0, ...(saved !== undefined ? { saved } : {}) });
 			const p = graph?.at(path[0]);
 			if (p) flyTo(p[0], p[1], 0.6);
 			setTab("route");
 		},
-		[setRoute, setPlayer, graph, flyTo, setTab],
+		[setRoute, graph, flyTo, setTab],
 	);
 
 	/** Track a saved route (Start tracking now on it in Bookmarks): its maps as they are on this atlas, branches run
 	 * where they split off. False when its maps aren't on this atlas any more. */
 	const trackSaved = useCallback(
-		(r: SavedRoute) => {
+		(r: SavedRoute, id: number) => {
 			const legs = graph ? legsOf(r, graph) : null;
 			if (!legs) return false;
-			trackRoute(visitOrder(legs));
+			trackRoute(visitOrder(legs), id);
 			return true;
 		},
 		[graph, trackRoute],
 	);
 
-	/** The next map of the route tracked: it is where you are now, and the map goes there (the maps passed again on
-	 * the way back from a branch are skipped: they're run already). */
+	/** The next map of the route tracked, and the map goes there (the maps passed again on the way back from a branch
+	 * are skipped: they're run already). */
 	const nextMap = useCallback(() => {
 		const r = useAppStore.getState().route;
 		if (!r || r.at === undefined) return;
 		const at = nextNew(r.path, r.at);
 		if (at === null) return;
 		setRoute({ ...r, at, message: tracking(r.path, at) });
-		setPlayer(r.path[at]);
 		const p = graph?.at(r.path[at]);
 		if (p) flyTo(p[0], p[1], 0.6);
-	}, [setRoute, setPlayer, graph, flyTo]);
+	}, [setRoute, graph, flyTo]);
 
 	return { graph, player, setPlayer, clearPlayer, routeTo, routeToNearest, clear, trackRoute, trackSaved, nextMap };
 }

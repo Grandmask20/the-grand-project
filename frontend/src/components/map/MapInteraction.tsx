@@ -19,11 +19,11 @@ import type { IconLayer3D } from "@/logic/IconLayer3D";
 import { modeCursor, modeHint } from "@/logic/ModeHint";
 import type { ModelLayer3D } from "@/logic/ModelLayer3D";
 import { layerOn } from "@/logic/map/AtlasLayers";
+import { wasDrag } from "@/logic/map/PanGuard";
 import type { PathLayer3D } from "@/logic/PathLayer3D";
 import { pickItem } from "@/logic/Pick";
 import { addMap, legsOf, nearestOn, removeMap, savedRouteOf } from "@/logic/SavedRoutes";
-import { useAppStore } from "@/store/AppStore";
-import { plural } from "@/utils/Format";
+import { type MapMode, useAppStore } from "@/store/AppStore";
 import { BiomeMenu } from "./BiomeMenu";
 import { LassoDraw } from "./draw/LassoDraw";
 import { MapMenu } from "./MapMenu";
@@ -44,7 +44,7 @@ export function MapInteraction() {
 	const setTab = useAppStore((s) => s.setTab);
 	const editBookmark = useAppStore((s) => s.editBookmark);
 	const tab = useAppStore((s) => s.tab);
-	const setRoute = useAppStore((s) => s.setRoute);
+	const setRouteDraft = useAppStore((s) => s.setRouteDraft);
 	const bookmarks = useBookmarks();
 	const showError = useAppStore((s) => s.showError);
 	const settings = useSettings();
@@ -93,9 +93,54 @@ export function MapInteraction() {
 		[map, app, pick, clickAt],
 	);
 
+	// Adjust route (a saved route's right-click menu in Bookmarks): a map clicked goes on the route (past an end, or a
+	// branch off its side), a map right-clicked comes off it with the rest of its leg (user)
+	const adjustRoute = useCallback(
+		async (at: Point, add: boolean, started: MapMode) => {
+			if (started.kind !== "route-edit" || !graph) return;
+			const hit = await pick(at);
+			if (useAppStore.getState().mode !== started) return; // (left meanwhile)
+			const picked = hit?.kind === "node" ? hit.id : (hit?.node ?? graph.nearest(at[0], at[1]));
+			const listed = queryClient
+				.getQueryData<Bookmarks>(AppQueryKeys.bookmarks)
+				?.groups.flatMap((g) => g.items)
+				.find((b) => b.id === started.id)?.route;
+			const before = editedRoute.current?.id === started.id ? editedRoute.current.route : listed;
+			if (!before) {
+				setMode({ kind: "normal" });
+				return;
+			}
+			const legs = legsOf(before, graph);
+			if (!legs) {
+				showError("This route's maps aren't on this atlas any more.", true);
+				return;
+			}
+			// taking maps off: the route's own map nearest the click, near enough (an icon beside it can belong to
+			// another map)
+			const reach = ROUTE_EDIT_REACH_PX / geo.pxPerUnit(map.getZoom());
+			const node = add ? picked : (nearestOn(legs, graph, at, reach) ?? picked);
+			if (node === null) return;
+			const next = add ? addMap(legs, node, graph) : removeMap(legs, node);
+			if (typeof next === "string") {
+				showError(next, true);
+				return;
+			}
+			const route = savedRouteOf(next, graph);
+			editedRoute.current = { id: started.id, route };
+			try {
+				await app.setBookmarkRoute(started.id, route);
+			} catch (err) {
+				editedRoute.current = null; // (the list holds what was saved)
+				throw err;
+			}
+		},
+		[graph, pick, queryClient, setMode, showError, geo, map, app],
+	);
+
 	// --- clicks
 	useEffect(() => {
 		const onClick = async (e: MapMouseEvent) => {
+			if (wasDrag()) return; // a pan, not a click
 			const at = mode.kind === "normal" ? clickAt(e) : atlasAt(e);
 			// what was clicked, for a mode still on once the answer comes: left meanwhile (Esc, another tab, another
 			// mode), the click is dropped (it opened the bookmark dialog after Add bookmark had ended: CodeRabbit)
@@ -140,60 +185,23 @@ export function MapInteraction() {
 						if (mode.from === null) {
 							setMode({ kind: "route", from: node });
 							// ringed at once (user: nothing showed until the second map)
-							setRoute({ path: [node], message: `Route from map #${node}` });
+							setRouteDraft([node]);
 							break;
 						}
 						setMode({ kind: "normal" });
 						const path = node === mode.from ? null : graph.shortest(mode.from, (u) => u === node);
 						if (!path) {
+							setRouteDraft(null);
 							showError(`No known path from map #${mode.from} to map #${node}.`, true);
 							break;
 						}
-						setRoute({ path, message: `${plural(path.length - 1, "map")} to run` });
+						setRouteDraft(path);
 						setRouteMenu({ path, x: e.point.x, y: e.point.y });
 						break;
 					}
-					case "route-edit": {
-						// a map clicked goes on the saved route (past an end, or a branch off its side) or comes off it,
-						// with the rest of its leg (user)
-						const still = await pickHere();
-						if (!still || !graph) break;
-						const { hit } = still;
-						const picked = hit?.kind === "node" ? hit.id : (hit?.node ?? graph.nearest(at[0], at[1]));
-						const listed = queryClient
-							.getQueryData<Bookmarks>(AppQueryKeys.bookmarks)
-							?.groups.flatMap((g) => g.items)
-							.find((b) => b.id === mode.id)?.route;
-						const before = editedRoute.current?.id === mode.id ? editedRoute.current.route : listed;
-						if (!before) {
-							setMode({ kind: "normal" });
-							break;
-						}
-						const legs = legsOf(before, graph);
-						if (!legs) {
-							showError("This route's maps aren't on this atlas any more.", true);
-							break;
-						}
-						// taking maps off: the route's own map nearest the click, near enough (an icon beside it can
-						// belong to another map)
-						const reach = ROUTE_EDIT_REACH_PX / geo.pxPerUnit(map.getZoom());
-						const node = mode.add ? picked : (nearestOn(legs, graph, at, reach) ?? picked);
-						if (node === null) break;
-						const next = mode.add ? addMap(legs, node, graph) : removeMap(legs, node);
-						if (typeof next === "string") {
-							showError(next, true);
-							break;
-						}
-						const route = savedRouteOf(next, graph);
-						editedRoute.current = { id: mode.id, route };
-						try {
-							await app.setBookmarkRoute(mode.id, route);
-						} catch (err) {
-							editedRoute.current = null; // (the list holds what was saved)
-							throw err;
-						}
+					case "route-edit":
+						await adjustRoute(at, true, mode); // a left click adds a map (user)
 						break;
-					}
 					case "debug-link": {
 						const still = await pickHere();
 						if (!still) break;
@@ -229,7 +237,7 @@ export function MapInteraction() {
 		select,
 		setTab,
 		editBookmark,
-		setRoute,
+		setRouteDraft,
 		setMode,
 		graph,
 		update,
@@ -238,14 +246,25 @@ export function MapInteraction() {
 		clickAt,
 		pick3d,
 		atlasFile,
-		queryClient,
-		geo,
+		adjustRoute,
 	]);
 
 	// another mode, or another route: what was changed is in the list now
 	useEffect(() => {
 		if (mode.kind !== "route-edit" || editedRoute.current?.id !== mode.id) editedRoute.current = null;
 	}, [mode]);
+
+	// Route left another way than its menu (another mode, another tab's button): its picked maps go
+	useEffect(() => {
+		if (mode.kind !== "route" && !routeMenu) setRouteDraft(null);
+	}, [mode, routeMenu, setRouteDraft]);
+
+	// a saved route deleted (its row, its group, Delete with it ticked): what was going on with it ends: tracking it,
+	// lighting it up, adjusting it (user: deleting a route while adjusting it left the mode on, and a click went to it)
+	useEffect(() => {
+		const groups = bookmarks.data?.groups;
+		if (groups) useAppStore.getState().bookmarksAre(new Set(groups.flatMap((g) => g.items.map((b) => b.id))));
+	}, [bookmarks.data]);
 
 	// --- double click: place the ghost, else zoom in
 	useEffect(() => {
@@ -337,7 +356,7 @@ export function MapInteraction() {
 			const t = e.target as HTMLElement | null;
 			if (t && (t.tagName === "INPUT" || t.tagName === "TEXTAREA" || t.isContentEditable)) return;
 			if (e.key === "Escape" && mode.kind !== "normal") {
-				if (mode.kind === "route") useAppStore.getState().setRoute(null); // (its first map's ring goes too)
+				if (mode.kind === "route") setRouteDraft(null); // (its first map's ring goes too; a route tracked stays)
 				drag.current = null; // a ghost drag ends too (it moved the next ghost: CodeRabbit)
 				lassoSeq.current++;
 				setLasso(null);
@@ -356,11 +375,20 @@ export function MapInteraction() {
 		};
 		window.addEventListener("keydown", onKey);
 		return () => window.removeEventListener("keydown", onKey);
-	}, [mode, setMode, app, showError]);
+	}, [mode, setMode, app, showError, setRouteDraft]);
 
 	// --- right click
 	useEffect(() => {
 		const onMenu = async (e: MapMouseEvent) => {
+			if (mode.kind === "route-edit") {
+				// a right click takes a map off the route being adjusted (user)
+				try {
+					await adjustRoute(atlasAt(e), false, mode);
+				} catch (err) {
+					showError(err);
+				}
+				return;
+			}
 			if (mode.kind !== "normal") return;
 			const at = clickAt(e);
 			let hit: ItemInfo | null = null;
@@ -376,7 +404,7 @@ export function MapInteraction() {
 		return () => {
 			map.off("contextmenu", onMenu);
 		};
-	}, [map, mode, select, clickAt, pick3d]);
+	}, [map, mode, select, clickAt, pick3d, adjustRoute, atlasAt, showError]);
 
 	// --- pointer over things that can be clicked
 	useEffect(() => {
@@ -402,6 +430,7 @@ export function MapInteraction() {
 	const chooseRoute = (what: "track" | "save" | null) => {
 		const r = routeMenu;
 		setRouteMenu(null);
+		setRouteDraft(null); // tracked, saved or cancelled: the route tracked before stays unless it's Track now
 		if (!r) return;
 		if (what === "track") routes.trackRoute(r.path);
 		else if (what === "save" && graph) {
@@ -417,7 +446,7 @@ export function MapInteraction() {
 				note: "",
 				route: savedRoute(graph, r.path),
 			});
-		} else setRoute(null);
+		}
 	};
 
 	const chooseBiome = async (biome: string | null) => {

@@ -108,7 +108,7 @@ describe("BookmarksTab", () => {
 		expect(useAppStore.getState().routeLit).toBe(5);
 	});
 
-	it("a saved route's right-click menu: track it now, add maps, remove maps", async () => {
+	it("a saved route's right-click menu: track it now, adjust it", async () => {
 		const { user, calls } = renderWithApp(<BookmarksTab />, {
 			"GET /api/bookmarks": withRoute,
 			"GET /api/graph": routeGraph,
@@ -116,21 +116,18 @@ describe("BookmarksTab", () => {
 		});
 		const row = await screen.findByRole("button", { name: "route1 (map #252 -> map #262)" });
 		fireEvent.contextMenu(row);
-		await user.click(await screen.findByRole("menuitem", { name: "Add maps" }));
-		expect(useAppStore.getState().mode).toEqual({ kind: "route-edit", id: 5, add: true });
+		await user.click(await screen.findByRole("menuitem", { name: "Adjust route" }));
+		expect(useAppStore.getState().mode).toEqual({ kind: "route-edit", id: 5 });
 		expect(useAppStore.getState().routeLit).toBe(5);
-
-		fireEvent.contextMenu(row);
-		await user.click(await screen.findByRole("menuitem", { name: "Remove maps" }));
-		expect(useAppStore.getState().mode).toEqual({ kind: "route-edit", id: 5, add: false });
 
 		fireEvent.contextMenu(row);
 		const track = await screen.findByRole("menuitem", { name: "Start tracking now" });
 		await waitFor(() => expect(track).not.toHaveAttribute("data-disabled")); // (once the map's paths are in)
 		await user.click(track);
-		// a route saved before routes kept their maps: found again from its line's ends
-		expect(useAppStore.getState().route).toMatchObject({ path: [252, 253, 262], at: 0 });
-		await waitFor(() => expect(calls.some((c) => c.path === "/api/settings")).toBe(true)); // you're on its first map
+		// a route saved before routes kept their maps: found again from its line's ends; tracked as this bookmark
+		expect(useAppStore.getState().route).toMatchObject({ path: [252, 253, 262], at: 0, saved: 5 });
+		// your position stays as it is (user: deleting a tracked route left a stray "I'm here")
+		expect(calls.some((c) => c.path === "/api/settings")).toBe(false);
 	});
 });
 

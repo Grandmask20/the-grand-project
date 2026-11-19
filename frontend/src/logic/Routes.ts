@@ -7,6 +7,14 @@ export function ringedMaps(path: number[]): number[] {
 	return path.length === 1 ? path : path.slice(1);
 }
 
+/** A route's marks on the map: its maps ringed, and while it is tracked (`at`) the map you are on marked instead, and
+ * only the maps not run yet ringed. */
+export function routeMarks(path: number[], at?: number): { rings: number[]; here: number | null } {
+	if (at === undefined) return { rings: ringedMaps(path), here: null };
+	const run = new Set(path.slice(0, at + 1));
+	return { rings: [...new Set(path.slice(at + 1).filter((m) => !run.has(m)))], here: path[at] ?? null };
+}
+
 /** The maps and paths routes are found on: every map run costs 1 (fewest maps), the length only breaks ties. */
 export class RouteGraph {
 	private readonly adj = new Map<number, number[]>();

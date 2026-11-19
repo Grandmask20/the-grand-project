@@ -52,7 +52,7 @@ export const gotoLayer = (): Spec => ({
 });
 
 /** The route: a green line edged in black (`route`) and its maps ringed (`route-nodes`). */
-export function routeLayers(geo: Geo, on: boolean): { line: Spec[]; nodes: Spec } {
+export function routeLayers(geo: Geo, on: boolean): { line: Spec[]; nodes: Spec; here: Spec } {
 	const layout = { visibility: visibility(on), "line-cap": "round" as const, "line-join": "round" as const };
 	return {
 		line: [
@@ -71,6 +71,20 @@ export function routeLayers(geo: Geo, on: boolean): { line: Spec[]; nodes: Spec 
 			source: "route-nodes",
 			layout: { visibility: visibility(on) },
 			paint: { "circle-radius": ringRadius(geo, 1), ...hollow("#7cff6b", 3) },
+		},
+		// the map you are on, on a route tracked: filled, so it stands out from the rings still to run
+		here: {
+			id: "route-here",
+			type: "circle",
+			source: "route-here",
+			layout: { visibility: visibility(on) },
+			paint: {
+				"circle-radius": ringRadius(geo, 1),
+				"circle-color": "#7cff6b",
+				"circle-opacity": 0.55,
+				"circle-stroke-color": "#000000",
+				"circle-stroke-width": 2,
+			},
 		},
 	};
 }

@@ -48,8 +48,10 @@ export function BookmarkLayer() {
 			}
 		return { pins: collection(pins), routes: collection(routes) };
 	}, [geo, bookmarks]);
+	// saved routes: the Routes button's (on / saved only), not the Bookmarks switch (user: they had no switch)
+	const routesOn = (!settings || layerOn(settings, "Saved routes")) && !replaying;
 	const spec = useMemo(() => bookmarkLayer(geo, meta, on), [geo, meta, on]);
-	const routeSpec = useMemo(() => savedRouteLayer(meta, on), [meta, on]);
+	const routeSpec = useMemo(() => savedRouteLayer(meta, routesOn), [meta, routesOn]);
 
 	// the route lit up: clicked in Bookmarks, or its maps being changed (user: it didn't light up as a bookmark
 	// does); its maps ringed, branches in their colour

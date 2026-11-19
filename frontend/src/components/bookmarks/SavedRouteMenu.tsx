@@ -17,16 +17,16 @@ interface Props {
 	onClose: () => void;
 }
 
-/** A saved route's right-click menu in Bookmarks (user): track it now, or add maps to it / take maps off it by
- * clicking them on the map. */
+/** A saved route's right-click menu in Bookmarks (user): track it now, or adjust it (on the map: a click adds a map,
+ * a right-click takes one off). */
 export function SavedRouteMenu({ x, y, bookmark: b, onClose }: Props) {
 	const routes = useRoutes(); // (the map's paths load when the menu opens)
 	const lightRoute = useAppStore((s) => s.lightRoute);
 	const setMode = useAppStore((s) => s.setMode);
 	const showError = useAppStore((s) => s.showError);
-	const edit = (add: boolean) => {
+	const adjust = () => {
 		lightRoute(b.id);
-		setMode({ kind: "route-edit", id: b.id, add });
+		setMode({ kind: "route-edit", id: b.id });
 	};
 	return (
 		<DropdownMenu open onOpenChange={(open) => !open && onClose()}>
@@ -38,14 +38,13 @@ export function SavedRouteMenu({ x, y, bookmark: b, onClose }: Props) {
 				<DropdownMenuItem
 					disabled={!routes.graph}
 					onSelect={() => {
-						if (!routes.trackSaved(b.route)) showError("This route's maps aren't on this atlas any more.", true);
+						if (!routes.trackSaved(b.route, b.id)) showError("This route's maps aren't on this atlas any more.", true);
 					}}
 				>
 					Start tracking now
 				</DropdownMenuItem>
 				<DropdownMenuSeparator />
-				<DropdownMenuItem onSelect={() => edit(true)}>Add maps</DropdownMenuItem>
-				<DropdownMenuItem onSelect={() => edit(false)}>Remove maps</DropdownMenuItem>
+				<DropdownMenuItem onSelect={adjust}>Adjust route</DropdownMenuItem>
 			</DropdownMenuContent>
 		</DropdownMenu>
 	);

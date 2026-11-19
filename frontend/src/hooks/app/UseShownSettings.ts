@@ -20,7 +20,7 @@ export function useRevealedLayers(): string[] {
 	const tab = useAppStore((s) => s.tab);
 	const page = useAppStore((s) => s.pages[s.tab]);
 	const mode = useAppStore((s) => s.mode.kind);
-	const routeShown = useAppStore((s) => s.route !== null);
+	const routeShown = useAppStore((s) => s.route !== null || s.routeDraft !== null);
 	const editing = useAppStore((s) => s.editing);
 	return useMemo(() => {
 		const out = new Set(editing);

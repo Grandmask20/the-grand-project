@@ -20,9 +20,23 @@ describe("useAppStore", () => {
 		s.select(null);
 		expect(useAppStore.getState().routeLit).toBeNull();
 		s.setTab("bookmarks");
-		s.setMode({ kind: "route-edit", id: 5, add: true });
+		s.setMode({ kind: "route-edit", id: 5 });
 		s.setTab("find");
 		expect(useAppStore.getState().mode).toEqual({ kind: "normal" });
+	});
+
+	it("a saved route deleted ends tracking it, lighting it up and adjusting it; other routes stay", () => {
+		const s = useAppStore.getState();
+		s.setRoute({ path: [1, 2], message: "", at: 0, saved: 5 });
+		s.lightRoute(5);
+		s.setMode({ kind: "route-edit", id: 5 });
+		s.bookmarksAre(new Set([5, 6]));
+		expect(useAppStore.getState()).toMatchObject({ routeLit: 5, mode: { kind: "route-edit" } });
+		s.bookmarksAre(new Set([6]));
+		expect(useAppStore.getState()).toMatchObject({ route: null, routeLit: null, mode: { kind: "normal" } });
+		s.setRoute({ path: [1, 2], message: "", at: 0 }); // (Track now: not a saved route)
+		s.bookmarksAre(new Set());
+		expect(useAppStore.getState().route).not.toBeNull();
 	});
 
 	it("patches the replay only while one is open", () => {

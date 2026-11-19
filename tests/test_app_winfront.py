@@ -3,6 +3,7 @@ faked, so this runs on every system)."""
 
 from pathlib import Path
 
+from grand_project.app import constants as K
 from grand_project.app import winfront
 
 
@@ -28,6 +29,7 @@ def test_an_already_open_window_is_the_one_brought_forward(monkeypatch):
         GetForegroundWindow = staticmethod(lambda: 7)
 
     moved = []
+    monkeypatch.setattr(K, "FOLDER_FRONT_WAIT", 0.2)  # (no new window comes: waited for, then the open one)
     monkeypatch.setattr(winfront, "_user32", lambda: User32())
     monkeypatch.setattr(winfront, "explorer_windows", lambda name: [99])
     monkeypatch.setattr(winfront.os, "startfile", lambda f: None, raising=False)
@@ -35,3 +37,19 @@ def test_an_already_open_window_is_the_one_brought_forward(monkeypatch):
     monkeypatch.setattr(winfront, "to_front", lambda h: True)
     assert winfront.open_folder_in_front(Path("C:/atlases/default"))
     assert moved == [99]
+
+
+def test_a_window_already_open_isn_t_taken_while_the_new_one_comes(monkeypatch):
+    # (it was taken at once and moved, and the new window opened where Explorer put it: user)
+    class User32:
+        GetForegroundWindow = staticmethod(lambda: 7)
+
+    windows = iter([[99], [99], [99], [99, 42]])
+    moved = []
+    monkeypatch.setattr(winfront, "_user32", lambda: User32())
+    monkeypatch.setattr(winfront, "explorer_windows", lambda name: next(windows, [99, 42]))
+    monkeypatch.setattr(winfront.os, "startfile", lambda f: None, raising=False)
+    monkeypatch.setattr(winfront, "onto_monitor_of", lambda h, other: moved.append(h))
+    monkeypatch.setattr(winfront, "to_front", lambda h: True)
+    assert winfront.open_folder_in_front(Path("C:/atlases/default"))
+    assert moved == [42]

@@ -1,5 +1,6 @@
 import { useEffect } from "react";
 import { useMapLibre } from "@/hooks/map/UseMapLibre";
+import { pressAt, pressMove } from "@/logic/map/PanGuard";
 import { useAppStore } from "@/store/AppStore";
 
 /**
@@ -15,11 +16,13 @@ export function MapPan() {
 		const canvas = map.getCanvasContainer();
 		let last: [number, number] | null = null;
 		const down = (e: MouseEvent) => {
+			if (e.button === 0) pressAt(e.clientX, e.clientY);
 			const kind = useAppStore.getState().mode.kind;
 			if (e.button !== 0 || e.ctrlKey || kind === "lasso" || kind === "ghost") return;
 			last = [e.clientX, e.clientY];
 		};
 		const move = (e: MouseEvent) => {
+			if (e.buttons & 1) pressMove(e.clientX, e.clientY);
 			if (!last || !(e.buttons & 1)) {
 				last = null;
 				return;

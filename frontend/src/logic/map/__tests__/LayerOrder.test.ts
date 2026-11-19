@@ -32,6 +32,7 @@ function everyLayer(): string[] {
 		gotoLayer(),
 		...route.line,
 		route.nodes,
+		route.here,
 		recentLayer(meta, true),
 		bookmarkLayer(geo, meta, true),
 		savedRouteLayer(meta, true),

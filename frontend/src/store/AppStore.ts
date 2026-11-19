@@ -27,8 +27,8 @@ export type MapMode =
 	| { kind: "debug-link"; from: number; note: string }
 	// Route (top bar): the first map picked, then the last
 	| { kind: "route"; from: number | null }
-	// Add maps / Remove maps on a saved route (Bookmarks, right-click): each map clicked changes it
-	| { kind: "route-edit"; id: number; add: boolean };
+	// Adjust route on a saved route (Bookmarks, right-click): a map clicked goes on it, a map right-clicked comes off
+	| { kind: "route-edit"; id: number };
 
 export type FilePick = {
 	title: string;
@@ -89,14 +89,19 @@ export interface AppStoreState {
 	pages: Record<string, string>;
 	setPage: (tab: string, page: string) => void;
 	/** Layers shown because you changed one of their View settings (cleared when you leave the tab). */
+	/** The layers shown because a View setting of theirs is in use (RevealWhileUsed). */
 	editing: string[];
-	reveal: (layer: string) => void;
+	/** A layer's setting is in use: it shows until the returned release, and a moment after. */
+	hold: (layer: string) => () => void;
 	selected: ItemInfo | null;
 	select: (info: ItemInfo | null) => void;
 	/** The saved route lit up on the map (its bookmark id): clicked in Bookmarks, or being changed (user: it didn't
 	 * light up as a bookmark does). Selecting anything else puts it out. */
 	routeLit: number | null;
 	lightRoute: (id: number | null) => void;
+	/** The bookmarks there are now: a saved route deleted ends what was going on with it (tracking it, lit up,
+	 * adjusting it). */
+	bookmarksAre: (ids: Set<number>) => void;
 	/** Select what a click loads, unless something else was selected (or clicked) meanwhile (CodeRabbit). */
 	selectLoaded: (load: Promise<ItemInfo>) => Promise<void>;
 	results: ResultRow[];
@@ -127,8 +132,13 @@ export interface AppStoreState {
 	goto: Point | null;
 	setGoto: (p: Point | null) => void;
 	/** The route shown; `at` while tracking it (Track now): the place in it of the map you are on. */
-	route: { path: number[]; message: string; at?: number } | null;
-	setRoute: (r: { path: number[]; message: string; at?: number } | null) => void;
+	route: RouteShown | null;
+	setRoute: (r: RouteShown | null) => void;
+	/** Route (top bar) while its maps are picked: the first map, then the route found, until Track now / Save route /
+	 * Cancel. Apart from `route`, so a route tracked meanwhile stays (user: the first click replaced it, Esc threw
+	 * it away). */
+	routeDraft: number[] | null;
+	setRouteDraft: (path: number[] | null) => void;
 	replay: ReplayUi | null;
 	setReplay: (r: ReplayUi | null) => void;
 	patchReplay: (r: Partial<ReplayUi>) => void;
@@ -157,6 +167,23 @@ export interface AppStoreState {
 	resetAtlas: () => void;
 }
 
+/** The route on the map. While it is tracked (Track now, Start tracking now): `at`, the place in it of the map you are
+ * on (its own marker: tracking leaves your position as it is, user: deleting a tracked route left a stray "I'm
+ * here"), and `saved`, the saved route's bookmark when it is one (deleting it ends the tracking). */
+export type RouteShown = { path: number[]; message: string; at?: number; saved?: number };
+
+/** The View settings in use, per layer (AppStoreState.hold). */
+const holds = new Map<string, number>();
+let holdEra = 0;
+function letGoAll(): { editing: string[] } {
+	holds.clear();
+	holdEra++;
+	return { editing: [] };
+}
+
+/** How long a layer stays shown after its setting was let go (ms): a click's change can be seen. */
+export const REVEAL_LINGER_MS = 1200;
+
 /** Counts selections: a click's answer that comes back after a newer selection is dropped. */
 let selectSeq = 0;
 
@@ -173,7 +200,7 @@ export const useAppStore = create<AppStoreState>()((set) => ({
 			return {
 				tab,
 				// leaving the View tab: the layers its settings showed go back to their switches
-				...(tab !== st.tab && st.editing.length ? { editing: [] } : {}),
+				...(tab !== st.tab && st.editing.length ? letGoAll() : {}),
 				...(page ? { pages: { ...st.pages, [tab]: page } } : {}),
 				...((st.mode.kind === "bookmark" || st.mode.kind === "route-edit") && tab !== "bookmarks"
 					? { mode: { kind: "normal" } as MapMode }
@@ -183,7 +210,23 @@ export const useAppStore = create<AppStoreState>()((set) => ({
 	pages: {},
 	setPage: (tab, page) => set((st) => ({ pages: { ...st.pages, [tab]: page } })),
 	editing: [],
-	reveal: (layer) => set((st) => (st.editing.includes(layer) ? {} : { editing: [...st.editing, layer] })),
+	hold: (layer) => {
+		const era = holdEra;
+		holds.set(layer, (holds.get(layer) ?? 0) + 1);
+		set({ editing: [...holds.keys()] });
+		let done = false;
+		return () => {
+			if (done) return;
+			done = true;
+			setTimeout(() => {
+				if (era !== holdEra) return; // (all let go meanwhile: the tab changed)
+				const n = (holds.get(layer) ?? 1) - 1;
+				if (n > 0) holds.set(layer, n);
+				else holds.delete(layer);
+				useAppStore.setState({ editing: [...holds.keys()] });
+			}, REVEAL_LINGER_MS);
+		};
+	},
 	selected: null,
 	select: (selected) => {
 		selectSeq++;
@@ -195,6 +238,12 @@ export const useAppStore = create<AppStoreState>()((set) => ({
 		if (mine === selectSeq) set({ selected: info, routeLit: null });
 	},
 	routeLit: null,
+	bookmarksAre: (ids) =>
+		set((st) => ({
+			...(st.route?.saved !== undefined && !ids.has(st.route.saved) ? { route: null } : {}),
+			...(st.routeLit !== null && !ids.has(st.routeLit) ? { routeLit: null } : {}),
+			...(st.mode.kind === "route-edit" && !ids.has(st.mode.id) ? { mode: { kind: "normal" } as MapMode } : {}),
+		})),
 	lightRoute: (routeLit) => {
 		selectSeq++;
 		set({ routeLit, ...(routeLit !== null ? { selected: null } : {}) });
@@ -224,6 +273,8 @@ export const useAppStore = create<AppStoreState>()((set) => ({
 	setGoto: (goto) => set({ goto }),
 	route: null,
 	setRoute: (route) => set({ route }),
+	routeDraft: null,
+	setRouteDraft: (routeDraft) => set({ routeDraft }),
 	replay: null,
 	setReplay: (replay) => set({ replay }),
 	patchReplay: (r) => set((s) => (s.replay ? { replay: { ...s.replay, ...r } } : {})),
@@ -273,6 +324,7 @@ export const useAppStore = create<AppStoreState>()((set) => ({
 			fitTo: null,
 			goto: null,
 			route: null,
+			routeDraft: null,
 			replay: null,
 			prompt: null,
 			confirm: null,

@@ -15,7 +15,7 @@ import time
 from ctypes import wintypes as wt
 from pathlib import Path
 
-from .constants import FOLDER_FRONT_WAIT
+from . import constants as K
 
 _SW_RESTORE = 9
 _MONITOR_NEAREST = 2
@@ -131,12 +131,17 @@ def open_folder_in_front(folder: Path) -> bool:
     front = u.GetForegroundWindow()
     before = set(explorer_windows(folder.name))
     os.startfile(folder)  # type: ignore[attr-defined]  # noqa: S606 (a known atlas folder, no shell)
-    end = time.monotonic() + FOLDER_FRONT_WAIT
-    while time.monotonic() < end:
-        time.sleep(0.1)
+    win = None
+    end = time.monotonic() + K.FOLDER_FRONT_WAIT
+    while win is None and time.monotonic() < end:
+        time.sleep(K.FOLDER_FRONT_POLL)
+        win = next((w for w in explorer_windows(folder.name) if w not in before), None)
+    # no new window: Explorer showed the folder in one it had open. Only then is an open one taken (it was taken at
+    # once before, before the new window came, and moved while the new one opened where Explorer put it: user)
+    if win is None:
         now = explorer_windows(folder.name)
-        win = next((w for w in now if w not in before), now[0] if now else None)  # a new window, else the open one
-        if win:
-            onto_monitor_of(win, front)
-            return to_front(win)
-    return False
+        win = now[0] if now else None
+    if win is None:
+        return False
+    onto_monitor_of(win, front)
+    return to_front(win)

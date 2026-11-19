@@ -1,4 +1,4 @@
-import type { KeyboardEvent } from "react";
+import type { ComponentProps, KeyboardEvent } from "react";
 import { PagePicker } from "@/components/common/PagePicker";
 import { Section } from "@/components/common/Section";
 import { Button } from "@/components/ui/button";
@@ -12,6 +12,7 @@ import { useFrames } from "@/hooks/replay/UseFrames";
 import { cityColours, landmarkColours, styleColour } from "@/logic/Colours";
 import { useAppStore } from "@/store/AppStore";
 import { ColourSwatch } from "./ColourSwatch";
+import { RevealWhileUsed, useHoldWhileOpen } from "./RevealWhileUsed";
 import { SettingSlider } from "./SettingSlider";
 import { IconPreview, MapPreview, Path3DPreview, PathPreview } from "./StylePreview";
 
@@ -55,15 +56,15 @@ export function ViewTab() {
 		</p>
 	);
 	const frames = useFrames(tint !== "off");
-	const reveal = useAppStore((s) => s.reveal);
+	const hold = useAppStore((s) => s.hold);
 	if (!meta || !settings) return null;
 	const st = settings.style;
-	// a change shows the layer it shapes until you leave the tab, even if its switch is off (user: icons, paths and
-	// maps stayed hidden while you restyled them)
+	// a change shows the layer it shapes for a moment, even if its switch is off (a key press, a colour picked; held
+	// controls show it longer: RevealWhileUsed)
 	const showing = (style: Record<string, unknown>) => {
 		for (const k of Object.keys(style)) {
 			const layer = layerOfStyle(k);
-			if (layer) reveal(layer);
+			if (layer) hold(layer)();
 		}
 	};
 	const set = (style: Record<string, string | number | boolean>) => {
@@ -80,7 +81,7 @@ export function ViewTab() {
 	const choice = (label: string, value: string, values: string[], onChange: (v: string) => void) => (
 		<div className="flex items-center gap-2">
 			<span className="w-24 text-xs text-muted-foreground">{label}</span>
-			<Select value={value} onValueChange={onChange}>
+			<HeldSelect value={value} onValueChange={onChange}>
 				<SelectTrigger size="sm" className="min-w-36" aria-label={label}>
 					<SelectValue />
 				</SelectTrigger>
@@ -91,7 +92,7 @@ export function ViewTab() {
 						</SelectItem>
 					))}
 				</SelectContent>
-			</Select>
+			</HeldSelect>
 		</div>
 	);
 
@@ -145,33 +146,39 @@ export function ViewTab() {
 				{!tilted && (
 					<p className="text-xs text-gold">These apply in the 3D view (the 3D button, or right-drag to tilt).</p>
 				)}
-				<Section title="Paths" locked={lock}>
-					<Path3DPreview st={st} meta={meta} />
-					{slider("height", "d3_path_lift", 0, 30, 1, 3, (v) => `${v}`)}
-					{slider("reach", "d3_path_far", 1, 6, 0.1, 2.6, times)}
-					{slider("far thickness", "d3_path_taper", 0.1, 1, 0.05, 0.2, (v) => `${Math.round(v * 100)}%`)}
-					{slider("dashes to line", "d3_solid_px", 0, 30, 1, 8, (v) => `${v} px`)}
-				</Section>
-				<Section title="Icons" locked={lock}>
-					{slider("reach", "d3_icon_far", 1, 8, 0.1, 2.5, times)}
-					{slider("size", "d3_icon_size", 0.5, 2.5, 0.1, 1.5, times)}
-				</Section>
+				<RevealWhileUsed layer="Paths">
+					<Section title="Paths" locked={lock}>
+						<Path3DPreview st={st} meta={meta} />
+						{slider("height", "d3_path_lift", 0, 30, 1, 3, (v) => `${v}`)}
+						{slider("reach", "d3_path_far", 1, 6, 0.1, 2.6, times)}
+						{slider("far thickness", "d3_path_taper", 0.1, 1, 0.05, 0.2, (v) => `${Math.round(v * 100)}%`)}
+						{slider("dashes to line", "d3_solid_px", 0, 30, 1, 8, (v) => `${v} px`)}
+					</Section>
+				</RevealWhileUsed>
+				<RevealWhileUsed layer="Icons">
+					<Section title="Icons" locked={lock}>
+						{slider("reach", "d3_icon_far", 1, 8, 0.1, 2.5, times)}
+						{slider("size", "d3_icon_size", 0.5, 2.5, 0.1, 1.5, times)}
+					</Section>
+				</RevealWhileUsed>
 				<Section title="Ground" locked={lock}>
 					{slider("fades out at", "d3_ground_far", 0, 6, 0.1, 2.4, (v) => (v ? times(v) : "never"))}
 				</Section>
-				<Section title="3D models" locked={lock}>
-					{slider("reach", "d3_model_far", 1, 8, 0.1, 2.4, times)}
-					{slider("size", "d3_model_size", 0.3, 3, 0.1, 1, times)}
-					{slider("height", "d3_model_height", 0.2, 3, 0.1, 0.8, times)}
-					<Label className="font-normal">
-						<input
-							type="checkbox"
-							checked={st.d3_beams !== false}
-							onChange={(e) => set({ d3_beams: e.target.checked })}
-						/>
-						beams over halls and towers
-					</Label>
-				</Section>
+				<RevealWhileUsed layer="3D models">
+					<Section title="3D models" locked={lock}>
+						{slider("reach", "d3_model_far", 1, 8, 0.1, 2.4, times)}
+						{slider("size", "d3_model_size", 0.3, 3, 0.1, 1, times)}
+						{slider("height", "d3_model_height", 0.2, 3, 0.1, 0.8, times)}
+						<Label className="font-normal">
+							<input
+								type="checkbox"
+								checked={st.d3_beams !== false}
+								onChange={(e) => set({ d3_beams: e.target.checked })}
+							/>
+							beams over halls and towers
+						</Label>
+					</Section>
+				</RevealWhileUsed>
 				<p className="text-xs text-muted-foreground">
 					Reach and fade: in times the distance from the camera to the middle of the view.
 				</p>
@@ -228,95 +235,101 @@ export function ViewTab() {
 				</p>
 			</Section>
 
-			<Section title="Paths" locked={lock}>
-				<PathPreview st={st} meta={meta} />
-				<div className="flex flex-wrap items-center gap-3">
+			<RevealWhileUsed layer="Paths">
+				<Section title="Paths" locked={lock}>
+					<PathPreview st={st} meta={meta} />
+					<div className="flex flex-wrap items-center gap-3">
+						<ColourSwatch
+							label="colour"
+							value={styleColour(st, "path_col", meta.colours.path_multi)}
+							onChange={(c) => set({ path_col: c })}
+						/>
+						<ColourSwatch
+							label="1 shot"
+							value={styleColour(st, "path_col1", meta.colours.path_single)}
+							onChange={(c) => set({ path_col1: c })}
+						/>
+					</div>
+					{choice("style", st.path_style, ["solid", "dashed", "dotted"], (v) => set({ path_style: v }))}
+					<div className="flex items-center gap-2">
+						<span className="w-24 text-xs text-muted-foreground">width (0 = auto)</span>
+						<SettingSlider
+							label="path width"
+							min={0}
+							max={8}
+							step={1}
+							value={Number(st.path_width) || 0}
+							onPreview={(v) => look({ path_width: v })}
+							onCommit={(v) => set({ path_width: v })}
+							format={(v) => (v ? String(v) : "auto")}
+							valueWidth="w-6"
+						/>
+					</div>
+					<div className="flex items-center gap-2">
+						<span className="w-24 text-xs text-muted-foreground">drawn by at least</span>
+						{/* live while dragged (the page hides paths by their share), saved when let go */}
+						<SettingSlider
+							label="drawn by at least"
+							min={0}
+							max={100}
+							step={5}
+							value={Math.round((Number(st.path_freq) || 0) * 100)}
+							onPreview={(v) => look({ path_freq: v / 100 })}
+							onCommit={(v) => set({ path_freq: v / 100 })}
+							format={(v) => `${v}%`}
+							valueWidth="w-10"
+						/>
+					</div>
+					<p className="text-xs text-muted-foreground">of the screenshots that show both maps</p>
+				</Section>
+			</RevealWhileUsed>
+
+			<RevealWhileUsed layer="Icons">
+				<Section title="Icons" locked={lock}>
+					<IconPreview style={iconStyle} size={Number(st.icon_size) || 1} />
+					{choice(
+						"style",
+						iconStyle,
+						// (poe2db's art is the game's own: one choice)
+						["game art", "from screenshots", "flat colour", "outline"],
+						(v) => set({ icon_style: v }),
+					)}
+					{slider("size", "icon_size", 0.5, 2.5, 0.1, 1, times)}
+				</Section>
+			</RevealWhileUsed>
+
+			<RevealWhileUsed layer="Nodes">
+				<Section title="Maps" locked={lock}>
+					<MapPreview st={st} meta={meta} />
 					<ColourSwatch
 						label="colour"
-						value={styleColour(st, "path_col", meta.colours.path_multi)}
-						onChange={(c) => set({ path_col: c })}
+						value={styleColour(st, "map_col", meta.colours.node.confirmed)}
+						onChange={(c) => set({ map_col: c })}
 					/>
-					<ColourSwatch
-						label="1 shot"
-						value={styleColour(st, "path_col1", meta.colours.path_single)}
-						onChange={(c) => set({ path_col1: c })}
-					/>
-				</div>
-				{choice("style", st.path_style, ["solid", "dashed", "dotted"], (v) => set({ path_style: v }))}
-				<div className="flex items-center gap-2">
-					<span className="w-24 text-xs text-muted-foreground">width (0 = auto)</span>
-					<SettingSlider
-						label="path width"
-						min={0}
-						max={8}
-						step={1}
-						value={Number(st.path_width) || 0}
-						onPreview={(v) => look({ path_width: v })}
-						onCommit={(v) => set({ path_width: v })}
-						format={(v) => (v ? String(v) : "auto")}
-						valueWidth="w-6"
-					/>
-				</div>
-				<div className="flex items-center gap-2">
-					<span className="w-24 text-xs text-muted-foreground">drawn by at least</span>
-					{/* live while dragged (the page hides paths by their share), saved when let go */}
-					<SettingSlider
-						label="drawn by at least"
-						min={0}
-						max={100}
-						step={5}
-						value={Math.round((Number(st.path_freq) || 0) * 100)}
-						onPreview={(v) => look({ path_freq: v / 100 })}
-						onCommit={(v) => set({ path_freq: v / 100 })}
-						format={(v) => `${v}%`}
-						valueWidth="w-10"
-					/>
-				</div>
-				<p className="text-xs text-muted-foreground">of the screenshots that show both maps</p>
-			</Section>
-
-			<Section title="Icons" locked={lock}>
-				<IconPreview style={iconStyle} size={Number(st.icon_size) || 1} />
-				{choice(
-					"style",
-					iconStyle,
-					// (poe2db's art is the game's own: one choice)
-					["game art", "from screenshots", "flat colour", "outline"],
-					(v) => set({ icon_style: v }),
-				)}
-				{slider("size", "icon_size", 0.5, 2.5, 0.1, 1, times)}
-			</Section>
-
-			<Section title="Maps" locked={lock}>
-				<MapPreview st={st} meta={meta} />
-				<ColourSwatch
-					label="colour"
-					value={styleColour(st, "map_col", meta.colours.node.confirmed)}
-					onChange={(c) => set({ map_col: c })}
-				/>
-				{/* (no "hidden": unticking Maps in "Show on the map" does that, user) */}
-				{choice("style", st.map_style, ["circles", "squares", "map icons"], (v) => set({ map_style: v }))}
-				{choice("fill", st.map_fill ?? "solid", ["solid", "bordered"], (v) => set({ map_fill: v }))}
-				{st.map_fill === "bordered" && (
-					<ColourSwatch
-						label="border"
-						value={styleColour(st, "map_border", styleColour(st, "map_col", meta.colours.node.confirmed))}
-						onChange={(c) => set({ map_border: c })}
-					/>
-				)}
-				<div className="flex items-center gap-2">
-					<span className="w-24 text-xs text-muted-foreground">size</span>
-					<SettingSlider
-						label="map size"
-						min={0.5}
-						max={2.5}
-						step={0.1}
-						value={Number(st.map_size) || 1}
-						onPreview={(v) => look({ map_size: v })}
-						onCommit={(v) => set({ map_size: v })}
-					/>
-				</div>
-			</Section>
+					{/* (no "hidden": unticking Maps in "Show on the map" does that, user) */}
+					{choice("style", st.map_style, ["circles", "squares", "map icons"], (v) => set({ map_style: v }))}
+					{choice("fill", st.map_fill ?? "solid", ["solid", "bordered"], (v) => set({ map_fill: v }))}
+					{st.map_fill === "bordered" && (
+						<ColourSwatch
+							label="border"
+							value={styleColour(st, "map_border", styleColour(st, "map_col", meta.colours.node.confirmed))}
+							onChange={(c) => set({ map_border: c })}
+						/>
+					)}
+					<div className="flex items-center gap-2">
+						<span className="w-24 text-xs text-muted-foreground">size</span>
+						<SettingSlider
+							label="map size"
+							min={0.5}
+							max={2.5}
+							step={0.1}
+							value={Number(st.map_size) || 1}
+							onPreview={(v) => look({ map_size: v })}
+							onCommit={(v) => set({ map_size: v })}
+						/>
+					</div>
+				</Section>
+			</RevealWhileUsed>
 
 			<Section title="City biomes and landmarks" locked={lock}>
 				<div className="grid grid-cols-2 gap-2">
@@ -371,5 +384,19 @@ export function ViewTab() {
 				Reset styles
 			</Button>
 		</div>
+	);
+}
+
+/** A View dropdown: open, the layer of its section shows (RevealWhileUsed). */
+function HeldSelect(props: ComponentProps<typeof Select>) {
+	const holdOpen = useHoldWhileOpen();
+	return (
+		<Select
+			{...props}
+			onOpenChange={(open) => {
+				holdOpen(open);
+				props.onOpenChange?.(open);
+			}}
+		/>
 	);
 }
