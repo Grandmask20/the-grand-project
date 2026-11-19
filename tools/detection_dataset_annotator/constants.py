@@ -73,6 +73,10 @@ ANNOTATOR_WORKER_IN_FLIGHT = 2
 ANNOTATOR_WORKER_LINE_LIMIT = 16 * 1024 * 1024
 """Longest worker answer line in bytes (asyncio's default 64 KiB is too short for a screenshot with every path)."""
 
+ANNOTATOR_WORKER_ANSWER_S = 300.0
+"""Seconds to wait for a worker's next answer before it counts as stuck: it is stopped and the screenshots it holds
+fail (they can be retried). A screenshot takes ~2-10 s, plus a few seconds of model loading for the first one."""
+
 ANNOTATOR_WORKER_EXIT_S = 10.0
 """Seconds a worker may take to exit after its input closes before it is terminated."""
 

@@ -15,6 +15,9 @@ RF_DETR_MODEL_NAME = "Roboflow/rf-detr-small"
 RF_DETR_USE_ENV = "GRAND_PROJECT_USE_RF_DETR"  # set to 1/true/on to select the optional RF-DETR backend
 RF_DETR_MODEL_ENV = "GRAND_PROJECT_RF_DETR_MODEL"  # optional model directory override for program/tests
 RF_DETR_DEVICE_ENV = "GRAND_PROJECT_RF_DETR_DEVICE"  # optional torch device override, e.g. cpu or cuda
+# set by tools.train_rf_detr when it restarts itself with the pip CUDA libraries first on LD_LIBRARY_PATH (the
+# dynamic linker reads it only at process start), so it restarts at most once
+RF_DETR_CUDA_REEXEC_ENV = "GRAND_PROJECT_RF_DETR_CUDA_REEXEC"
 RF_DETR_DEFAULT_MODEL_DIR = rc_paths.ROOT / "runs" / "rf-detr-small" / "best"
 RF_DETR_SCORE_THRESHOLD = 0.35  # confidence: tuned as a safe starting point for the small fine-tuned checkpoint
 RF_DETR_NMS_IOU = 0.50  # overlap: remove duplicate predictions of the same RF-DETR class
@@ -27,6 +30,7 @@ RF_DETR_ICON_BOX = 34.0  # px: square around an icon centre, inside the standard
 RF_DETR_LANDMARK_BOX = 80.0  # px: square around a city / hall / deadly-boss map point
 RF_DETR_TOWER_WIDTH = 80.0  # px: tower box width around its map node
 RF_DETR_TOWER_HEIGHT = 220.0  # px: tower box extends upward from its map node to the spire
+RF_DETR_TOWER_NODE_REACH = 55.0  # px: a tower box's base and the map node it stands on are at most this far apart
 RF_DETR_STRONGHOLD_BOX = 150.0  # px: square around a Breach stronghold structure
 RF_DETR_PATH_PAD = 8.0  # px: padding around a traced path centre line
 RF_DETR_PATH_DASH_BOX = 18.0  # px: square around one path dash for the low-level path detector

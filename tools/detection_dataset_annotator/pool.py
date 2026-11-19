@@ -200,10 +200,15 @@ async def _drive_worker(run: _Run, options: DetectionOptions, process: asyncio.s
             if not in_flight:
                 break
             try:
-                line = await process.stdout.readline()
+                line = await asyncio.wait_for(process.stdout.readline(), K.ANNOTATOR_WORKER_ANSWER_S)
             except ValueError as exc:  # longer than ANNOTATOR_WORKER_LINE_LIMIT: the stream is out of step
                 while in_flight:
                     run.fail(in_flight.popleft()[1], f"Detection worker answer could not be read: {exc}")
+                break
+            except TimeoutError:  # stuck: its screenshots fail (retryable), it is stopped, the other workers go on
+                while in_flight:
+                    error = f"Detection worker did not answer within {K.ANNOTATOR_WORKER_ANSWER_S:g} s; it was stopped."
+                    run.fail(in_flight.popleft()[1], error)
                 break
             if not line:  # end of output: the worker exited
                 with contextlib.suppress(TimeoutError):

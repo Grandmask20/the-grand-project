@@ -30,7 +30,7 @@ from pathlib import Path
 import cv2
 import numpy as np
 
-from grand_project import icon_refs
+from grand_project import core, icon_refs
 from grand_project import paths as rc_paths
 from grand_project.detect import models
 from grand_project.detect.constants import ICON_ART_DIR, ICON_INFO, TRUTH_SETS
@@ -146,8 +146,8 @@ def truth_pictures(old: str, arts: dict, unsure: float) -> list[tuple[Path, str,
             for i, b in enumerate(t["badges"]):
                 if b["name"] != old:
                     continue
-                if img is None:
-                    img = cv2.imdecode(np.fromfile(str(shots / shot), np.uint8), cv2.IMREAD_COLOR)
+                if img is None:  # truth points are in detector pixels: 1440p / 4K screenshots read as 1080p
+                    img = core.read_screenshot(shots / shot)
                 crop = icon_refs.crop(img, b["x"], b["y"]) if img is not None else None
                 if crop is None:
                     print(f"  {shot} {b.get('id', i)}: screenshot missing or icon off its edge, left as {old}")

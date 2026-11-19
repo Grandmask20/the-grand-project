@@ -6,6 +6,12 @@ RF_DETR_ANNOTATOR_MANIFEST=...``). Both files point at the original screenshots;
 
 from __future__ import annotations
 
+import contextlib
+import math
+import os
+import shutil
+import tempfile
+from collections.abc import Iterable
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -34,14 +40,18 @@ def _exported_annotation(annotation: dict[str, Any], label_ids: dict[str, int]) 
     if label not in label_ids:
         return None
     try:
-        x, y, width, height = (float(value) for value in annotation["bbox"])
+        values = [float(value) for value in annotation["bbox"]]
+        x, y, width, height = values
     except (KeyError, TypeError, ValueError):
         return None
-    if width <= 0 or height <= 0:
+    if not all(math.isfinite(value) for value in values):
+        return None  # json would write NaN / Infinity, which is not JSON
+    x, y, width, height = (round(value, 2) for value in values)
+    if width <= 0 or height <= 0:  # after rounding: a box this thin would be exported as zero
         return None
     return {
         "category_id": label_ids[label],
-        "bbox": [round(x, 2), round(y, 2), round(width, 2), round(height, 2)],
+        "bbox": [x, y, width, height],
         "area": round(width * height, 2),
         "iscrowd": 0,
         "label": label,
@@ -56,6 +66,51 @@ def _image_size(item: dict[str, Any], path: Path) -> tuple[int, int] | None:
         return width, height
     image = decode_image(path)
     return None if image is None else (image.shape[1], image.shape[0])
+
+
+def _source_group(path: Path, roots: Iterable[str]) -> str:
+    """The screenshot's source for a split by source: the (most specific) discovery root it was found under, else its
+    folder, so screenshots of one source stay together and different roots can be told apart."""
+    resolved = path.resolve()
+    under = []
+    for root in roots:
+        candidate = Path(root).resolve()
+        if candidate != resolved and resolved.is_relative_to(candidate):
+            under.append(candidate)
+    return relative_source(max(under, key=lambda root: len(root.parts), default=resolved.parent))
+
+
+def _publish(output_dir: Path, files: dict[str, Any]) -> None:
+    """Write the export files as one generation: all of them are written to a staging folder first, then moved into
+    place; if a move fails, the previous files are put back, so a reader never finds a mix of two exports."""
+    staging = Path(tempfile.mkdtemp(prefix=".export-new-", dir=output_dir))
+    backup = Path(tempfile.mkdtemp(prefix=".export-old-", dir=output_dir))
+    keep_backup = False
+    try:
+        for name, value in files.items():
+            write_json_atomic(staging / name, value)
+        for name in files:
+            if (output_dir / name).is_file():
+                shutil.copy2(output_dir / name, backup / name)
+        placed: list[str] = []
+        try:
+            for name in files:
+                os.replace(staging / name, output_dir / name)
+                placed.append(name)
+        except BaseException:
+            keep_backup = True  # until every previous file is back in place
+            for name in placed:
+                if (backup / name).is_file():
+                    os.replace(backup / name, output_dir / name)
+                else:
+                    (output_dir / name).unlink()
+            keep_backup = False
+            raise
+    finally:
+        shutil.rmtree(staging, ignore_errors=True)
+        if not keep_backup:
+            with contextlib.suppress(OSError):
+                shutil.rmtree(backup)
 
 
 def export_dataset(state: dict[str, Any], output_dir: Path, *, reviewed_only: bool = True) -> ExportResult:
@@ -73,10 +128,13 @@ def export_dataset(state: dict[str, Any], output_dir: Path, *, reviewed_only: bo
     annotation_rows: list[dict[str, Any]] = []
     manifest_rows: list[dict[str, Any]] = []
     skipped = 0
+    roots = state.get("input_roots", [])
     for key, item in state.get("images", {}).items():
         reviewed = bool(item.get("reviewed", False))
         if reviewed_only and not reviewed:
             continue
+        if not (reviewed or item.get("detected")):
+            continue  # never processed: its empty box list is not a labelling
         path = Path(item["path"])
         size = _image_size(item, path) if path.is_file() else None
         if size is None:
@@ -110,7 +168,7 @@ def export_dataset(state: dict[str, Any], output_dir: Path, *, reviewed_only: bo
                 "path": str(path),
                 "source": source or relative_source(path),
                 "source_type": "annotator_reviewed" if reviewed else "annotator_unreviewed",
-                "source_group": Path(source).parts[0] if source else "annotator",
+                "source_group": _source_group(path, roots),
                 "width": width,
                 "height": height,
                 "reviewed": reviewed,
@@ -138,9 +196,10 @@ def export_dataset(state: dict[str, Any], output_dir: Path, *, reviewed_only: bo
     }
     coco_path = output_dir / K.ANNOTATOR_COCO_FILE
     manifest_path = output_dir / K.ANNOTATOR_MANIFEST_FILE
-    write_json_atomic(coco_path, coco)
-    write_json_atomic(manifest_path, manifest)
-    write_json_atomic(output_dir / K.ANNOTATOR_LABELS_FILE, label_map)
+    _publish(
+        output_dir,
+        {K.ANNOTATOR_COCO_FILE: coco, K.ANNOTATOR_MANIFEST_FILE: manifest, K.ANNOTATOR_LABELS_FILE: label_map},
+    )
     return ExportResult(
         images=len(image_rows),
         annotations=len(annotation_rows),

@@ -28,12 +28,15 @@ DEFAULT_OPTIONS = DetectionOptions()
 
 
 def decode_image(path: Path) -> np.ndarray | None:
-    """The original-size BGR image, or None when it cannot be read (``np.fromfile`` handles non-ASCII paths)."""
+    """The original-size BGR image, or None when it cannot be read (``np.fromfile`` handles non-ASCII paths).
+
+    An empty file is None too: OpenCV raises on an empty buffer (as handled in ``core.read_screenshot``).
+    """
     try:
         encoded = np.fromfile(str(path), dtype=np.uint8)
-    except OSError:
+        return cv2.imdecode(encoded, cv2.IMREAD_COLOR) if encoded.size else None
+    except (OSError, ValueError, cv2.error):
         return None
-    return cv2.imdecode(encoded, cv2.IMREAD_COLOR)
 
 
 def _read_images(path: Path) -> tuple[np.ndarray, np.ndarray] | None:

@@ -142,7 +142,8 @@ def screenshot_city_types(img: np.ndarray, points: list[tuple[float, float]]) ->
 
     Returns:
         One (type, sure) per point; sure is False when the margin is under CITY_LOOK_SURE, the window is cut off by
-        the screenshot edge, or there is nothing to compare with (then the type is TYPES[0]).
+        the screenshot edge, there is nothing to compare with (then the type is TYPES[0]), or a city decided before
+        it closer than TRIO_GAP, whose type ruled one out, is unsure itself.
     """
     n = len(points)
     dist: list[list[float] | None] = [None] * n
@@ -159,19 +160,23 @@ def screenshot_city_types(img: np.ndarray, points: list[tuple[float, float]]) ->
         for k in range(n):
             if out[k] is not None:
                 continue
-            taken = {out[j][0] for j in np.nonzero(D[k] < TRIO_GAP)[0] if j != k and out[j]}
+            near = [j for j in np.nonzero(D[k] < TRIO_GAP)[0] if j != k and out[j]]
+            taken = {out[j][0] for j in near}
             al = [t for t in TYPES if t not in taken] or list(TYPES)
+            # the neighbours that narrowed the choice (none when every type was taken): their doubt carries over
+            leaned = near if len(al) < len(TYPES) else []
             if dist[k] is None:
-                cand = (-1.0, k, al[0])
+                cand = (-1.0, k, al[0], leaned)
             else:
                 ds = sorted((dist[k][TYPES.index(t)], t) for t in al)
-                cand = (ds[1][0] - ds[0][0] if len(ds) > 1 else 9.0, k, ds[0][1])
+                cand = (ds[1][0] - ds[0][0] if len(ds) > 1 else 9.0, k, ds[0][1], leaned)
             if best is None or cand[0] > best[0]:
                 best = cand
         if best is None:
             break
-        margin, k, t = best
-        out[k] = (t, bool(dist[k] is not None and whole[k] and margin >= CITY_LOOK_SURE))
+        margin, k, t, leaned = best
+        sure = dist[k] is not None and whole[k] and margin >= CITY_LOOK_SURE and all(out[j][1] for j in leaned)
+        out[k] = (t, bool(sure))
     return [o for o in out if o is not None]
 
 

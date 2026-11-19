@@ -27,7 +27,9 @@ from .constants import (
     RF_DETR_MODEL_ENV,
     RF_DETR_NMS_IOU,
     RF_DETR_SCORE_THRESHOLD,
+    RF_DETR_TOWER_NODE_REACH,
     RF_DETR_USE_ENV,
+    TOWER_NMS,
     WALL_CROSS,
 )
 from .icon_types import icon_type
@@ -268,10 +270,17 @@ def detect_rf_detr(img: np.ndarray) -> dict:
         if nodes:
             distances = np.hypot([node["x"] - x for node in nodes], [node["y"] - y for node in nodes])
             nearest = int(np.argmin(distances))
-            if distances[nearest] <= 55:
-                # The classical detector reports a tower as a landmark, not as an ordinary graph node.
-                nodes.pop(nearest)
-                continue
+            if distances[nearest] <= RF_DETR_TOWER_NODE_REACH:
+                # As in the classical detector (landmarks_from): the tower's map node stays in the graph, flagged, so
+                # paths still reach it (trace_paths) and expedition_rules can unflag it; other map nodes this close
+                # are the same wide tower base.
+                tower = nodes[nearest]
+                tower["tower"] = True
+                nodes = [
+                    node
+                    for node in nodes
+                    if node is tower or np.hypot(node["x"] - tower["x"], node["y"] - tower["y"]) > TOWER_NMS
+                ]
 
     predicted_dashes = np.asarray([_centre(d["box"]) for d in detections if d["label"] == "path_dash"], float).reshape(
         -1, 2

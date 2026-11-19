@@ -61,6 +61,23 @@ def test_a_crashed_worker_fails_its_screenshots_and_the_others_finish(tmp_path: 
     assert state["images"]["crash0"]["error"] == "Detection worker exited unexpectedly (code 3)."
 
 
+def test_a_stuck_worker_is_stopped_and_the_others_finish(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """A worker that answers nothing within ANNOTATOR_WORKER_ANSWER_S is stopped: the screenshots it holds fail and
+    stay retryable, the other worker goes on."""
+    monkeypatch.setattr(K, "ANNOTATOR_WORKER_ANSWER_S", 1.0)
+    names = ["hang0"] + [f"ok{i}" for i in range(6)]
+    state = _state(tmp_path, *names)
+
+    completed, failed = pool.detect_pending(state, OPTIONS, max_workers=2)
+
+    assert completed + failed == len(names)
+    assert 1 <= failed <= K.ANNOTATOR_WORKER_IN_FLIGHT  # the stuck one and what was queued behind it on that worker
+    stuck = state["images"]["hang0"]
+    assert stuck["detected"] is False
+    assert stuck["error"] == "Detection worker did not answer within 1 s; it was stopped."
+    assert sum(bool(item.get("detected")) for item in state["images"].values()) == completed
+
+
 def test_screenshots_left_when_every_worker_crashed_fail(tmp_path: Path) -> None:
     names = [f"crash{i}" for i in range(4)]
     state = _state(tmp_path, *names)

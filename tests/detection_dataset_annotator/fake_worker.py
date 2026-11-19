@@ -4,7 +4,8 @@
 
 What it does depends on the request's file name: ``ok*`` answers a small result that echoes the worker's thread
 limits, ``error*`` answers an error, ``crash*`` exits with code 3 without answering, ``big*`` answers a line
-longer than asyncio's default 64 KiB limit, ``slow*`` sleeps a moment first.
+longer than asyncio's default 64 KiB limit, ``slow*`` sleeps a moment first, ``hang*`` never answers (it sleeps until
+it is stopped).
 """
 
 from __future__ import annotations
@@ -26,6 +27,8 @@ def main() -> None:
             sys.exit(3)
         if name.startswith("slow"):
             time.sleep(0.3)
+        if name.startswith("hang"):
+            time.sleep(600)
         if name.startswith("error"):
             answer = {"key": key, "error": "ValueError: Could not read image"}
         else:

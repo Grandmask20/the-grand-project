@@ -33,6 +33,7 @@ from .state import (
     relative_source,
     resolve_input_paths,
     resolve_path,
+    save_items,
     save_state,
     write_json_atomic,
 )
@@ -62,6 +63,7 @@ __all__ = [
     "resolve_input_paths",
     "resolve_path",
     "run_classical_detector",
+    "save_items",
     "save_state",
     "write_json_atomic",
 ]

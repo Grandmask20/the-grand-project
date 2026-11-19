@@ -10,6 +10,7 @@ work without the optional training stack installed.
 from __future__ import annotations
 
 import json
+import math
 import random
 from dataclasses import dataclass, replace
 from pathlib import Path
@@ -32,6 +33,7 @@ from .constants import (
     RF_DETR_SOFT_FLAGS,
     RF_DETR_STRONGHOLD_BOX,
     RF_DETR_TOWER_HEIGHT,
+    RF_DETR_TOWER_NODE_REACH,
     RF_DETR_TOWER_WIDTH,
     RF_DETR_WALL_MIN_AREA,
 )
@@ -97,13 +99,18 @@ def _clip_rect(
     return left, top, right - left, bottom - top
 
 
+def _decode(path: Path, flags: int) -> np.ndarray | None:
+    """Decode an image file, or None when it is empty or not a picture (OpenCV raises on an empty buffer)."""
+    buf = np.fromfile(str(path), np.uint8)
+    return cv2.imdecode(buf, flags) if buf.size else None
+
+
 def _source_image(path: Path) -> tuple[np.ndarray, int, int] | None:
-    """Read a source image once and return detector pixels plus its raw dimensions."""
-    raw = cv2.imdecode(np.fromfile(str(path), np.uint8), cv2.IMREAD_COLOR)
-    detector = core.read_screenshot(path)
-    if raw is None or detector is None:
+    """Read a source image once and return detector pixels (as core.read_screenshot gives) plus its raw dimensions."""
+    raw = _decode(path, cv2.IMREAD_COLOR)
+    if raw is None:
         return None
-    return detector, int(raw.shape[1]), int(raw.shape[0])
+    return core.scale_screenshot(raw), int(raw.shape[1]), int(raw.shape[0])
 
 
 def _annotation(
@@ -360,7 +367,7 @@ def _truth_annotations(
 
 def _wall_annotations(mask_path: Path, image: np.ndarray) -> list[dict[str, Any]]:
     """Turn an optional painted fortress-wall alpha mask into wall boxes."""
-    mask = cv2.imdecode(np.fromfile(str(mask_path), np.uint8), cv2.IMREAD_UNCHANGED)
+    mask = _decode(mask_path, cv2.IMREAD_UNCHANGED)
     if mask is None:
         return []
     if mask.ndim == 3:
@@ -387,11 +394,18 @@ def _wall_annotations(mask_path: Path, image: np.ndarray) -> list[dict[str, Any]
     return out
 
 
-def _load_wall_records(data_root: Path) -> list[Record]:
-    """Load optional ``fortress_paint`` screenshot/mask pairs as wall-only records."""
+def _full(records: list[Record], limit: int | None) -> bool:
+    """Whether a loader has collected ``limit`` usable records (None: no limit)."""
+    return limit is not None and len(records) >= limit
+
+
+def _load_wall_records(data_root: Path, *, limit: int | None = None) -> list[Record]:
+    """Load optional ``fortress_paint`` screenshot/mask pairs as wall-only records (at most ``limit``)."""
     wall_dir = data_root / "fortress_paint"
     records = []
     for mask_path in sorted(wall_dir.glob("[0-9]*.png")):
+        if _full(records, limit):
+            break
         image_path = wall_dir / f"paint_{mask_path.stem}.png"
         loaded = _source_image(image_path) if image_path.is_file() else None
         if loaded is None:
@@ -458,13 +472,16 @@ def _load_truth_records(
     badge_granularity: str,
     include_paths: bool,
     include_path_dashes: bool,
+    limit: int | None = None,
 ) -> list[Record]:
-    """Load hand-labelled screenshot records."""
+    """Load hand-labelled screenshot records (at most ``limit``, in source order)."""
     records = []
     for truth_path, image_dir in truth_sources(data_root):
         truth = json.loads(truth_path.read_text(encoding="utf-8"))
         source_group = truth_path.parent.name
         for filename, labels in truth.items():
+            if _full(records, limit):
+                return records
             image_path = image_dir / filename
             loaded = _source_image(image_path) if image_path.is_file() else None
             if loaded is None:
@@ -507,12 +524,28 @@ def _cache_image_path(cache_path: Path, cached_path: str, data_root: Path, name:
 
 
 def _load_cached_records(
-    data_root: Path, *, badge_granularity: str, include_paths: bool, include_path_dashes: bool
+    data_root: Path,
+    *,
+    map_box: float = RF_DETR_MAP_BOX,
+    icon_box: float = RF_DETR_ICON_BOX,
+    landmark_box: float = RF_DETR_LANDMARK_BOX,
+    tower_width: float = RF_DETR_TOWER_WIDTH,
+    tower_height: float = RF_DETR_TOWER_HEIGHT,
+    stronghold_box: float = RF_DETR_STRONGHOLD_BOX,
+    badge_granularity: str,
+    include_paths: bool,
+    include_path_dashes: bool,
+    limit: int | None = None,
 ) -> list[Record]:
-    """Load cached crawl detections as explicitly marked pseudo-labelled records."""
+    """Load cached crawl detections as explicitly marked pseudo-labelled records (at most ``limit``).
+
+    Boxes have the sizes given (the same as the hand truth's in ``load_records``).
+    """
     frame_dir = data_root / "crawl_atlas" / "atlas_frames"
     records = []
     for cache_path in sorted(frame_dir.glob("*_detect1.json")):
+        if _full(records, limit):
+            break
         cached = json.loads(cache_path.read_text(encoding="utf-8"))
         name = str(cached.get("name", cache_path.stem.removesuffix("_detect1")))
         image_path = _cache_image_path(cache_path, str(cached.get("path", "")), data_root, name)
@@ -529,8 +562,8 @@ def _load_cached_records(
                 image_height=height,
                 x=float(node["x"]),
                 y=float(node["y"]),
-                width=RF_DETR_MAP_BOX,
-                height=RF_DETR_MAP_BOX,
+                width=map_box,
+                height=map_box,
                 scale_x=1.0,
                 scale_y=1.0,
                 provenance="cached_detector",
@@ -544,8 +577,8 @@ def _load_cached_records(
                     image_height=height,
                     x=float(node["x"]),
                     y=float(node["y"]),
-                    width=RF_DETR_TOWER_WIDTH,
-                    height=RF_DETR_TOWER_HEIGHT,
+                    width=tower_width,
+                    height=tower_height,
                     scale_x=1.0,
                     scale_y=1.0,
                     anchor="base",
@@ -553,26 +586,34 @@ def _load_cached_records(
                 )
                 if item:
                     annotations.append(item)
+        # Every Tower landmark is one tower box. Classical rows report a tower twice, as a map node flagged "tower"
+        # (boxed above) and as a landmark at that node; RF-DETR rows may have only the landmark (older ones dropped
+        # the tower's map node). So a landmark adds a box unless a flagged node lies within RF_DETR_TOWER_NODE_REACH.
+        flagged = [(float(node["x"]), float(node["y"])) for node in cached.get("nodes", []) if node.get("tower")]
         city_categories = _city_categories(cached.get("landmarks", []), image)
         for index, landmark in enumerate(cached.get("landmarks", [])):
             category = city_categories.get(index) or _landmark_category(str(landmark.get("kind", "")))
-            if category is None or category == "tower":
+            if category is None:
                 continue
-            size = (
-                RF_DETR_STRONGHOLD_BOX
-                if category in {"breach_stronghold", "locked_stronghold"}
-                else RF_DETR_LANDMARK_BOX
-            )
+            x, y = float(landmark["x"]), float(landmark["y"])
+            if category == "tower":
+                if any(np.hypot(x - fx, y - fy) <= RF_DETR_TOWER_NODE_REACH for fx, fy in flagged):
+                    continue
+                box_width, box_height, anchor = tower_width, tower_height, "base"
+            else:
+                size = stronghold_box if category in {"breach_stronghold", "locked_stronghold"} else landmark_box
+                box_width, box_height, anchor = size, size, "center"
             item = _point_annotation(
                 category,
                 image_width=width,
                 image_height=height,
-                x=float(landmark["x"]),
-                y=float(landmark["y"]),
-                width=size,
-                height=size,
+                x=x,
+                y=y,
+                width=box_width,
+                height=box_height,
                 scale_x=1.0,
                 scale_y=1.0,
+                anchor=anchor,
                 provenance="cached_detector",
             )
             if item:
@@ -584,8 +625,8 @@ def _load_cached_records(
                 image_height=height,
                 x=float(icon["x"]),
                 y=float(icon["y"]),
-                width=RF_DETR_ICON_BOX,
-                height=RF_DETR_ICON_BOX,
+                width=icon_box,
+                height=icon_box,
                 scale_x=1.0,
                 scale_y=1.0,
                 provenance="cached_detector",
@@ -670,34 +711,48 @@ def load_records(
         icon_box = badge_box
     if badge_granularity not in {"name", "all"}:
         raise ValueError("badge_granularity must be 'name' or 'all'")
-    records = _load_truth_records(
-        data_root,
-        map_box=map_box,
-        icon_box=icon_box,
-        landmark_box=landmark_box,
-        tower_width=tower_width,
-        tower_height=tower_height,
-        stronghold_box=stronghold_box,
-        include_soft=include_soft,
-        badge_granularity=badge_granularity,
-        include_paths=include_paths,
-        include_path_dashes=include_path_dashes,
+    if max_images is not None and max_images < 1:
+        raise ValueError("max_images must be positive")
+
+    def left() -> int | None:
+        """How many more usable records the loaders may add (None: no limit); a skipped file never counts."""
+        return None if max_images is None else max_images - len(records)
+
+    records: list[Record] = []
+    records.extend(
+        _load_truth_records(
+            data_root,
+            map_box=map_box,
+            icon_box=icon_box,
+            landmark_box=landmark_box,
+            tower_width=tower_width,
+            tower_height=tower_height,
+            stronghold_box=stronghold_box,
+            include_soft=include_soft,
+            badge_granularity=badge_granularity,
+            include_paths=include_paths,
+            include_path_dashes=include_path_dashes,
+            limit=left(),
+        )
     )
-    if include_cached:
+    if include_cached and left() != 0:
         records.extend(
             _load_cached_records(
                 data_root,
+                map_box=map_box,
+                icon_box=icon_box,
+                landmark_box=landmark_box,
+                tower_width=tower_width,
+                tower_height=tower_height,
+                stronghold_box=stronghold_box,
                 badge_granularity=badge_granularity,
                 include_paths=include_paths,
                 include_path_dashes=include_path_dashes,
+                limit=left(),
             )
         )
-    if include_walls:
-        records.extend(_load_wall_records(data_root))
-    if max_images is not None:
-        if max_images < 1:
-            raise ValueError("max_images must be positive")
-        records = records[:max_images]
+    if include_walls and left() != 0:
+        records.extend(_load_wall_records(data_root, limit=left()))
     if not records:
         raise FileNotFoundError(
             f"No usable detector screenshots found below {data_root}; download atlas_test_data or set ATLAS_TEST_DATA."
@@ -752,14 +807,20 @@ def load_annotator_manifest(manifest_path: Path, max_images: int | None = None) 
                 bbox = tuple(float(value) for value in annotation["bbox"])
             except (KeyError, TypeError, ValueError) as exc:
                 raise ValueError(f"Invalid annotator bbox in {manifest_path}") from exc
-            if len(bbox) != 4 or bbox[2] <= 0 or bbox[3] <= 0:
+            if len(bbox) != 4 or not all(math.isfinite(value) for value in bbox) or bbox[2] <= 0 or bbox[3] <= 0:
                 raise ValueError(f"Invalid annotator bbox in {manifest_path}: {bbox}")
+            try:
+                area = float(annotation.get("area", bbox[2] * bbox[3]))
+            except (TypeError, ValueError) as exc:
+                raise ValueError(f"Invalid annotator area in {manifest_path}") from exc
+            if not math.isfinite(area):
+                raise ValueError(f"Invalid annotator area in {manifest_path}: {area}")
             annotations.append(
                 {
                     "category_name": label,
                     "category_id": name_to_id[label],
                     "bbox": bbox,
-                    "area": float(annotation.get("area", bbox[2] * bbox[3])),
+                    "area": area,
                     "iscrowd": int(annotation.get("iscrowd", 0)),
                     "provenance": str(annotation.get("source", "annotator_reviewed")),
                 }
@@ -798,16 +859,16 @@ def split_records(
         groups: dict[str, list[Record]] = {}
         for record in records:
             groups.setdefault(record.source_group, []).append(record)
+        if len(groups) < 2:
+            raise ValueError("Need at least two source groups to split by source")
         keys = list(groups)
         rng.shuffle(keys)
         target = max(1, int(np.ceil(len(records) * val_fraction)))
         validation: list[Record] = []
-        while keys and (len(validation) < target or not validation):
+        # whole groups only, and the last group always stays for training
+        while len(keys) > 1 and (len(validation) < target or not validation):
             validation.extend(groups.pop(keys.pop()))
         train = [record for group in groups.values() for record in group]
-        if not train:
-            moved = validation.pop()
-            train = [moved]
         return train, validation
     order = np.arange(len(records))
     rng.shuffle(order)
@@ -1013,18 +1074,22 @@ def augment_detection_example(image, objects: dict[str, Any], rng: random.Random
     return image, transformed
 
 
-def processor_transform(processor, *, augment: bool = False, seed: int = 1337):
-    """Return a batched transform, optionally applying seeded train-only geometric augmentation."""
+class ProcessorTransform:
+    """The batched dataset transform of ``processor_transform``: a module-level class, not a closure, so a dataset
+    that carries it can be pickled into DataLoader worker processes (spawn, on Windows and macOS)."""
 
-    rng = random.Random(seed)
+    def __init__(self, processor, *, augment: bool = False, seed: int = 1337) -> None:
+        self.processor = processor
+        self.augment = augment
+        self.rng = random.Random(seed)
 
-    def transform(examples: dict[str, list[Any]]) -> dict[str, Any]:
+    def __call__(self, examples: dict[str, list[Any]]) -> dict[str, Any]:
         images = []
         annotations = []
         for image, image_id, objects in zip(examples["image"], examples["image_id"], examples["objects"], strict=True):
             image = image.convert("RGB")
-            if augment:
-                image, objects = augment_detection_example(image, objects, rng)
+            if self.augment:
+                image, objects = augment_detection_example(image, objects, self.rng)
             images.append(image)
             annotations.append(
                 {
@@ -1043,12 +1108,16 @@ def processor_transform(processor, *, augment: bool = False, seed: int = 1337):
                     ],
                 }
             )
-        return processor(images=images, annotations=annotations, return_tensors="pt")
+        return self.processor(images=images, annotations=annotations, return_tensors="pt")
 
-    return transform
+
+def processor_transform(processor, *, augment: bool = False, seed: int = 1337) -> ProcessorTransform:
+    """Return a batched transform, optionally applying seeded train-only geometric augmentation."""
+    return ProcessorTransform(processor, augment=augment, seed=seed)
 
 
 __all__ = [
+    "ProcessorTransform",
     "Record",
     "augment_detection_example",
     "build_dataset",

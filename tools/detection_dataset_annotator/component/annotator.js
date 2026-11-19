@@ -29,7 +29,7 @@ const SCALE_STEP_PX = 1; // , and . shrink / grow every side of a box this much 
 const SCALE_STEP_SHIFT_PX = 5; // ... with Shift
 const SCALE_WHEEL_DELTA = 100; // wheel delta per resize step: one mouse-wheel notch; trackpads add up small deltas
 const SCALE_UNDO_MS = 600; // resize steps closer together than this are one undo step (one wheel gesture)
-const REVEAL_MARGIN_PX = 24; // Tab pans when the box comes closer than this to the viewport edge
+const REVEAL_MARGIN_PX = 24; // J / K pan when the box comes closer than this to the viewport edge
 const MANUAL = "manual"; // box source of drawn or changed boxes (constants.ANNOTATOR_MANUAL_SOURCE)
 const CITY_GUESS = "city_guess"; // box source of an unsure city type (constants.ANNOTATOR_CITY_GUESS_SOURCE)
 
@@ -59,7 +59,7 @@ const SHORTCUTS = [
   ["Arrows (+Shift)", "move 1 px (10 px)"],
   ["Alt+Arrows (+Shift)", "resize 1 px (10 px)"],
   [", / . (+Shift)", "shrink / grow 1 px on every side (5 px), keeping the centre"],
-  ["Tab / Shift+Tab", "next / previous box"],
+  ["J / K", "next / previous box"],
   ["Ctrl+Z / Ctrl+Shift+Z, Ctrl+Y", "undo / redo"],
   ["Esc", "cancel drag, deselect, close help"],
   ["Wheel / + / -", "zoom; with boxes selected: grow / shrink them 1 px on every side"],
@@ -144,7 +144,12 @@ class Annotator {
   }
 
   update(data) {
-    const first = !this.data || this.data.image_key !== data.image_key || this.data.revision !== data.revision;
+    // A new screenshot, detection revision or review state file (output folder) starts a fresh editor.
+    const first =
+      !this.data ||
+      this.data.dataset !== data.dataset ||
+      this.data.image_key !== data.image_key ||
+      this.data.revision !== data.revision;
     this.data = data;
     this.labels = data.labels ?? [];
     this.labelByName = Object.fromEntries(this.labels.map((label) => [label.name, label]));
@@ -195,11 +200,14 @@ class Annotator {
   }
 
   payload() {
+    // During a drag the boxes are only on their way: the last committed ones are sent (an autosave timer can fire
+    // mid-drag, and a cancelled drag puts them back exactly as sent).
+    const boxes = this.drag?.before ?? this.boxes;
     return {
       image_key: this.data.image_key,
       revision: this.data.revision,
       seq: this.seq,
-      boxes: this.boxes.map(({ id, label, x, y, w, h }) => ({
+      boxes: boxes.map(({ id, label, x, y, w, h }) => ({
         id,
         label,
         x: round2(x),
@@ -312,8 +320,15 @@ class Annotator {
     node.addEventListener("click", (event) => {
       event.preventDefault();
       onClick();
+      this.backToCanvas(event);
     });
     return node;
+  }
+
+  backToCanvas(event) {
+    // After a mouse click on a side-panel button the shortcuts go on working; a keyboard press (detail 0) keeps the
+    // focus where Tab put it.
+    if (event.detail > 0) this.viewport.focus({ preventScroll: true });
   }
 
   on(target, type, handler, options) {
@@ -487,13 +502,24 @@ class Annotator {
   // ---- history --------------------------------------------------------------------------------------------
 
   snapshot() {
-    this.history.push(cloneBoxes(this.boxes));
+    this.remember(cloneBoxes(this.boxes));
+  }
+
+  remember(boxes) {
+    // A new undo step: the redo history ends, and so does a resize gesture (the next , / . / wheel step is its own).
+    this.history.push(boxes);
     if (this.history.length > HISTORY_LIMIT) this.history.shift();
     this.future = [];
+    this.endScaleGesture();
+  }
+
+  endScaleGesture() {
+    this.lastScale = { at: 0, selection: "" };
   }
 
   undo() {
     if (!this.history.length) return;
+    this.endScaleGesture();
     this.future.push(cloneBoxes(this.boxes));
     this.boxes = this.history.pop();
     this.afterRestore();
@@ -501,6 +527,7 @@ class Annotator {
 
   redo() {
     if (!this.future.length) return;
+    this.endScaleGesture();
     this.history.push(cloneBoxes(this.boxes));
     this.boxes = this.future.pop();
     this.afterRestore();
@@ -542,7 +569,8 @@ class Annotator {
     if (translate && this.selectedAt(point)) {
       return { kind: "move", start: point, originals: cloneBoxes(this.selectedBoxes()) };
     }
-    const handle = translate ? null : this.handleAt(point);
+    // Alt (cycle) and Shift (add to the selection) are selection clicks, even on a handle.
+    const handle = translate || event.altKey || event.shiftKey ? null : this.handleAt(point);
     if (handle) {
       this.select(handle.box.id);
       return { kind: "resize", handle: handle.handle, start: point, box: { ...handle.box }, id: handle.box.id };
@@ -585,7 +613,8 @@ class Annotator {
     const dx = point.x - drag.start.x;
     const dy = point.y - drag.start.y;
     if (!drag.moved && Math.hypot(dx, dy) * this.view.zoom < DRAG_START_PX) return;
-    if (!drag.moved && drag.kind !== "draw") this.snapshot();
+    // The state before the drag becomes an undo step only when the drag ends (a cancelled drag keeps redo).
+    if (!drag.moved && drag.kind !== "draw") drag.before = cloneBoxes(this.boxes);
     drag.moved = true;
     if (drag.kind === "move") this.dragMove(drag, dx, dy);
     else if (drag.kind === "resize") this.dragResize(drag, dx, dy);
@@ -595,7 +624,7 @@ class Annotator {
   hoverAt(point, event) {
     if (!this.showBoxes) return;
     const translate = (event?.ctrlKey || event?.metaKey) && this.selectedAt(point);
-    const handle = translate ? null : this.handleAt(point);
+    const handle = translate || event?.altKey || event?.shiftKey ? null : this.handleAt(point);
     const under = this.boxesAt(point);
     this.setHover(handle?.box.id ?? under[0]?.id ?? null);
     let cursor = "crosshair";
@@ -666,6 +695,7 @@ class Annotator {
       this.select(box.id);
       this.changed();
     } else if (drag.moved && (drag.kind === "move" || drag.kind === "resize")) {
+      this.remember(drag.before);
       this.changed();
     }
     this.renderAll();
@@ -678,7 +708,7 @@ class Annotator {
     this.viewport.classList.remove("ann-translating");
     this.drawEl.hidden = true;
     if ((drag.kind === "move" || drag.kind === "resize") && drag.moved) {
-      this.boxes = this.history.pop() ?? this.boxes;
+      this.boxes = drag.before;
     }
     this.renderAll();
   }
@@ -701,7 +731,8 @@ class Annotator {
   // ---- keyboard -------------------------------------------------------------------------------------------
 
   keyDown(event) {
-    if (!this.active || !this.data || isTyping(event)) return;
+    // Shortcuts belong to the canvas: Tab moving the focus and Enter / Space on a focused button keep their meaning.
+    if (!this.active || !this.data || isTyping(event) || !event.composedPath().includes(this.viewport)) return;
     const handled = event.ctrlKey || event.metaKey ? this.commandKey(event) : this.plainKey(event);
     if (handled) {
       event.preventDefault();
@@ -749,8 +780,11 @@ class Annotator {
       case "Backspace":
         this.deleteSelected();
         return true;
-      case "Tab":
-        this.cycle(shiftKey ? -1 : 1);
+      case "j":
+        this.cycle(1);
+        return true;
+      case "k":
+        this.cycle(-1);
         return true;
       case "Enter":
         this.act(shiftKey ? "toggle_review" : "review_next");
@@ -935,7 +969,6 @@ class Annotator {
     const now = Date.now();
     const selection = [...this.selected].sort().join(" ");
     const newGesture = now - this.lastScale.at > SCALE_UNDO_MS || this.lastScale.selection !== selection;
-    this.lastScale = { at: now, selection };
     const resize = (box) => {
       const cx = box.x + box.w / 2;
       const cy = box.y + box.h / 2;
@@ -945,6 +978,7 @@ class Annotator {
       box.y = cy - box.h / 2;
     };
     this.editSelected(resize, { snapshot: newGesture }); // one wheel gesture is one undo step
+    this.lastScale = { at: now, selection }; // after the snapshot, which ends any earlier gesture
   }
 
   cycle(step) {
@@ -1088,7 +1122,10 @@ class Annotator {
       this.picture(row, label, "ann-pic");
       this.labelText(row, label.name, label);
       el("span", "ann-count", row).textContent = String(counts[label.name] ?? 0);
-      row.addEventListener("click", () => this.useLabel(label.name));
+      row.addEventListener("click", (event) => {
+        this.useLabel(label.name);
+        this.backToCanvas(event);
+      });
     }
     if (!shown.length) el("p", "ann-muted", this.legendEl).textContent = "No label matches.";
   }

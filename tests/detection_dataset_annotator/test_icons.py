@@ -30,18 +30,19 @@ def _fake_matches(monkeypatch: pytest.MonkeyPatch, matches: dict[tuple[int, int]
     )
 
 
-def test_batched_naming_matches_name_badge() -> None:
+def test_batched_naming_matches_name_badge(seed: int, runs) -> None:
     """name_icons gives the same name and distance as the detector's own name_badge, also at the screen edge."""
-    rng = np.random.default_rng(3)
-    image = rng.integers(0, 256, (240, 320, 3), dtype=np.uint8)
-    image[100:140, 150:190] = rng.integers(120, 256, (40, 40, 3), dtype=np.uint8)
+    rng = np.random.default_rng(seed)
     points = np.array([[170, 120], [60, 60], [250, 180], [10, 10], [315, 120], [20, 20], [299, 219]])
     names, features = icon_proposals.picture_book({"names": [], "F": np.zeros((0, 0), np.float32)})
-    fast = icon_proposals.name_icons(image, points, names, features)
-    slow = [badges.name_badge(image, float(x), float(y), names, features) for x, y in points]
-    for (fast_name, fast_dist), (slow_name, slow_dist) in zip(fast, slow, strict=True):
-        assert fast_name == slow_name
-        assert fast_dist == pytest.approx(slow_dist, abs=1e-4)
+    for _ in range(runs(1)):
+        image = rng.integers(0, 256, (240, 320, 3), dtype=np.uint8)
+        image[100:140, 150:190] = rng.integers(120, 256, (40, 40, 3), dtype=np.uint8)
+        fast = icon_proposals.name_icons(image, points, names, features)
+        slow = [badges.name_badge(image, float(x), float(y), names, features) for x, y in points]
+        for (fast_name, fast_dist), (slow_name, slow_dist) in zip(fast, slow, strict=True):
+            assert fast_name == slow_name
+            assert fast_dist == pytest.approx(slow_dist, abs=1e-4)
 
 
 def test_proposal_rules(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -174,14 +175,27 @@ def test_icons_over_fogged_map_nodes(test_data: Path) -> None:
 
 
 @pytest.mark.data
-def test_the_annotator_shares_one_map_finder_run(test_data: Path) -> None:
-    """``run_classical_detector`` hands its ``find_maps`` run to the detector instead of running it twice: the
-    detector's result and the faint map nodes must be what two separate runs give."""
+def test_the_annotator_shares_one_map_finder_run(test_data: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """``run_classical_detector`` hands its ``find_maps`` run to the detector instead of running it twice (the
+    finder runs once), and the detector's result and the faint map nodes are what two separate runs give."""
     from grand_project import core
+    from grand_project.detect import pipeline
     from grand_project.detect.models import _models
     from grand_project.detect.pipeline import detect_classical, ensure_models, find_maps
 
-    image = core.read_screenshot(_shot(test_data, "2694490_20261114092839_1.png"))
+    shot = _shot(test_data, "2694490_20261114092839_1.png")
+    calls: list[int] = []
+
+    def counting_find_maps(*args, **kwargs):
+        calls.append(1)
+        return find_maps(*args, **kwargs)
+
+    with monkeypatch.context() as patch:
+        patch.setattr(pipeline, "find_maps", counting_find_maps)
+        run_classical_detector(shot)
+    assert len(calls) == 1
+
+    image = core.read_screenshot(shot)
     ensure_models()
     found = find_maps(image, _models["maps"])
 

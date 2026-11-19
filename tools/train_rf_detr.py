@@ -36,6 +36,7 @@ from grand_project.detect.constants import (
     RF_DETR_AUGMENT_CROP_MIN_VISIBILITY,
     RF_DETR_AUGMENT_CROP_PROBABILITY,
     RF_DETR_AUGMENT_FLIP_PROBABILITY,
+    RF_DETR_CUDA_REEXEC_ENV,
     RF_DETR_ICON_BOX,
     RF_DETR_LANDMARK_BOX,
     RF_DETR_MAP_BOX,
@@ -63,8 +64,12 @@ def _prepare_cuda_library_path() -> None:
     libraries all use the same sonames, the dynamic linker silently combines
     components from both installations and cuDNN reports a sublibrary-loading
     failure during the first convolution.
+
+    The dynamic linker reads ``LD_LIBRARY_PATH`` once, when the process starts, so
+    setting it here would not reach this process: when it is not right yet, the run
+    restarts itself (once, guarded by RF_DETR_CUDA_REEXEC_ENV) with the path set.
     """
-    if not sys.platform.startswith("linux"):
+    if not sys.platform.startswith("linux") or os.environ.get(RF_DETR_CUDA_REEXEC_ENV):
         return
     package_dirs = {Path(entry) / "nvidia" for entry in sys.path if entry}
     cuda_dirs = [
@@ -76,11 +81,18 @@ def _prepare_cuda_library_path() -> None:
     if not cuda_dirs:
         return
     existing = os.environ.get("LD_LIBRARY_PATH", "")
+    current = existing.split(os.pathsep) if existing else []
     entries = [str(directory) for directory in cuda_dirs]
-    os.environ["LD_LIBRARY_PATH"] = os.pathsep.join(entries + ([existing] if existing else []))
+    if current[: len(entries)] == entries:
+        return
+    env = {**os.environ, "LD_LIBRARY_PATH": os.pathsep.join(entries + current), RF_DETR_CUDA_REEXEC_ENV: "1"}
+    sys.stdout.flush()
+    sys.stderr.flush()
+    os.execve(sys.executable, [sys.executable, *sys.orig_argv[1:]], env)
 
 
-_prepare_cuda_library_path()
+if __name__ == "__main__":  # only a training run restarts itself; importing this module (tests) never does
+    _prepare_cuda_library_path()
 
 from datasets import DatasetDict  # noqa: E402
 
@@ -128,24 +140,26 @@ def run_epoch(model, loader, optimizer, device, *, amp: bool, scaler, train: boo
     total_loss = 0.0
     count = 0
     autocast_dtype = torch.float16 if device.type == "cuda" else torch.bfloat16
-    context = torch.autocast(device_type=device.type, dtype=autocast_dtype) if amp else nullcontext()
-    with context:
-        for batch in loader:
-            batch = move_batch(batch, device)
-            with torch.set_grad_enabled(train):
-                outputs = model(**batch)
-                loss = outputs.loss
-            if loss is None or not torch.isfinite(loss):
-                raise RuntimeError(f"RF-DETR returned an invalid loss: {loss}")
-            if train:
-                optimizer.zero_grad(set_to_none=True)
-                scaler.scale(loss).backward()
-                scaler.unscale_(optimizer)
-                torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=0.1)
-                scaler.step(optimizer)
-                scaler.update()
-            total_loss += float(loss.detach())
-            count += 1
+    for batch in loader:
+        batch = move_batch(batch, device)
+        # Mixed precision for the forward pass and loss only, a new context per batch: autocast caches its
+        # half-precision copies of the weights until the context exits, so one context around the whole epoch
+        # would run every batch on the weights from before the optimizer steps.
+        autocast = torch.autocast(device_type=device.type, dtype=autocast_dtype) if amp else nullcontext()
+        with torch.set_grad_enabled(train), autocast:
+            outputs = model(**batch)
+            loss = outputs.loss
+        if loss is None or not torch.isfinite(loss):
+            raise RuntimeError(f"RF-DETR returned an invalid loss: {loss}")
+        if train:
+            optimizer.zero_grad(set_to_none=True)
+            scaler.scale(loss).backward()
+            scaler.unscale_(optimizer)
+            torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=0.1)
+            scaler.step(optimizer)
+            scaler.update()
+        total_loss += float(loss.detach())
+        count += 1
     return total_loss / max(1, count)
 
 
@@ -155,6 +169,25 @@ def save_model(model, processor, output_dir: Path, label_map: dict[str, str]) ->
     model.save_pretrained(output_dir, safe_serialization=True)
     processor.save_pretrained(output_dir)
     (output_dir / "labels.json").write_text(json.dumps(label_map, indent=2) + "\n", encoding="utf-8")
+
+
+def replace_checkpoint(model, processor, best_dir: Path, label_map: dict[str, str]) -> None:
+    """Save a new best checkpoint beside the current one and switch them only once it is complete.
+
+    A failed or interrupted save leaves the previous best in place; during the switch it is kept as
+    ``<best>.previous`` (deleted once the new one is in place), so it can always be recovered.
+    """
+    staging = best_dir.with_name(f"{best_dir.name}.new")
+    previous = best_dir.with_name(f"{best_dir.name}.previous")
+    if staging.exists():
+        shutil.rmtree(staging)
+    save_model(model, processor, staging, label_map)
+    if previous.exists():
+        shutil.rmtree(previous)
+    if best_dir.exists():
+        best_dir.rename(previous)
+    staging.rename(best_dir)
+    shutil.rmtree(previous, ignore_errors=True)
 
 
 def parse_args() -> argparse.Namespace:
@@ -389,9 +422,7 @@ def main() -> int:
         )
         if val_loss < best_val:
             best_val = val_loss
-            if best_dir.exists():
-                shutil.rmtree(best_dir)
-            save_model(model, processor, best_dir, label_map)
+            replace_checkpoint(model, processor, best_dir, label_map)
             print(f"saved {best_dir} (best validation loss)")
 
     args.output_dir.mkdir(parents=True, exist_ok=True)

@@ -33,6 +33,7 @@ from tools.detection_dataset_annotator.pool import cpu_count, default_workers, d
 from tools.detection_dataset_annotator.state import (
     DetectionOptions,
     discover_images,
+    image_key,
     label_names,
     merge_discovered_images,
     neighbour_key,
@@ -40,6 +41,7 @@ from tools.detection_dataset_annotator.state import (
     relative_source,
     resolve_input_paths,
     resolve_path,
+    save_items,
     save_state,
 )
 
@@ -70,8 +72,13 @@ def _image_url(path: str, modified_ns: int) -> str | None:
     return editor_image_url(Path(path))
 
 
-def _editor_key(image_key: str, revision: int) -> str:
-    return f"annotator-{image_key}-{revision}"
+def _dataset_id(state_path: Path) -> str:
+    """A short id of the review state file: two output folders can hold the same screenshot at the same revision."""
+    return image_key(state_path)
+
+
+def _editor_key(state_path: Path, key: str, revision: int) -> str:
+    return f"annotator-{_dataset_id(state_path)}-{key}-{revision}"
 
 
 def _saved_seq_key(editor_key: str) -> str:
@@ -168,7 +175,7 @@ def _render_editor(state: dict[str, Any], key: str, keys: list[str], settings: S
     if ensure_annotation_ids(item):
         save_state(settings.state_path, state)
     revision = int(item.get("edit_version", 0))
-    editor_key = _editor_key(key, revision)
+    editor_key = _editor_key(settings.state_path, key, revision)
     if st.session_state.get(K.ANNOTATOR_SESSION_MOUNTED_EDITOR) != editor_key:
         # A freshly mounted editor counts its edits from zero and its undo history starts here.
         st.session_state[K.ANNOTATOR_SESSION_MOUNTED_EDITOR] = editor_key
@@ -178,6 +185,7 @@ def _render_editor(state: dict[str, Any], key: str, keys: list[str], settings: S
     index = keys.index(key) if key in keys else -1
     labels = label_names(state, named_icons=settings.options.named_icons, derived=True)
     payload = {
+        "dataset": _dataset_id(settings.state_path),
         "image_key": key,
         "revision": revision,
         "image_url": image_url,
@@ -267,22 +275,27 @@ def _run_detection(
     progress_bar = st.progress(0.0) if keys is None or len(keys) > 1 else None
     status = st.empty()
     last_save = time.monotonic()
+    # Saves write only the screenshots this run finished into the state saved now: the editor (another browser tab)
+    # may have saved edits since this snapshot was loaded.
+    key_of = {str(item["path"]): key for key, item in state["images"].items()}
+    finished: set[str] = set()
 
     def progress(done: int, total: int, path: str) -> None:
         nonlocal last_save
+        finished.add(key_of[path])  # first: the UI calls below may raise Streamlit's stop
         if progress_bar is not None:
             progress_bar.progress(done / max(1, total), text=f"{done:,}/{total:,} complete")
         status.caption(f"Finished {Path(path).name}")
         # By time, not by count: with many workers a save every few screenshots would take most of the time.
         if time.monotonic() - last_save >= K.ANNOTATOR_SAVE_EVERY_S:
-            save_state(settings.state_path, state)
+            save_items(settings.state_path, state, finished)
             last_save = time.monotonic()
 
     with st.spinner("Running the classical detector…"):
         completed, errors = detect_pending(
             state, settings.options, keys=keys, force=force, max_workers=settings.max_workers, progress=progress
         )
-    save_state(settings.state_path, state)
+    save_items(settings.state_path, state, finished)
     st.session_state[K.ANNOTATOR_SESSION_NOTICE] = (
         f"Processed {completed} screenshots; {errors} failed. Failed items remain retryable."
     )
@@ -297,9 +310,11 @@ def _sidebar_actions(state: dict[str, Any], settings: Settings) -> None:
         discover, detect_new = st.columns(2)
         if discover.button("Discover", use_container_width=True, help="Find screenshots below the roots"):
             found = discover_images(settings.roots)
-            added, existing = merge_discovered_images(state, found)
-            state["input_roots"] = [str(root) for root in settings.roots]
-            save_state(settings.state_path, state)
+            # merged into the state saved now, not the one loaded before the (slow) search: keeps edits saved meanwhile
+            latest = read_state(settings.state_path, settings.roots)
+            added, existing = merge_discovered_images(latest, found)
+            latest["input_roots"] = [str(root) for root in settings.roots]
+            save_state(settings.state_path, latest)
             st.session_state[K.ANNOTATOR_SESSION_NOTICE] = (
                 f"Discovered {len(found)} images ({added} new, {existing} already in the queue)."
             )

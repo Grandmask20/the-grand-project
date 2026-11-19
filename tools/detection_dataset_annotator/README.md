@@ -40,7 +40,7 @@ in the side panel says when they are saved.
 | Arrows (`Shift` for 10 px) | move selected by 1 px |
 | `Alt`+Arrows (`Shift` for 10 px) | resize selected by 1 px |
 | `,` / `.` (`Shift` for 5 px) | shrink / grow selected by 1 px on every side, keeping each box's centre |
-| `Tab` / `Shift+Tab` | next / previous box |
+| `J` / `K` | next / previous box |
 | `Ctrl+Z` / `Ctrl+Shift+Z`, `Ctrl+Y` | undo / redo |
 | `Esc` | cancel a drag, deselect, close help |
 | Wheel, `+` / `-` | zoom (wheel zooms around the pointer); with boxes selected, grow / shrink them by 1 px on every side, keeping each box's centre (`Shift`+wheel: 5 px) |
@@ -54,7 +54,8 @@ in the side panel says when they are saved.
 | `N` or `]` / `P` or `[` | next / previous screenshot |
 | `?` | shortcut help |
 
-Shortcuts work after a click in the editor and stop after a click elsewhere on the page (for example in the sidebar).
+Shortcuts work while the screenshot has the focus: after a click on it or on a side-panel button, not after a click
+elsewhere on the page (for example in the sidebar). `Tab` moves the focus as usual and `Enter` presses a focused button.
 The side panel also has the label list with counts, and the selected box's label and X/Y/W/H in source pixels.
 
 Each label shows its picture next to its name: an icon label (`icon_breachhive`) its icon's art from poe2db

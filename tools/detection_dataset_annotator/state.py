@@ -77,8 +77,17 @@ def discover_images(roots: Iterable[Path]) -> list[Path]:
 
 
 def image_key(path: Path) -> str:
-    """A stable, filesystem-safe identifier for a screenshot."""
-    return hashlib.sha256(str(path.resolve()).encode("utf-8")).hexdigest()[:24]
+    """A stable, filesystem-safe identifier for a screenshot.
+
+    A file name with bytes that are not UTF-8 (POSIX keeps them as surrogate escapes) is hashed in its filesystem
+    encoding instead, so discovery does not stop at it; every other path keeps its UTF-8 key.
+    """
+    resolved = str(path.resolve())
+    try:
+        encoded = resolved.encode("utf-8")
+    except UnicodeEncodeError:
+        encoded = os.fsencode(resolved)
+    return hashlib.sha256(encoded).hexdigest()[:24]
 
 
 def relative_source(path: Path, root: Path = paths.ROOT) -> str:
@@ -104,12 +113,14 @@ def read_state(path: Path, input_roots: Iterable[Path]) -> dict[str, Any]:
     """Load a review state, or a fresh one when the file does not exist yet.
 
     Raises:
-        ValueError: The file is from another schema version.
+        ValueError: The file is from another schema version, or its JSON is not an object.
         json.JSONDecodeError: The file is not JSON.
     """
     if not path.is_file():
         return new_state(input_roots)
     state = json.loads(path.read_text(encoding="utf-8"))
+    if not isinstance(state, dict):
+        raise ValueError(f"Review state is not a JSON object: {path}")
     if state.get("schema_version") != K.ANNOTATOR_SCHEMA_VERSION:
         raise ValueError(f"Unsupported review state version: {state.get('schema_version')}")
     state.setdefault("input_roots", [str(root) for root in input_roots])
@@ -136,6 +147,21 @@ def write_json_atomic(path: Path, value: Any) -> None:
 def save_state(path: Path, state: dict[str, Any]) -> None:
     """Persist the review state."""
     write_json_atomic(path, state)
+
+
+def save_items(path: Path, state: dict[str, Any], keys: Iterable[str]) -> None:
+    """Write the given screenshots' items and the settings of ``state`` into the state saved now.
+
+    A long run (detection) works on the state it loaded at its start; writing that whole snapshot back would undo
+    what another session saved meanwhile (the editor autosaves every edit). Only this run's screenshots are taken.
+    """
+    latest = read_state(path, state.get("input_roots", []))
+    images = latest.setdefault("images", {})
+    for key in keys:
+        if key in state.get("images", {}):
+            images[key] = state["images"][key]
+    latest["settings"] = state.get("settings", latest.get("settings", {}))
+    save_state(path, latest)
 
 
 def merge_discovered_images(state: dict[str, Any], images: Iterable[Path]) -> tuple[int, int]:
