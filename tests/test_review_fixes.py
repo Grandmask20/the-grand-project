@@ -431,3 +431,42 @@ def test_a_failing_map_image_is_reported_and_the_stitching_beats(session, monkey
     part = session.parts.payload()["parts"]["map_image"]
     assert part["state"] == "failed" and "disk full" in part["error"]  # (it only reached the log)
     assert len(beats) == len(session.atlas.frames)  # one beat per screenshot stitched
+
+
+def test_an_older_map_image_build_failing_leaves_the_newer_ones_state(session, monkeypatch, tmp_path):
+    import grand_project.app.mapimage as mi
+
+    def superseded_then_fails(atlas, **kw):
+        session._terrain_job += 1  # a newer build started meanwhile
+        session.parts.start("map_image", session.generation)
+        raise OSError("disk full")
+
+    monkeypatch.setattr(type(session.atlas), "composite", superseded_then_fails)
+    monkeypatch.setattr(mi.core, "map_image_files", lambda path: (tmp_path / "none.png", tmp_path / "none.npz"))
+    session.load_terrain(background=False)
+    assert session.parts.payload()["parts"]["map_image"]["state"] == "building"  # (the old failure marked it)
+
+
+def test_a_model_failing_after_a_new_map_image_is_the_models_failure(session, monkeypatch, tmp_path):
+    import grand_project.app.mapimage as mi
+    import grand_project.app.session as sm
+
+    canvas, weight, origin = session.terrain
+    monkeypatch.setattr(type(session.atlas), "composite", lambda atlas, **kw: (canvas, origin, weight))
+    monkeypatch.setattr(mi.core, "map_image_files", lambda path: (tmp_path / "none.png", tmp_path / "none.npz"))
+
+    def broken(atlas):
+        raise RuntimeError("bad model")
+
+    monkeypatch.setattr(sm, "view_model", broken)
+    session.load_terrain(background=False)  # shown, then the model rebuilt for its biomes fails
+    parts = session.parts.payload()["parts"]
+    assert parts["map_image"]["state"] == "ready" and parts["model"]["state"] == "failed"  # (both said map image)
+
+
+def test_the_timelapse_replans_in_the_models_locked_step(session, monkeypatch):
+    held = []
+    monkeypatch.setattr(session, "_replay_on", True)
+    monkeypatch.setattr(session, "_replan", lambda: held.append(session._lock._is_owned()))
+    session.rebuild_model()
+    assert held == [True]  # (a close between the check and the replan made the rebuild fail)

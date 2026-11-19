@@ -161,21 +161,41 @@ class MapImageMixin:
         job, atlas, gen, scope = self._terrain_job, opened.atlas, opened.gen, opened.scope
         self.events.set_progress("building the map image (first time for this atlas)…")
 
+        def failed(e: Exception) -> None:
+            """Report the map image as failed (its log line always; the part only for the build still current: an
+            older build failing late marked the newer one failed, CodeRabbit)."""
+            LOG.exception("map image could not be built")
+            self.events.log(f"map image could not be built: {e}", scope)
+            if job == self._terrain_job:
+                self.parts.fail("map_image", f"{type(e).__name__}: {e}", gen)  # (it only reached the log: user)
+                self.events.publish("terrain", self.terrain_version)
+
         def work():
             """Build the map image and show it (background thread)."""
             try:
                 t0 = time.monotonic()
-                canvas, origin, weight = atlas.composite(
-                    max_pixels=TERRAIN_PIXELS, with_weight=True, progress=lambda: self.parts.beat("map_image", gen)
-                )
-                if job == self._terrain_job and self.set_terrain(canvas, weight, origin, gen=gen):
+                try:
+                    canvas, origin, weight = atlas.composite(
+                        max_pixels=TERRAIN_PIXELS, with_weight=True, progress=lambda: self.parts.beat("map_image", gen)
+                    )
+                except Exception as e:
+                    failed(e)
+                    return
+                if job != self._terrain_job:
+                    return  # a newer build took over
+                try:
+                    shown = self.set_terrain(canvas, weight, origin, gen=gen)
+                except Exception as e:
+                    # once the image is in, an error comes from the model rebuilt after it, which reports itself:
+                    # not the map image's (it marked a shown image failed, CodeRabbit)
+                    if self.parts.payload()["parts"].get("map_image", {}).get("state") == "building":
+                        failed(e)
+                    else:
+                        LOG.exception("the model after the new map image failed")
+                    return
+                if shown:
                     h, w = canvas.shape[:2]
                     self.events.log(f"map image built in {time.monotonic() - t0:.1f} s ({w} x {h} px)", scope)
-            except Exception as e:
-                LOG.exception("map image could not be built")
-                self.events.log(f"map image could not be built: {e}", scope)
-                self.parts.fail("map_image", f"{type(e).__name__}: {e}", gen)  # (it only reached the log: user)
-                self.events.publish("terrain", self.terrain_version)
             finally:
                 self.events.set_progress(None)
 

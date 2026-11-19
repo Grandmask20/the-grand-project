@@ -63,6 +63,18 @@ export function AtlasMap({ info, meta }: Props) {
 	useEffect(() => {
 		if (failed.length || tileError) setShown(true);
 	}, [failed.length, tileError]);
+	// tile errors from the start: one while the model was still building came before the wait began, and went
+	// unseen (CodeRabbit)
+	useEffect(() => {
+		if (!map) return;
+		const failedTile = (e: { sourceId?: string; error?: { message?: string } }) => {
+			if (e.sourceId === "terrain" || e.sourceId === "atlas") setTileError(e.error?.message ?? "a map tile failed");
+		};
+		map.on("error", failedTile);
+		return () => {
+			map.off("error", failedTile);
+		};
+	}, [map]);
 	useEffect(() => {
 		if (!map || shown || !ready) return;
 		// only what is shown is waited for: a source none of whose layers is ticked loads nothing (MapLibre skips it),
@@ -77,17 +89,11 @@ export function AtlasMap({ info, meta }: Props) {
 		const check = () => {
 			if (loaded()) setShown(true);
 		};
-		// a tile that can't load ends the wait too (the cover says so); the content tiles' address changes when the
-		// model is built: the drawing after it is the one waited for
-		const failedTile = (e: { sourceId?: string; error?: { message?: string } }) => {
-			if (e.sourceId === "terrain" || e.sourceId === "atlas") setTileError(e.error?.message ?? "a map tile failed");
-		};
+		// (the content tiles' address changes when the model is built: the drawing after it is the one waited for)
 		map.on("idle", check);
-		map.on("error", failedTile);
 		check();
 		return () => {
 			map.off("idle", check);
-			map.off("error", failedTile);
 		};
 	}, [map, ready, shown]);
 

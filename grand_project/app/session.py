@@ -403,8 +403,6 @@ class AtlasSession(
             self.parts.fail("model", f"{type(e).__name__}: {e}", gen)  # (it only reached the log: user)
             raise
         self.parts.done("model", gen)
-        if getattr(self, "_replay_on", False) and self.atlas and self.atlas.frames:
-            self._replan()  # screenshots added while the replay is open
         self.filters_changed(publish=False)
         self.events.publish("model", self.model_version)
 
@@ -465,6 +463,11 @@ class AtlasSession(
             D["landmark_node"] = landmark_nodes(V["nodes"], V["landmarks"], D["locked"])
             self.V, self.D = V, D
             self.model_version += 1
+            # screenshots added while the replay is open: replanned in the same locked step (checked apart, a
+            # close between the check and the replan made the rebuild fail after it said the model was ready,
+            # CodeRabbit)
+            if getattr(self, "_replay_on", False) and self.atlas and self.atlas.frames:
+                self._replan()
 
     # ------------------------------------------------------------------ what the page shows of the atlas
     def atlas_summary(self) -> dict | None:
