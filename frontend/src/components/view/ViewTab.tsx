@@ -3,14 +3,14 @@ import { Section } from "@/components/common/Section";
 import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Slider } from "@/components/ui/slider";
 import type { Background } from "@/domain/app/UiSettings";
 import { useMeta } from "@/hooks/app/UseMeta";
-import { useSettings, useUpdateSettings } from "@/hooks/app/UseSettings";
+import { usePreviewSettings, useSettings, useUpdateSettings } from "@/hooks/app/UseSettings";
 import { useFrames } from "@/hooks/replay/UseFrames";
 import { cityColours, landmarkColours, styleColour } from "@/logic/Colours";
 import { useAppStore } from "@/store/AppStore";
 import { ColourSwatch } from "./ColourSwatch";
+import { SettingSlider } from "./SettingSlider";
 import { IconPreview, MapPreview, Path3DPreview, PathPreview } from "./StylePreview";
 
 /** View: what the map shows and how (background, layers, paths, maps, colours, "Colour by"). */
@@ -31,6 +31,7 @@ export function ViewTab() {
 	const meta = useMeta().data;
 	const settings = useSettings();
 	const update = useUpdateSettings();
+	const preview = usePreviewSettings();
 	const tint = settings?.style.age_tint ?? "off";
 	const tilted = useAppStore((s) => (s.camera?.pitch ?? 0) > 1);
 	const iconStyle =
@@ -51,6 +52,8 @@ export function ViewTab() {
 	if (!meta || !settings) return null;
 	const st = settings.style;
 	const set = (style: Record<string, string | number | boolean>) => update.mutate({ style });
+	// a look shown while its slider is dragged, saved when let go
+	const look = (style: Record<string, number>) => preview({ style });
 	const bg = settings.ui.background ?? "picture";
 
 	const choice = (label: string, value: string, values: string[], onChange: (v: string) => void) => (
@@ -84,16 +87,16 @@ export function ViewTab() {
 		return (
 			<div key={key} className="flex items-center gap-2">
 				<span className="w-24 text-xs text-muted-foreground">{label}</span>
-				<Slider
+				<SettingSlider
+					label={label}
 					min={lo}
 					max={hi}
 					step={stepv}
-					value={[v]}
-					onValueChange={([x]) => set({ [key]: x })}
-					className="w-36"
-					aria-label={label}
+					value={v}
+					onPreview={(x) => look({ [key]: x })}
+					onCommit={(x) => set({ [key]: x })}
+					format={fmt}
 				/>
-				<span className="w-12 text-xs">{fmt(v)}</span>
 			</div>
 		);
 	};
@@ -226,29 +229,31 @@ export function ViewTab() {
 				{choice("style", st.path_style, ["solid", "dashed", "dotted"], (v) => set({ path_style: v }))}
 				<div className="flex items-center gap-2">
 					<span className="w-24 text-xs text-muted-foreground">width (0 = auto)</span>
-					<Slider
+					<SettingSlider
+						label="path width"
 						min={0}
 						max={8}
 						step={1}
-						value={[Number(st.path_width) || 0]}
-						onValueChange={([v]) => set({ path_width: v })}
-						className="w-36"
-						aria-label="path width"
+						value={Number(st.path_width) || 0}
+						onPreview={(v) => look({ path_width: v })}
+						onCommit={(v) => set({ path_width: v })}
+						format={(v) => (v ? String(v) : "auto")}
+						valueWidth="w-6"
 					/>
-					<span className="w-6 text-xs">{Number(st.path_width) || "auto"}</span>
 				</div>
 				<div className="flex items-center gap-2">
 					<span className="w-24 text-xs text-muted-foreground">drawn by at least</span>
-					<Slider
+					{/* saved when let go: which paths show is the app's filter (no preview while dragging) */}
+					<SettingSlider
+						label="drawn by at least"
 						min={0}
 						max={100}
 						step={5}
-						value={[Math.round((Number(st.path_freq) || 0) * 100)]}
-						onValueChange={([v]) => set({ path_freq: v / 100 })}
-						className="w-36"
-						aria-label="drawn by at least"
+						value={Math.round((Number(st.path_freq) || 0) * 100)}
+						onCommit={(v) => set({ path_freq: v / 100 })}
+						format={(v) => `${v}%`}
+						valueWidth="w-10"
 					/>
-					<span className="w-10 text-xs">{Math.round((Number(st.path_freq) || 0) * 100)}%</span>
 				</div>
 				<p className="text-xs text-muted-foreground">of the screenshots that show both maps</p>
 			</Section>
@@ -283,14 +288,14 @@ export function ViewTab() {
 				)}
 				<div className="flex items-center gap-2">
 					<span className="w-24 text-xs text-muted-foreground">size</span>
-					<Slider
+					<SettingSlider
+						label="map size"
 						min={0.5}
 						max={2.5}
 						step={0.1}
-						value={[Number(st.map_size) || 1]}
-						onValueChange={([v]) => set({ map_size: v })}
-						className="w-36"
-						aria-label="map size"
+						value={Number(st.map_size) || 1}
+						onPreview={(v) => look({ map_size: v })}
+						onCommit={(v) => set({ map_size: v })}
 					/>
 				</div>
 			</Section>
@@ -336,13 +341,6 @@ export function ViewTab() {
 						</div>
 					</div>
 				)}
-			</Section>
-
-			<Section title="Pictures on the map (zoomed in)" locked={lock}>
-				<Label className="font-normal">
-					<input type="checkbox" checked={!!st.ov_towers} onChange={(e) => set({ ov_towers: e.target.checked })} />
-					tower picture
-				</Label>
 			</Section>
 
 			<Button

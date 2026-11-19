@@ -1,6 +1,9 @@
+import { useQueryClient } from "@tanstack/react-query";
+import { AppQueryKeys } from "@/api/AppQueryKeys";
 import { IconPicture } from "@/components/common/IconPicture";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
+import type { AppState } from "@/domain/app/AppState";
 import { useSettings, useUpdateSettings } from "@/hooks/app/UseSettings";
 import { useTypes } from "@/hooks/find/UseTypes";
 
@@ -9,11 +12,14 @@ export function TypeList({ onList }: { onList: (label: string, icon: string | nu
 	const types = useTypes();
 	const settings = useSettings();
 	const update = useUpdateSettings();
+	const queryClient = useQueryClient();
 	const hidden = new Set(settings?.hidden_types ?? []);
 	const all = types.data?.sections.flatMap((s) => s.rows.map((r) => r.label)) ?? [];
 
 	const set = (label: string, shown: boolean) => {
-		const next = new Set(hidden);
+		// from the page's settings as they are now, not as this list last drew them (quick ticks: one was lost)
+		const now = queryClient.getQueryData<AppState>(AppQueryKeys.state)?.settings.hidden_types;
+		const next = new Set(now ?? hidden);
 		if (shown) next.delete(label);
 		else next.add(label);
 		update.mutate({ hidden_types: [...next] });

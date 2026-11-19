@@ -136,7 +136,9 @@ class AtlasSession(
             "only_icon_maps": bool(s.get("only_icon_maps", False)),
             "near_only": bool(s.get("near_only", False)),
             "hidden_types": sorted(s.get("icon_hidden", [])),
-            "style": {**STYLE_DEFAULT, **s.get("style", {})},
+            # the tower picture's switch left the View tab (user, banner agreed: the 3D view shows towers): kept off for
+            # settings saved with it on
+            "style": {**STYLE_DEFAULT, **s.get("style", {}), "ov_towers": False},
             "replay": s.get("replay", {}),
             "ui": s.get("ui", {}),
         }
