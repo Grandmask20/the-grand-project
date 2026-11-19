@@ -28,8 +28,6 @@ export interface AppState {
 	log_scope?: string;
 	/** The atlas being opened at start (its name): the page shows at once and says so meanwhile. */
 	opening?: string | null;
-	/** The open atlas's model is built (map nodes, paths, icons, biomes): the map is shown only then. */
-	model_ready?: boolean;
 	debug: boolean;
 	settings: UiSettings;
 	map: MapInfo | null;

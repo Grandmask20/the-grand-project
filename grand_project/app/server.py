@@ -35,7 +35,6 @@ from grand_project.webmap.constants import WEBMAP_ICON_SPRITE
 from .constants import (
     APP_HELLO_WAIT,
     APP_HOST,
-    APP_OPEN_WAIT,
     APP_PORT,
     APP_PORT_TRIES,
     APP_QUIT_WAIT,
@@ -382,6 +381,11 @@ class Handler(BaseHTTPRequestHandler):
         ok = self.S.events.answer(int(qid), bool(self._body().get("yes")))
         self._json({"ok": ok})
 
+    @route("GET", "/api/parts")
+    def get_parts(self, q) -> None:
+        """How far the map's parts are (the page's loading cover asks while it waits): never waits on the session."""
+        self._json(self.S.parts.payload())
+
     @route("GET", "/api/hello")
     def get_hello(self, q) -> None:
         """Which program answers here (a second start finds the copy already running: running_app)."""
@@ -440,8 +444,25 @@ class Handler(BaseHTTPRequestHandler):
 
     @route("POST", "/api/atlas/open")
     def post_open(self, q) -> None:
-        """Open an atlas file."""
-        self.S.open_atlas(self._body()["path"])
+        """Open an atlas file (with "background": answered at once, opened behind: another start handing it over)."""
+        body = self._body()
+        if body.get("background"):
+            # checked now (busy adding: refused, and the start says so), opened behind the page: the start
+            # handing it over waited for the whole open, and a big atlas outlasted its wait (banner, user)
+            if self.S.working():
+                raise ValueError("wait until the screenshots being added are done")
+            path = body["path"]
+
+            def open_it() -> None:
+                try:
+                    self.S.open_atlas(path)
+                except ValueError as e:
+                    self.S.events.log(str(e))
+
+            self.server.background(open_it)  # type: ignore[attr-defined]
+            self._json({"ok": True})
+            return
+        self.S.open_atlas(body["path"])
         self._json(self.S.atlas_summary())
 
     @route("POST", "/api/atlas/new")
@@ -967,6 +988,8 @@ class AppServer(ThreadingHTTPServer):
             OSError: When no port is free.
         """
         self.session, self.stopping, self.heat = session, False, None
+        # runs work behind a request (a thread; tests run it at once instead of waiting for it)
+        self.background = lambda fn: threading.Thread(target=fn, daemon=True).start()
         last: OSError | None = None
         for p in [0] if port == 0 else range(port, port + APP_PORT_TRIES):
             try:
@@ -1127,7 +1150,7 @@ def reuse_running(port: int, atlas: str | None, browser: bool) -> str:
     _say(f"The Grand Project is already running: {url}")
     if browser:
         webbrowser.open(url)
-    if atlas and _local(url + "api/atlas/open", {"path": str(Path(atlas).resolve())}, timeout=APP_OPEN_WAIT) is None:
+    if atlas and _local(url + "api/atlas/open", {"path": str(Path(atlas).resolve()), "background": True}) is None:
         _say(f"The running copy couldn't open {atlas} (it may be adding screenshots): open it there when it's done.")
         return FAILED
     return HANDED

@@ -135,8 +135,10 @@ class MapImageMixin:
         """
         if not self.atlas or not self.atlas.frames:
             self._reset_mapimage()
+            self.parts.done("map_image", self.generation)  # (nothing to show: not waited for)
             self.events.publish("terrain", self.terrain_version)
             return
+        self.parts.start("map_image", self.generation)
         png, npz = core.map_image_files(self.path)
         key = self.atlas.terrain_key()
         try:
@@ -163,13 +165,17 @@ class MapImageMixin:
             """Build the map image and show it (background thread)."""
             try:
                 t0 = time.monotonic()
-                canvas, origin, weight = atlas.composite(max_pixels=TERRAIN_PIXELS, with_weight=True)
+                canvas, origin, weight = atlas.composite(
+                    max_pixels=TERRAIN_PIXELS, with_weight=True, progress=lambda: self.parts.beat("map_image", gen)
+                )
                 if job == self._terrain_job and self.set_terrain(canvas, weight, origin, gen=gen):
                     h, w = canvas.shape[:2]
                     self.events.log(f"map image built in {time.monotonic() - t0:.1f} s ({w} x {h} px)", scope)
             except Exception as e:
                 LOG.exception("map image could not be built")
                 self.events.log(f"map image could not be built: {e}", scope)
+                self.parts.fail("map_image", f"{type(e).__name__}: {e}", gen)  # (it only reached the log: user)
+                self.events.publish("terrain", self.terrain_version)
             finally:
                 self.events.set_progress(None)
 
@@ -220,6 +226,7 @@ class MapImageMixin:
             self._tiles.clear()
             self._vector = None
             self._scene3d = None
+            self.parts.done("map_image", self.generation)
         if save and self.path:
             key, path = self.atlas.terrain_key(), self.path
 

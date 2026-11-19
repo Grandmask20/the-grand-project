@@ -41,6 +41,7 @@ from .icons import icon_label, icon_rows
 from .library import LibraryMixin
 from .mapimage import MapImageMixin
 from .model import view_model
+from .parts import Parts
 from .query import QueryMixin
 from .replay_data import ReplayMixin
 from .settings import load_settings, save_settings
@@ -105,6 +106,7 @@ class AtlasSession(
         self.V: dict = {"nodes": [], "paths": [], "icons": [], "landmarks": [], "final": None}
         self.D: dict = {}  # derived from V: biomes, icon rows, type counts, footprints (rebuild_model)
         self.model_version = 0
+        self.parts = Parts()  # the map's parts (map image, model) and how far each is: the page's loading cover
         self.opening: str | None = None  # the atlas being opened at start (its name), shown on the page meanwhile
         self._closing = False
         self._extra_groups: set[str] = set()  # bookmark groups made empty (kept until the app closes)
@@ -298,6 +300,7 @@ class AtlasSession(
         """
         scope = str(p.resolve()) if p is not None else ""
         self.opened = Opened(atlas, p, self.opened.gen + 1, scope)
+        self.parts.reset(self.opened.gen)
         self.V = {"nodes": [], "paths": [], "icons": [], "landmarks": [], "final": None}
         self.D = {}
         self.model_version += 1
@@ -392,8 +395,28 @@ class AtlasSession(
     def rebuild_model(self) -> None:
         """Rebuild the view model from the atlas and everything derived from it: icon rows, type counts, locked
         strongholds, city types, biomes, screenshot footprints. Publishes a "model" event with the new version."""
+        gen = self.generation
+        self.parts.start("model", gen)
+        try:
+            self._rebuild_model(gen)
+        except Exception as e:
+            self.parts.fail("model", f"{type(e).__name__}: {e}", gen)  # (it only reached the log: user)
+            raise
+        self.parts.done("model", gen)
+        if getattr(self, "_replay_on", False) and self.atlas and self.atlas.frames:
+            self._replan()  # screenshots added while the replay is open
+        self.filters_changed(publish=False)
+        self.events.publish("model", self.model_version)
+
+    def _rebuild_model(self, gen: int) -> None:
+        """The work of rebuild_model, beating the model part between its steps.
+
+        Args:
+            gen: The generation it was started for.
+        """
         with self._lock:
             V = view_model(self.atlas) if self.atlas else {"nodes": [], "paths": [], "icons": [], "landmarks": []}
+            self.parts.beat("model", gen)
             D: dict = {}
             counts: dict[str, int] = {}
             for ic in V["icons"]:
@@ -401,6 +424,7 @@ class AtlasSession(
             D["icon_types"] = sorted(counts, key=lambda k: (k == "Unidentified badge", k))
             try:
                 found = atlas_cities.biomes(self.atlas, V, ground=self.ground()) if self.atlas else None
+                self.parts.beat("model", gen)
             except Exception:
                 LOG.exception("city types / biomes failed")
                 self.events.log("city types / biomes failed (details in the log file)")
@@ -441,10 +465,6 @@ class AtlasSession(
             D["landmark_node"] = landmark_nodes(V["nodes"], V["landmarks"], D["locked"])
             self.V, self.D = V, D
             self.model_version += 1
-        if getattr(self, "_replay_on", False) and self.atlas and self.atlas.frames:
-            self._replan()  # screenshots added while the replay is open
-        self.filters_changed(publish=False)
-        self.events.publish("model", self.model_version)
 
     # ------------------------------------------------------------------ what the page shows of the atlas
     def atlas_summary(self) -> dict | None:
@@ -493,9 +513,6 @@ class AtlasSession(
             "log": list(self.events.log_lines)[-300:],
             "log_scope": opened.scope,
             "opening": self.opening,
-            # this atlas's model is built (map nodes, paths, icons, biomes): the page shows the map only then, so
-            # everything comes in together (user: the map image came first and the rest seconds later)
-            "model_ready": bool(self.D),
         }
 
     def _forget_session(self) -> None:

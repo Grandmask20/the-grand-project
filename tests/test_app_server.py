@@ -165,6 +165,7 @@ def test_a_second_start_opens_the_running_app(app, monkeypatch, tmp_path):
     # an atlas asked for on the command line is opened by the running copy (it was dropped)
     (tmp_path / "b").mkdir()
     other, _p, _i = make_atlas(tmp_path / "b")
+    monkeypatch.setattr(srv, "background", lambda fn: fn())  # (opened behind the answer: run at once here)
     monkeypatch.setattr(srv.session, "open_atlas", lambda p: asked.append(p))
     assert S.main(["--port", str(port), str(other)]) == 0
     assert asked == [str(other.resolve())]
@@ -194,10 +195,7 @@ def test_a_refused_atlas_hand_over_is_reported(app, monkeypatch, tmp_path):
     srv, _pts = app
     monkeypatch.setattr(S.webbrowser, "open", lambda url: None)
 
-    def busy(p):
-        raise ValueError("wait until the screenshots being added are done")
-
-    monkeypatch.setattr(srv.session, "open_atlas", busy)
+    monkeypatch.setattr(srv.session, "working", lambda: True)  # busy adding screenshots: it can't open another
     assert S.main(["--port", str(srv.server_address[1]), str(tmp_path / "x.json")]) == 1  # (it said success)
 
 
@@ -255,12 +253,11 @@ def test_something_else_on_a_port_doesnt_stop_the_start():
         sock.close()
 
 
-def test_looking_for_a_running_copy_is_quick_on_free_ports():
-    import time
-
-    t0 = time.perf_counter()
-    assert S.running_app(S.APP_PORT + 500) is None
-    assert time.perf_counter() - t0 < 1.0  # (a refused connection takes ~2 s on Windows: 20 ports made starts ~10 s)
+def test_free_ports_are_not_asked_when_looking_for_a_running_copy(monkeypatch):
+    asked = []
+    monkeypatch.setattr(S, "_local", lambda url, data=None, timeout=0: asked.append(url))
+    monkeypatch.setattr(S, "_in_use", lambda host, port: False)  # every port free
+    assert S.running_app(S.APP_PORT) is None and asked == []  # (each refused connection took ~2 s on Windows)
 
 
 def test_a_quit_copy_counts_as_gone_though_its_port_wont_bind_yet(monkeypatch):
@@ -276,3 +273,11 @@ def test_a_quit_copy_counts_as_gone_though_its_port_wont_bind_yet(monkeypatch):
     monkeypatch.setattr(S, "running_app", lambda p: (f"http://127.0.0.1:{port}/", "1.0"))  # an older copy...
     monkeypatch.setattr(S, "_local", lambda url, data=None, timeout=0: {"ok": True})  # ...asked to quit
     assert S.reuse_running(port, None, browser=False) == S.START
+
+
+def test_the_parts_answer_while_the_session_is_busy(app):
+    srv, _pts = app
+    with srv.session._lock:  # (a model being built holds it: the page still learns how far it is)
+        status, _h, body = call(srv, "/api/parts")
+    parts = json.loads(body)["parts"]
+    assert status == 200 and parts["map_image"]["state"] == "ready" and parts["model"]["state"] == "ready"

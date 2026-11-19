@@ -2,6 +2,7 @@ import type { ItemKind } from "@/domain/map/ItemKind";
 
 export const AppQueryKeys = {
 	state: ["state"] as const,
+	parts: ["parts"] as const,
 	meta: ["meta"] as const,
 	atlases: ["atlases"] as const,
 	types: ["types"] as const,

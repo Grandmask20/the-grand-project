@@ -855,7 +855,7 @@ class Atlas:
         return at
 
     # -------- composite image
-    def composite(self, max_pixels: int = 36_000_000, with_weight: bool = False):
+    def composite(self, max_pixels: int = 36_000_000, with_weight: bool = False, progress=None):
         """Stitch the terrain: each spot from the screenshot that shows it most centrally.
 
         Moved or deleted screenshots are skipped. with_weight also returns the per-pixel weight, so screenshots can
@@ -864,6 +864,7 @@ class Atlas:
         Args:
             max_pixels: Largest canvas size in pixels; bigger atlases are scaled down.
             with_weight: Also return the weight map.
+            progress: Called after each screenshot is pasted (the app's heartbeat for the map image), or None.
 
         Returns:
             (canvas, (x0, y0, scale)) or, with with_weight, (canvas, (x0, y0, scale), weight): BGR uint8 canvas,
@@ -886,12 +887,12 @@ class Atlas:
         CW, CH = max(1, int(W * scale)), max(1, int(H * scale))
         best_w = np.zeros((CH, CW), np.float32)
         canvas = np.zeros((CH, CW, 3), np.uint8)
-        self.paste_into(canvas, best_w, (x0, y0, scale), frames)
+        self.paste_into(canvas, best_w, (x0, y0, scale), frames, progress=progress)
         if with_weight:
             return canvas, (x0, y0, scale), best_w
         return canvas, (x0, y0, scale)
 
-    def paste_into(self, canvas, best_w, origin, frames, labels=None, names=None) -> bool:
+    def paste_into(self, canvas, best_w, origin, frames, labels=None, names=None, progress=None) -> bool:
         """Warp screenshots into an existing stitched canvas, each only into its own patch.
 
         A pixel is taken where this screenshot's weight (distance from its masked edge) beats the current one.
@@ -904,6 +905,7 @@ class Atlas:
             labels: Optional (h, w) int map of which screenshot owns each pixel (a clean map's ownership map,
                 core.seams); updated with indices into `names`.
             names: Screenshot names for `labels`; new names are appended.
+            progress: Called after each screenshot (a heartbeat), or None.
 
         Returns:
             False when one falls outside the canvas (then rebuild with composite), else True.
@@ -913,6 +915,8 @@ class Atlas:
         T = np.array([[scale, 0, -x0 * scale], [0, scale, -y0 * scale], [0, 0, 1]], float)
         inside = True
         for f in frames:
+            if progress is not None:
+                progress()
             if not Path(f["path"]).exists():
                 continue
             Hc = T @ screen_to_atlas(np.array(f["M"], float), self.frame_R(f))

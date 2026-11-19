@@ -336,11 +336,9 @@ def test_forgetting_a_closed_atlas_doesnt_bring_it_back(session):
 
 
 def test_the_stronghold_search_releases_its_flag_with_its_result(session, monkeypatch):
-    import time
-
-    t0 = time.monotonic()  # the search opening the atlas started is done first (running, it refused this one)
-    while getattr(session, "_lock_job", False) and time.monotonic() - t0 < 10:
-        time.sleep(0.02)
+    started = getattr(session, "_lock_thread", None)
+    if started is not None:
+        started.join()  # the search opening the atlas started is done first (running, it refused this one)
     flags = []
     real = type(session.atlas).save
 
@@ -399,3 +397,37 @@ def test_the_flat_map_doesnt_build_the_3d_view(session, monkeypatch):
     session._vector_made(False)  # the flat map's tiles
     assert built == []  # (its models were built for every flat map though never in its tiles)
     assert json.loads(session.scene_3d())["models"] and built == [1]  # asked for by the 3D view: built then
+
+
+def test_a_failing_model_is_reported_to_the_page(session, monkeypatch):
+    import grand_project.app.session as sm
+
+    def broken(atlas):
+        raise RuntimeError("bad atlas file")
+
+    monkeypatch.setattr(sm, "view_model", broken)
+    with pytest.raises(RuntimeError):
+        session.rebuild_model()
+    model = session.parts.payload()["parts"]["model"]
+    assert model["state"] == "failed" and "bad atlas file" in model["error"]  # (it only reached the log)
+
+
+def test_a_failing_map_image_is_reported_and_the_stitching_beats(session, monkeypatch, tmp_path):
+    import grand_project.app.mapimage as mi
+
+    beats = []
+    real = type(session.atlas).composite
+
+    def stitch_then_fail(atlas, **kw):
+        beat = kw["progress"]
+        real(atlas, **{**kw, "progress": lambda: (beats.append(1), beat())})
+        raise OSError("disk full")  # the build fails once the screenshots are stitched
+
+    for f in session.atlas.frames:  # (stitched only when the screenshot file is there)
+        cv2.imwrite(f["path"], np.full((f["h"], f["w"], 3), 60, np.uint8))
+    monkeypatch.setattr(type(session.atlas), "composite", stitch_then_fail)
+    monkeypatch.setattr(mi.core, "map_image_files", lambda path: (tmp_path / "none.png", tmp_path / "none.npz"))
+    session.load_terrain(background=False)  # (no cache: built)
+    part = session.parts.payload()["parts"]["map_image"]
+    assert part["state"] == "failed" and "disk full" in part["error"]  # (it only reached the log)
+    assert len(beats) == len(session.atlas.frames)  # one beat per screenshot stitched

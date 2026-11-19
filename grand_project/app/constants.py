@@ -337,7 +337,6 @@ APP_PORT_TRIES = 20  # ports tried after APP_PORT when it is in use
 APP_HELLO_WAIT = 0.5  # s: a second start waits this long per port for a running copy to answer
 APP_QUIT_WAIT = 40.0  # s: a newer start waits this long for an older running copy to quit (its shutdown may wait 30 s)
 APP_STOP_PROBE = 3.0  # s: a connection attempt telling whether a quit copy's port still listens
-APP_OPEN_WAIT = 120.0  # s: a second start waits this long for the running copy to open the atlas it asked for
 HELLO_APP = "the-grand-project"  # what /api/hello answers with: the program's own copy, not another server
 LOG_KEEP = 2000  # log lines kept for the Log tab of a page opened later
 EVENT_HISTORY = 200  # recent events kept for a page that reconnects
