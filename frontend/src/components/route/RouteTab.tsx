@@ -38,6 +38,11 @@ export function RouteTab() {
 							Go there
 						</Button>
 					)}
+					{routes.player && (
+						<Button size="xs" variant="outline" onClick={routes.clearPlayer}>
+							Forget my position
+						</Button>
+					)}
 				</div>
 				{mode.kind === "player" && <p className="text-xs text-gold">Click the map you are on (Esc cancels).</p>}
 			</Section>

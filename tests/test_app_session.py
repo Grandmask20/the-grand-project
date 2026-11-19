@@ -279,3 +279,10 @@ def test_drawn_by_at_least_makes_no_tile_again_and_paths_carry_their_share(sessi
     shares = [p["share"] for _g, _pts2, p, _id in features(session, "paths")]
     assert shares and all(0 <= s <= 1 for s in shares)
     assert "Changed: paths drawn by at least 50%" in session.events.log_lines[-1]
+
+
+def test_your_position_reads_in_words_in_the_log():
+    from grand_project.app.session import settings_change_text
+
+    assert settings_change_text({"ui": {"player": {"x": 1, "y": 2, "node": 12}}}, set()) == "your position map #12"
+    assert settings_change_text({"ui": {"player": None}}, set()) == "your position forgotten"

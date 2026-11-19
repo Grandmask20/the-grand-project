@@ -93,9 +93,16 @@ export function SelectedBox() {
 							<Button size="xs" variant="outline" onClick={() => routes.routeTo(node)}>
 								Route here
 							</Button>
-							<Button size="xs" variant="outline" onClick={() => routes.setPlayer(node)}>
-								I'm here
-							</Button>
+							{/* on your own position it takes it back (an "I'm here" by mistake stayed: user) */}
+							{routes.player?.node === node ? (
+								<Button size="xs" variant="outline" onClick={routes.clearPlayer}>
+									I'm not here
+								</Button>
+							) : (
+								<Button size="xs" variant="outline" onClick={() => routes.setPlayer(node)}>
+									I'm here
+								</Button>
+							)}
 						</>
 					)}
 					<Button size="xs" variant="outline" onClick={() => showSources([info.x, info.y])}>

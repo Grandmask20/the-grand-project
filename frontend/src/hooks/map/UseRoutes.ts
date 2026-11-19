@@ -60,5 +60,11 @@ export function useRoutes() {
 
 	const clear = useCallback(() => setRoute(null), [setRoute]);
 
-	return { graph, player, setPlayer, routeTo, routeToNearest, clear };
+	/** Forget your position (user: an "I'm here" clicked by mistake couldn't be taken back). */
+	const clearPlayer = useCallback(() => {
+		update.mutate({ ui: { player: null } });
+		setRoute(null);
+	}, [update, setRoute]);
+
+	return { graph, player, setPlayer, clearPlayer, routeTo, routeToNearest, clear };
 }

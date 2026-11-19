@@ -87,7 +87,11 @@ export function MapMenu({ x, y, at, hit, meta, debug, onClose }: Props) {
 				{node !== null && (
 					<>
 						<DropdownMenuSeparator />
-						<DropdownMenuItem onSelect={() => routes.setPlayer(node)}>I'm here</DropdownMenuItem>
+						{routes.player?.node === node ? (
+							<DropdownMenuItem onSelect={routes.clearPlayer}>I'm not here</DropdownMenuItem>
+						) : (
+							<DropdownMenuItem onSelect={() => routes.setPlayer(node)}>I'm here</DropdownMenuItem>
+						)}
 						<DropdownMenuItem onSelect={() => routes.routeTo(node)}>Route here</DropdownMenuItem>
 					</>
 				)}

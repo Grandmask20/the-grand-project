@@ -572,6 +572,11 @@ def settings_change_text(changes: dict, hidden_before: set) -> str:
             parts.append("styles reset")
         elif isinstance(v, dict):
             for kk, vv in v.items():
+                if kk == "player":  # (I'm here)
+                    parts.append(
+                        f"your position map #{vv['node']}" if isinstance(vv, dict) else "your position forgotten"
+                    )
+                    continue
                 val = f"{round(100 * vv)}%" if kk == "path_freq" else _say(vv)
                 parts.append(f"{_WORDS.get(kk, kk.replace('_', ' '))} {val}")
         else:

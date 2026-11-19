@@ -209,7 +209,16 @@ export function BookmarksTab() {
 										title: "Rename group",
 										label: "New name:",
 										value: g.name,
-										onOk: (n) => void app.renameGroup(g.name, n).catch(fail),
+										onOk: (n) =>
+											void app
+												.renameGroup(g.name, n)
+												// a ticked group stays ticked under its new name (user)
+												.then(() =>
+													setPickedGroups((gs) =>
+														gs.has(g.name) ? new Set([...gs].filter((x) => x !== g.name).concat(n.trim())) : gs,
+													),
+												)
+												.catch(fail),
 									})
 								}
 							>
