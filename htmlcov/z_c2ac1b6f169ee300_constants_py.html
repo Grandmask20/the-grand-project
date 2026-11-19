@@ -1,0 +1,233 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+    <title>Coverage for grand_project/core/constants.py: 100.0%</title>
+    <link rel="icon" sizes="32x32" href="favicon_32_cb_c827f16f.png">
+    <link rel="stylesheet" href="style_cb_4667309f.css" type="text/css">
+    <script src="coverage_html_cb_54cfdca1.js" defer></script>
+</head>
+<body class="pyfile">
+<header>
+    <div class="content">
+        <h1>
+            <span class="text">Coverage for </span><b>grand_project<span class="sep">/</span>core<span class="sep">/</span>constants.py</b>:
+            <span class="pc_cov">100.0%</span>
+        </h1>
+        <aside id="help_panel_wrapper">
+            <input id="help_panel_state" type="checkbox">
+            <label for="help_panel_state">
+                <img id="keyboard_icon" src="keybd_closed_cb_900cfef5.png" alt="Show/hide keyboard shortcuts">
+            </label>
+            <div id="help_panel">
+                <p class="legend">Shortcuts on this page</p>
+                <div class="keyhelp">
+                    <p>
+                        <kbd>r</kbd>
+                        <kbd>m</kbd>
+                        <kbd>x</kbd>
+                        &nbsp; toggle line displays
+                    </p>
+                    <p>
+                        <kbd>j</kbd>
+                        <kbd>k</kbd>
+                        &nbsp; next/prev highlighted chunk
+                    </p>
+                    <p>
+                        <kbd>0</kbd> &nbsp; (zero) top of page
+                    </p>
+                    <p>
+                        <kbd>1</kbd> &nbsp; (one) first highlighted chunk
+                    </p>
+                    <p>
+                        <kbd>[</kbd>
+                        <kbd>]</kbd>
+                        &nbsp; prev/next file
+                    </p>
+                    <p>
+                        <kbd>u</kbd> &nbsp; up to the index
+                    </p>
+                    <p>
+                        <kbd>?</kbd> &nbsp; show/hide this help
+                    </p>
+                </div>
+            </div>
+        </aside>
+        <h2>
+            <span class="text">54 statements &nbsp;</span>
+            <button type="button" class="run button_toggle_run" value="run" data-shortcut="r" title="Toggle lines run">54<span class="text"> run</span></button>
+            <button type="button" class="mis show_mis button_toggle_mis" value="mis" data-shortcut="m" title="Toggle lines missing">0<span class="text"> missing</span></button>
+            <button type="button" class="exc show_exc button_toggle_exc" value="exc" data-shortcut="x" title="Toggle lines excluded">0<span class="text"> excluded</span></button>
+        </h2>
+        <p class="text">
+            <a id="prevFileLink" class="nav" href="z_c2ac1b6f169ee300_atlas_py.html">&#xab; prev</a> &nbsp; &nbsp;
+            <a id="indexLink" class="nav" href="index.html">&Hat; index</a> &nbsp; &nbsp;
+            <a id="nextFileLink" class="nav" href="z_c2ac1b6f169ee300_frame_py.html">&#xbb; next</a>
+            &nbsp; &nbsp; &nbsp;
+            <a class="nav" href="https://coverage.readthedocs.io/en/7.17.3">coverage.py v7.17.3</a>,
+            created at 2026-11-19 02:33 +0000
+        </p>
+        <aside class="hidden">
+            <button type="button" class="button_next_chunk" data-shortcut="j"></button>
+            <button type="button" class="button_prev_chunk" data-shortcut="k"></button>
+            <button type="button" class="button_top_of_page" data-shortcut="0"></button>
+            <button type="button" class="button_first_chunk" data-shortcut="1"></button>
+            <button type="button" class="button_prev_file" data-shortcut="["></button>
+            <button type="button" class="button_next_file" data-shortcut="]"></button>
+            <button type="button" class="button_to_index" data-shortcut="u"></button>
+            <button type="button" class="button_show_hide_help" data-shortcut="?"></button>
+        </aside>
+    </div>
+</header>
+<main id="source">
+    <p class="pln"><span class="n"><a id="t1" href="#t1">1</a></span><span class="t"><span class="str">&quot;&quot;&quot;core.constants (from atlas_builder_core.py)&quot;&quot;&quot;</span>&nbsp;</span><span class="r"></span></p>
+    <p class="pln"><span class="n"><a id="t2" href="#t2">2</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
+    <p class="run"><span class="n"><a id="t3" href="#t3">3</a></span><span class="t"><span class="key">from</span> <span class="nam">__future__</span> <span class="key">import</span> <span class="nam">annotations</span>&nbsp;</span><span class="r"></span></p>
+    <p class="pln"><span class="n"><a id="t4" href="#t4">4</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
+    <p class="run"><span class="n"><a id="t5" href="#t5">5</a></span><span class="t"><span class="key">from</span> <span class="nam">grand_project</span> <span class="key">import</span> <span class="nam">paths</span> <span class="key">as</span> <span class="nam">rc_paths</span>&nbsp;</span><span class="r"></span></p>
+    <p class="pln"><span class="n"><a id="t6" href="#t6">6</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
+    <p class="pln"><span class="n"><a id="t7" href="#t7">7</a></span><span class="t"><span class="com"># ------------------------------------------------------------------ tunables</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run"><span class="n"><a id="t8" href="#t8">8</a></span><span class="t"><span class="nam">SCREEN_HEIGHT</span> <span class="op">=</span> <span class="num">1080</span>  <span class="com"># px: every screenshot is scaled to this height when read (the detector&#x27;s size)</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run"><span class="n"><a id="t9" href="#t9">9</a></span><span class="t"><span class="nam">VOTE_BIN</span> <span class="op">=</span> <span class="num">8</span>  <span class="com"># px, translation histogram bin</span>&nbsp;</span><span class="r"></span></p>
+    <p class="pln"><span class="n"><a id="t10" href="#t10">10</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
+    <p class="pln"><span class="n"><a id="t11" href="#t11">11</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
+    <p class="run"><span class="n"><a id="t12" href="#t12">12</a></span><span class="t"><span class="nam">SIG_DIST1</span><span class="op">,</span> <span class="nam">SIG_DIST2</span> <span class="op">=</span> <span class="num">8.0</span><span class="op">,</span> <span class="num">10.0</span>  <span class="com"># neighbour-spacing agreement for a &quot;good&quot; pair</span>&nbsp;</span><span class="r"></span></p>
+    <p class="pln"><span class="n"><a id="t13" href="#t13">13</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
+    <p class="pln"><span class="n"><a id="t14" href="#t14">14</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
+    <p class="run"><span class="n"><a id="t15" href="#t15">15</a></span><span class="t"><span class="nam">REFINE_TOLS</span> <span class="op">=</span> <span class="op">(</span><span class="num">16</span><span class="op">,</span> <span class="num">12</span><span class="op">,</span> <span class="num">8</span><span class="op">,</span> <span class="num">6</span><span class="op">,</span> <span class="num">5</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
+    <p class="pln"><span class="n"><a id="t16" href="#t16">16</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
+    <p class="pln"><span class="n"><a id="t17" href="#t17">17</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
+    <p class="run"><span class="n"><a id="t18" href="#t18">18</a></span><span class="t"><span class="nam">MERGE_TOL</span> <span class="op">=</span> <span class="num">9.0</span>  <span class="com"># px: a frame node closer than this to an atlas node IS that node</span>&nbsp;</span><span class="r"></span></p>
+    <p class="pln"><span class="n"><a id="t19" href="#t19">19</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
+    <p class="pln"><span class="n"><a id="t20" href="#t20">20</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
+    <p class="run"><span class="n"><a id="t21" href="#t21">21</a></span><span class="t"><span class="nam">MIN_INLIERS</span> <span class="op">=</span> <span class="num">8</span>&nbsp;</span><span class="r"></span></p>
+    <p class="pln"><span class="n"><a id="t22" href="#t22">22</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
+    <p class="pln"><span class="n"><a id="t23" href="#t23">23</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
+    <p class="run"><span class="n"><a id="t24" href="#t24">24</a></span><span class="t"><span class="nam">MIN_OVERLAP_RATIO</span> <span class="op">=</span> <span class="num">0.40</span>&nbsp;</span><span class="r"></span></p>
+    <p class="pln"><span class="n"><a id="t25" href="#t25">25</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
+    <p class="pln"><span class="n"><a id="t26" href="#t26">26</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
+    <p class="run"><span class="n"><a id="t27" href="#t27">27</a></span><span class="t"><span class="nam">MIN_NCC</span> <span class="op">=</span> <span class="num">0.35</span>&nbsp;</span><span class="r"></span></p>
+    <p class="pln"><span class="n"><a id="t28" href="#t28">28</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
+    <p class="pln"><span class="n"><a id="t29" href="#t29">29</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
+    <p class="run"><span class="n"><a id="t30" href="#t30">30</a></span><span class="t"><span class="nam">SCALE_RANGE</span> <span class="op">=</span> <span class="op">(</span><span class="num">0.90</span><span class="op">,</span> <span class="num">1.12</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
+    <p class="pln"><span class="n"><a id="t31" href="#t31">31</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
+    <p class="pln"><span class="n"><a id="t32" href="#t32">32</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
+    <p class="run"><span class="n"><a id="t33" href="#t33">33</a></span><span class="t"><span class="nam">LANDMARK_MERGE</span> <span class="op">=</span> <span class="num">45.0</span>&nbsp;</span><span class="r"></span></p>
+    <p class="pln"><span class="n"><a id="t34" href="#t34">34</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
+    <p class="pln"><span class="n"><a id="t35" href="#t35">35</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
+    <p class="run"><span class="n"><a id="t36" href="#t36">36</a></span><span class="t"><span class="nam">ICON_BASE_DY</span> <span class="op">=</span> <span class="num">24.0</span>  <span class="com"># screen px: a map base sits this far below its icon badge (measured, 22-28)</span>&nbsp;</span><span class="r"></span></p>
+    <p class="pln"><span class="n"><a id="t37" href="#t37">37</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
+    <p class="pln"><span class="n"><a id="t38" href="#t38">38</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
+    <p class="run"><span class="n"><a id="t39" href="#t39">39</a></span><span class="t"><span class="nam">ICON_MERGE</span> <span class="op">=</span> <span class="num">14.0</span>  <span class="com"># atlas units: the same badge seen in two screenshots</span>&nbsp;</span><span class="r"></span></p>
+    <p class="pln"><span class="n"><a id="t40" href="#t40">40</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
+    <p class="pln"><span class="n"><a id="t41" href="#t41">41</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
+    <p class="pln"><span class="n"><a id="t42" href="#t42">42</a></span><span class="t"><span class="com"># The atlas camera is tilted: panning sideways moves the bottom of the screen further than the</span>&nbsp;</span><span class="r"></span></p>
+    <p class="pln"><span class="n"><a id="t43" href="#t43">43</a></span><span class="t"><span class="com"># top, and panning up/down squashes the view.  Undoing that tilt (&quot;rectifying&quot;) turns every pan</span>&nbsp;</span><span class="r"></span></p>
+    <p class="pln"><span class="n"><a id="t44" href="#t44">44</a></span><span class="t"><span class="com"># into a pure shift.  HORIZON is where the map&#x27;s vanishing line sits, in PIXELS above the top</span>&nbsp;</span><span class="r"></span></p>
+    <p class="pln"><span class="n"><a id="t45" href="#t45">45</a></span><span class="t"><span class="com"># edge of the screenshot (negative = above).  It is a fixed distance, not a fraction of the image</span>&nbsp;</span><span class="r"></span></p>
+    <p class="pln"><span class="n"><a id="t46" href="#t46">46</a></span><span class="t"><span class="com"># height: cropped Screenshot_35-38 fit -2170 px, full 1919x1079 Screenshot_39-43 fit -2150 px.</span>&nbsp;</span><span class="r"></span></p>
+    <p class="pln"><span class="n"><a id="t47" href="#t47">47</a></span><span class="t"><span class="com"># Assumes a 1080p game window with the top of the screen kept when cropping.</span>&nbsp;</span><span class="r"></span></p>
+    <p class="pln"><span class="n"><a id="t48" href="#t48">48</a></span><span class="t"><span class="com"># Set to None to disable (treat screenshots as flat, the pre-0.2 behaviour).</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run"><span class="n"><a id="t49" href="#t49">49</a></span><span class="t"><span class="nam">HORIZON</span><span class="op">:</span> <span class="nam">float</span> <span class="op">|</span> <span class="key">None</span> <span class="op">=</span> <span class="op">-</span><span class="num">2155.0</span>&nbsp;</span><span class="r"></span></p>
+    <p class="pln"><span class="n"><a id="t50" href="#t50">50</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
+    <p class="pln"><span class="n"><a id="t51" href="#t51">51</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
+    <p class="run"><span class="n"><a id="t52" href="#t52">52</a></span><span class="t"><span class="nam">PLACEMENT</span> <span class="op">=</span> <span class="str">&quot;shift&quot;</span>  <span class="com"># &quot;shift&quot; (pans on the flattened map) or &quot;affine&quot; (old behaviour)</span>&nbsp;</span><span class="r"></span></p>
+    <p class="pln"><span class="n"><a id="t53" href="#t53">53</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
+    <p class="pln"><span class="n"><a id="t54" href="#t54">54</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
+    <p class="run"><span class="n"><a id="t55" href="#t55">55</a></span><span class="t"><span class="nam">TERRAIN_MIN_AGREE</span> <span class="op">=</span> <span class="num">15</span>  <span class="com"># terrain fallback: features agreeing on one shift</span>&nbsp;</span><span class="r"></span></p>
+    <p class="pln"><span class="n"><a id="t56" href="#t56">56</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
+    <p class="pln"><span class="n"><a id="t57" href="#t57">57</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
+    <p class="run"><span class="n"><a id="t58" href="#t58">58</a></span><span class="t"><span class="nam">TERRAIN_SCALE</span> <span class="op">=</span> <span class="num">1.0075</span>  <span class="com"># parallax: ground texture moves ~0.75% more than the map nodes on a pan (measured</span>&nbsp;</span><span class="r"></span></p>
+    <p class="pln"><span class="n"><a id="t59" href="#t59">59</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
+    <p class="pln"><span class="n"><a id="t60" href="#t60">60</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
+    <p class="pln"><span class="n"><a id="t61" href="#t61">61</a></span><span class="t"><span class="com"># on 157 crawl pairs, same on x and y); terrain shifts are divided by it so they are</span>&nbsp;</span><span class="r"></span></p>
+    <p class="pln"><span class="n"><a id="t62" href="#t62">62</a></span><span class="t"><span class="com"># in map-node units. Uncorrected, a 1100-unit jump was ~10 units off and the map</span>&nbsp;</span><span class="r"></span></p>
+    <p class="pln"><span class="n"><a id="t63" href="#t63">63</a></span><span class="t"><span class="com"># refine (allowed &lt; 10) was thrown away.</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run"><span class="n"><a id="t64" href="#t64">64</a></span><span class="t"><span class="nam">PARALLAX_MIN_INLIERS</span> <span class="op">=</span> <span class="num">15</span>  <span class="com"># second chance for screenshots of raised ground: exact matches needed ...</span>&nbsp;</span><span class="r"></span></p>
+    <p class="pln"><span class="n"><a id="t65" href="#t65">65</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
+    <p class="pln"><span class="n"><a id="t66" href="#t66">66</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
+    <p class="run"><span class="n"><a id="t67" href="#t67">67</a></span><span class="t"><span class="nam">PARALLAX_TOL</span> <span class="op">=</span> <span class="num">20.0</span>  <span class="com"># ... and this share of maps within this distance</span>&nbsp;</span><span class="r"></span></p>
+    <p class="pln"><span class="n"><a id="t68" href="#t68">68</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
+    <p class="pln"><span class="n"><a id="t69" href="#t69">69</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
+    <p class="run"><span class="n"><a id="t70" href="#t70">70</a></span><span class="t"><span class="nam">PARALLAX_RATIO</span> <span class="op">=</span> <span class="num">0.45</span>&nbsp;</span><span class="r"></span></p>
+    <p class="pln"><span class="n"><a id="t71" href="#t71">71</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
+    <p class="pln"><span class="n"><a id="t72" href="#t72">72</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
+    <p class="run"><span class="n"><a id="t73" href="#t73">73</a></span><span class="t"><span class="nam">DROP_MIN_INLIERS</span> <span class="op">=</span> <span class="num">5</span>  <span class="com"># placing by hand: maps that must agree near the drop point</span>&nbsp;</span><span class="r"></span></p>
+    <p class="pln"><span class="n"><a id="t74" href="#t74">74</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
+    <p class="pln"><span class="n"><a id="t75" href="#t75">75</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
+    <p class="run"><span class="n"><a id="t76" href="#t76">76</a></span><span class="t"><span class="nam">TERRAIN_MIN_NCC</span> <span class="op">=</span> <span class="num">0.40</span>  <span class="com"># ...and a stricter whole-overlap pixel check than the map route (0.35)</span>&nbsp;</span><span class="r"></span></p>
+    <p class="pln"><span class="n"><a id="t77" href="#t77">77</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
+    <p class="pln"><span class="n"><a id="t78" href="#t78">78</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
+    <p class="pln"><span class="n"><a id="t79" href="#t79">79</a></span><span class="t"><span class="com"># Game HUD on a full, uncropped window: hud_mask_full.png (white = HUD), from a 1920x1080 screenshot taken</span>&nbsp;</span><span class="r"></span></p>
+    <p class="pln"><span class="n"><a id="t80" href="#t80">80</a></span><span class="t"><span class="com"># over black unexplored fog (everything not black is interface; the stat text blocks are filled whole, their</span>&nbsp;</span><span class="r"></span></p>
+    <p class="pln"><span class="n"><a id="t81" href="#t81">81</a></span><span class="t"><span class="com"># numbers change width), scaled for other full-window sizes. Nodes / towers / badges &quot;found&quot; there are detector</span>&nbsp;</span><span class="r"></span></p>
+    <p class="pln"><span class="n"><a id="t82" href="#t82">82</a></span><span class="t"><span class="com"># mistakes on the UI. A spot counts as UI HUD_DEPTH px inside the outline: map nodes half behind the HUD</span>&nbsp;</span><span class="r"></span></p>
+    <p class="pln"><span class="n"><a id="t83" href="#t83">83</a></span><span class="t"><span class="com"># have their middle just inside it.</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run"><span class="n"><a id="t84" href="#t84">84</a></span><span class="t"><span class="nam">HUD_DEPTH</span> <span class="op">=</span> <span class="num">8</span>&nbsp;</span><span class="r"></span></p>
+    <p class="pln"><span class="n"><a id="t85" href="#t85">85</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
+    <p class="pln"><span class="n"><a id="t86" href="#t86">86</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
+    <p class="run"><span class="n"><a id="t87" href="#t87">87</a></span><span class="t"><span class="nam">HUD_MASK_FILE</span> <span class="op">=</span> <span class="nam">rc_paths</span><span class="op">.</span><span class="nam">ref</span><span class="op">(</span><span class="str">&quot;hud_mask_full.png&quot;</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
+    <p class="pln"><span class="n"><a id="t88" href="#t88">88</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
+    <p class="pln"><span class="n"><a id="t89" href="#t89">89</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
+    <p class="run"><span class="n"><a id="t90" href="#t90">90</a></span><span class="t"><span class="nam">IMAGE_EXT</span> <span class="op">=</span> <span class="op">{</span><span class="str">&quot;.png&quot;</span><span class="op">,</span> <span class="str">&quot;.jpg&quot;</span><span class="op">,</span> <span class="str">&quot;.jpeg&quot;</span><span class="op">,</span> <span class="str">&quot;.webp&quot;</span><span class="op">,</span> <span class="str">&quot;.bmp&quot;</span><span class="op">}</span>&nbsp;</span><span class="r"></span></p>
+    <p class="pln"><span class="n"><a id="t91" href="#t91">91</a></span><span class="t"><span class="com"># every PNG the program writes carries this text tag; the screenshot check skips tagged files, so a map image,</span>&nbsp;</span><span class="r"></span></p>
+    <p class="pln"><span class="n"><a id="t92" href="#t92">92</a></span><span class="t"><span class="com"># thumbnail or export left in a screenshot folder is never added as a screenshot (user: an overview image</span>&nbsp;</span><span class="r"></span></p>
+    <p class="pln"><span class="n"><a id="t93" href="#t93">93</a></span><span class="t"><span class="com"># landed in Waiting)</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run"><span class="n"><a id="t94" href="#t94">94</a></span><span class="t"><span class="nam">GENERATED_TAG</span> <span class="op">=</span> <span class="str">b&quot;GrandProject&quot;</span>&nbsp;</span><span class="r"></span></p>
+    <p class="pln"><span class="n"><a id="t95" href="#t95">95</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
+    <p class="pln"><span class="n"><a id="t96" href="#t96">96</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
+    <p class="pln"><span class="n"><a id="t97" href="#t97">97</a></span><span class="t"><span class="com"># images the atlas itself writes (never screenshots): &lt;atlas&gt;_terrain.png, _composite.png, _network.png, ...</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run"><span class="n"><a id="t98" href="#t98">98</a></span><span class="t"><span class="nam">ATLAS_OUTPUTS</span> <span class="op">=</span> <span class="op">(</span><span class="str">&quot;_terrain.png&quot;</span><span class="op">,</span> <span class="str">&quot;_terrain.npz&quot;</span><span class="op">,</span> <span class="str">&quot;_composite.png&quot;</span><span class="op">,</span> <span class="str">&quot;_network.png&quot;</span><span class="op">,</span> <span class="str">&quot;_coverage.png&quot;</span><span class="op">,</span> <span class="str">&quot;_badges.png&quot;</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
+    <p class="pln"><span class="n"><a id="t99" href="#t99">99</a></span><span class="t"><span class="com"># ...and old icon-labelling sheets &quot;&lt;atlas&gt;_badges_&lt;round&gt;.png&quot; written before images were tagged (user: auto-add</span>&nbsp;</span><span class="r"></span></p>
+    <p class="pln"><span class="n"><a id="t100" href="#t100">100</a></span><span class="t"><span class="com"># tried to add six of them in an old crawl atlas folder)</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run"><span class="n"><a id="t101" href="#t101">101</a></span><span class="t"><span class="nam">ATLAS_OLD_SHEETS</span> <span class="op">=</span> <span class="str">r&quot;_badges_(after|check|round\d+)\.png$&quot;</span>  <span class="com"># (only these names: review)</span>&nbsp;</span><span class="r"></span></p>
+    <p class="pln"><span class="n"><a id="t102" href="#t102">102</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
+    <p class="pln"><span class="n"><a id="t103" href="#t103">103</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
+    <p class="run"><span class="n"><a id="t104" href="#t104">104</a></span><span class="t"><span class="nam">ROW_STEP_PX</span> <span class="op">=</span> <span class="num">36.0</span>  <span class="com"># screen px between neighbouring badges of one row (measured)</span>&nbsp;</span><span class="r"></span></p>
+    <p class="pln"><span class="n"><a id="t105" href="#t105">105</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
+    <p class="pln"><span class="n"><a id="t106" href="#t106">106</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
+    <p class="pln"><span class="n"><a id="t107" href="#t107">107</a></span><span class="t"><span class="com"># clean map (Fix seams, core/seams.py)</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run"><span class="n"><a id="t108" href="#t108">108</a></span><span class="t"><span class="nam">SEAM_SCORE_SCALE</span> <span class="op">=</span> <span class="num">4</span>  <span class="com"># screenshot scores are worked out at 1/4 size (smooth anyway)</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run"><span class="n"><a id="t109" href="#t109">109</a></span><span class="t"><span class="nam">SEAM_DARK</span> <span class="op">=</span> <span class="num">25</span>  <span class="com"># grey level: at or below this a spot counts as unseen fog</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run"><span class="n"><a id="t110" href="#t110">110</a></span><span class="t"><span class="nam">SEAM_LIT</span> <span class="op">=</span> <span class="num">60</span>  <span class="com"># ... and from this on as fully lit</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run"><span class="n"><a id="t111" href="#t111">111</a></span><span class="t"><span class="nam">SEAM_DARK_FLOOR</span> <span class="op">=</span> <span class="num">0.35</span>  <span class="com"># a dark spot keeps this share of its score: a lit copy wins clearly</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run"><span class="n"><a id="t112" href="#t112">112</a></span><span class="t"><span class="nam">SEAM_LIT_BLUR</span> <span class="op">=</span> <span class="num">25</span>  <span class="com"># (at 1/4 size: ~100 px) how lit an area is, not single dark rocks / water: no specks</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run"><span class="n"><a id="t113" href="#t113">113</a></span><span class="t"><span class="nam">SEAM_GRID</span> <span class="op">=</span> <span class="num">8</span>  <span class="com"># atlas units per ownership cell</span>&nbsp;</span><span class="r"></span></p>
+    <p class="pln"><span class="n"><a id="t114" href="#t114">114</a></span><span class="t"><span class="com"># costs (one unit = one cell of plain seam between two views of a spot right in their middles)</span>&nbsp;</span><span class="r"></span></p>
+    <p class="pln"><span class="n"><a id="t115" href="#t115">115</a></span><span class="t"><span class="com"># a screenshot&#x27;s well-seen middle (user, 1920x1080 px): a trapezoid, (y, half width) of its top and bottom</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run"><span class="n"><a id="t116" href="#t116">116</a></span><span class="t"><span class="nam">SEAM_MIDDLE_TOP</span><span class="op">,</span> <span class="nam">SEAM_MIDDLE_BOTTOM</span> <span class="op">=</span> <span class="op">(</span><span class="num">241</span><span class="op">,</span> <span class="num">630</span><span class="op">)</span><span class="op">,</span> <span class="op">(</span><span class="num">1005</span><span class="op">,</span> <span class="num">302</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run"><span class="n"><a id="t117" href="#t117">117</a></span><span class="t"><span class="nam">SEAM_DATA_W</span> <span class="op">=</span> <span class="num">12.0</span>  <span class="com"># cost of taking a spot on the edge of a screenshot&#x27;s middle (0 at its centre, grows outside)</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run"><span class="n"><a id="t118" href="#t118">118</a></span><span class="t"><span class="nam">SEAM_S_FULL</span> <span class="op">=</span> <span class="num">200</span>  <span class="com"># px from a screenshot&#x27;s edge / HUD (x how lit) from where a spot costs nothing more</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run"><span class="n"><a id="t119" href="#t119">119</a></span><span class="t"><span class="nam">SEAM_EDGE_W</span> <span class="op">=</span> <span class="num">8.0</span>  <span class="com"># cost of taking a spot right at a screenshot&#x27;s edge / HUD, or in its fog</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run"><span class="n"><a id="t120" href="#t120">120</a></span><span class="t"><span class="nam">SEAM_OFF_W</span> <span class="op">=</span> <span class="num">3.0</span>  <span class="com"># seam: + this times how far off each screenshot&#x27;s middle the spot is (0 middle, 1 trapezoid edge)</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run"><span class="n"><a id="t121" href="#t121">121</a></span><span class="t"><span class="nam">SEAM_SHIFT_W</span> <span class="op">=</span> <span class="num">2.0</span>  <span class="com"># seam: + this per 1000 units between the two screenshots</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run"><span class="n"><a id="t122" href="#t122">122</a></span><span class="t"><span class="nam">SEAM_TEX_W</span> <span class="op">=</span> <span class="num">3.0</span>  <span class="com"># seam weight: x(1 + this) through busy ground</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run"><span class="n"><a id="t123" href="#t123">123</a></span><span class="t"><span class="nam">SEAM_PATH_W</span> <span class="op">=</span> <span class="num">10.0</span>  <span class="com"># ... + this on paths</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run"><span class="n"><a id="t124" href="#t124">124</a></span><span class="t"><span class="nam">SEAM_NODE_W</span> <span class="op">=</span> <span class="num">300.0</span>  <span class="com"># ... + this on map nodes and their icons</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run"><span class="n"><a id="t125" href="#t125">125</a></span><span class="t"><span class="nam">SEAM_NODE_R</span><span class="op">,</span> <span class="nam">SEAM_ICON_R</span><span class="op">,</span> <span class="nam">SEAM_PATH_HALF</span> <span class="op">=</span> <span class="num">38</span><span class="op">,</span> <span class="num">28</span><span class="op">,</span> <span class="num">8</span>  <span class="com"># atlas units: map node / icon cores, path band</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run"><span class="n"><a id="t126" href="#t126">126</a></span><span class="t"><span class="nam">SEAM_NEAR_SHARE</span><span class="op">,</span> <span class="nam">SEAM_NEAR_FALL</span> <span class="op">=</span> <span class="num">0.3</span><span class="op">,</span> <span class="num">70</span>  <span class="com"># around a core: this share of SEAM_NODE_W, falling to 0 this many units away</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run"><span class="n"><a id="t127" href="#t127">127</a></span><span class="t"><span class="nam">SEAM_CYCLES</span> <span class="op">=</span> <span class="num">2</span>  <span class="com"># alpha-expansion rounds over all screenshots</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run"><span class="n"><a id="t128" href="#t128">128</a></span><span class="t"><span class="nam">SEAM_FLOW_SCALE</span> <span class="op">=</span> <span class="num">64</span>  <span class="com"># costs to integer capacities</span>&nbsp;</span><span class="r"></span></p>
+    <p class="pln"><span class="n"><a id="t129" href="#t129">129</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
+    <p class="pln"><span class="n"><a id="t130" href="#t130">130</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
+    <p class="pln"><span class="n"><a id="t131" href="#t131">131</a></span><span class="t"><span class="com"># groups of waiting screenshots (core/islands.py)</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run"><span class="n"><a id="t132" href="#t132">132</a></span><span class="t"><span class="nam">ISLAND_MIN</span> <span class="op">=</span> <span class="num">2</span>  <span class="com"># screenshots in an island before it is matched as one piece</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run"><span class="n"><a id="t133" href="#t133">133</a></span><span class="t"><span class="nam">ISLAND_CANDIDATES</span> <span class="op">=</span> <span class="num">12</span>  <span class="com"># shifts passing the quick count that get the exact check</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run"><span class="n"><a id="t134" href="#t134">134</a></span><span class="t"><span class="nam">ISLAND_TERRAIN_TRIES</span> <span class="op">=</span> <span class="num">3</span>  <span class="com"># of those passing it, the best this many get the terrain check</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run"><span class="n"><a id="t135" href="#t135">135</a></span><span class="t"><span class="nam">ISLAND_COVER_CELL</span> <span class="op">=</span> <span class="num">20.0</span>  <span class="com"># atlas units: grid cell for &quot;which area does an atlas / a group cover&quot;</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run"><span class="n"><a id="t136" href="#t136">136</a></span><span class="t"><span class="nam">ISLAND_QUICK_TOL</span> <span class="op">=</span> <span class="num">8.0</span>  <span class="com"># px: a map counts as landing on one in the quick count (shifts are rounded to 4 units)</span>&nbsp;</span><span class="r"></span></p>
+</main>
+<footer>
+    <div class="content">
+        <p>
+            <a class="nav" href="z_c2ac1b6f169ee300_atlas_py.html">&#xab; prev</a> &nbsp; &nbsp;
+            <a class="nav" href="index.html">&Hat; index</a> &nbsp; &nbsp;
+            <a class="nav" href="z_c2ac1b6f169ee300_frame_py.html">&#xbb; next</a>
+            &nbsp; &nbsp; &nbsp;
+            <a class="nav" href="https://coverage.readthedocs.io/en/7.17.3">coverage.py v7.17.3</a>,
+            created at 2026-11-19 02:33 +0000
+        </p>
+    </div>
+</footer>
+</body>
+</html>
