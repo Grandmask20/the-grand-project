@@ -41,6 +41,7 @@ from .icons import icon_label, icon_rows
 from .library import LibraryMixin
 from .mapimage import MapImageMixin
 from .model import view_model
+from .parts import Parts
 from .query import QueryMixin
 from .replay_data import ReplayMixin
 from .settings import load_settings, save_settings
@@ -105,6 +106,8 @@ class AtlasSession(
         self.V: dict = {"nodes": [], "paths": [], "icons": [], "landmarks": [], "final": None}
         self.D: dict = {}  # derived from V: biomes, icon rows, type counts, footprints (rebuild_model)
         self.model_version = 0
+        self.parts = Parts()  # the map's parts (map image, model) and how far each is: the page's loading cover
+        self.opening: str | None = None  # the atlas being opened at start (its name), shown on the page meanwhile
         self._closing = False
         self._extra_groups: set[str] = set()  # bookmark groups made empty (kept until the app closes)
         self._replay_on = False
@@ -174,7 +177,7 @@ class AtlasSession(
         return self.ui_settings()
 
     # ------------------------------------------------------------------ open / new / save / close
-    def open_atlas(self, p) -> None:
+    def open_atlas(self, p, expect_gen: int | None = None) -> None:
         """Open an atlas file and show it.
 
         Unsaved changes of the open atlas are saved first. An atlas with screenshots but no atlas-wide result
@@ -182,11 +185,15 @@ class AtlasSession(
 
         Args:
             p: Path of the atlas .json file.
+            expect_gen: Open it only while this is still the generation (the app's start opening the last atlas in
+                the background: an atlas opened on the page meanwhile stays, CodeRabbit). None: always.
 
         Raises:
             ValueError: When the file cannot be read as an atlas, or work is still running.
         """
         p = Path(p)
+        if expect_gen is not None and not self.owns(expect_gen):
+            return
         if self.working():
             raise ValueError("wait until the screenshots being added are done")
         try:
@@ -196,14 +203,19 @@ class AtlasSession(
             raise ValueError(f"could not read {p}: {e}") from e
         switching = self.path is None or p.resolve() != self.path.resolve()
         # the open atlas's background work stops first (auto-add restarts below; Fix seams' result would be for the
-        # atlas object read before, also when the same file is opened again)
-        self.stop_watch()
-        if self.seams_running():
-            self.stop_seams()
-            self.events.log("Fix seams stopped: another atlas was opened")
-        self.save()
+        # atlas object read before, also when the same file is opened again). Not for the app's start (expect_gen):
+        # nothing of its own is open yet, so any work running belongs to an atlas opened on the page meanwhile, and
+        # stopping it there cancelled that atlas's Fix seams (CodeRabbit)
+        if expect_gen is None:
+            self.stop_watch()
+            if self.seams_running():
+                self.stop_seams()
+                self.events.log("Fix seams stopped: another atlas was opened")
+            self.save()
         name = p.stem if p.stem != "atlas" else p.parent.name
         with self._lock:
+            if expect_gen is not None and not self.owns(expect_gen):  # another atlas opened while this one loaded
+                return
             if self.working():  # a job slipped in meanwhile
                 self._resume_watch()  # (stopped above for a switch that doesn't happen: CodeRabbit)
                 raise ValueError("wait until the screenshots being added are done")
@@ -212,12 +224,14 @@ class AtlasSession(
                 self._drop_stale_snapshots(p)
                 self._reset_mapimage()  # the other atlas's map image never shows for this one
             before, now = self.opened, self._switch(atlas, p)
+            # in the same step as the switch: set after it, an older load finishing late made itself the atlas
+            # opened at the next start (CodeRabbit)
+            self.settings["last_atlas"] = str(p)
             if before.scope and before.scope != now.scope:
                 self.events.log(f"switched to atlas {name}", before.scope)
         maps = len((atlas.final or {}).get("nodes", []))
         LOG.info(f"opened atlas {p}: {len(atlas.frames)} screenshots, {maps} maps")
         self.events.log(f"opened atlas {name} ({p}): {len(atlas.frames)} screenshots, {maps} maps", now.scope)
-        self.settings["last_atlas"] = str(p)
         if atlas.frames and atlas.final is None:
             self.events.log("this atlas predates the atlas-wide check: running it now")
             try:
@@ -286,6 +300,7 @@ class AtlasSession(
         """
         scope = str(p.resolve()) if p is not None else ""
         self.opened = Opened(atlas, p, self.opened.gen + 1, scope)
+        self.parts.reset(self.opened.gen)
         self.V = {"nodes": [], "paths": [], "icons": [], "landmarks": [], "final": None}
         self.D = {}
         self.model_version += 1
@@ -380,8 +395,26 @@ class AtlasSession(
     def rebuild_model(self) -> None:
         """Rebuild the view model from the atlas and everything derived from it: icon rows, type counts, locked
         strongholds, city types, biomes, screenshot footprints. Publishes a "model" event with the new version."""
+        gen = self.generation
+        self.parts.start("model", gen)
+        try:
+            self._rebuild_model(gen)
+        except Exception as e:
+            self.parts.fail("model", f"{type(e).__name__}: {e}", gen)  # (it only reached the log: user)
+            raise
+        self.parts.done("model", gen)
+        self.filters_changed(publish=False)
+        self.events.publish("model", self.model_version)
+
+    def _rebuild_model(self, gen: int) -> None:
+        """The work of rebuild_model, beating the model part between its steps.
+
+        Args:
+            gen: The generation it was started for.
+        """
         with self._lock:
             V = view_model(self.atlas) if self.atlas else {"nodes": [], "paths": [], "icons": [], "landmarks": []}
+            self.parts.beat("model", gen)
             D: dict = {}
             counts: dict[str, int] = {}
             for ic in V["icons"]:
@@ -389,6 +422,7 @@ class AtlasSession(
             D["icon_types"] = sorted(counts, key=lambda k: (k == "Unidentified badge", k))
             try:
                 found = atlas_cities.biomes(self.atlas, V, ground=self.ground()) if self.atlas else None
+                self.parts.beat("model", gen)
             except Exception:
                 LOG.exception("city types / biomes failed")
                 self.events.log("city types / biomes failed (details in the log file)")
@@ -429,10 +463,11 @@ class AtlasSession(
             D["landmark_node"] = landmark_nodes(V["nodes"], V["landmarks"], D["locked"])
             self.V, self.D = V, D
             self.model_version += 1
-        if getattr(self, "_replay_on", False) and self.atlas and self.atlas.frames:
-            self._replan()  # screenshots added while the replay is open
-        self.filters_changed(publish=False)
-        self.events.publish("model", self.model_version)
+            # screenshots added while the replay is open: replanned in the same locked step (checked apart, a
+            # close between the check and the replan made the rebuild fail after it said the model was ready,
+            # CodeRabbit)
+            if getattr(self, "_replay_on", False) and self.atlas and self.atlas.frames:
+                self._replan()
 
     # ------------------------------------------------------------------ what the page shows of the atlas
     def atlas_summary(self) -> dict | None:
@@ -480,6 +515,7 @@ class AtlasSession(
             "questions": self.events.open_questions(),
             "log": list(self.events.log_lines)[-300:],
             "log_scope": opened.scope,
+            "opening": self.opening,
         }
 
     def _forget_session(self) -> None:

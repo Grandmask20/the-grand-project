@@ -76,8 +76,11 @@ def land_polygons(image: np.ndarray, origin: tuple[float, float, float]) -> list
     """
     x0, y0, sc = origin
     f = max(1.0, WEBMAP_SHAPE_CELL * sc)  # map image px per grid cell
+    # the brightest channel per pixel, by OpenCV: numpy's max over the colour axis took ~0.6 s on a big atlas (user)
+    b, g, r = cv2.split(image)
+    brightest = cv2.max(cv2.max(b, g), r)
     small = cv2.resize(
-        (image.max(axis=2) > 12).astype(np.uint8) * 255,
+        (brightest > 12).astype(np.uint8) * 255,
         (max(1, round(image.shape[1] / f)), max(1, round(image.shape[0] / f))),
         interpolation=cv2.INTER_AREA,
     )

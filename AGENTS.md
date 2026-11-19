@@ -95,7 +95,7 @@ module gets its own test file (one per module or class under test).
 
 ## Git workflow
 
-- `develop` is the default branch; `main` is protected and only updated from develop by `make_release.py`
+- `develop` is the default branch; `main` is protected and only updated from develop by `tools/make_release.py`
   (player release, no debug options or test files) through a pull request.
 - **Never push straight to develop.** Work on a branch and open a pull request to `develop`, so changes can be
   reviewed first.

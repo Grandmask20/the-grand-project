@@ -1,9 +1,10 @@
 """Build the player release (GitHub main) from this working copy (GitHub develop).
 
-    py make_release.py            build into ../1.0 on a new branch release/v<version> from origin/main,
+    py -m tools.make_release            build into ../1.0 on a new branch release/v<version> from origin/main,
                                   commit and push it; then open a pull request into main (main is protected)
-    py make_release.py --check    only list what the release would contain
-    py make_release.py --db       first refresh references/atlas_references.sqlite3 from the private database
+    py -m tools.make_release --check    only list what the release would contain
+    py -m tools.make_release --notes    only print the release notes (also written next to ../1.0 on a release)
+    py -m tools.make_release --db       first refresh references/atlas_references.sqlite3 from the private database
                                   (keeps only badge_refs + detector_models: nothing from anyone's atlas)
 
 The player build has the program, the reference files, the launchers, LICENSE and README, the app's page built
@@ -20,7 +21,7 @@ import subprocess
 import sys
 from pathlib import Path
 
-HERE = Path(__file__).resolve().parent
+HERE = Path(__file__).resolve().parents[1]  # the repo (this file is in tools/)
 TARGET = HERE.parent / "1.0"
 REPO = "https://github.com/Grandmask20/the-grand-project"
 
@@ -30,7 +31,7 @@ FILES = (
     "LICENSE",
     "requirements.txt",
     "pyproject.toml",
-    "Start Atlas Viewer.bat",
+    "Start The Grand Project.bat",
     "Install (run once).bat",
     "install.sh",
     "start.sh",
@@ -47,6 +48,7 @@ atlases/*
 atlases/default/*
 !atlases/default/.gitkeep
 local_paths.json
+The Grand Project.lnk
 .venv/
 *.egg-info
 """
@@ -102,6 +104,28 @@ def player_readme() -> str:
             + s[b:]
         )
     return s
+
+
+def release_notes() -> str:
+    """The GitHub release's notes: how to install and start it on each system, every time (manny: tell newcomers
+    which script to run on Windows vs macOS / Linux), then a place for what's new.
+
+    The install and start part is the README's "Run it" section (without "Get it": they are on the download page),
+    so the notes and the README never disagree.
+    """
+    s = (HERE / "README.md").read_text(encoding="utf-8").replace("\r\n", "\n")
+    a = s.find("## Run it\n")
+    b = s.find("\n---\n", a)
+    run = s[a + len("## Run it\n") : b].strip() if a != -1 and b > a else ""
+    g, h = run.find("### Get it"), run.find("### First time")
+    if g != -1 and h > g:
+        run = run[:g] + run[h:]
+    return (
+        f"Program version v{version()}. Download **Source code (zip)** below and unzip it into a folder you can "
+        "write to.\n\n"
+        f"## How to install and start\n\n{run.replace('### ', '#### ')}\n\n"
+        "## What's new\n\n- (write the highlights here)\n"
+    )
 
 
 def refresh_db() -> None:
@@ -162,6 +186,9 @@ def build() -> list[str]:
 
 
 def main() -> int:
+    if "--notes" in sys.argv:
+        print(release_notes())
+        return 0
     if "--db" in sys.argv:
         refresh_db()
     if "--check" not in sys.argv:
@@ -210,7 +237,10 @@ def main() -> int:
         f"Release v{v}\n\nPlayer build from develop ({git('rev-parse', '--short', 'HEAD', cwd=HERE)}).",
     )
     git("push", "-q", "-u", "origin", branch, "--force")
+    notes = TARGET.parent / f"release_notes_v{v}.md"
+    notes.write_text(release_notes(), encoding="utf-8")
     print(f"pushed {branch}: open the pull request into main at\n  {REPO}/compare/main...{branch}?expand=1")
+    print(f"release notes (paste into the GitHub release, then add what's new): {notes}")
     print("after merging it:  git -C ../1.0 checkout main && git -C ../1.0 pull")
     return 0
 

@@ -48,6 +48,7 @@ export function sameAtlas(): () => boolean {
  */
 const GEN_FREE = [
 	"/api/state",
+	"/api/parts",
 	"/api/meta",
 	"/api/settings",
 	"/api/quit",

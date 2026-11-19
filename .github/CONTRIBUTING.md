@@ -6,7 +6,7 @@ operating systems are all welcome.
 ## Where changes go
 
 - **`develop`** is where work happens. Open your pull request against `develop`, never `main`.
-- **`main`** is the player release. It is protected and only updated from `develop` with `make_release.py` (which
+- **`main`** is the player release. It is protected and only updated from `develop` with `tools/make_release.py` (which
   strips debug options and test files) through a pull request.
 - Keep a pull request to one topic, and say in it what you checked (tests run, scores before / after).
 

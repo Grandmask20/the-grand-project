@@ -1,9 +1,11 @@
 import { FullscreenControl, LngLat, type Map as MapLibreMap, Map as MapView, NavigationControl } from "maplibre-gl";
 import { useEffect, useRef, useState } from "react";
 import nodePicture from "@/assets/map_node_icon.webp";
+import { Button } from "@/components/ui/button";
 import type { Meta } from "@/domain/app/Meta";
 import type { MapInfo } from "@/domain/map/MapInfo";
 import { useAppClient } from "@/hooks/app/UseAppClient";
+import { PART_QUIET_S, useParts } from "@/hooks/app/UseParts";
 import { Geo } from "@/logic/Geo";
 import { baseStyle, squareImage } from "@/logic/MapStyle";
 import { useAppStore } from "@/store/AppStore";
@@ -38,6 +40,8 @@ interface Props {
 	meta: Meta;
 }
 
+const PART_NAMES: Record<string, string> = { map_image: "Map image", model: "Map nodes, paths, icons and biomes" };
+
 /** The map: MapLibre on the app's tiles, with everything the page draws over them. */
 export function AtlasMap({ info, meta }: Props) {
 	const app = useAppClient();
@@ -45,6 +49,53 @@ export function AtlasMap({ info, meta }: Props) {
 	const [map, setMap] = useState<MapLibreMap | null>(null);
 	const [geo] = useState(() => new Geo(info));
 	const setStoreMap = useAppStore((s) => s.setMap);
+	const [shown, setShown] = useState(false);
+	const [tileError, setTileError] = useState<string | null>(null);
+	const parts = useParts(!shown).data?.parts ?? {};
+	const states = Object.values(parts);
+	const failed = Object.entries(parts).filter(([, p]) => p?.state === "failed");
+	const ready = states.length > 0 && states.every((p) => p?.state === "ready");
+
+	// the map is shown in one go, on what the app and MapLibre say, never on a timer (a big atlas outgrew it, and a
+	// failed part only reached the log: banner, user): once every part is ready (map image, model) and the map image
+	// and content tiles for the view have loaded, or as soon as a part or its tiles fail (shown with what is there,
+	// and why). Shown as each came, the map image was up seconds before the rest (user). Only the first draw waits.
+	useEffect(() => {
+		if (failed.length || tileError) setShown(true);
+	}, [failed.length, tileError]);
+	// tile errors from the start: one while the model was still building came before the wait began, and went
+	// unseen (CodeRabbit)
+	useEffect(() => {
+		if (!map) return;
+		const failedTile = (e: { sourceId?: string; error?: { message?: string } }) => {
+			if (e.sourceId === "terrain" || e.sourceId === "atlas") setTileError(e.error?.message ?? "a map tile failed");
+		};
+		map.on("error", failedTile);
+		return () => {
+			map.off("error", failedTile);
+		};
+	}, [map]);
+	useEffect(() => {
+		if (!map || shown || !ready) return;
+		// only what is shown is waited for: a source none of whose layers is ticked loads nothing (MapLibre skips it),
+		// so with Ground off the map image isn't waited for (user: what isn't ticked mustn't slow the loading)
+		const ticked = (id: string) =>
+			map
+				.getStyle()
+				.layers.some((l) => "source" in l && l.source === id && (l.layout?.visibility ?? "visible") !== "none");
+		const loaded = () =>
+			map.isStyleLoaded() &&
+			["terrain", "atlas"].every((id) => !map.getSource(id) || !ticked(id) || map.isSourceLoaded(id));
+		const check = () => {
+			if (loaded()) setShown(true);
+		};
+		// (the content tiles' address changes when the model is built: the drawing after it is the one waited for)
+		map.on("idle", check);
+		check();
+		return () => {
+			map.off("idle", check);
+		};
+	}, [map, ready, shown]);
 
 	// biome-ignore lint/correctness/useExhaustiveDependencies: made once per grid (the parent remounts on a new one)
 	useEffect(() => {
@@ -165,6 +216,39 @@ export function AtlasMap({ info, meta }: Props) {
 			{/* h-full, not absolute inset-0: MapLibre's stylesheet makes its container position: relative, which
 			    turned the absolute box 0 px tall (a black map) */}
 			<div ref={box} className="h-full w-full" />
+			{!shown && (
+				<div className="absolute inset-0 z-10 flex flex-col items-center justify-center gap-2 bg-background text-sm text-muted-foreground">
+					<p className="text-foreground">Loading atlas…</p>
+					{Object.entries(parts).map(([name, p]) =>
+						p ? (
+							<p key={name}>
+								{PART_NAMES[name] ?? name}:{" "}
+								{p.state === "ready"
+									? "ready"
+									: p.state === "building" && p.quiet >= PART_QUIET_S
+										? `no progress for ${Math.round(p.quiet)} s`
+										: p.state === "building"
+											? "building…"
+											: "waiting"}
+							</p>
+						) : null,
+					)}
+					{ready && <p>Map tiles: loading…</p>}
+					<Button variant="outline" size="sm" onClick={() => setShown(true)}>
+						Show the map anyway
+					</Button>
+				</div>
+			)}
+			{(failed.length > 0 || tileError) && (
+				<div className="absolute top-2 left-2 z-10 max-w-md rounded border border-destructive bg-card p-2 text-xs text-destructive">
+					{failed.map(([name, p]) => (
+						<p key={name}>
+							{PART_NAMES[name] ?? name} could not be made: {p?.error}
+						</p>
+					))}
+					{tileError && <p>Map tiles could not load: {tileError}</p>}
+				</div>
+			)}
 			{map && (
 				<>
 					<MapTiles map={map} />

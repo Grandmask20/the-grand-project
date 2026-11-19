@@ -135,8 +135,10 @@ class MapImageMixin:
         """
         if not self.atlas or not self.atlas.frames:
             self._reset_mapimage()
+            self.parts.done("map_image", self.generation)  # (nothing to show: not waited for)
             self.events.publish("terrain", self.terrain_version)
             return
+        self.parts.start("map_image", self.generation)
         png, npz = core.map_image_files(self.path)
         key = self.atlas.terrain_key()
         try:
@@ -159,17 +161,41 @@ class MapImageMixin:
         job, atlas, gen, scope = self._terrain_job, opened.atlas, opened.gen, opened.scope
         self.events.set_progress("building the map image (first time for this atlas)…")
 
+        def failed(e: Exception) -> None:
+            """Report the map image as failed (its log line always; the part only for the build still current: an
+            older build failing late marked the newer one failed, CodeRabbit)."""
+            LOG.exception("map image could not be built")
+            self.events.log(f"map image could not be built: {e}", scope)
+            if job == self._terrain_job:
+                self.parts.fail("map_image", f"{type(e).__name__}: {e}", gen)  # (it only reached the log: user)
+                self.events.publish("terrain", self.terrain_version)
+
         def work():
             """Build the map image and show it (background thread)."""
             try:
                 t0 = time.monotonic()
-                canvas, origin, weight = atlas.composite(max_pixels=TERRAIN_PIXELS, with_weight=True)
-                if job == self._terrain_job and self.set_terrain(canvas, weight, origin, gen=gen):
+                try:
+                    canvas, origin, weight = atlas.composite(
+                        max_pixels=TERRAIN_PIXELS, with_weight=True, progress=lambda: self.parts.beat("map_image", gen)
+                    )
+                except Exception as e:
+                    failed(e)
+                    return
+                if job != self._terrain_job:
+                    return  # a newer build took over
+                try:
+                    shown = self.set_terrain(canvas, weight, origin, gen=gen)
+                except Exception as e:
+                    # once the image is in, an error comes from the model rebuilt after it, which reports itself:
+                    # not the map image's (it marked a shown image failed, CodeRabbit)
+                    if self.parts.payload()["parts"].get("map_image", {}).get("state") == "building":
+                        failed(e)
+                    else:
+                        LOG.exception("the model after the new map image failed")
+                    return
+                if shown:
                     h, w = canvas.shape[:2]
                     self.events.log(f"map image built in {time.monotonic() - t0:.1f} s ({w} x {h} px)", scope)
-            except Exception as e:
-                LOG.exception("map image could not be built")
-                self.events.log(f"map image could not be built: {e}", scope)
             finally:
                 self.events.set_progress(None)
 
@@ -219,6 +245,8 @@ class MapImageMixin:
             self._terrain_snap = (self.terrain, self.terrain_version)
             self._tiles.clear()
             self._vector = None
+            self._scene3d = None
+            self.parts.done("map_image", self.generation)
         if save and self.path:
             key, path = self.atlas.terrain_key(), self.path
 
@@ -526,6 +554,8 @@ class MapImageMixin:
         self.filter_version += 1
         self._vector = None
         self._vector_steps = None
+        self._scene3d = None
+        self._scene3d_steps = None
         if publish:
             self.events.publish("filters", self.filter_version)
 
@@ -771,14 +801,45 @@ class MapImageMixin:
             g = self.grid
             if g is None:
                 return None
-            layers = self.vector_layers(g, steps)
-            # the 3D view's icons and models aren't cut into tiles: the page gets them whole (scene_3d), read back
-            # from loaded tiles they were missing zoomed out, came twice at tile edges and were gathered again
-            # after every move (user: lag, popping)
-            scene = {k: layers.pop(k) for k in ("icon_rows", "solids")}
-            scene["paths"] = layers["paths"]
+            # without the 3D view's parts: built only when it asks (scene_3d). Built for every flat map too, they
+            # were ~0.8 s of a big atlas's first tiles though never in them (user: what isn't shown shouldn't slow it)
+            layers = self.vector_layers(g, steps, with_3d=False)
+            for k in ("icon_rows", "solids"):
+                layers.pop(k, None)
             dense = max(0, g.zmax - 4)  # icons and labels are not drawn zoomed far out
-            made = (key, VectorTiler(layers, g, min_zoom={"icons": dense}), scene, g)
+            made = (key, VectorTiler(layers, g, min_zoom={"icons": dense}), None, g)
+            setattr(self, slot, made)
+            return made
+
+    def _scene_made(self, steps: bool = False) -> tuple | None:
+        """Return (versions, 3D scene features, grid) of the current model, filters and map image, made once and only
+        when the 3D view asks (the flat map's tiles never carry them).
+
+        The 3D view's icons and models aren't cut into tiles: the page gets them whole (scene_3d); read back from
+        loaded tiles they were missing zoomed out, came twice at tile edges and were gathered again after every move
+        (user: lag, popping).
+
+        Args:
+            steps: The timelapse's (items carry their reveal step), kept beside the plain one.
+
+        Returns:
+            The tuple, or None without a map image.
+        """
+        slot = "_scene3d_steps" if steps else "_scene3d"
+        key = (self.model_version, self.filter_version, self.terrain_version, self.replay_token if steps else 0)
+        v = getattr(self, slot, None)
+        if v is not None and v[0] == key:
+            return v
+        with self._vector_lock, self._lock:
+            key = (self.model_version, self.filter_version, self.terrain_version, self.replay_token if steps else 0)
+            v = getattr(self, slot, None)
+            if v is not None and v[0] == key:
+                return v
+            g = self.grid
+            if g is None:
+                return None
+            layers = self.vector_layers(g, steps)
+            made = (key, {"icon_rows": layers["icon_rows"], "solids": layers["solids"], "paths": layers["paths"]}, g)
             setattr(self, slot, made)
             return made
 
@@ -797,10 +858,10 @@ class MapImageMixin:
             the start; pick: what a click on it selects, "node:<i>" / "landmark:<i>" / "").
         """
         steps = replay and self.replay_steps() is not None
-        made = self._vector_made(steps)  # its own snapshot: the slot can be replaced meanwhile (CodeRabbit)
+        made = self._scene_made(steps)  # its own snapshot: the slot can be replaced meanwhile (CodeRabbit)
         if made is None:
             return b'{"icons": [], "paths": [], "models": []}'
-        key, _tiler, scene, g = made
+        key, scene, g = made
         kept = getattr(self, "_scene", None)
         if kept is not None and kept[0] == (key, steps):
             return kept[1]
@@ -831,12 +892,13 @@ class MapImageMixin:
         self._scene = ((key, steps), data)
         return data
 
-    def vector_layers(self, grid: Grid, steps: bool = False) -> dict[str, list[dict]]:
+    def vector_layers(self, grid: Grid, steps: bool = False, with_3d: bool = True) -> dict[str, list[dict]]:
         """Build the vector tile features of what the filters show (world px at zmax).
 
         Args:
             grid: The map image's grid.
             steps: Give items their timelapse reveal step (while one is open).
+            with_3d: Also the 3D view's parts (icon rows, models); without them icon_rows and solids stay empty.
 
         Returns:
             Layer name -> features: land, biomes, paths, removed, maps, icons, landmarks, bookmarks, solids.
@@ -912,30 +974,31 @@ class MapImageMixin:
             for k, i in enumerate(members):
                 slot[i] = k - (len(members) - 1) / 2
         node_of = D.get("icon_node", {})
-        shapes = self._solid_shapes(node_ok)
+        shapes = self._solid_shapes(node_ok) if with_3d else []
         lift = self._model_tops(shapes)
         for i, ic in enumerate(V["icons"]):
             if not self.icon_visible(i, fl):
                 continue
             v = node_of.get(i)
             at = (nodes[v]["x"], nodes[v]["y"]) if v is not None and v < len(nodes) else (ic["x"], ic["y"])
-            L["icon_rows"].append(
-                {
-                    "kind": "point",
-                    "pts": [W(*at)],
-                    "id": i,
-                    "props": {
+            if with_3d:
+                L["icon_rows"].append(
+                    {
+                        "kind": "point",
+                        "pts": [W(*at)],
                         "id": i,
-                        "name": ic["name"],
-                        "slot": f"{slot.get(i, 0.0):g}",
-                        # the top of the 3D model under it (pillar, tower, city), atlas units in steps of 10: the
-                        # page stands the icon on top when the models are shown (user: city icons sat inside)
-                        "lift": int(round(lift.get(v, 0.0) / 10) * 10) if v is not None else 0,
-                        "node": -1 if v is None else v,  # (a selected map node rings its icon in 3D)
-                        **step("icon", i),
-                    },
-                }
-            )
+                        "props": {
+                            "id": i,
+                            "name": ic["name"],
+                            "slot": f"{slot.get(i, 0.0):g}",
+                            # the top of the 3D model under it (pillar, tower, city), atlas units in steps of 10: the
+                            # page stands the icon on top when the models are shown (user: city icons sat inside)
+                            "lift": int(round(lift.get(v, 0.0) / 10) * 10) if v is not None else 0,
+                            "node": -1 if v is None else v,  # (a selected map node rings its icon in 3D)
+                            **step("icon", i),
+                        },
+                    }
+                )
             x, y = pts[i] if pts is not None and i < len(pts) else (ic["x"], ic["y"])
             L["icons"].append(
                 {
@@ -972,7 +1035,7 @@ class MapImageMixin:
                 L["biomes"].append(
                     {"kind": "polygon", "rings": [[W(x, y) for x, y in r] for r in poly], "props": {"kind": kind}}
                 )
-        L["solids"] = self._solids(grid, shapes, rs)
+        L["solids"] = self._solids(grid, shapes, rs) if with_3d else []
         return L
 
     def _land(self) -> list:

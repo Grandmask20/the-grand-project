@@ -1,8 +1,8 @@
 """Build the trimmed, public test data set into the GitHub release folder (kept there in Git LFS).
 
-    py make_test_pack.py              # -> ../1.0/atlas_test_data
-    py make_test_pack.py --to NAME    # -> ../NAME/atlas_test_data
-    py make_test_pack.py --to internal --res   # only (re)build res_atlases/ from ../atlas-tests, nothing else
+    py -m tools.make_test_pack              # -> ../1.0/atlas_test_data
+    py -m tools.make_test_pack --to NAME    # -> ../NAME/atlas_test_data
+    py -m tools.make_test_pack --to internal --res   # only (re)build res_atlases/ from ../atlas-tests, nothing else
 
 From the full private set (../atlas_test_data) it takes only what the tests and the detector score need:
 - the 10 + 10 hand-labelled screenshots and their truth (truth/, truth_ocean/)
@@ -19,7 +19,7 @@ import shutil
 import sys
 from pathlib import Path
 
-HERE = Path(__file__).resolve().parent
+HERE = Path(__file__).resolve().parents[1]  # the repo (this file is in tools/)
 
 SRC = HERE.parent / "atlas_test_data"
 RES_SRC = HERE.parent / "atlas-tests"  # the resolution atlases (score_atlases.py)
