@@ -10,3 +10,14 @@ local_paths.json
 atlas_test_data/detect_pairs_out/
 *.egg-info
 .ruff_cache/
+frontend/node_modules/
+frontend/dist/
+frontend/coverage/
+frontend/test-results/
+frontend/playwright-report/
+e2e-run/
+.coverage
+.coverage.*
+htmlcov/
+coverage.xml
+The Grand Project.lnk

@@ -98,7 +98,22 @@ class Atlas:
         self.locks: list[dict] = []  # {x,y,n} hand badges = locked Breach strongholds
         self.lock_scanned: list[str] = []  # screenshots already searched for the hand badge
         self.frames: list[dict] = []  # {name,path,sha,w,h,M,stats}
-        self._images: dict[str, np.ndarray] = {}
+        self._images: dict[str, np.ndarray] = {}  # (not pickled: __getstate__)
+
+    def __getstate__(self) -> dict:
+        """Pickle without the decoded screenshot cache (up to IMAGE_CACHE pictures, ~6 MB each).
+
+        Fix seams pickles the atlas as its process's input under the session lock: the cache made that write
+        long and held everyone else up (CodeRabbit).
+        """
+        state = self.__dict__.copy()
+        state["_images"] = {}
+        return state
+
+    def __setstate__(self, state: dict) -> None:
+        """Restore a pickled atlas (its screenshot cache empty)."""
+        self.__dict__.update(state)
+        self.__dict__.setdefault("_images", {})
 
     # -------- image access
     IMAGE_CACHE = 90  # decoded screenshots kept in memory (~6 MB each; a terrain
@@ -106,7 +121,7 @@ class Atlas:
 
     _image_lock = threading.Lock()  # the viewer reads images while a worker places
 
-    def image(self, path: str) -> np.ndarray:
+    def image(self, path: str) -> np.ndarray | None:
         """Return a screenshot image, read through a small most-recently-used cache.
 
         IMAGE_CACHE decoded screenshots are kept (~6 MB each; a terrain check of one screenshot reads ~60
@@ -116,7 +131,8 @@ class Atlas:
             path: Screenshot file path.
 
         Returns:
-            BGR image as read by read_screenshot.
+            BGR image as read by read_screenshot, or None while it can't be read (not kept: a file put back is
+            read again, CodeRabbit).
         """
         with Atlas._image_lock:
             if path in self._images:
@@ -124,6 +140,8 @@ class Atlas:
                 self._images[path] = img  # most recently used last
                 return img
         img = _frame.read_screenshot(path)
+        if img is None:
+            return None
         with Atlas._image_lock:
             self._images[path] = img
             while len(self._images) > self.IMAGE_CACHE:
@@ -707,6 +725,22 @@ class Atlas:
                 self._merge_icons(fr, np.array(f["M"], float))
 
     # -------- export
+    def terrain_key(self) -> str:
+        """Return the key of the stitched map image: a hash of every screenshot's name and placement.
+
+        A cached map image (map_image_files) is used only when its key matches; the viewer and the web map share it.
+
+        Returns:
+            The hex digest.
+        """
+        import hashlib
+
+        h = hashlib.sha1()
+        for f in self.frames:
+            h.update(f["name"].encode())
+            h.update(np.round(np.array(f["M"], float), 2).tobytes())
+        return h.hexdigest()
+
     def to_json(self) -> dict:
         """Return the atlas as the dict saved in atlas.json.
 
@@ -824,7 +858,7 @@ class Atlas:
         return at
 
     # -------- composite image
-    def composite(self, max_pixels: int = 36_000_000, with_weight: bool = False):
+    def composite(self, max_pixels: int = 36_000_000, with_weight: bool = False, progress=None):
         """Stitch the terrain: each spot from the screenshot that shows it most centrally.
 
         Moved or deleted screenshots are skipped. with_weight also returns the per-pixel weight, so screenshots can
@@ -833,6 +867,7 @@ class Atlas:
         Args:
             max_pixels: Largest canvas size in pixels; bigger atlases are scaled down.
             with_weight: Also return the weight map.
+            progress: Called after each screenshot is pasted (the app's heartbeat for the map image), or None.
 
         Returns:
             (canvas, (x0, y0, scale)) or, with with_weight, (canvas, (x0, y0, scale), weight): BGR uint8 canvas,
@@ -855,12 +890,12 @@ class Atlas:
         CW, CH = max(1, int(W * scale)), max(1, int(H * scale))
         best_w = np.zeros((CH, CW), np.float32)
         canvas = np.zeros((CH, CW, 3), np.uint8)
-        self.paste_into(canvas, best_w, (x0, y0, scale), frames)
+        self.paste_into(canvas, best_w, (x0, y0, scale), frames, progress=progress)
         if with_weight:
             return canvas, (x0, y0, scale), best_w
         return canvas, (x0, y0, scale)
 
-    def paste_into(self, canvas, best_w, origin, frames, labels=None, names=None) -> bool:
+    def paste_into(self, canvas, best_w, origin, frames, labels=None, names=None, progress=None) -> bool:
         """Warp screenshots into an existing stitched canvas, each only into its own patch.
 
         A pixel is taken where this screenshot's weight (distance from its masked edge) beats the current one.
@@ -873,6 +908,7 @@ class Atlas:
             labels: Optional (h, w) int map of which screenshot owns each pixel (a clean map's ownership map,
                 core.seams); updated with indices into `names`.
             names: Screenshot names for `labels`; new names are appended.
+            progress: Called after each screenshot (a heartbeat), or None.
 
         Returns:
             False when one falls outside the canvas (then rebuild with composite), else True.
@@ -882,6 +918,8 @@ class Atlas:
         T = np.array([[scale, 0, -x0 * scale], [0, scale, -y0 * scale], [0, 0, 1]], float)
         inside = True
         for f in frames:
+            if progress is not None:
+                progress()
             if not Path(f["path"]).exists():
                 continue
             Hc = T @ screen_to_atlas(np.array(f["M"], float), self.frame_R(f))

@@ -1,0 +1,22 @@
+{
+	"$schema": "./node_modules/@biomejs/biome/configuration_schema.json",
+	"vcs": { "enabled": true, "clientKind": "git", "useIgnoreFile": true },
+	"files": {
+		"includes": ["src/**", "e2e/**", "*.ts", "*.json", "!src/components/ui", "!**/*.css"]
+	},
+	"formatter": {
+		"enabled": true,
+		"useEditorconfig": false,
+		"indentStyle": "tab",
+		"lineWidth": 120
+	},
+	"javascript": {
+		"formatter": { "quoteStyle": "double" }
+	},
+	"linter": {
+		"enabled": true
+	},
+	"assist": {
+		"actions": { "source": { "organizeImports": "on" } }
+	}
+}

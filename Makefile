@@ -1,5 +1,5 @@
 ########## PROJECT RECIPES ##########
-.PHONY: install install_training install_annotator annotate_dataset lint test test_all evaluate_detector prepare_rf_detr_data train_rf_detr pr_precheck
+.PHONY: install install_training install_annotator annotate_dataset lint test test_all coverage evaluate_detector prepare_rf_detr_data train_rf_detr pr_precheck page page_test page_coverage e2e
 
 # GNU Make exposes OS=Windows_NT on Windows. On Unix-like systems, uname
 # distinguishes macOS (Darwin) from Linux; both use the same venv layout.
@@ -56,7 +56,7 @@ lint:
 	$(RUFF) format grand_project tools tests --config pyproject.toml
 	$(RUFF) clean
 
-# the tests (pytest; markers in pyproject.toml): offline + test-data ones + the viewer window, not the slow ones
+# the tests (pytest; markers in pyproject.toml): offline + test-data ones, not the slow ones
 test:
 	@echo Running tests on $(PLATFORM) with $(PYTHON)
 	$(PYTHON) -m pytest -m "not slow"
@@ -64,6 +64,33 @@ test:
 # every test, the ~10 minute waiting-islands test too
 test_all:
 	$(PYTHON) -m pytest -m ""
+
+# the tests under coverage (settings in pyproject.toml): a table here, the report in htmlcov/index.html
+coverage:
+	$(PYTHON) -m coverage erase
+	$(PYTHON) -m coverage run -m pytest
+	$(PYTHON) -m coverage combine
+	$(PYTHON) -m coverage report
+	$(PYTHON) -m coverage html
+
+# the app's page (frontend/, needs Node.js 20+): install, then lint, type check, test and build it into frontend/dist
+page:
+	cd frontend && npm install --no-audit --no-fund && npm run build
+
+page_test:
+	cd frontend && npm run lint && npm run typecheck && npm test
+
+# the page's tests under coverage: a summary here, the report in frontend/coverage/index.html
+page_coverage:
+	cd frontend && npm run coverage
+
+# the browser tests: the real app on a hand-made atlas, driven through the built page (Playwright; once:
+# cd frontend && npx playwright install chromium). Screenshots of each step: frontend/test-results/
+# PYTHON is handed to the tests by make (no shell syntax: cmd.exe on Windows has none for it); the app starts in
+# this folder, so a relative .venv path works
+e2e: export PYTHON := $(PYTHON)
+e2e: page
+	cd frontend && npm run e2e
 
 # score the detector on the hand-labelled screenshots (needs the full test data; takes ~15 min).
 # Put the numbers from before and after a detector change in the pull request.

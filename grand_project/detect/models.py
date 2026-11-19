@@ -7,9 +7,15 @@ import sqlite3
 from datetime import datetime
 from pathlib import Path
 
-import skops.io as sio
-
 from .constants import DB_PATH
+
+
+def _skops():
+    """skops (and scikit-learn under it), imported when a model is first stored or loaded: imported with this
+    module, they held up the app's start by ~3 s before the page could show (user)."""
+    import skops.io as sio
+
+    return sio
 
 
 # ---------------------------------------------------------------- models in the DB
@@ -37,7 +43,7 @@ def save_model(name: str, model, info: dict, path: Path | None = None) -> None:
         info: Extra facts about the training (stored as JSON).
         path: Database file; None uses DB_PATH (tools/split_icon_type.py writes other icon databases too).
     """
-    buf = sio.dumps(model)
+    buf = _skops().dumps(model)
     with _db(path) as c:
         c.execute(
             "INSERT OR REPLACE INTO detector_models VALUES (?, ?, ?, ?)",
@@ -91,6 +97,7 @@ def safe_model_loads(blob: bytes):
     Raises:
         UnsafeModel: The archive is invalid, unsupported, or refers to an untrusted type.
     """
+    sio = _skops()
     try:
         untrusted = set(sio.get_untrusted_types(data=blob))
     except Exception as exc:

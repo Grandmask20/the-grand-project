@@ -11,11 +11,10 @@ dependencies = [
     "scipy",
     "scikit-learn",
     "skops",
-    "tkinterdnd2",
 ]
 
 [project.scripts]
-grand-project = "grand_project.viewer.app:main"
+grand-project = "grand_project.app.server:main"
 
 [project.urls]
 Repository = "https://github.com/Grandmask20/the-grand-project"
@@ -26,6 +25,7 @@ Changelog = "https://github.com/Grandmask20/the-grand-project/releases"
 
 [project.optional-dependencies]
 dev = [
+    "coverage>=7.6",
     "pytest>=8",
     "ruff>=0.9",
 ]
@@ -49,6 +49,7 @@ include = ["grand_project*"]
 
 [dependency-groups]
 dev = [
+    "coverage>=7.6",
     "pytest>=8",
     "ruff>=0.9",
 ]
@@ -58,14 +59,35 @@ default-groups = ["dev"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
-# `pytest` alone runs the offline tests and the ones with test data (skipped without it); the window test and
-# the long ones are opt-in: pytest -m gui / pytest -m slow / pytest -m "" for everything
-addopts = '-ra -m "not gui and not slow"'
+# `pytest` alone runs the offline tests and the ones with test data (skipped without it); the long ones are
+# opt-in: pytest -m slow / pytest -m "" for everything
+addopts = '-ra -m "not slow"'
 markers = [
     "data: needs the test screenshots (Git LFS or ATLAS_TEST_DATA); skipped without them",
-    "gui: opens a window (needs a desktop)",
     "slow: takes several minutes",
 ]
+
+# code coverage (make coverage; CI: every test job runs under it and one report is made from all of them)
+[tool.coverage.run]
+source = ["grand_project"]
+parallel = true
+# the app answers in threads; detection and the atlas-wide check run in worker processes
+concurrency = ["thread", "multiprocessing"]
+# stored relative, so runs on Windows, macOS and Linux combine into one report
+relative_files = true
+# the app under the browser tests is stopped with SIGTERM when it doesn't quit by itself
+sigterm = true
+
+[tool.coverage.paths]
+source = ["grand_project/", "*/grand_project/", "*\\grand_project\\"]
+
+[tool.coverage.report]
+skip_empty = true
+precision = 1
+exclude_also = ['if __name__ == "__main__":']
+
+[tool.coverage.html]
+directory = "htmlcov"
 
 [tool.ruff]
 target-version = "py311"

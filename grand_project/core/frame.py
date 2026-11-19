@@ -125,9 +125,15 @@ def read_screenshot(path) -> np.ndarray | None:
         path: Image file path (non-ASCII paths work).
 
     Returns:
-        BGR image, or None when it can't be read.
+        BGR image, or None when it can't be read (missing, moved, or not a picture).
     """
-    img = cv2.imdecode(np.fromfile(str(path), np.uint8), cv2.IMREAD_COLOR)
+    try:
+        buf = np.fromfile(str(path), np.uint8)
+        # an empty file: OpenCV raises on an empty buffer (CodeRabbit)
+        img = cv2.imdecode(buf, cv2.IMREAD_COLOR) if buf.size else None
+    # missing or unreadable: said so, not raised (Screenshots of this spot answered 500)
+    except (OSError, ValueError, cv2.error):
+        return None
     return None if img is None else scale_screenshot(img)
 
 
@@ -185,6 +191,21 @@ def atlas_files(atlas_path) -> Path:
             with contextlib.suppress(OSError):
                 old.rename(new)
     return d
+
+
+def map_image_files(atlas_path) -> tuple[Path, Path]:
+    """Return the cache files of an atlas's stitched map image (written and read by the app).
+
+    Args:
+        atlas_path: Path of the atlas .json file.
+
+    Returns:
+        (<stem>_terrain.png, <stem>_terrain.npz) in the atlas's files folder: the picture, and its key, origin,
+        weight and (after Fix seams) ownership labels.
+    """
+    p = Path(atlas_path)
+    d = atlas_files(p)
+    return d / (p.stem + "_terrain.png"), d / (p.stem + "_terrain.npz")
 
 
 def png_bytes(img: np.ndarray, what: str = "output") -> bytes:

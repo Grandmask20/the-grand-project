@@ -85,3 +85,37 @@ def test_screenshot_without_a_saved_hash_finds_its_cache_by_name(tmp_path):
     _cache(frames, "old", "ff" * 32, builder.detector_stamp())  # same name, fresh: wins
     got = builder.cached_frames(tmp_path / "atlas.json", [{"name": "old"}])
     assert list(got) == ["old"] and got["old"].sha == "ff" * 32
+
+
+def test_read_screenshot_of_a_missing_or_broken_file_is_none(tmp_path):
+    assert core.read_screenshot(tmp_path / "missing.png") is None
+    (tmp_path / "broken.png").write_bytes(b"not a picture")
+    assert core.read_screenshot(tmp_path / "broken.png") is None
+    (tmp_path / "empty.png").write_bytes(b"")
+    assert core.read_screenshot(tmp_path / "empty.png") is None
+
+
+def test_a_screenshot_that_cant_be_read_is_not_kept(tmp_path):
+    import cv2
+    import numpy as np
+
+    at = core.Atlas()
+    shot = tmp_path / "back.png"
+    assert at.image(str(shot)) is None  # missing
+    cv2.imwrite(str(shot), np.full((1080, 1920, 3), 90, np.uint8))
+    img = at.image(str(shot))  # put back: read now, not the missing one remembered
+    assert img is not None and img.shape[:2] == (1080, 1920)
+
+
+def test_a_screenshot_put_back_after_being_missing_is_read_again(tmp_path):
+    import cv2
+    import numpy as np
+
+    from grand_project import core
+
+    atlas = core.Atlas()
+    shot = tmp_path / "2694490_20250101120000_1.png"
+    assert atlas.image(str(shot)) is None  # missing: nothing, and nothing kept
+    cv2.imwrite(str(shot), np.full((1080, 1920, 3), 90, np.uint8))
+    img = atlas.image(str(shot))  # (a kept None was returned until the cache dropped it: CodeRabbit)
+    assert img is not None and img.shape == (1080, 1920, 3)
