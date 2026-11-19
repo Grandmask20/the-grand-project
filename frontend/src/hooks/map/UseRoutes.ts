@@ -1,4 +1,4 @@
-import { useCallback } from "react";
+import { useCallback, useRef } from "react";
 import type { SavedRoute } from "@/domain/bookmarks/Bookmarks";
 import { usePlayer, useUpdateSettings } from "@/hooks/app/UseSettings";
 import { useRouteGraph } from "@/hooks/map/UseGraph";
@@ -30,9 +30,9 @@ export function useRoutes() {
 		return null;
 	}, [player, graph, setRoute, setMode]);
 
+	// a route found is tracked as every route is (user: Route here showed a list, Track now maps left and Next map)
 	const show = useCallback(
-		(path: number[] | null, none: string) =>
-			setRoute(path ? { path, message: `${plural(path.length - 1, "map")} to run` } : { path: [], message: none }),
+		(path: number[] | null, none: string) => (path ? trackRef.current(path) : setRoute({ path: [], message: none })),
 		[setRoute],
 	);
 
@@ -40,13 +40,12 @@ export function useRoutes() {
 		(node: number) => {
 			const from = need();
 			if (from === null || !graph) return;
-			if (from === node) return setRoute({ path: [node], message: "You are already there." });
 			show(
-				graph.shortest(from, (u) => u === node),
+				from === node ? [node] : graph.shortest(from, (u) => u === node),
 				`No path from your map to map #${node} in this atlas.`,
 			);
 		},
-		[need, graph, setRoute, show],
+		[need, graph, show],
 	);
 
 	const routeToNearest = useCallback(
@@ -72,9 +71,9 @@ export function useRoutes() {
 	const flyTo = useAppStore((s) => s.flyTo);
 	const setTab = useAppStore((s) => s.setTab);
 
-	/** Track a route (Route in the top bar, Track now): it starts on its first map, the Route page shows how many maps
-	 * are left, and Next map moves on one (user). The route marks where you are on it; your position (I'm here) stays
-	 * as it is. `saved`: the saved route's bookmark, when it is one. */
+	/** Track a route (Route in the top bar: Track now; Route here; a saved route: Start tracking now): it starts on its
+	 * first map, the Route page shows how many maps are left, and Next map moves on one (user). The route marks where
+	 * you are on it; your position (I'm here) stays as it is. `saved`: the saved route's bookmark, when it is one. */
 	const trackRoute = useCallback(
 		(path: number[], saved?: number) => {
 			if (path.length < 1) return;
@@ -85,6 +84,8 @@ export function useRoutes() {
 		},
 		[setRoute, graph, flyTo, setTab],
 	);
+	const trackRef = useRef(trackRoute);
+	trackRef.current = trackRoute;
 
 	/** Track a saved route (Start tracking now on it in Bookmarks): its maps as they are on this atlas, branches run
 	 * where they split off. False when its maps aren't on this atlas any more. */

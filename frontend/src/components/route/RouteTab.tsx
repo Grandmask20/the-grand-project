@@ -65,7 +65,26 @@ export function RouteTab() {
 				</Select>
 			</Section>
 
-			{/* a route tracked (Route in the top bar, Track now): how many maps are left, and on to the next (user) */}
+			<Section title="Route">
+				<Select value="" onValueChange={(v) => routes.routeToNearest(v, iconOf.get(v))}>
+					<SelectTrigger size="sm" aria-label="Route to the nearest">
+						<SelectValue placeholder="to the nearest map with…" />
+					</SelectTrigger>
+					<SelectContent>
+						{icons.map((r) => (
+							<SelectItem key={r.icon} value={r.icon}>
+								{r.label}
+							</SelectItem>
+						))}
+					</SelectContent>
+				</Select>
+				<p className="text-xs text-muted-foreground">Or right-click a map: Route here. Or Route in the top bar.</p>
+				{/* no route: why (set your position first, no path) */}
+				{route && route.at === undefined && <p className="font-medium">{route.message}</p>}
+			</Section>
+
+			{/* the route tracked, however it was found (Route here, the nearest map, Route in the top bar, a saved route):
+			    how many maps are left, on to the next, and its maps (user: Route here and tracking worked apart) */}
 			{route?.at !== undefined && (
 				<Section title="Tracking">
 					<p className="font-medium">{route.message}</p>
@@ -81,46 +100,23 @@ export function RouteTab() {
 							Stop tracking
 						</Button>
 					</div>
+					<ol className="flex max-h-72 list-decimal flex-col overflow-y-auto pl-6 text-xs">
+						{[...new Set(route.path)].slice(1).map((id) => {
+							const p = routes.graph?.at(id);
+							const what = (routes.graph?.iconsOf(id) ?? []).map((n) => iconOf.get(n) ?? n).join(", ");
+							const run = route.path.slice(0, (route.at ?? 0) + 1).includes(id);
+							return (
+								<li key={id} className={run ? "text-muted-foreground line-through" : undefined}>
+									<button type="button" className="hover:text-gold" onClick={() => p && flyTo(p[0], p[1], 0.6)}>
+										map #{id}
+										{what && <span className="text-muted-foreground"> · {what}</span>}
+									</button>
+								</li>
+							);
+						})}
+					</ol>
 				</Section>
 			)}
-
-			<Section title="Route">
-				<Select value="" onValueChange={(v) => routes.routeToNearest(v, iconOf.get(v))}>
-					<SelectTrigger size="sm" aria-label="Route to the nearest">
-						<SelectValue placeholder="to the nearest map with…" />
-					</SelectTrigger>
-					<SelectContent>
-						{icons.map((r) => (
-							<SelectItem key={r.icon} value={r.icon}>
-								{r.label}
-							</SelectItem>
-						))}
-					</SelectContent>
-				</Select>
-				<p className="text-xs text-muted-foreground">Or right-click a map: Route here.</p>
-				{route && (
-					<>
-						<p className="font-medium">{route.message}</p>
-						<ol className="flex max-h-72 list-decimal flex-col overflow-y-auto pl-6 text-xs">
-							{route.path.slice(1).map((id) => {
-								const p = routes.graph?.at(id);
-								const what = (routes.graph?.iconsOf(id) ?? []).map((n) => iconOf.get(n) ?? n).join(", ");
-								return (
-									<li key={id}>
-										<button type="button" className="hover:text-gold" onClick={() => p && flyTo(p[0], p[1], 0.6)}>
-											map #{id}
-											{what && <span className="text-muted-foreground"> · {what}</span>}
-										</button>
-									</li>
-								);
-							})}
-						</ol>
-						<Button size="xs" variant="outline" className="self-start" onClick={routes.clear}>
-							Clear route
-						</Button>
-					</>
-				)}
-			</Section>
 		</div>
 	);
 }

@@ -28,4 +28,27 @@ describe("pageChanges", () => {
 		expect(pageChanges({ ...before, filePick: pick }, before)).toEqual(["Open your screenshot folder: dialog opened"]);
 		expect(pageChanges(before, before)).toEqual([]);
 	});
+
+	it("says what happened to the route (user: Route here left no line)", () => {
+		const st = useAppStore.getState();
+		const at = (route: typeof st.route) => ({ ...st, route });
+		const tracked = { path: [4, 5, 6], message: "2 maps left", at: 0 };
+		expect(pageChanges(at(tracked), at(null))).toEqual(["Tracking a route: map #4 to map #6, 2 maps left"]);
+		expect(pageChanges(at({ ...tracked, at: 1, message: "1 map left" }), at(tracked))).toEqual([
+			"Next map: on map #5, 1 map left",
+		]);
+		expect(pageChanges(at(null), at(tracked))).toEqual(["Stopped tracking the route"]);
+		expect(pageChanges(at({ ...tracked, saved: 3 }), at(null))[0]).toMatch(/^Tracking a saved route/);
+		expect(pageChanges(at({ path: [], message: "No reachable map with Breach." }), at(null))).toEqual([
+			"Route: No reachable map with Breach.",
+		]);
+	});
+
+	it("a map mode refused in the timelapse is said, so it is logged", () => {
+		useAppStore.setState({ replay: {} as never });
+		useAppStore.getState().setMode({ kind: "player" });
+		expect(useAppStore.getState()).toMatchObject({ mode: { kind: "normal" }, errorBrief: true });
+		expect(useAppStore.getState().error).toMatch(/timelapse is open/);
+		useAppStore.setState({ replay: null, error: null });
+	});
 });

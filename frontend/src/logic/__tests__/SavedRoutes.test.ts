@@ -103,6 +103,34 @@ describe("saved routes", () => {
 		expect(removeMap(once as number[][], 2)).toEqual([[3, 5]]);
 	});
 
+	it("your case: maps added off the route's side, then the route's own maps taken off: the branch is the route", () => {
+		// a route 1 - 2, maps 3 - 5 - 6 added off 2's side as a branch... here 2 - 3 - 5 - 6 (3 is off 2)
+		const legs = [
+			[1, 2],
+			[2, 3, 5, 6],
+		];
+		expect(removeMap(legs, 1)).toEqual([[2, 3, 5, 6]]);
+		expect(removeMap(removeMap(legs, 1) as number[][], 2)).toEqual([[3, 5, 6]]);
+	});
+
+	it("maps added off the side of the route's first map stay when that map goes (the bigger piece)", () => {
+		const legs = [
+			[1, 2],
+			[1, 7, 8, 9],
+		];
+		expect(removeMap(legs, 1)).toEqual([[7, 8, 9]]);
+		// a tie keeps the piece with the route's start
+		expect(
+			removeMap(
+				[
+					[1, 2, 3, 5, 6],
+					[3, 4],
+				],
+				3,
+			),
+		).toEqual([[1, 2]]);
+	});
+
 	it("keeps at least two maps", () => {
 		expect(removeMap([[1, 2]], 1)).toBe("A route needs two maps: delete it instead.");
 		expect(removeMap([[1, 2, 3]], 2)).toBe("A route needs two maps: delete it instead.");

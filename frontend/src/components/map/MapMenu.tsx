@@ -58,7 +58,18 @@ export function MapMenu({ x, y, at, hit, meta, debug, onClose }: Props) {
 			<DropdownMenuTrigger asChild>
 				<span className="pointer-events-none absolute size-px" style={{ left: x, top: y }} />
 			</DropdownMenuTrigger>
-			<DropdownMenuContent align="start" className="w-60">
+			<DropdownMenuContent
+				align="start"
+				className="w-60"
+				// what was chosen goes in the log (user: I'm here and Route here left no line of their own); submenus
+				// open, they aren't a choice
+				onClickCapture={(e) => {
+					const item = (e.target as HTMLElement).closest("[role=menuitem]");
+					if (!item || item.hasAttribute("aria-haspopup")) return;
+					const on = hit ? hit.title : `the spot (${Math.round(at[0])}, ${Math.round(at[1])})`;
+					app.log([`Right-click menu on ${on}: ${item.textContent?.replace(/^● /, "")}`]).catch(() => {});
+				}}
+			>
 				{mark ? (
 					<>
 						<DropdownMenuItem onSelect={() => s.editBookmark(mark)}>Edit bookmark…</DropdownMenuItem>

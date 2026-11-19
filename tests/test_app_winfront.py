@@ -59,3 +59,53 @@ def test_no_window_found_gives_up_after_the_wait(faked, monkeypatch):
 def test_a_title_is_a_folder_s_by_its_whole_name():
     assert winfront.shows("default - File Explorer", "default") and winfront.shows("default", "default")
     assert not winfront.shows("default2", "default")
+
+
+class _Windows:
+    """A fake user32 for to_front: `front` is the window in front; SetForegroundWindow works only once `allowed`."""
+
+    def __init__(self, allowed_after_restore: bool):
+        self.front = 7
+        self.calls = []
+        self.restored = False
+        self.allowed_after_restore = allowed_after_restore
+
+    def GetForegroundWindow(self):  # noqa: N802 (Windows' names)
+        return self.front
+
+    def GetWindowThreadProcessId(self, h, _p):  # noqa: N802
+        return 100
+
+    def AttachThreadInput(self, *_a):  # noqa: N802
+        return 1
+
+    def IsIconic(self, h):  # noqa: N802
+        return False
+
+    def BringWindowToTop(self, h):  # noqa: N802
+        self.calls.append("top")
+
+    def ShowWindow(self, h, how):  # noqa: N802
+        self.calls.append(("show", how))
+        if how == winfront._SW_RESTORE:
+            self.restored = True
+
+    def SetForegroundWindow(self, h):  # noqa: N802
+        self.calls.append("set")
+        if self.restored and self.allowed_after_restore:
+            self.front = h
+        return self.front == h
+
+
+def test_a_window_refused_the_front_is_minimized_and_restored(monkeypatch):
+    # (an Explorer window already open, behind another: the taskbar blinked and it stayed behind: user)
+    w = _Windows(allowed_after_restore=True)
+    monkeypatch.setattr(winfront, "_user32", lambda: w)
+    monkeypatch.setattr(
+        winfront.ctypes,
+        "windll",
+        type("W", (), {"kernel32": type("K", (), {"GetCurrentThreadId": staticmethod(lambda: 1)})})(),
+        raising=False,
+    )
+    assert winfront.to_front(42)
+    assert ("show", winfront._SW_MINIMIZE) in w.calls and w.calls[-1] == "set"

@@ -93,34 +93,45 @@ export function addMap(legs: Legs, node: number, graph: RouteGraph): Legs | stri
 	return [...legs, way];
 }
 
-/** A route with a map taken off, with the maps on its shorter side: on the main leg, toward the nearer end (at an
- * end, the map alone: user: the route's first maps couldn't be taken off); on a branch, toward its tip. The branches
- * off the maps taken off go too. A message when it can't be. */
+/** A route with a map taken off: the route's biggest piece left stays, the rest goes with it (at an end, the map
+ * alone; nearer one end, that side; a branch, toward its tip; maps added off the side of a map taken off stay when
+ * they're the bigger piece, and are the route then: user: the route's first maps couldn't be taken off). A tie keeps
+ * the piece with the route's start, then its end. A message when it can't be. */
 export function removeMap(legs: Legs, node: number): Legs | string {
-	// the leg the map is on (a branch's first map belongs to the leg it splits off)
-	const i = legs.findIndex((l, k) => l.indexOf(node) >= (k === 0 ? 0 : 1));
-	if (i < 0) return `Map #${node} isn't on the route.`;
-	const leg = legs[i];
-	const j = leg.indexOf(node);
-	// the main leg: the start's side when it is the shorter (a tie: the end's side, as on a branch)
-	const startSide = i === 0 && j + 1 < leg.length - j;
-	const keep = startSide ? leg.slice(j + 1) : leg.slice(0, j);
-	if (i === 0 && keep.length < 2) return "A route needs two maps: delete it instead.";
-	const gone = new Set(startSide ? leg.slice(0, j + 1) : leg.slice(j));
-	const kept = legs.map((l, k) => (k === i ? keep : l));
-	// branches off the maps taken off go too, and branches off theirs
-	const dropped = new Set<number>();
-	for (let changed = true; changed; ) {
-		changed = false;
-		kept.forEach((l, k) => {
-			if (k > 0 && !dropped.has(k) && gone.has(l[0])) {
-				dropped.add(k);
-				for (const m of l.slice(1)) gone.add(m);
-				changed = true;
-			}
-		});
+	if (!legs.some((l) => l.includes(node))) return `Map #${node} isn't on the route.`;
+	// the route as maps joined to the maps before and after them on its legs
+	const near = new Map<number, number[]>();
+	const link = (a: number, b: number) => near.set(a, [...(near.get(a) ?? []), b]);
+	for (const l of legs)
+		for (let k = 0; k + 1 < l.length; k++) {
+			link(l[k], l[k + 1]);
+			link(l[k + 1], l[k]);
+		}
+	// the pieces left: what each map next to it reaches without passing it
+	const pieces: Set<number>[] = [];
+	for (const n of near.get(node) ?? []) {
+		if (pieces.some((p) => p.has(n))) continue;
+		const piece = new Set([n]);
+		for (const todo = [n]; todo.length; )
+			for (const m of near.get(todo.pop() as number) ?? [])
+				if (m !== node && !piece.has(m)) {
+					piece.add(m);
+					todo.push(m);
+				}
+		pieces.push(piece);
 	}
-	return tidy(kept.filter((l, k) => !dropped.has(k) && (k === 0 || l.length >= 2)));
+	const main = legs[0];
+	const rank = (p: Set<number>) => [p.size, p.has(main[0]) ? 1 : 0, p.has(main[main.length - 1]) ? 1 : 0];
+	const best = pieces.sort((a, b) => {
+		const [x, y] = [rank(a), rank(b)];
+		return y[0] - x[0] || y[1] - x[1] || y[2] - x[2];
+	})[0];
+	if (!best) return "A route needs two maps: delete it instead.";
+	// each leg's maps in that piece (a run of it: a leg passing the map has a side in another piece); the main leg's
+	// first, else the first left; a branch left on its first map alone goes
+	const kept = legs.map((l) => l.filter((m) => best.has(m))).filter((l) => l.length);
+	const out = tidy([kept[0], ...kept.slice(1).filter((l) => l.length >= 2)]);
+	return out[0].length >= 2 ? out : "A route needs two maps: delete it instead.";
 }
 
 /** A leg that now ends where a branch starts goes on along that branch (no going there and back for nothing). */

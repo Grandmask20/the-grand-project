@@ -18,6 +18,7 @@ from pathlib import Path
 from . import constants as K
 
 _SW_RESTORE = 9
+_SW_MINIMIZE = 6
 _MONITOR_NEAREST = 2
 _SWP_NOZORDER_NOACTIVATE = 0x0004 | 0x0010
 
@@ -95,13 +96,15 @@ def onto_monitor_of(h: int, other: int) -> bool:
 
 def to_front(h: int) -> bool:
     """Bring a window to the front: the calling thread's input is attached to the front window's thread meanwhile,
-    which lets it hand the front over.
+    which lets it hand the front over. When Windows still refuses (it blinks the window on the taskbar instead: an
+    Explorer window already open, behind another, user), the window is minimized and restored: Windows brings a
+    restored window forward (user: a minimized one did come up).
 
     Args:
         h: The window.
 
     Returns:
-        True when Windows took it.
+        True when it is in front.
     """
     u = _user32()
     k = ctypes.windll.kernel32  # type: ignore[attr-defined]
@@ -112,10 +115,15 @@ def to_front(h: int) -> bool:
         if u.IsIconic(h):
             u.ShowWindow(h, _SW_RESTORE)
         u.BringWindowToTop(h)
-        return bool(u.SetForegroundWindow(h))
+        u.SetForegroundWindow(h)
     finally:
         if attached:
             u.AttachThreadInput(me, front_thread, False)
+    if u.GetForegroundWindow() != h:
+        u.ShowWindow(h, _SW_MINIMIZE)
+        u.ShowWindow(h, _SW_RESTORE)
+        u.SetForegroundWindow(h)
+    return u.GetForegroundWindow() == h
 
 
 def open_folder_in_front(folder: Path) -> bool:

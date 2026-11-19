@@ -7,7 +7,7 @@ import { renderWithApp, resetStore } from "@/test/RenderWithApp";
 
 const graph = {
 	nodes: [
-		{ id: 12, x: 440, y: 200, icons: ["MapBoss"], status: "confirmed" },
+		{ id: 12, x: 440, y: 200, icons: ["MapBoss", "Breach"], status: "confirmed" },
 		{ id: 13, x: 500, y: 200, icons: [], status: "confirmed" },
 	],
 	edges: [{ a: 12, b: 13 }],
@@ -60,18 +60,34 @@ describe("RouteTab", () => {
 		expect(screen.getByText("not set")).toBeInTheDocument();
 	});
 
-	it("lists the route's maps and clears it", async () => {
-		useAppStore.getState().setRoute({ path: [12, 13], message: "1 map to Map boss" });
+	it("a route tracked: maps left, its maps, and Stop tracking", async () => {
+		useAppStore.getState().setRoute({ path: [12, 13], message: "1 map left", at: 0 });
 		const { user } = renderWithApp(<RouteTab />, {
 			"GET /api/state": withPlayer,
 			"GET /api/graph": graph,
 			"GET /api/types": types,
 		});
-		expect(screen.getByText("1 map to Map boss")).toBeInTheDocument();
+		expect(screen.getByText("1 map left")).toBeInTheDocument();
 		await waitFor(() => expect(screen.getByRole("button", { name: /map #13/ })).toBeInTheDocument());
 		await user.click(screen.getByRole("button", { name: /map #13/ }));
 		expect(useAppStore.getState().fly).toMatchObject({ x: 500, y: 200 });
-		await user.click(screen.getByRole("button", { name: "Clear route" }));
+		await user.click(screen.getByRole("button", { name: "Stop tracking" }));
 		expect(useAppStore.getState().route).toBeNull();
+	});
+
+	it("the nearest map with an icon is tracked, as a route from Route in the top bar is (user)", async () => {
+		const { user } = renderWithApp(<RouteTab />, {
+			"GET /api/state": {
+				...withPlayer,
+				settings: { ...withPlayer.settings, ui: { player: { x: 500, y: 200, node: 13, atlas: state.atlas?.path } } },
+			},
+			"GET /api/graph": graph,
+			"GET /api/types": types,
+		});
+		await waitFor(() => expect(screen.getByText("map #13")).toBeInTheDocument());
+		await user.click(screen.getByRole("combobox", { name: "Route to the nearest" }));
+		await user.click(await screen.findByRole("option", { name: "Breach" }));
+		await waitFor(() => expect(useAppStore.getState().route).toMatchObject({ path: [13, 12], at: 0 }));
+		expect(screen.getByRole("button", { name: "Next map" })).toBeInTheDocument();
 	});
 });

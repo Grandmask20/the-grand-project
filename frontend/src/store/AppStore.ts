@@ -261,7 +261,13 @@ export const useAppStore = create<AppStoreState>()((set) => ({
 	highlight: null,
 	setHighlight: (highlight) => set({ highlight }),
 	mode: { kind: "normal" },
-	setMode: (mode) => set((st) => (st.replay && mode.kind !== "normal" ? {} : { mode })),
+	// refused while the timelapse is open, and said so (user: it was dropped without a word, not even in the log)
+	setMode: (mode) =>
+		set((st) =>
+			st.replay && mode.kind !== "normal"
+				? { error: "That doesn't work while the timelapse is open: close it first.", errorBrief: true }
+				: { mode },
+		),
 	lassoAsked: false,
 	fly: null,
 	flyTo: (x, y, px) => set((s) => ({ fly: { x, y, px, n: (s.fly?.n ?? 0) + 1 } })),
