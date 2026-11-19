@@ -39,6 +39,6 @@ describe("DebugMarkLayers", () => {
 		await waitFor(() => expect(features(fm, "marks")).toHaveLength(3));
 		const kinds = features(fm, "marks").map((f) => `${f.geometry.type} ${f.properties?.label}`);
 		expect(kinds).toEqual(["LineString D1", "Point D1", "Point D2"]);
-		expect(fm.layers.map((l) => l.id)).toEqual(["marks-line", "marks-dashed", "marks-point"]);
+		expect(fm.layerIds()).toEqual(["marks-line", "marks-dashed", "marks-point"]);
 	});
 });

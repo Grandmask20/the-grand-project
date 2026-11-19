@@ -28,7 +28,7 @@ describe("SelectionLayers", () => {
 		expect(features(fm, "hits")).toHaveLength(2);
 		expect(features(fm, "goto")[0].geometry).toMatchObject({ coordinates: geo.toLngLat(5, 6) });
 		expect(vis(fm, "selected")).toBe("visible");
-		expect(fm.layers.map((l) => l.before)).toContain("slot:hits-edge");
+		expect(fm.drawn().map((l) => l.before)).toContain("slot:hits-edge");
 	});
 
 	it("lights a selected path up whole instead of ringing it", () => {

@@ -91,7 +91,7 @@ const impl = <T,>(fm: ReturnType<typeof renderOnMap>["fm"], id: string) =>
 describe("Scene3D", () => {
 	it("flat: no 3D layers", () => {
 		const { fm } = renderOnMap(<Scene3D />, app());
-		expect(fm.layers).toEqual([]);
+		expect(fm.drawn()).toEqual([]);
 	});
 
 	it("tilted: models, paths, icons and the ground fading out, each in its slot, given the scene", async () => {
@@ -100,7 +100,7 @@ describe("Scene3D", () => {
 		await waitFor(() =>
 			expect(fm.layerIds().sort()).toEqual(["ground-fade-gl", "icons-3d-gl", "models-3d-gl", "paths-3d-gl"]),
 		);
-		for (const l of fm.layers) expect(l.before).toBe(`slot:${l.id}`);
+		for (const l of fm.drawn()) expect(l.before).toBe(`slot:${l.id}`);
 		// (what each was given, before it is uploaded)
 		const models = impl<{ pending: unknown[] }>(fm, "models-3d-gl");
 		await waitFor(() => expect(models?.pending).toHaveLength(2));
@@ -128,7 +128,7 @@ describe("Scene3D", () => {
 	it("lights the selection up and follows the timelapse", async () => {
 		const { fm } = renderOnMap(<Scene3D />, app());
 		tilt();
-		await waitFor(() => expect(fm.layers).toHaveLength(4));
+		await waitFor(() => expect(fm.drawn()).toHaveLength(4));
 		act(() => {
 			useAppStore.setState({ selected: { kind: "icon", id: 3, x: 0, y: 0 } as never });
 			useAppStore.setState({ replay: { pos: 2, plan: {} } as never });
@@ -150,8 +150,8 @@ describe("Scene3D", () => {
 	it("flat again: the layers go", async () => {
 		const { fm } = renderOnMap(<Scene3D />, app());
 		tilt();
-		await waitFor(() => expect(fm.layers).toHaveLength(4));
+		await waitFor(() => expect(fm.drawn()).toHaveLength(4));
 		act(() => useAppStore.setState({ camera: { x: 0, y: 0, px: 1, bearing: 0, pitch: 0 } }));
-		expect(fm.layers).toEqual([]);
+		expect(fm.drawn()).toEqual([]);
 	});
 });

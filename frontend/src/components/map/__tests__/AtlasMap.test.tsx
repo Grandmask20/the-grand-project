@@ -1,7 +1,7 @@
 import { act, screen, waitFor } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { AtlasMap } from "@/components/map/AtlasMap";
-import { LAYER_ORDER, mapStyle } from "@/logic/map/LayerOrder";
+import { LAYER_ORDER } from "@/logic/map/LayerOrder";
 import { useAppStore } from "@/store/AppStore";
 import { fakeMap } from "@/test/FakeMap";
 import { mapInfo, meta, state } from "@/test/Fixtures";
@@ -34,12 +34,10 @@ describe("AtlasMap", () => {
 	});
 
 	it("puts every layer in its place in the stack, whenever it comes", async () => {
-		const slotted = fakeMap();
-		for (const l of mapStyle().layers) slotted.map.addLayer(l as never); // the style's slots, as the real map has them
-		const { fm } = render(undefined, slotted);
+		const { fm } = render(); // (the fake map has the style's slots, as the real one)
 		await waitFor(() => expect(useAppStore.getState().map).toBe(fm.map));
 		act(() => useAppStore.setState({ camera: { x: 0, y: 0, px: 1, bearing: 0, pitch: 59 } })); // the 3D layers come later
-		const drawn = fm.layerIds().filter((id) => !id.startsWith("slot:") && id !== "background");
+		const drawn = fm.layerIds();
 		expect(drawn).toEqual(LAYER_ORDER.filter((id) => drawn.includes(id)));
 		expect(drawn.length).toBeGreaterThan(20);
 	});

@@ -23,6 +23,6 @@ describe("RecentLayer", () => {
 		await waitFor(() => expect(features(fm, "recent")).toHaveLength(3));
 		const props = features(fm, "recent").map((f) => f.properties);
 		expect(props.map((p) => p?.opacity)).toEqual([1, 1, 1 - 2 / 4]); // the picked one stays bright
-		expect(fm.layers[0]).toMatchObject({ id: "recent", before: "slot:recent" });
+		expect(fm.drawn()[0]).toMatchObject({ id: "recent", before: "slot:recent" });
 	});
 });

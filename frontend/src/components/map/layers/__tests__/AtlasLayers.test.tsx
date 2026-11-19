@@ -14,7 +14,7 @@ describe("AtlasLayers", () => {
 		expect(fm.layerIds()).toEqual(
 			expect.arrayContaining(["land", "biomes", "paths", "icons", "maps", "landmarks", "highlight"]),
 		);
-		for (const l of fm.layers) expect(l.before).toBe(`slot:${l.id}`);
+		for (const l of fm.drawn()) expect(l.before).toBe(`slot:${l.id}`);
 		expect(fm.layerIds()).not.toContain("towers"); // (the tower picture went with its View switch)
 	});
 

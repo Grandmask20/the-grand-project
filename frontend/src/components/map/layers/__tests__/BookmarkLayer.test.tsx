@@ -14,8 +14,8 @@ describe("BookmarkLayer", () => {
 		const f = features(fm, "bookmarks")[0];
 		expect(f.geometry).toEqual({ type: "Point", coordinates: geo.toLngLat(10, 20) });
 		expect(f.properties).toEqual({ id: 0, name: "big boss" });
-		expect(fm.layers[0].layout.visibility).toBe("visible");
+		expect(fm.drawn()[0].layout.visibility).toBe("visible");
 		act(() => useAppStore.setState({ replay: { pos: 1, plan: {} } as never }));
-		expect(fm.layers[0].layout.visibility).toBe("none");
+		expect(fm.drawn()[0].layout.visibility).toBe("none");
 	});
 });

@@ -1,4 +1,5 @@
 import { vi } from "vitest";
+import { mapStyle } from "@/logic/map/LayerOrder";
 import { fakeGl } from "./FakeGl";
 
 type Listener = (e?: unknown) => void;
@@ -16,8 +17,12 @@ export interface FakeLayer {
  * A MapLibre map for the map's tests: it keeps the sources, layers, pictures, controls and listeners the page gives
  * it, moves its camera when asked (no animation), and fires events on demand (`fire`). The camera is a centre, a zoom,
  * a pitch and a bearing; `project` places a [lng, lat] on a 1000 x 800 screen at 100 px per degree.
+ *
+ * It starts with the page's style (`mapStyle()`: the background and every layer's slot), as the real map does, and
+ * like MapLibre it refuses a layer put before one it doesn't have: it fires an error, and the layer isn't added. Pass
+ * `{ style: false }` for a map without them. `drawn()` and `layerIds()` leave the style's own layers out.
  */
-export function fakeMap() {
+export function fakeMap({ style = true }: { style?: boolean } = {}) {
 	const listeners = new Map<string, Set<Listener>>();
 	const layerListeners = new Map<string, Set<Listener>>(); // "event layer" -> listeners
 	const sources = new Map<string, Record<string, unknown>>();
@@ -109,6 +114,11 @@ export function fakeMap() {
 		getSource: (id: string) => sources.get(id),
 		removeSource: vi.fn((id: string) => sources.delete(id)),
 		addLayer: vi.fn((spec: Record<string, unknown> & { id: string }, before?: string) => {
+			// as MapLibre: put before a layer it doesn't have, it is an error and nothing is added (CodeRabbit)
+			if (before !== undefined && !layers.some((l) => l.id === before)) {
+				fire("error", { error: new Error(`Cannot add layer "${spec.id}" before non-existing layer "${before}".`) });
+				return;
+			}
 			const layer = {
 				id: spec.id,
 				before,
@@ -116,7 +126,7 @@ export function fakeMap() {
 				paint: { ...(spec.paint as object) },
 				layout: { ...(spec.layout as object) },
 			};
-			// as MapLibre: right under the layer it is put before (on top without one, or when that one isn't there)
+			// right under the layer it is put before, on top without one
 			const at = before === undefined ? -1 : layers.findIndex((l) => l.id === before);
 			if (at < 0) layers.push(layer);
 			else layers.splice(at, 0, layer);
@@ -164,6 +174,13 @@ export function fakeMap() {
 		hasControl: (c: unknown) => controls.has(c),
 	};
 
+	const own = new Set<string>();
+	if (style)
+		for (const l of mapStyle().layers) {
+			own.add(l.id);
+			layers.push({ id: l.id, spec: l as never, paint: {}, layout: { ...(l.layout as object) } });
+		}
+
 	return {
 		map,
 		sources,
@@ -182,8 +199,10 @@ export function fakeMap() {
 		setMoving: (on: boolean) => {
 			moving = on;
 		},
-		/** The layer ids, bottom to top. */
-		layerIds: () => layers.map((l) => l.id),
+		/** The layers the page added (not the style's own), bottom to top. */
+		drawn: () => layers.filter((l) => !own.has(l.id)),
+		/** Their ids. */
+		layerIds: () => layers.filter((l) => !own.has(l.id)).map((l) => l.id),
 		/** The listeners of an event. */
 		count: (type: string) => listeners.get(type)?.size ?? 0,
 	};

@@ -1,7 +1,7 @@
 import { render } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { CanvasPicture } from "@/components/map/layers/CanvasPicture";
-import { fakeMap } from "./FakeMap";
+import { fakeMap } from "@/test/FakeMap";
 
 let fake = fakeMap();
 vi.mock("@/hooks/map/UseMapLibre", () => ({
@@ -44,8 +44,8 @@ describe("CanvasPicture", () => {
 		const src = fake.sources.get("fog-picture");
 		expect(src).toMatchObject({ type: "canvas", animate: false, coordinates: corners });
 		expect((src?.canvas as HTMLCanvasElement | undefined)?.width).toBe(4);
-		expect(fake.layers[0]).toMatchObject({ id: "fog-picture", before: "slot:fog-picture" });
-		expect(fake.layers[0].paint["raster-resampling"]).toBe("linear");
+		expect(fake.drawn()[0]).toMatchObject({ id: "fog-picture", before: "slot:fog-picture" });
+		expect(fake.drawn()[0].paint["raster-resampling"]).toBe("linear");
 		expect(draw).toHaveBeenCalledWith(expect.anything(), 4, 2);
 		expect(src?.play).toHaveBeenCalled(); // read for a frame
 
@@ -57,7 +57,7 @@ describe("CanvasPicture", () => {
 		expect(fake.map.addSource).toHaveBeenCalledOnce(); // same size and place (a new array): the same canvas
 
 		unmount();
-		expect(fake.layers).toEqual([]);
+		expect(fake.drawn()).toEqual([]);
 		expect(fake.sources.size).toBe(0);
 	});
 
@@ -68,7 +68,7 @@ describe("CanvasPicture", () => {
 		rerender(<CanvasPicture id="tint-picture" width={8} height={2} corners={corners} draw={draw} opacity={0.3} />);
 		expect(fake.map.addSource).toHaveBeenCalledTimes(2);
 		expect((fake.sources.get("tint-picture")?.canvas as HTMLCanvasElement | undefined)?.width).toBe(8);
-		expect(fake.layers).toHaveLength(1);
-		expect(fake.layers[0].paint["raster-opacity"]).toBe(0.3);
+		expect(fake.drawn()).toHaveLength(1);
+		expect(fake.drawn()[0].paint["raster-opacity"]).toBe(0.3);
 	});
 });
