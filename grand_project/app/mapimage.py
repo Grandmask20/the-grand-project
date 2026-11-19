@@ -138,7 +138,11 @@ class MapImageMixin:
             self.parts.done("map_image", self.generation)  # (nothing to show: not waited for)
             self.events.publish("terrain", self.terrain_version)
             return
-        self.parts.start("map_image", self.generation)
+        with self._lock:  # the build claimed, then its part started: in one step (a replacement started its part
+            # first, and an older build failing in between still counted as current, CodeRabbit)
+            self._terrain_job += 1
+            job = self._terrain_job
+            self.parts.start("map_image", self.generation)
         png, npz = core.map_image_files(self.path)
         key = self.atlas.terrain_key()
         try:
@@ -156,9 +160,8 @@ class MapImageMixin:
                         return
         except Exception:
             LOG.debug("map image cache not usable, rebuilding", exc_info=True)
-        self._terrain_job += 1
         opened = self.opened  # (one record: its atlas, generation and log together)
-        job, atlas, gen, scope = self._terrain_job, opened.atlas, opened.gen, opened.scope
+        atlas, gen, scope = opened.atlas, opened.gen, opened.scope
         self.events.set_progress("building the map image (first time for this atlas)…")
 
         def failed(e: Exception) -> None:
@@ -166,8 +169,11 @@ class MapImageMixin:
             older build failing late marked the newer one failed, CodeRabbit)."""
             LOG.exception("map image could not be built")
             self.events.log(f"map image could not be built: {e}", scope)
-            if job == self._terrain_job:
-                self.parts.fail("map_image", f"{type(e).__name__}: {e}", gen)  # (it only reached the log: user)
+            with self._lock:  # (checked and marked in one step: a replacement claims its number under this lock)
+                current = job == self._terrain_job
+                if current:
+                    self.parts.fail("map_image", f"{type(e).__name__}: {e}", gen)  # (it only reached the log: user)
+            if current:
                 self.events.publish("terrain", self.terrain_version)
 
         def work():

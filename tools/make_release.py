@@ -44,9 +44,6 @@ GITIGNORE = """__pycache__/
 *.pyc
 user_data/
 atlases/*
-!atlases/default/
-atlases/default/*
-!atlases/default/.gitkeep
 local_paths.json
 The Grand Project.lnk
 .venv/
@@ -217,8 +214,8 @@ def main() -> int:
     (TARGET / ".gitignore").write_text(GITIGNORE, encoding="utf-8")
     (TARGET / ".gitattributes").write_text(GITATTRIBUTES, encoding="utf-8")
     (TARGET / "channel.txt").write_text("release\n", encoding="utf-8")
-    (TARGET / "atlases" / "default").mkdir(parents=True, exist_ok=True)
-    (TARGET / "atlases" / "default" / ".gitkeep").touch()
+    # no atlases/ in the release: the app makes atlases/default on first start. Shipped (for its .gitkeep), copying
+    # an update over with macOS Finder's Replace swapped the player's whole atlases folder for it (CodeRabbit)
     (TARGET / ".github" / "workflows").mkdir(parents=True, exist_ok=True)
     (TARGET / ".github" / "workflows" / "safety.yml").write_text(CI, encoding="utf-8")
     for leftover in (TARGET / "atlas_test_data", TARGET / "tools", TARGET / ".lfsconfig"):

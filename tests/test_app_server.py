@@ -280,4 +280,30 @@ def test_the_parts_answer_while_the_session_is_busy(app):
     with srv.session._lock:  # (a model being built holds it: the page still learns how far it is)
         status, _h, body = call(srv, "/api/parts")
     parts = json.loads(body)["parts"]
-    assert status == 200 and parts["map_image"]["state"] == "ready" and parts["model"]["state"] == "ready"
+    # answered while the lock is held (the atlas's own background search may be rebuilding the model just now, so
+    # its state isn't checked here)
+    assert status == 200 and set(parts) == {"map_image", "model"}
+    assert all(p["state"] in ("waiting", "building", "ready", "failed") for p in parts.values())
+
+
+def test_one_launch_holds_the_start_lock_at_a_time(tmp_path, monkeypatch):
+    monkeypatch.setattr(S.rc_paths, "USER_DATA", tmp_path)
+    first = S.take_app_lock()
+    assert first is not None and S.take_app_lock() is None  # a second launch at the same moment waits
+    first.close()  # (the system lets go when the process ends)
+    again = S.take_app_lock()
+    assert again is not None
+    again.close()
+
+
+def test_a_launch_that_cant_take_the_lock_starts_no_second_copy(tmp_path, monkeypatch):
+    monkeypatch.setattr(S.rc_paths, "USER_DATA", tmp_path)
+    monkeypatch.setattr(S, "reuse_running", lambda port, atlas, browser: S.START)  # none found yet
+    monkeypatch.setattr(S, "running_app", lambda port: None)  # and the other launch never answers
+    monkeypatch.setattr(S, "APP_QUIT_WAIT", 0.3)
+    monkeypatch.setattr(S, "AtlasSession", lambda: pytest.fail("a second copy was started"))
+    held = S.take_app_lock()
+    try:
+        assert S.main(["--port", "1", "--no-browser"]) == 1  # (both started and wrote the same atlas)
+    finally:
+        held.close()
