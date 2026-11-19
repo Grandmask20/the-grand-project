@@ -208,4 +208,5 @@ class EditsMixin:
             self.rebuild_model()
             self.scan_locks()  # screenshots added meanwhile
 
-        threading.Thread(target=work, daemon=True).start()
+        self._lock_thread = threading.Thread(target=work, daemon=True)  # (kept: tests wait for it, not a timer)
+        self._lock_thread.start()

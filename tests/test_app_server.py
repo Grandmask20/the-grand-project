@@ -4,6 +4,7 @@ import json
 import threading
 import urllib.error
 import urllib.request
+from pathlib import Path
 
 import pytest
 
@@ -148,3 +149,174 @@ def test_the_page_is_served_and_routes_itself(app, tmp_path, monkeypatch):
     st, h, _b = call(srv, "/assets/a.js")
     assert st == 200 and "immutable" in h["Cache-Control"]
     assert call(srv, "/../../etc/passwd")[2] == b"<html>app</html>"  # never outside the page's folder
+
+
+def test_a_second_start_opens_the_running_app(app, monkeypatch, tmp_path):
+    srv, _pts = app
+    port = srv.server_address[1]
+    opened, asked = [], []
+    monkeypatch.setattr(S.webbrowser, "open", lambda url: opened.append(url))
+    monkeypatch.setattr(S, "AtlasSession", lambda: pytest.fail("a second copy was started"))
+    monkeypatch.setenv("http_proxy", "http://127.0.0.1:9")  # a proxy that refuses: the probe goes direct
+    monkeypatch.setenv("HTTP_PROXY", "http://127.0.0.1:9")
+    assert S.running_app(port) == (srv.url, S.VERSION)
+    assert S.main(["--port", str(port)]) == 0 and opened == [srv.url]  # its page, not a second copy
+    assert S.running_app(port, root=tmp_path) is None  # a copy of the program in another folder: not this one
+    # an atlas asked for on the command line is opened by the running copy (it was dropped)
+    (tmp_path / "b").mkdir()
+    other, _p, _i = make_atlas(tmp_path / "b")
+    monkeypatch.setattr(srv, "background", lambda fn: fn())  # (opened behind the answer: run at once here)
+    monkeypatch.setattr(srv.session, "open_atlas", lambda p: asked.append(p))
+    assert S.main(["--port", str(port), str(other)]) == 0
+    assert asked == [str(other.resolve())]
+
+
+def test_an_older_running_copy_is_closed_for_the_update(monkeypatch):
+    monkeypatch.setattr(S, "running_app", lambda port: ("http://127.0.0.1:1/", "1.0"))  # an older copy answers
+    monkeypatch.setattr(S, "APP_QUIT_WAIT", 0.5)
+    state = {"gone": False, "quits": 0}
+
+    def fake(url, data=None, timeout=0):
+        if url.endswith("api/quit"):
+            state["quits"] += 1
+            state["gone"] = state["obeys"]
+            return {"ok": True}
+        return None if state["gone"] else {"app": S.HELLO_APP}
+
+    monkeypatch.setattr(S, "_local", fake)
+    monkeypatch.setattr(S, "_stopped", lambda host, port: state["gone"])  # (gone: nothing listens there)
+    state["obeys"] = True
+    assert S.reuse_running(1, None, browser=False) == S.START and state["quits"] == 1  # it quit: the update starts
+    state.update(gone=False, obeys=False)  # still closing after the wait: no second copy writing the same atlas
+    assert S.reuse_running(1, None, browser=False) == S.FAILED
+
+
+def test_a_refused_atlas_hand_over_is_reported(app, monkeypatch, tmp_path):
+    srv, _pts = app
+    monkeypatch.setattr(S.webbrowser, "open", lambda url: None)
+
+    monkeypatch.setattr(srv.session, "working", lambda: True)  # busy adding screenshots: it can't open another
+    assert S.main(["--port", str(srv.server_address[1]), str(tmp_path / "x.json")]) == 1  # (it said success)
+
+
+def test_the_start_doesnt_replace_an_atlas_opened_meanwhile(tmp_path, monkeypatch):
+    (tmp_path / "a").mkdir()
+    (tmp_path / "b").mkdir()
+    a, _p, _i = make_atlas(tmp_path / "a")
+    b, _p, _i = make_atlas(tmp_path / "b")
+    session = AtlasSession(settings={}, worker=False)
+    try:
+        start = session.generation
+        session.open_atlas(b)  # opened on the page before the start's atlas began loading
+        S.open_first_atlas(session, str(a), start)
+        assert session.path == b  # (it switched back to the start's atlas)
+        # opened on the page while the start's atlas is being read: the start stops none of its work
+        start = session.generation
+        real_load, stopped = S.core.Atlas.load, []
+
+        def load_while_b_opens(path):
+            atlas = real_load(path)
+            if Path(path) == a:
+                session.open_atlas(b)
+            return atlas
+
+        monkeypatch.setattr(S.core.Atlas, "load", staticmethod(load_while_b_opens))
+        monkeypatch.setattr(session, "stop_seams", lambda: stopped.append("seams"))
+        monkeypatch.setattr(session, "stop_watch", lambda: stopped.append("watch"))
+        monkeypatch.setattr(session, "seams_running", lambda: True)
+        stopped.clear()
+        session.settings["last_atlas"] = str(b)
+        S.open_first_atlas(session, str(a), start)
+        assert session.path == b and session.settings["last_atlas"] == str(b)
+        assert stopped == ["watch", "seams"]  # B's own open only: the start stopped nothing of B's (it did, twice)
+    finally:
+        session.shutdown()
+
+
+def test_something_else_on_a_port_doesnt_stop_the_start():
+    import socket
+
+    sock = socket.socket()
+    sock.bind(("127.0.0.1", 0))
+    sock.listen(1)
+    port = sock.getsockname()[1]
+
+    def banner():
+        conn, _ = sock.accept()
+        conn.sendall(b"SSH-2.0-OpenSSH_9.6\r\n")  # not HTTP: urlopen raised BadStatusLine through main
+        conn.close()
+
+    threading.Thread(target=banner, daemon=True).start()
+    try:
+        assert S._local(f"http://127.0.0.1:{port}/api/hello", timeout=2) is None
+    finally:
+        sock.close()
+
+
+def test_free_ports_are_not_asked_when_looking_for_a_running_copy(monkeypatch):
+    asked = []
+    monkeypatch.setattr(S, "_local", lambda url, data=None, timeout=0: asked.append(url))
+    monkeypatch.setattr(S, "_in_use", lambda host, port: False)  # every port free
+    assert S.running_app(S.APP_PORT) is None and asked == []  # (each refused connection took ~2 s on Windows)
+
+
+def test_a_quit_copy_counts_as_gone_though_its_port_wont_bind_yet(monkeypatch):
+    import socket
+
+    monkeypatch.setattr(S, "_in_use", lambda host, port: True)  # (Linux / macOS: TIME_WAIT keeps it unbindable)
+    with socket.socket() as s:
+        s.bind(("127.0.0.1", 0))
+        port = s.getsockname()[1]
+        s.listen(1)
+        assert not S._stopped("127.0.0.1", port)  # still listening: not gone
+    assert S._stopped("127.0.0.1", port)  # closed: the connection is refused, so it is gone (it waited out 40 s)
+    monkeypatch.setattr(S, "running_app", lambda p: (f"http://127.0.0.1:{port}/", "1.0"))  # an older copy...
+    monkeypatch.setattr(S, "_local", lambda url, data=None, timeout=0: {"ok": True})  # ...asked to quit
+    assert S.reuse_running(port, None, browser=False) == S.START
+
+
+def test_the_parts_answer_while_the_session_is_busy(app):
+    srv, _pts = app
+    with srv.session._lock:  # (a model being built holds it: the page still learns how far it is)
+        status, _h, body = call(srv, "/api/parts")
+    parts = json.loads(body)["parts"]
+    # answered while the lock is held (the atlas's own background search may be rebuilding the model just now, so
+    # its state isn't checked here)
+    assert status == 200 and set(parts) == {"map_image", "model"}
+    assert all(p["state"] in ("waiting", "building", "ready", "failed") for p in parts.values())
+
+
+def test_one_launch_holds_the_start_lock_at_a_time(tmp_path, monkeypatch):
+    monkeypatch.setattr(S.rc_paths, "USER_DATA", tmp_path)
+    first = S.take_app_lock()
+    assert first is not None and S.take_app_lock() is None  # a second launch at the same moment waits
+    first.close()  # (the system lets go when the process ends)
+    again = S.take_app_lock()
+    assert again is not None
+    again.close()
+
+
+def test_a_launch_that_cant_take_the_lock_starts_no_second_copy(tmp_path, monkeypatch):
+    monkeypatch.setattr(S.rc_paths, "USER_DATA", tmp_path)
+    monkeypatch.setattr(S, "reuse_running", lambda port, atlas, browser: S.START)  # none found yet
+    monkeypatch.setattr(S, "running_app", lambda port: None)  # and the other launch never answers
+    monkeypatch.setattr(S, "APP_QUIT_WAIT", 0.3)
+    monkeypatch.setattr(S, "AtlasSession", lambda: pytest.fail("a second copy was started"))
+    held = S.take_app_lock()
+    try:
+        assert S.main(["--port", "1", "--no-browser"]) == 1  # (both started and wrote the same atlas)
+    finally:
+        held.close()
+
+
+def test_a_launch_without_the_lock_finds_the_copy_on_its_recorded_port(app, tmp_path, monkeypatch):
+    srv, _pts = app
+    monkeypatch.setattr(S.rc_paths, "USER_DATA", tmp_path)
+    (tmp_path / S.APP_URL_FILE).write_text(srv.url, encoding="utf-8")  # started on a port outside the default range
+    monkeypatch.setattr(S.webbrowser, "open", lambda url: None)
+    monkeypatch.setattr(S, "AtlasSession", lambda: pytest.fail("a second copy was started"))
+    held = S.take_app_lock()
+    try:
+        assert S.main(["--no-browser"]) == 0  # handed over (it waited out 40 s and gave up)
+    finally:
+        held.close()

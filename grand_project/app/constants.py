@@ -334,6 +334,12 @@ REPLAY_SESSION_COLS = (
 APP_HOST = "127.0.0.1"  # the app serves this computer only: the atlas is the player's own data
 APP_PORT = 8765  # default port (the next free one is taken when it is in use); 0 = any free port
 APP_PORT_TRIES = 20  # ports tried after APP_PORT when it is in use
+APP_HELLO_WAIT = 0.5  # s: a second start waits this long per port for a running copy to answer
+APP_LOCK_FILE = "app.lock"  # in user_data: held while the app runs, so two launches at once start only one copy
+APP_URL_FILE = "app.url"  # in user_data: the address the lock's holder serves on (a launch finding it taken goes there)
+APP_QUIT_WAIT = 40.0  # s: a newer start waits this long for an older running copy to quit (its shutdown may wait 30 s)
+APP_STOP_PROBE = 3.0  # s: a connection attempt telling whether a quit copy's port still listens
+HELLO_APP = "the-grand-project"  # what /api/hello answers with: the program's own copy, not another server
 LOG_KEEP = 2000  # log lines kept for the Log tab of a page opened later
 EVENT_HISTORY = 200  # recent events kept for a page that reconnects
 TILE_CACHE = 1500  # encoded tiles (map image, sharp ground, vector) kept in memory

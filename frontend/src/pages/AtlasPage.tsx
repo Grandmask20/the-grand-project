@@ -17,6 +17,7 @@ import { Button } from "@/components/ui/button";
 import { useAppState } from "@/hooks/app/UseAppState";
 import { useEventStream } from "@/hooks/app/UseEventStream";
 import { useMeta } from "@/hooks/app/UseMeta";
+import { PART_QUIET_S, useParts } from "@/hooks/app/UseParts";
 import { useAtlasActions } from "@/hooks/atlas/UseAtlasActions";
 
 /** The app's one page: top bar, side panel, the map, the status line, and the dialogs. */
@@ -68,9 +69,11 @@ export function AtlasPage() {
 							<AtlasMap key={mapKey} info={map} meta={meta.data} />
 						) : (
 							<div className="flex h-full flex-col items-center justify-center gap-3 text-center text-muted-foreground">
-								{s.atlas ? (
+								{!s.atlas && s.opening ? (
+									<p>Loading atlas {s.opening}…</p>
+								) : s.atlas ? (
 									s.atlas.shots ? (
-										<p>Building the map image…</p>
+										<MapImageWait />
 									) : (
 										<>
 											<p>This atlas has no screenshots yet.</p>
@@ -111,5 +114,18 @@ export function AtlasPage() {
 			<SourcesDialog />
 			<DeleteAtlasDialog />
 		</div>
+	);
+}
+
+/** Before there is a map: the map image being built, how far it is, or why it failed (that only reached the log). */
+function MapImageWait() {
+	const part = useParts(true).data?.parts.map_image;
+	if (part?.state === "failed")
+		return <p className="text-destructive">The map image could not be built: {part.error}</p>;
+	return (
+		<p>
+			Building the map image…
+			{part?.state === "building" && part.quiet >= PART_QUIET_S ? ` (no progress for ${Math.round(part.quiet)} s)` : ""}
+		</p>
 	);
 }

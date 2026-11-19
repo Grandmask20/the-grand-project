@@ -360,8 +360,51 @@ def ground_sampler(canvas: np.ndarray, weight: np.ndarray, origin, radius: float
         px = lab[cy - r : cy + r + 1, cx - r : cx + r + 1][m]
         return np.concatenate([px.mean(0), px.std(0)])  # spread: Faridun ground is flat, desert mottled
 
+    dy, dx = np.mgrid[-r : r + 1, -r : r + 1]
+    need = disc.sum() * 0.5
+
+    def many(points) -> tuple[np.ndarray, np.ndarray]:
+        """`at` for many atlas points at once (one call per map node took ~2 s on a 24,000-map atlas, user).
+
+        Args:
+            points: (n, 2) atlas x, y.
+
+        Returns:
+            (looks, ok): (n, 6) Lab mean + spread, and (n,) whether each point has one (where `at` gives None, the
+            row is zeros and ok is False).
+        """
+        P = np.asarray(points, float).reshape(-1, 2)
+        out = np.zeros((len(P), 6), np.float32)
+        ok = np.zeros(len(P), bool)
+        cx = np.round((P[:, 0] - x0) * s0).astype(int)
+        cy = np.round((P[:, 1] - y0) * s0).astype(int)
+        inside = np.nonzero((cx - r >= 0) & (cy - r >= 0) & (cx + r + 1 <= W) & (cy + r + 1 <= H))[0]
+        # as many discs as fit the pixel budget (a fixed 512 was 300 MB with big discs: CodeRabbit), at least one
+        chunk = max(1, CITY_GROUND_PIXELS // (2 * r + 1) ** 2)
+        for k in range(0, len(inside), chunk):
+            i = inside[k : k + chunk]
+            ys, xs = cy[i, None, None] + dy, cx[i, None, None] + dx  # (m, 2r+1, 2r+1) each
+            m = (weight[ys, xs] > 0) & disc
+            cnt = m.sum((1, 2))
+            good = cnt >= need
+            if not good.any():
+                continue
+            i, ys, xs, m, cnt = i[good], ys[good], xs[good], m[good], cnt[good]
+            px = lab[ys, xs]  # (m, 2r+1, 2r+1, 3) float32
+            w = m.astype(np.float32)
+            # one pass: sums and sums of squares over the seen part of each disc (totals in float64)
+            s1 = np.einsum("nyxc,nyx->nc", px, w, dtype=np.float64)
+            s2 = np.einsum("nyxc,nyxc,nyx->nc", px, px, w, dtype=np.float64)
+            mean = s1 / cnt[:, None]
+            std = np.sqrt(np.maximum(s2 / cnt[:, None] - mean**2, 0.0))
+            out[i, :3], out[i, 3:], ok[i] = mean, std, True
+        return out, ok
+
+    at.many = many  # type: ignore[attr-defined]
     return at
 
+
+CITY_GROUND_PIXELS = 600_000  # disc pixels read in one go (ground_sampler.many): ~7 MB of Lab pixels a chunk
 
 SHIP_BUTTON = rc_paths.ref("ship_button.png")  # the Expedition ship marker: same square button, ship symbol
 BUTTON_FRAME = 0.86  # frame match (symbol area masked): real buttons 0.87-1.0, anything else <= 0.854
@@ -628,10 +671,17 @@ def potential_maps(
     if ground is not None and starts:
         GV = np.zeros((len(pts), 6), np.float32)
         ok = np.zeros(len(pts), bool)
-        for v in np.nonzero(alive)[0]:
-            gv = g(v)
-            if gv is not None:
-                GV[v], ok[v] = gv, True
+        live = np.nonzero(alive)[0]
+        if hasattr(ground, "many"):  # every map node's ground at once (one by one took ~2 s on rc1, user)
+            looks, seen = ground.many(np.asarray(pts, float)[live])
+            GV[live[seen]], ok[live[seen]] = looks[seen], True
+            for j, v in enumerate(live):
+                gcache.setdefault(int(v), looks[j] if seen[j] else None)
+        else:
+            for v in live:
+                gv = g(v)
+                if gv is not None:
+                    GV[v], ok[v] = gv, True
         S = np.array([[x, y] for _s, x, y, _l in starts], float)
         dmin = np.full(len(pts), 1e9)
         for k in range(0, len(S), 64):

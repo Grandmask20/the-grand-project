@@ -3,6 +3,7 @@ import type { RecentOutline } from "@/domain/adding/RecentOutline";
 import type { WatchState } from "@/domain/adding/WatchState";
 import type { AppState } from "@/domain/app/AppState";
 import type { Meta, ReplaySettings } from "@/domain/app/Meta";
+import type { Parts } from "@/domain/app/Parts";
 import type { SettingsChange, UiSettings } from "@/domain/app/UiSettings";
 import type { AtlasCard } from "@/domain/atlas/AtlasCard";
 import type { AtlasSummary } from "@/domain/atlas/AtlasSummary";
@@ -29,6 +30,7 @@ export function createAppClient(http: Http) {
 	return {
 		// the app
 		getState: () => http.get<AppState>("/api/state"),
+		getParts: () => http.get<Parts>("/api/parts"),
 		getMeta: () => http.get<Meta>("/api/meta"),
 		getSettings: () => http.get<UiSettings>("/api/settings"),
 		updateSettings: (change: SettingsChange) => http.send<UiSettings>("PATCH", "/api/settings", change),

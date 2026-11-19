@@ -336,6 +336,9 @@ def test_forgetting_a_closed_atlas_doesnt_bring_it_back(session):
 
 
 def test_the_stronghold_search_releases_its_flag_with_its_result(session, monkeypatch):
+    started = getattr(session, "_lock_thread", None)
+    if started is not None:
+        started.join()  # the search opening the atlas started is done first (running, it refused this one)
     flags = []
     real = type(session.atlas).save
 
@@ -385,3 +388,102 @@ def test_a_stop_while_fix_seams_starts_is_kept(session, monkeypatch):
     monkeypatch.setattr("grand_project.app.mapimage.subprocess.Popen", popen)
     session.fix_seams()
     assert ended == [1] and session._seams_proc is None and not session.seams_running()
+
+
+def test_the_flat_map_doesnt_build_the_3d_view(session, monkeypatch):
+    real = type(session)._solid_shapes
+    built = []
+    monkeypatch.setattr(type(session), "_solid_shapes", lambda self, ok: (built.append(1), real(self, ok))[1])
+    session._vector_made(False)  # the flat map's tiles
+    assert built == []  # (its models were built for every flat map though never in its tiles)
+    assert json.loads(session.scene_3d())["models"] and built == [1]  # asked for by the 3D view: built then
+
+
+def test_a_failing_model_is_reported_to_the_page(session, monkeypatch):
+    import grand_project.app.session as sm
+
+    def broken(atlas):
+        raise RuntimeError("bad atlas file")
+
+    monkeypatch.setattr(sm, "view_model", broken)
+    with pytest.raises(RuntimeError):
+        session.rebuild_model()
+    model = session.parts.payload()["parts"]["model"]
+    assert model["state"] == "failed" and "bad atlas file" in model["error"]  # (it only reached the log)
+
+
+def test_a_failing_map_image_is_reported_and_the_stitching_beats(session, monkeypatch, tmp_path):
+    import grand_project.app.mapimage as mi
+
+    beats = []
+    real = type(session.atlas).composite
+
+    def stitch_then_fail(atlas, **kw):
+        beat = kw["progress"]
+        real(atlas, **{**kw, "progress": lambda: (beats.append(1), beat())})
+        raise OSError("disk full")  # the build fails once the screenshots are stitched
+
+    for f in session.atlas.frames:  # (stitched only when the screenshot file is there)
+        cv2.imwrite(f["path"], np.full((f["h"], f["w"], 3), 60, np.uint8))
+    monkeypatch.setattr(type(session.atlas), "composite", stitch_then_fail)
+    monkeypatch.setattr(mi.core, "map_image_files", lambda path: (tmp_path / "none.png", tmp_path / "none.npz"))
+    session.load_terrain(background=False)  # (no cache: built)
+    part = session.parts.payload()["parts"]["map_image"]
+    assert part["state"] == "failed" and "disk full" in part["error"]  # (it only reached the log)
+    assert len(beats) == len(session.atlas.frames)  # one beat per screenshot stitched
+
+
+def test_an_older_map_image_build_failing_leaves_the_newer_ones_state(session, monkeypatch, tmp_path):
+    import grand_project.app.mapimage as mi
+
+    def superseded_then_fails(atlas, **kw):
+        session._terrain_job += 1  # a newer build started meanwhile
+        session.parts.start("map_image", session.generation)
+        raise OSError("disk full")
+
+    monkeypatch.setattr(type(session.atlas), "composite", superseded_then_fails)
+    monkeypatch.setattr(mi.core, "map_image_files", lambda path: (tmp_path / "none.png", tmp_path / "none.npz"))
+    session.load_terrain(background=False)
+    assert session.parts.payload()["parts"]["map_image"]["state"] == "building"  # (the old failure marked it)
+
+
+def test_a_model_failing_after_a_new_map_image_is_the_models_failure(session, monkeypatch, tmp_path):
+    import grand_project.app.mapimage as mi
+    import grand_project.app.session as sm
+
+    canvas, weight, origin = session.terrain
+    monkeypatch.setattr(type(session.atlas), "composite", lambda atlas, **kw: (canvas, origin, weight))
+    monkeypatch.setattr(mi.core, "map_image_files", lambda path: (tmp_path / "none.png", tmp_path / "none.npz"))
+
+    def broken(atlas):
+        raise RuntimeError("bad model")
+
+    monkeypatch.setattr(sm, "view_model", broken)
+    published = []
+    real_publish = session.events.publish
+    monkeypatch.setattr(
+        session.events, "publish", lambda kind, data=None: (published.append(kind), real_publish(kind, data))
+    )
+    session.load_terrain(background=False)  # shown, then the model rebuilt for its biomes fails
+    parts = session.parts.payload()["parts"]
+    assert parts["map_image"]["state"] == "ready" and parts["model"]["state"] == "failed"  # (both said map image)
+    assert "terrain" in published  # the page learns of the new image all the same (it kept the old one)
+
+
+def test_the_timelapse_replans_in_the_models_locked_step(session, monkeypatch):
+    held = []
+    monkeypatch.setattr(session, "_replay_on", True)
+    monkeypatch.setattr(session, "_replan", lambda: held.append(session._lock._is_owned()))
+    session.rebuild_model()
+    assert held == [True]  # (a close between the check and the replan made the rebuild fail)
+
+
+def test_the_ground_batch_gives_the_same_looks_in_small_chunks(session, monkeypatch):
+    from grand_project import cities
+
+    ground = session.ground()
+    pts = np.array([[n["x"], n["y"]] for n in session.V["nodes"]], float)
+    whole, ok_whole = ground.many(pts)
+    monkeypatch.setattr(cities, "CITY_GROUND_PIXELS", 1)  # one disc a chunk (sized by pixels, not 512 points)
+    small, ok_small = ground.many(pts)
+    assert (ok_whole == ok_small).all() and np.allclose(whole, small)

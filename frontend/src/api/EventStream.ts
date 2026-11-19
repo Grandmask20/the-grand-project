@@ -81,6 +81,7 @@ export function createEventHandler(queryClient: QueryClient) {
 			case "atlas":
 				refresh(
 					"state",
+					"parts",
 					"types",
 					"search",
 					"list",
@@ -96,7 +97,7 @@ export function createEventHandler(queryClient: QueryClient) {
 				break;
 			case "terrain":
 			case "filters":
-				refresh("state", "graph", "types", "search", "list", "heat");
+				refresh("state", "parts", "graph", "types", "search", "list", "heat");
 				break;
 			case "atlases":
 				refresh("atlases");

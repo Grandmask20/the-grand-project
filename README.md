@@ -1,4 +1,4 @@
-# The Grand Project — v1.17
+# The Grand Project — v1.18
 
 Builds one big map of your Path of Exile 2 atlas from your screenshots. Named after the in-game tablet, *The Grand Project*. It finds maps, paths, icons, towers and cities, and lets you search, bookmark and route through them.
 
@@ -6,20 +6,48 @@ The app runs in your web browser: starting it opens a page served by the program
 
 ## Run it
 
-1. Install Python 3.11 or newer from python.org (tick "Add python.exe to PATH").
-2. Double-click **`Install (run once).bat`**.
-3. Double-click **`Start Atlas Viewer.bat`**. Your browser opens the app. To stop it: **File ▾ → Quit the app**.
+**Which files to run:**
+
+| | Once, to install | Every time, to start |
+|---|---|---|
+| **Windows** | `Install (run once).bat` | the **The Grand Project** shortcut (made by the install), or `Start The Grand Project.bat` |
+| **macOS / Linux** | `./install.sh` | `./start.sh` |
+
+### Get it
+
+Download the newest release from the [Releases page](https://github.com/Grandmask20/the-grand-project/releases): open the top one and click **Source code (zip)**. Unzip it into a folder you can write to, e.g. `Documents\The Grand Project` (not `Program Files`). Don't use the green **Code** button on the front page: that is the developer copy, and its page isn't built.
+
+### First time
+
+**Windows:**
+
+1. Install Python 3.11 or newer from [python.org](https://www.python.org/downloads/). In the installer, tick **"Add python.exe to PATH"**.
+2. Double-click **`Install (run once).bat`**. It installs the Python packages the app needs and makes a **The Grand Project** shortcut with the tablet icon in this folder (copy it to your desktop or pin it to Start if you like), then says *Done*.
 
 **macOS / Linux:**
 
-1. Install Python 3.11 or newer.
-2. In a terminal, in this folder, run `./install.sh` (once). It makes a `.venv` folder and installs the packages there.
-3. Run `./start.sh` (Ctrl+C in the terminal, or **File ▾ → Quit the app**, stops it).
+1. Install Python 3.11 or newer (macOS: the [python.org](https://www.python.org/downloads/) installer or Homebrew; Linux: your package manager's `python3`, plus `python3-venv` on Debian / Ubuntu).
+2. Open a terminal in this folder and run **`./install.sh`**. It makes a `.venv` folder and installs the packages there. (If it says *permission denied*: `bash install.sh`.)
 
-On macOS right-click is a two-finger click (or Ctrl+click).
+### Every time
+
+- **Windows:** double-click the **The Grand Project** shortcut (or **`Start The Grand Project.bat`**). No window opens: the app runs in the background and your browser opens its page.
+- **macOS / Linux:** run **`./start.sh`** in a terminal and keep the terminal open. (On macOS right-click is a two-finger click, or Ctrl+click.)
+
+The page is **`http://127.0.0.1:8765`**: bookmark it. Closing the browser tab doesn't stop the app: open the page again any time. Starting it again while it runs just opens its page. To stop it: **File ▾ → Quit the app** (or Ctrl+C in the terminal).
 
 On first start the app opens the empty atlas **`atlases/default`**.
 
+### Updating
+
+First quit the app (**File ▾ → Quit the app**). Then download the new release and unzip it: it holds one folder (`the-grand-project-<version>`). Open that folder and copy everything in it into your current program folder, replacing the files. The release has no `atlases` or `user_data` folder, so yours are never replaced (never delete or replace those two folders yourself): your atlases (`atlases/`) and settings (`user_data/`) stay. Then run the install file again (**`Install (run once).bat`** or **`./install.sh`**): a new version can need new packages. (From 1.18 the Windows start file is `Start The Grand Project.bat`: an old `Start Atlas Viewer.bat` left in the folder can be deleted.)
+
+### If it doesn't start
+
+- **Windows: nothing happens, or "python is not recognized":** Python isn't on the PATH. Run the Python installer again, choose *Modify*, tick *Add Python to environment variables*, then run `Install (run once).bat` again.
+- **The browser didn't open:** go to `http://127.0.0.1:8765` yourself. If that port was taken the app uses the next free one (8766, ...); the terminal (macOS / Linux) shows it, and so does `user_data/atlas_debug.log`.
+- **The page says "The page isn't built":** you have the developer copy. Download the release from the Releases page instead.
+- **Something else:** open a terminal in this folder and run `python -m grand_project` (macOS / Linux: `./start.sh`) to see the error; the full log is `user_data/atlas_debug.log`. 
 ---
 
 ## Before you start: Steam screenshots
@@ -127,7 +155,7 @@ A screenshot that might be placed wrong is shown on the map, see-through and out
 | `atlases/` | Your atlases. `default/` opens on first start. |
 | `grand_project/` | The program, a Python package (see *Code layout* below). |
 | `references/` | Every file the program reads: the database copy, HUD mask, icons and tower / city templates. |
-| `tools/` | Helpers for improving the detector (mark checks, icon teaching, badge sheets, coverage). |
+| `tools/` | Developer helpers: improving the detector (mark checks, icon teaching, badge sheets, coverage), and making releases and the test pack (`make_release.py`, `make_test_pack.py`). |
 | `tests/` | Regression tests. Their screenshots and hand-made truth are not included (see below). |
 | `user_data/` | Settings and the log, created on first run. |
 | `atlas_test_data/` | Trimmed test data, in Git LFS and not downloaded by default (see below). |
