@@ -1,6 +1,7 @@
 import { act, screen, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { MapInteraction } from "@/components/map/MapInteraction";
+import { MapNotes } from "@/components/map/MapNotes";
 import type { Point } from "@/logic/Geo";
 import { modeCursor, modeHint } from "@/logic/ModeHint";
 import { useAppStore } from "@/store/AppStore";
@@ -41,7 +42,10 @@ function setup(routes: Record<string, unknown> = {}) {
 	const fm = fakeMap();
 	fm.map.addLayer({ id: "maps" }); // (the pointer changes over the layers the map has)
 	return renderOnMap(
-		<MapInteraction />,
+		<>
+			<MapInteraction />
+			<MapNotes />
+		</>,
 		{ "POST /api/pick": nodeInfo, "GET /api/graph": graph, "PATCH /api/settings": (b: unknown) => b, ...routes },
 		fm,
 	);
