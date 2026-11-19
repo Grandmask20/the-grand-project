@@ -349,7 +349,14 @@ def test_the_replay_of_a_is_closed_by_opening_b(session, two, tmp_path):
 
 
 def test_a_fog_made_for_an_old_plan_is_not_kept(session, tmp_path, monkeypatch):
-    session.open_atlas(timed_atlas(tmp_path))
+    path = timed_atlas(tmp_path)
+    at = core.Atlas.load(path)
+    # already searched for hand badges: the open starts no search, whose late model rebuild would replan the replay
+    # and drop the fog this test checks is kept (it failed on CI)
+    at.lock_scanned = [f["name"] for f in at.frames]
+    at.save(path)
+    session.open_atlas(path)
+    assert not getattr(session, "_lock_job", False)  # no search started
     session.replay_open()
     real = replay_data.base64.b64encode
 

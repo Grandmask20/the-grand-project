@@ -121,7 +121,7 @@ class Atlas:
 
     _image_lock = threading.Lock()  # the viewer reads images while a worker places
 
-    def image(self, path: str) -> np.ndarray:
+    def image(self, path: str) -> np.ndarray | None:
         """Return a screenshot image, read through a small most-recently-used cache.
 
         IMAGE_CACHE decoded screenshots are kept (~6 MB each; a terrain check of one screenshot reads ~60
@@ -131,7 +131,8 @@ class Atlas:
             path: Screenshot file path.
 
         Returns:
-            BGR image as read by read_screenshot.
+            BGR image as read by read_screenshot, or None while it can't be read (not kept: a file put back is
+            read again, CodeRabbit).
         """
         with Atlas._image_lock:
             if path in self._images:
@@ -139,6 +140,8 @@ class Atlas:
                 self._images[path] = img  # most recently used last
                 return img
         img = _frame.read_screenshot(path)
+        if img is None:
+            return None
         with Atlas._image_lock:
             self._images[path] = img
             while len(self._images) > self.IMAGE_CACHE:

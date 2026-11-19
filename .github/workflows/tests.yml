@@ -4,22 +4,271 @@ on:
   push:
   pull_request:
 
+concurrency: # a newer push to the same branch / PR cancels the older run
+  group: tests-${{ github.ref }}
+  cancel-in-progress: true
+
+defaults:
+  run:
+    shell: bash
+
+env:
+  # Python 3.12+'s sys.monitoring: coverage at little cost (the classic tracer made the detection ~2x slower)
+  COVERAGE_CORE: sysmon
+
+# the tests run on Windows, macOS and Linux (platform bugs show only there); coverage is measured on Ubuntu only
+# (the same code runs everywhere: other OSes only add their few own branches, and tracing doubled the slow jobs).
+# The coverage job makes one report from the Python jobs and adds the page's (settings in pyproject.toml and
+# frontend/vitest.config.ts).
+
 jobs:
-  test:
+  # the tests that need no test data: every OS, the oldest and newest supported Python
+  offline:
     strategy:
       fail-fast: false
       matrix:
         os: [windows-latest, macos-latest, ubuntu-latest]
         python: ["3.11", "3.13"]
     runs-on: ${{ matrix.os }}
+    env:
+      COVER: ${{ matrix.os == 'ubuntu-latest' && matrix.python == '3.13' }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
           python-version: ${{ matrix.python }}
           cache: pip
-      - run: python -m pip install -r requirements.txt pytest
-      # pytest's defaults (pyproject.toml) leave out the slow test; the
-      # test-data tests skip themselves without the Git LFS screenshots
+      - run: python -m pip install -r requirements.txt pytest coverage
+      # pytest's defaults (pyproject.toml) leave out the slow test; the test-data tests skip themselves here
       - name: tests
-        run: python -m pytest
+        run: if [ "$COVER" = true ]; then python -m coverage run -m pytest; else python -m pytest; fi
+      - uses: actions/upload-artifact@v4
+        if: ${{ !cancelled() && env.COVER == 'true' }}
+        with:
+          name: coverage-offline
+          path: .coverage.*
+          include-hidden-files: true
+          if-no-files-found: ignore
+
+  # the test data (~500 MB in Git LFS) is downloaded once and cached; LFS bandwidth is limited, so the jobs
+  # below restore it from the cache instead of each downloading it
+  testdata:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: list the test data files
+        run: git lfs ls-files -l -I "atlas_test_data/**" | cut -d' ' -f1 | sort > .lfs-testdata-id
+      - uses: actions/cache@v4
+        id: cache
+        with:
+          path: .git/lfs/objects
+          key: lfs-testdata-${{ hashFiles('.lfs-testdata-id') }}
+          enableCrossOsArchive: true
+      - name: download the test data
+        if: steps.cache.outputs.cache-hit != 'true'
+        run: git lfs fetch --include="atlas_test_data/**" --exclude=""
+
+  # the tests on the real screenshots (pytest marker "data"): detection, placement, false merges, atlas folders.
+  # In two halves side by side (the false-merge test alone is about half the time), and the randomised tests with
+  # 3 runs each (new seeds every time: over many pushes they still try many cases; --runs N --seed S locally)
+  data:
+    needs: testdata
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, macos-latest, ubuntu-latest]
+        part:
+          - { name: false-merge, args: "tests/test_false_merge.py" }
+          - { name: the-rest, args: "--ignore=tests/test_false_merge.py" }
+    name: data (${{ matrix.os }}, ${{ matrix.part.name }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
+    env:
+      COVER: ${{ matrix.os == 'ubuntu-latest' }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: list the test data files
+        run: git lfs ls-files -l -I "atlas_test_data/**" | cut -d' ' -f1 | sort > .lfs-testdata-id
+      - uses: actions/cache/restore@v4
+        with:
+          path: .git/lfs/objects
+          key: lfs-testdata-${{ hashFiles('.lfs-testdata-id') }}
+          enableCrossOsArchive: true
+          fail-on-cache-miss: true
+      - name: put the test data in place
+        run: |
+          git lfs install --local
+          git lfs checkout atlas_test_data
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+          cache: pip
+      - run: python -m pip install -r requirements.txt pytest coverage
+      - name: tests
+        run: |
+          args='-m "data and not slow" --runs 3 --durations=15 ${{ matrix.part.args }}'
+          if [ "$COVER" = true ]; then eval python -m coverage run -m pytest $args
+          else eval python -m pytest $args; fi
+      - uses: actions/upload-artifact@v4
+        if: ${{ !cancelled() && env.COVER == 'true' }}
+        with:
+          name: coverage-data-${{ matrix.part.name }}
+          path: .coverage.*
+          include-hidden-files: true
+          if-no-files-found: ignore
+
+  # the real app in a browser (the Tk viewer test's successor): the built page against the app on a hand-made atlas,
+  # driven by Playwright, screenshots added while the page is used (made-up ones, and real ones from the test data:
+  # the detection's worker processes, the job queue and auto-add beside the page); the app runs under coverage, the
+  # page's screenshots are kept
+  e2e:
+    needs: testdata
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+      - name: list the test data files
+        run: git lfs ls-files -l -I "atlas_test_data/**" | cut -d' ' -f1 | sort > .lfs-testdata-id
+      - uses: actions/cache/restore@v4
+        with:
+          path: .git/lfs/objects
+          key: lfs-testdata-${{ hashFiles('.lfs-testdata-id') }}
+          enableCrossOsArchive: true
+          fail-on-cache-miss: true
+      - name: put the test data in place
+        run: |
+          git lfs install --local
+          git lfs checkout atlas_test_data
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+          cache: pip
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - run: python -m pip install -r requirements.txt coverage
+      - name: build the page
+        working-directory: frontend
+        run: |
+          npm ci --no-audit --no-fund
+          npm run build
+          npx playwright install --with-deps chromium
+      - name: browser tests
+        working-directory: frontend
+        env:
+          E2E_COVERAGE: "1"
+          PYTHON: python
+        run: npm run e2e
+      - uses: actions/upload-artifact@v4
+        if: ${{ !cancelled() }}
+        with:
+          name: coverage-e2e
+          path: .coverage.*
+          include-hidden-files: true
+          if-no-files-found: ignore
+      - name: keep the page's screenshots and the report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: e2e-screenshots
+          path: |
+            frontend/test-results
+            frontend/playwright-report
+          if-no-files-found: ignore
+
+  # the page (frontend/): Biome, the types, the tests under coverage (their summary goes to the coverage job), the build
+  page:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      # the committed lock file: every run builds with the same versions (CodeRabbit)
+      - run: npm ci --no-audit --no-fund
+      - name: biome
+        run: npm run lint
+      - name: types
+        run: npm run typecheck
+      - name: tests
+        run: npm run coverage
+      - uses: actions/upload-artifact@v4
+        if: ${{ !cancelled() }}
+        with:
+          name: page-coverage-report
+          path: frontend/coverage
+          if-no-files-found: ignore
+      - name: build
+        run: npm run build
+
+  # one coverage report from the Python jobs above: a table on the run's summary page with the page's below it, the
+  # HTML report as a download, and a comment on pull requests (Python: the total and the lines the PR changed)
+  coverage:
+    needs: [offline, data, e2e, page]
+    if: ${{ !cancelled() }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write # the comment action keeps the default branch's coverage for comparison
+      pull-requests: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+      - run: python -m pip install coverage
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: coverage-*
+          merge-multiple: true
+      - uses: actions/download-artifact@v4
+        continue-on-error: true # the page's tests failed before writing it: only the Python table
+        with:
+          name: page-coverage-report
+          path: page-coverage
+      - name: combine
+        run: |
+          python -m coverage combine
+          python -m coverage report
+          python -m coverage html
+          {
+            echo "## Python code coverage"
+            python -m coverage report --format=markdown
+            echo
+            echo "## Page code coverage"
+            echo
+            if [ -f page-coverage/coverage-summary.json ]; then
+              python - <<'PY'
+          import json
+          t = json.load(open("page-coverage/coverage-summary.json"))["total"]
+          print("| | Covered | |\n|---|---|---|")
+          for k in ("lines", "statements", "functions", "branches"):
+              print(f"| {k} | {t[k]['pct']}% | {t[k]['covered']} / {t[k]['total']} |")
+          PY
+            else
+              echo "(not available: the page's tests did not finish)"
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: coverage-report-html
+          path: htmlcov
+      - name: coverage comment
+        id: coverage_comment
+        uses: py-cov-action/python-coverage-comment-action@v3
+        with:
+          GITHUB_TOKEN: ${{ github.token }}
+      # pull requests from forks can't comment from here (read-only token): the comment is handed to
+      # coverage-comment.yml, which posts it
+      - uses: actions/upload-artifact@v4
+        if: steps.coverage_comment.outputs.COMMENT_FILE_WRITTEN == 'true'
+        with:
+          name: python-coverage-comment-action
+          path: python-coverage-comment-action.txt

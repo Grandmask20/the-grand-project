@@ -83,6 +83,16 @@ use them instead of module-level setup, and `tmp_path` instead of temporary fold
 compare `python -m grand_project.detect score` before and after. When piping test output on Windows set
 `PYTHONIOENCODING=utf-8` (some checks print non-ASCII).
 
+The browser tests (`frontend/e2e/`, Playwright: `make e2e`) run the real app on the hand-made atlas of
+`tests/e2e_atlas.py` and drive the built page: add one there for a flow that crosses the page and the app (the map,
+clicking it, dialogs that save). `Adding.spec.ts` adds made-up screenshots while the page is used (the detection's
+worker processes, the job queue, refusals while busy, auto-add) and `RealAdding.spec.ts` real ones from the test data
+(skipped without it): run them after changing how detection or adding runs in parallel. They keep the app's settings in `e2e-run/user_data` (`GRAND_PROJECT_USER_DATA`),
+never the player's. Coverage: `make coverage` (Python, settings in `pyproject.toml`) and `npm run coverage` (the
+page); CI runs the tests on Windows, macOS and Linux, measures coverage on the Ubuntu jobs, shows the Python and page tables
+on the `tests` run's page and comments the Python one on pull requests. A new
+module gets its own test file (one per module or class under test).
+
 ## Git workflow
 
 - `develop` is the default branch; `main` is protected and only updated from develop by `tools/make_release.py`
