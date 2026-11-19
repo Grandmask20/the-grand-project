@@ -8,8 +8,8 @@ import { iconSize, OWN_IMAGES } from "@/logic/MapStyle";
 
 /**
  * The map content icons' pictures. The icon layers are in the map's style from the start (MapStyle); a picture
- * MapLibre asks for is handed out blank at once (styleimagemissing), and the real one replaces it in place when it has
- * come in, so nothing is laid out again. Before, the layers were added once every picture had loaded, the look applied
+ * MapLibre asks for is handed out blank at once (styleimagemissing), and the real one replaces it when it has come in
+ * (the tiles using it are laid out again: an update in place left the ones on screen with the old picture). Before, the layers were added once every picture had loaded, the look applied
  * again after them, and the icons made to lay out anew whenever pictures arrived.
  */
 export function MapIcons({ map, geo, info }: { map: MapLibreMap; geo: Geo; info: MapInfo }) {
@@ -31,7 +31,12 @@ export function MapIcons({ map, geo, info }: { map: MapLibreMap; geo: Geo; info:
 				.loadImage(app.spriteUrl(name, style, art))
 				.then((r) => {
 					if (!live || !map.hasImage(name)) return;
-					map.updateImage(name, r.data);
+					// replaced, not updated in place: updateImage reached only tiles laid out after it, and the ones on
+					// screen kept the older picture, so the map showed the style picked before (user: "lagged behind by
+					// 1 step"; a size change, laying the icons out again, put it right). A removed and added picture
+					// has MapLibre lay out again the tiles that use it.
+					map.removeImage(name);
+					map.addImage(name, r.data);
 				})
 				.catch(() => undefined); // no picture: it stays blank
 		};
