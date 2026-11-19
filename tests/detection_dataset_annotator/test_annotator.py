@@ -3,14 +3,17 @@ optional classes, the review state, export, and screenshots stay untouched."""
 
 import base64
 import hashlib
+import io
 import json
 from pathlib import Path
 
 import cv2
 import numpy as np
 import pytest
+from PIL import Image
 
 from grand_project.detect import constants as detect_constants
+from grand_project.detect.icon_types import dataset_icon_types, icon_class
 from tools.detection_dataset_annotator import (
     DetectionOptions,
     apply_editor_boxes,
@@ -150,7 +153,33 @@ def test_label_names_follow_options_and_used_labels() -> None:
     assert label_names(state, named_icons=False, derived=False) == [*K.ANNOTATOR_CORE_LABELS, "icon_map_boss"]
     named = label_names(state, named_icons=True, derived=True)
     assert "icon" not in named
-    assert named[-3:] == ["path", "fortress_wall", "icon_map_boss"]
+    assert named[-1] == "icon_map_boss"
+
+
+def test_named_icons_list_every_icon_type() -> None:
+    """User: every map content icon can be labelled, whether or not the classical detector named one yet; the icon
+    types come in ICON_INFO order after the core labels, so an export numbers them the same every time."""
+    state = {"images": {"a": {"annotations": [{"label": "icon_unidentified"}, {"label": "icon_breachhive"}]}}}
+    icons = [icon_class(name) for name in dataset_icon_types()]
+    assert {"icon_breachhive", "icon_wisdomsteachings", "icon_arcanehordes", "icon_hideoutred"} <= set(icons)
+    core = [label for label in K.ANNOTATOR_CORE_LABELS if label != "icon"]
+    assert label_names(state, named_icons=True, derived=False) == [*core, *icons, "icon_unidentified"]
+    assert label_names({"images": {}}, named_icons=True, derived=False) == [*core, *icons]  # nothing labelled yet
+
+
+def test_label_palette_shows_icon_pictures_and_names() -> None:
+    """Each icon label carries its icon's picture and poe2db name (the editor shows them next to the label)."""
+    palette = {e["name"]: e for e in label_palette(["map_node", "city", "icon_breachhive", "icon_unidentified", "x"])}
+    breach = palette["icon_breachhive"]
+    assert breach["picture"].startswith("data:image/webp;base64,")
+    picture = Image.open(io.BytesIO(base64.b64decode(breach["picture"].split(",", 1)[1])))  # OpenCV drops alpha
+    assert picture.mode == "RGBA" and picture.size == (K.ANNOTATOR_LABEL_PICTURE_PX,) * 2
+    assert picture.getchannel("A").getextrema() == (0, 255)  # a disc on a transparent square
+    assert breach["title"] == "Breach Hive"
+    assert "breach hive" in breach["search"] and "icon_breachhive" in breach["search"]
+    assert palette["map_node"]["picture"]  # ANNOTATOR_LABEL_ART
+    assert palette["city"]["picture"] == palette["x"]["picture"] == palette["x"]["title"] == ""
+    assert palette["icon_unidentified"]["picture"] == ""  # no art and no stored picture: only its colour
 
 
 def test_named_icons_and_derived_classes_are_independent(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -237,3 +266,11 @@ def test_editor_never_changes_the_screenshot(tmp_path: Path) -> None:
     manifest = json.loads(result.manifest_path.read_text(encoding="utf-8"))
     assert manifest["format"] == K.ANNOTATOR_MANIFEST_FORMAT
     assert manifest["images"][0]["source_type"] == "annotator_reviewed"
+
+    # with named icons the export lists every icon type, used or not, in a fixed order (user)
+    state["settings"] = DetectionOptions(named_icons=True).as_settings()
+    item["annotations"][1]["label"] = "icon_breachhive"
+    named = export_dataset(state, tmp_path / "named")
+    labels = json.loads(named.manifest_path.read_text(encoding="utf-8"))["labels"]
+    core = [label for label in K.ANNOTATOR_CORE_LABELS if label != "icon"]
+    assert list(labels.values()) == [*core, *(icon_class(name) for name in dataset_icon_types())]

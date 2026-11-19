@@ -61,8 +61,9 @@ def _image_size(item: dict[str, Any], path: Path) -> tuple[int, int] | None:
 def export_dataset(state: dict[str, Any], output_dir: Path, *, reviewed_only: bool = True) -> ExportResult:
     """Export the (reviewed) annotations as COCO JSON and a project-native RF-DETR manifest.
 
-    Screenshots that no longer exist are left out. Labels are the core labels plus every label in use (derived
-    labels only when used), numbered in that order, so the core classes keep their ids.
+    Screenshots that no longer exist are left out. Labels are the core labels, with named icons every icon type
+    (``label_names``), then every other label in use (derived labels only when used), numbered in that order, so
+    the core classes and the icon types keep their ids from one export to the next.
     """
     output_dir.mkdir(parents=True, exist_ok=True)
     options = DetectionOptions.from_settings(state.get("settings", {}))

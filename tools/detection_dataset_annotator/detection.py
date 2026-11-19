@@ -7,7 +7,6 @@ exported boxes fit the file the training reads.
 
 from __future__ import annotations
 
-import re
 from pathlib import Path
 from typing import Any
 
@@ -16,6 +15,7 @@ import numpy as np
 
 from grand_project import core
 from grand_project.detect import constants as detect_constants
+from grand_project.detect.icon_types import icon_class
 
 from . import constants as K
 from .state import DetectionOptions
@@ -76,9 +76,7 @@ def _icon_label(icon: dict[str, Any], named_icons: bool) -> str:
     """The generic ``icon`` label, or a stable ``icon_<name>`` one."""
     if not named_icons:
         return "icon"
-    name = str(icon.get("name") or "unidentified").lower()
-    safe = re.sub(r"[^a-z0-9]+", "_", name).strip("_")
-    return f"icon_{safe or 'unknown'}"
+    return icon_class(str(icon.get("name") or "Unidentified"))
 
 
 def _wall_boxes(mask: np.ndarray) -> list[Box]:

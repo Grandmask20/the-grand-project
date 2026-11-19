@@ -17,6 +17,7 @@ from pathlib import Path
 from typing import Any
 
 from grand_project import paths
+from grand_project.detect.icon_types import dataset_icon_types, icon_class
 
 from . import constants as K
 
@@ -158,13 +159,17 @@ def merge_discovered_images(state: dict[str, Any], images: Iterable[Path]) -> tu
 
 
 def label_names(state: dict[str, Any], *, named_icons: bool, derived: bool) -> list[str]:
-    """The labels of a state: the core labels (and the derived ones), then every other label in use.
+    """The labels of a state: the core labels (and the derived ones), every icon type, then every other label in use.
 
-    With named icons the generic ``icon`` label is left out: icons are labelled ``icon_<name>`` instead.
+    With named icons the generic ``icon`` label is left out: icons are labelled ``icon_<name>`` instead, one label
+    per icon type (``dataset_icon_types``, in ``ICON_INFO`` order) whether or not a screenshot has one yet, so every
+    type can be labelled and an export numbers the classes the same way every time (user). Labels in use that are
+    not one of them (``icon_unidentified``, an old type, a custom label) follow.
     """
     labels = list(K.ANNOTATOR_ALL_LABELS if derived else K.ANNOTATOR_CORE_LABELS)
     if named_icons:
         labels.remove("icon")
+        labels.extend(icon_class(name) for name in dataset_icon_types())
     for image in state.get("images", {}).values():
         for annotation in image.get("annotations", []):
             label = str(annotation.get("label", ""))

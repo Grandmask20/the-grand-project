@@ -9,12 +9,19 @@ from __future__ import annotations
 import base64
 import colorsys
 import copy
+import functools
 import hashlib
+import io
 from collections.abc import Iterable
 from pathlib import Path
 from typing import Any
 
 import cv2
+from PIL import Image
+
+from grand_project import paths
+from grand_project.detect.constants import ICON_INFO
+from grand_project.detect.icon_types import file_picture, icon_picture, icon_type
 
 from . import constants as K
 from .detection import decode_image
@@ -46,17 +53,63 @@ def _hashed_color(label: str) -> str:
     return f"#{round(red * 255):02x}{round(green * 255):02x}{round(blue * 255):02x}"
 
 
+@functools.cache
+def label_picture(label: str) -> str:
+    """A WebP data URL of the picture shown next to a label in the editor, or "" for a label without one.
+
+    An ``icon_<type>`` label shows its icon type's picture (its poe2db art, else a stored on-screen picture), a core
+    label the one ``ANNOTATOR_LABEL_ART`` gives it.
+    """
+    size = K.ANNOTATOR_LABEL_PICTURE_PX
+    art = K.ANNOTATOR_LABEL_ART.get(label)
+    if art is None:
+        name = icon_type(label)
+        picture = icon_picture(name, size) if name else None
+    elif art in ICON_INFO:
+        picture = icon_picture(art, size)
+    else:
+        picture = file_picture(paths.ref(art), size)
+    if picture is None:
+        return ""
+    buffer = io.BytesIO()  # Pillow, not OpenCV: OpenCV's lossy WebP drops the transparency
+    Image.fromarray(cv2.cvtColor(picture, cv2.COLOR_BGRA2RGBA)).save(
+        buffer, "WEBP", quality=K.ANNOTATOR_LABEL_PICTURE_QUALITY, method=6
+    )
+    return "data:image/webp;base64," + base64.b64encode(buffer.getvalue()).decode("ascii")
+
+
+def label_text(label: str) -> tuple[str, str]:
+    """The poe2db name of an icon label ("" for other labels) and the words it can be found by in the editor.
+
+    Returns:
+        (title, search): e.g. ("Breach Hive", "icon_breachhive breach hive breach hive, complete all breach hives").
+    """
+    name = icon_type(label)
+    title, _colour, aliases = ICON_INFO[name] if name else ("", None, "")
+    return title, " ".join(part for part in (label, title, aliases) if part).lower()
+
+
 def label_palette(labels: Iterable[str]) -> list[dict[str, str]]:
-    """Give each editor label a colour and, for the first ten, a number hotkey."""
+    """Give each editor label a colour, its picture and poe2db name, and, for the first ten, a number hotkey."""
     fixed = {
         label: _css_color(color) for label, color in zip(K.ANNOTATOR_CORE_LABELS, K.ANNOTATOR_LABEL_COLORS, strict=True)
     }
     fixed.update({label: _css_color(color) for label, color in K.ANNOTATOR_EXTRA_LABEL_COLORS.items()})
     hotkeys = K.ANNOTATOR_LABEL_HOTKEYS
-    return [
-        {"name": label, "color": fixed.get(label) or _hashed_color(label), "hotkey": hotkeys[index : index + 1]}
-        for index, label in enumerate(labels)
-    ]
+    palette = []
+    for index, label in enumerate(labels):
+        title, search = label_text(label)
+        palette.append(
+            {
+                "name": label,
+                "color": fixed.get(label) or _hashed_color(label),
+                "hotkey": hotkeys[index : index + 1],
+                "picture": label_picture(label),
+                "title": title,
+                "search": search,
+            }
+        )
+    return palette
 
 
 def ensure_annotation_ids(item: dict[str, Any]) -> bool:

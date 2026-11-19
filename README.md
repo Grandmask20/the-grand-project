@@ -162,7 +162,8 @@ Run these from this folder:
 - `python -m grand_project.builder add --atlas X.json --image FOLDER` builds an atlas without the window.
 - `python -m tools.atlas_marks` checks the detector against all hand-drawn mark layers and true paths.
 - `python -m grand_project.detect train` also retrains the City check (a city's map node always stands on a brass barrel) from screenshots plus a `cities_truth.json` listing each city's map node (`CITY_TRUTH_SETS`); it prints a fair score first and saves `references/city_barrel.npz`. `python -m grand_project.detect train_cities [FOLDER ...]` retrains only that.
-- `python -m tools.import_poe2db_art` adds poe2db's Map Content art (`references/poe2db_icons/`) as icon pictures for types with no on-screen example yet, so rare icons can still be named.
+- `python -m tools.import_poe2db_art` adds poe2db's Map Content art (`references/poe2db_icons/`) as icon pictures for the types the detector cannot name yet (no on-screen picture and none in the badges model), so rare icons can still be named. Every icon type is listed in `ICON_INFO` (`grand_project/detect/constants.py`), with its art named `full__<Type>.webp` / `inner__<Type>.webp`.
+- `python -m tools.split_icon_type OLD NEW ...` splits an icon type into several (e.g. `ArcaneOrProsperous` into `ArcaneHordes` and `ProsperousPopulous`): every stored picture, badges-model picture and hand label of OLD takes the new type whose art it matches best; `--dry-run` writes only the review sheet.
 - `python -m tools.make_hud_mask SCREENSHOT` rebuilds `references/hud_mask_full.png` from a 1920×1080 atlas screenshot taken over black unexplored fog (everything not black is interface).
 - Tests: `pytest` (or `make test`, `tests/Run all tests.bat`, `tests/run_all_tests.sh`); one file with `pytest tests/test_atlas_builder.py`. `pytest -m gui` adds the viewer window test, `pytest -m slow` the long one; see `tests/conftest.py`. `test_atlas_viewer` opens a window for about 20 s.
 - Lint: `make lint` (ruff check + format); CI runs the same on every push and pull request.
@@ -173,7 +174,7 @@ Run these from this folder:
 |---|---|
 | `paths.py` | every folder location (atlases, references, user data, test data) |
 | `core/` | screenshots and their geometry, placing a screenshot (`register.py`), terrain matching, the atlas file (`atlas.py`), joining groups of waiting screenshots (`islands.py`), the clean map (`seams.py`) |
-| `detect/` | the screenshot detector: maps, badges, landmarks, path dashes, fortress walls, the stored models, training |
+| `detect/` | the screenshot detector: maps, badges, landmarks, path dashes, fortress walls, the stored models, training; the icon types (`ICON_INFO`, `icon_types.py`: their dataset classes and pictures) |
 | `finalize/` | the atlas-wide check after screenshots are added: path evidence, map rules, settlements, local re-checks |
 | `builder.py` | detecting and adding screenshots (also a command line) |
 | `cities.py`, `towers.py` | city types and biomes; hand-made tower / stronghold rules |

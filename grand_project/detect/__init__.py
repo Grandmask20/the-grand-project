@@ -63,6 +63,9 @@ from .constants import (  # noqa: F401
     HALL_ORANGE,
     HERE,
     HIDDEN_SNAP,
+    ICON_INFO,
+    ICON_LEGACY,
+    ICON_NOT_A_CLASS,
     MAP,
     MAP_MERGE,
     MAP_MIN,
@@ -142,6 +145,13 @@ from .constants import (  # noqa: F401
     WALL_SCALES,
     WALL_STEP,
     R,
+)
+from .icon_types import (  # noqa: F401
+    dataset_icon_types,
+    file_picture,
+    icon_class,
+    icon_picture,
+    icon_type,
 )
 from .landmarks import (  # noqa: F401
     _TP,

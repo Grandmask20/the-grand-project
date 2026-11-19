@@ -50,6 +50,7 @@ const SHORTCUTS = [
   ["Alt+click", "cycle through boxes stacked under the pointer"],
   ["Drag box / handle", "move / resize"],
   ["1 … 9, 0", "label the selected boxes, or pick the label for new boxes"],
+  ["/", "find a label by its name, icon name or other names (Enter: use the first one, Esc: clear)"],
   ["Del, Backspace", "delete selected"],
   ["Ctrl+D", "duplicate selected"],
   ["Ctrl+A", "select all"],
@@ -123,6 +124,8 @@ class Annotator {
     this.currentLabel = null;
     this.data = null;
     this.labels = [];
+    this.labelByName = {};
+    this.labelFilter = ""; // words typed in the label finder
     this.colors = {};
     this.listeners = [];
     this.build();
@@ -142,6 +145,7 @@ class Annotator {
     const first = !this.data || this.data.image_key !== data.image_key || this.data.revision !== data.revision;
     this.data = data;
     this.labels = data.labels ?? [];
+    this.labelByName = Object.fromEntries(this.labels.map((label) => [label.name, label]));
     this.colors = Object.fromEntries(this.labels.map((label) => [label.name, label.color]));
     if (!this.currentLabel || !this.colors[this.currentLabel]) {
       this.currentLabel = this.labels[0]?.name ?? "";
@@ -275,6 +279,15 @@ class Annotator {
     this.statusEl.setAttribute("aria-live", "polite");
 
     el("div", "ann-heading", side).textContent = "Labels";
+    this.filterEl = el("input", "ann-filter", side);
+    this.filterEl.type = "search";
+    this.filterEl.placeholder = "Find a label (/)";
+    this.filterEl.setAttribute("aria-label", "Find a label");
+    this.filterEl.addEventListener("input", () => {
+      this.labelFilter = this.filterEl.value.trim().toLowerCase();
+      this.renderLegend();
+    });
+    this.filterEl.addEventListener("keydown", (event) => this.filterKey(event));
     this.legendEl = el("div", "ann-legend", side);
 
     el("div", "ann-heading", side).textContent = "Selection";
@@ -757,12 +770,43 @@ class Annotator {
       case "?":
         this.toggleHelp();
         return true;
+      case "/":
+        this.filterEl.focus();
+        this.filterEl.select();
+        return true;
       default: {
         const label = this.labels.find((item) => item.hotkey && item.hotkey === key);
         if (label) this.useLabel(label.name);
         return Boolean(label);
       }
     }
+  }
+
+  filterKey(event) {
+    // In the label finder: Enter uses the first label it shows and gives the keys back to the editor; Esc clears it.
+    if (event.key === "Enter") {
+      const [first] = this.filteredLabels();
+      if (first) this.useLabel(first.name);
+      this.viewport.focus();
+    } else if (event.key === "Escape") {
+      this.filterEl.value = "";
+      this.labelFilter = "";
+      this.renderLegend();
+      this.viewport.focus();
+    } else {
+      return;
+    }
+    event.preventDefault();
+    event.stopPropagation();
+  }
+
+  filteredLabels() {
+    // Every typed word must appear in the label's name, its icon's poe2db name or its other names (label.search).
+    const words = this.labelFilter.split(/\s+/).filter(Boolean);
+    return this.labels.filter((label) => {
+      const text = label.search || label.name.toLowerCase();
+      return words.every((word) => text.includes(word));
+    });
   }
 
   escape() {
@@ -953,7 +997,9 @@ class Annotator {
       node.style.setProperty("--c", this.colors[box.label] ?? "#ffffff");
       node.classList.toggle("selected", this.selected.has(box.id));
       node.classList.toggle("hover", box.id === this.hoverId);
-      el("span", "ann-chip", node).textContent = box.label;
+      const chip = el("span", "ann-chip", node);
+      if (this.labelByName[box.label]?.picture) this.picture(chip, this.labelByName[box.label], "ann-chip-pic");
+      chip.append(box.label);
       for (const handle of HANDLES) el("span", `ann-handle ${handle}`, node);
       this.updateBoxNode(box, node);
     }
@@ -981,21 +1027,43 @@ class Annotator {
     this.renderInspector();
   }
 
+  picture(parent, label, className) {
+    // The label's picture (an icon's art), or an empty slot of the same size so the names line up.
+    if (!label?.picture) return el("span", className, parent);
+    const img = el("img", className, parent);
+    img.src = label.picture;
+    img.alt = "";
+    img.draggable = false;
+    return img;
+  }
+
+  labelText(parent, name, label) {
+    // The label's name, with its icon's poe2db name under it.
+    const text = el("span", "ann-text", parent);
+    el("span", "ann-name", text).textContent = name;
+    if (label?.title) el("span", "ann-title", text).textContent = label.title;
+    return text;
+  }
+
   renderLegend() {
     const counts = {};
     for (const box of this.boxes) counts[box.label] = (counts[box.label] ?? 0) + 1;
     this.legendEl.replaceChildren();
-    for (const label of this.labels) {
+    const shown = this.filteredLabels();
+    for (const label of shown) {
       const row = el("button", "ann-label", this.legendEl);
       row.type = "button";
-      row.title = this.selected.size ? `Label the selected boxes ${label.name}` : `Draw ${label.name} boxes`;
+      const what = label.title ? `${label.name} (${label.title})` : label.name;
+      row.title = this.selected.size ? `Label the selected boxes ${what}` : `Draw ${what} boxes`;
       row.setAttribute("aria-pressed", String(label.name === this.currentLabel));
       el("span", "ann-key", row).textContent = label.hotkey || "·";
       el("span", "ann-swatch", row).style.background = label.color;
-      el("span", "ann-name", row).textContent = label.name;
+      this.picture(row, label, "ann-pic");
+      this.labelText(row, label.name, label);
       el("span", "ann-count", row).textContent = String(counts[label.name] ?? 0);
       row.addEventListener("click", () => this.useLabel(label.name));
     }
+    if (!shown.length) el("p", "ann-muted", this.legendEl).textContent = "No label matches.";
   }
 
   renderStatus() {
@@ -1022,12 +1090,16 @@ class Annotator {
       return;
     }
     const [box] = boxes;
+    const current = el("div", "ann-row ann-current", panel);
+    this.picture(current, this.labelByName[box.label], "ann-pic-large");
+    this.labelText(current, box.label, this.labelByName[box.label]);
     const select = el("select", "ann-select", panel);
     select.setAttribute("aria-label", "Label");
     for (const label of this.labels) {
       const option = el("option", "", select);
       option.value = label.name;
-      option.textContent = label.hotkey ? `${label.hotkey}  ${label.name}` : label.name;
+      const name = label.title ? `${label.name} — ${label.title}` : label.name;
+      option.textContent = label.hotkey ? `${label.hotkey}  ${name}` : name;
     }
     if (!this.colors[box.label]) {
       const option = el("option", "", select);

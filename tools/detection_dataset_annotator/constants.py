@@ -131,6 +131,24 @@ ANNOTATOR_HASHED_SATURATION = 0.75
 ANNOTATOR_LABEL_HOTKEYS = "1234567890"
 """Number keys that pick a label in the editor, assigned in label-palette order (core, derived, then custom)."""
 
+ANNOTATOR_LABEL_ART = {
+    "map_node": "map_node_icon.webp",
+    "tower": "LostTower",
+    "deadly_boss_map": "MapBossSpecial",
+    "locked_stronghold": "lock_icon.png",
+}
+"""Pictures shown next to core labels in the editor: an icon type (its picture, as for ``icon_<type>`` labels) or a
+file in references/. Icon labels show their type's picture (``icon_types.icon_picture``: its poe2db art, else a stored
+on-screen picture); the other labels show only their colour."""
+
+ANNOTATOR_LABEL_PICTURE_PX = 40
+"""Side of the label pictures sent to the editor, px: sharp at the 34 px the inspector shows them on a 1x screen and
+the 20 px of the label list on a 2x one."""
+
+ANNOTATOR_LABEL_PICTURE_QUALITY = 85
+"""WebP quality of the label pictures. They travel with every editor update: as PNG the 90 pictures of a named-icon
+palette took 555 KB, as WebP (transparency kept) about 110 KB."""
+
 # ---- box editor ------------------------------------------------------------------------------------------------
 
 ANNOTATOR_EDITOR_JPEG_QUALITY = 92

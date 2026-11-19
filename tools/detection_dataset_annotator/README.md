@@ -33,6 +33,7 @@ in the side panel says when they are saved.
 | Alt+click | cycle through boxes stacked under the pointer |
 | Drag a box / a handle | move / resize |
 | `1` … `9`, `0` | label the selected boxes, or pick the label for new boxes (numbers shown in the side panel) |
+| `/` | find a label: type words of its name, its icon's poe2db name or other names; `Enter` uses the first match, `Esc` clears |
 | `Del`, `Backspace` | delete selected |
 | `Ctrl+D` / `Ctrl+A` | duplicate selected / select all |
 | Arrows (`Shift` for 10 px) | move selected by 1 px |
@@ -55,6 +56,12 @@ in the side panel says when they are saved.
 Shortcuts work after a click in the editor and stop after a click elsewhere on the page (for example in the sidebar).
 The side panel also has the label list with counts, and the selected box's label and X/Y/W/H in source pixels.
 
+Each label shows its picture next to its name: an icon label (`icon_breachhive`) its icon's art from poe2db
+(`references/poe2db_icons`, else a stored on-screen picture of it) and its poe2db name ("Breach Hive"); the map node,
+tower, deadly-boss map and locked-stronghold labels a picture of what they mark (`ANNOTATOR_LABEL_ART`). The box
+chips and the selected box's panel show the same picture, so an icon on the screenshot can be compared with it. The
+finder above the list (`/`) narrows it down; clicking a label (or `Enter` in the finder) labels the selected boxes.
+
 ## Detection and export
 
 The app writes `review_state.json` in the output folder (default `runs/detection-dataset`) while work is in
@@ -63,7 +70,7 @@ progress. Exporting writes:
 - `annotations.json`: COCO object-detection JSON with absolute `file_name` paths.
 - `manifest.json`: the project-native manifest accepted by `make prepare_rf_detr_data` through
   `RF_DETR_ANNOTATOR_MANIFEST=...`.
-- `labels.json`: stable numeric IDs and labels.
+- `labels.json`: the numeric class ids and their labels (with named icons: the same for every export).
 
 Only reviewed screenshots are exported by default. The classical detector provides map nodes, icons, towers, cities,
 halls, deadly-boss maps, and Breach strongholds. City subtype is not a separate detection class.
@@ -87,7 +94,13 @@ detected before these steps have to be rerun to get the extra boxes. The thresho
 `ANNOTATOR_SPOT_MIN` and `ANNOTATOR_HIDDEN_...` in `constants.py`.
 
 Icons are one `icon` class by default; “Name icons by type” labels them with classes such as `icon_mapboss`. This
-changes labels, not icon finding, so processed screenshots must be rerun to apply it.
+changes labels, not icon finding, so processed screenshots must be rerun to apply it. With it, every icon type the
+program knows (`ICON_INFO` in `grand_project/detect/constants.py`: every poe2db Map Content / Map Legend icon, plus
+the Expedition ship markers) is a label, whether or not the classical detector named one yet, and the export lists
+them all in that order (core labels first, then the icon types, then any other label in use such as
+`icon_unidentified`), so the class ids stay the same from one export to the next. Icons the detector could not name
+are `icon_unidentified`: give them their type before exporting. The classical detector can name every type: those
+without an on-screen picture yet are named by their poe2db art (`python -m tools.import_poe2db_art`).
 
 Optional derived labels have independent toggles: paths (including their dashes) are grouped as `path`, and fortress
 walls use `fortress_wall`. They are optional because production inference currently derives them with the classical

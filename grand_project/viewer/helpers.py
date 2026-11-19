@@ -9,7 +9,6 @@ import numpy as np
 from PIL import Image
 
 from grand_project import logs as atlas_log
-from grand_project import paths as rc_paths
 
 from .constants import ICON_INFO, ICON_ROW_DY, ICON_ROW_STEP, IS_MAC, LABEL_GRID_PX
 
@@ -262,8 +261,8 @@ def icon_label(ic: dict) -> str:
 def icon_thumb(raw: str, size: int = 22):
     """Small RGBA picture of an icon type, cached per type and size.
 
-    The game's own icon from atlas_icons.zip when there is one, otherwise a taught reference crop (icon database)
-    cut to a circle, otherwise a dot in the type's colour.
+    The type's art (poe2db, references/poe2db_icons) when there is some, otherwise a taught reference crop (icon
+    database) cut to a circle (both: detect.icon_types.icon_picture), otherwise a dot in the type's colour.
 
     Args:
         raw: The icon's raw (game) name, e.g. "LostTower".
@@ -277,30 +276,13 @@ def icon_thumb(raw: str, size: int = 22):
         return _THUMBS[key]
     img = None
     try:
-        import io
-        import zipfile
+        from grand_project.detect.icon_types import icon_picture
 
-        with zipfile.ZipFile(rc_paths.ref("atlas_icons.zip")) as z:
-            want = {f"AtlasIconContent{raw}.webp", f"{raw}.webp"}
-            name = next((n for n in z.namelist() if n.split("/")[-1] in want), None)
-            if name:
-                im = Image.open(io.BytesIO(z.read(name))).convert("RGBA")
-                bbox = im.getchannel("A").point(lambda a: 255 if a > 120 else 0).getbbox()
-                img = im.crop(bbox) if bbox else im
+        pic = icon_picture(raw, size)
+        if pic is not None:
+            img = Image.fromarray(cv2.cvtColor(pic, cv2.COLOR_BGRA2RGBA), "RGBA")
     except Exception:
         img = None
-    if img is None:
-        from grand_project import icon_refs as atlas_icon_refs
-
-        refs = atlas_icon_refs.load(raw)[:1]
-        if refs:
-            c = refs[0][1]
-            if c is not None:
-                c = cv2.cvtColor(c, cv2.COLOR_BGR2RGB)
-                hh, ww = c.shape[:2]
-                yy, xx = np.mgrid[:hh, :ww]
-                alpha = (np.hypot(xx - ww / 2 + 0.5, yy - hh / 2 + 0.5) <= min(hh, ww) / 2 - 1).astype(np.uint8) * 255
-                img = Image.fromarray(np.dstack([c, alpha]), "RGBA")
     if img is None:  # no picture: a dot in the type's colour
         b, g, r = icon_col(raw)
         img = Image.new("RGBA", (size, size), (0, 0, 0, 0))

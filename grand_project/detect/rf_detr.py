@@ -11,7 +11,6 @@ from __future__ import annotations
 
 import json
 import random
-import re
 from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any
@@ -35,6 +34,7 @@ from .constants import (
     RF_DETR_TOWER_WIDTH,
     RF_DETR_WALL_MIN_AREA,
 )
+from .icon_types import icon_class, slug  # noqa: F401  (slug: re-exported, see __all__)
 from .paths import path_dashes, trace_paths
 
 
@@ -50,12 +50,6 @@ class Record:
     width: int
     height: int
     annotations: tuple[dict[str, Any], ...]
-
-
-def slug(value: str) -> str:
-    """Make a stable category suffix from a stored icon name."""
-    value = re.sub(r"[^a-z0-9]+", "_", value.lower()).strip("_")
-    return value or "unknown"
 
 
 def truth_sources(data_root: Path) -> list[tuple[Path, Path]]:
@@ -176,7 +170,7 @@ def _allowed(item: dict[str, Any], include_soft: bool, *, exclude_offcenter: boo
 
 def _icon_category(name: str, granularity: str) -> str:
     """Return the RF-DETR class for a named icon."""
-    return "icon" if granularity == "all" else f"icon_{slug(name)}"
+    return "icon" if granularity == "all" else icon_class(name)
 
 
 def _landmark_category(kind: str) -> str | None:

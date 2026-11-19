@@ -28,6 +28,7 @@ from .constants import (
     RF_DETR_USE_ENV,
     WALL_CROSS,
 )
+from .icon_types import icon_type
 from .landmarks import expedition_rules, ship_markers
 from .paths import path_dashes as classical_path_dashes
 from .paths import trace_paths
@@ -181,9 +182,10 @@ def _icon_name(label: str, img: np.ndarray, x: float, y: float) -> str:
             return name
         except Exception:
             return "Unidentified"
+    known = icon_type(label)  # every ICON_INFO type, spelt as the program spells it
+    if known:
+        return known
     suffix = label.removeprefix("icon_")
-    if suffix == "expeditionship":
-        return "ExpeditionShip"
     try:
         from grand_project import icon_refs
 

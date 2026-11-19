@@ -235,8 +235,8 @@ def _sidebar() -> Settings:
             named_icons=st.checkbox(
                 "Name icons by type",
                 value=False,
-                help="Labels icons such as `icon_mapboss`. Changes labels only, not whether icons are found. "
-                "Rerun processed screenshots to apply it.",
+                help="Labels icons such as `icon_mapboss`, and lists every icon type (with its picture) as a label. "
+                "Changes labels only, not whether icons are found. Rerun processed screenshots to apply it.",
             ),
         )
         max_workers = st.number_input(

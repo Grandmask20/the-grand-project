@@ -4,6 +4,7 @@ import json
 import random
 from pathlib import Path
 
+import numpy as np
 from PIL import Image
 
 from grand_project.detect import constants as K
@@ -16,6 +17,7 @@ from grand_project.detect.rf_detr import (
     slug,
     split_records,
 )
+from grand_project.detect.rf_detr_model import _icon_name
 
 
 def _record(index: int, group: str = "truth") -> Record:
@@ -30,6 +32,13 @@ def test_box_is_clipped_to_the_source_image() -> None:
 def test_category_slug_is_stable_and_safe() -> None:
     assert slug("Map Boss Special") == "map_boss_special"
     assert slug("!!!") == "unknown"
+
+
+def test_named_icon_classes_come_back_as_the_program_spells_them() -> None:
+    """Issue: "icon_abyssoverrun" came back as "Abyssoverrun" (not a type the viewer and the atlas check know)."""
+    image = np.zeros((1080, 1920, 3), np.uint8)
+    for name in ("AbyssOverrun", "BreachHive", "WisdomsTeachings", "LostTower", "ExpeditionShip", "ArcaneHordes"):
+        assert _icon_name(f"icon_{slug(name)}", image, 960, 540) == name
 
 
 def test_annotator_manifest_loads_source_paths_and_labels(tmp_path: Path) -> None:
