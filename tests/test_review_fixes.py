@@ -459,9 +459,15 @@ def test_a_model_failing_after_a_new_map_image_is_the_models_failure(session, mo
         raise RuntimeError("bad model")
 
     monkeypatch.setattr(sm, "view_model", broken)
+    published = []
+    real_publish = session.events.publish
+    monkeypatch.setattr(
+        session.events, "publish", lambda kind, data=None: (published.append(kind), real_publish(kind, data))
+    )
     session.load_terrain(background=False)  # shown, then the model rebuilt for its biomes fails
     parts = session.parts.payload()["parts"]
     assert parts["map_image"]["state"] == "ready" and parts["model"]["state"] == "failed"  # (both said map image)
+    assert "terrain" in published  # the page learns of the new image all the same (it kept the old one)
 
 
 def test_the_timelapse_replans_in_the_models_locked_step(session, monkeypatch):

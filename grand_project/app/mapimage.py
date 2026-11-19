@@ -266,9 +266,13 @@ class MapImageMixin:
             threading.Thread(target=write, daemon=True).start()
         elif self.path and not self.thumb_exists(self.path):
             threading.Thread(target=self.write_thumb, args=(self.path, canvas), daemon=True).start()
-        if cities and self.V.get("nodes"):
-            self.rebuild_model()  # the biomes follow the ground now
-        self.events.publish("terrain", self.terrain_version)
+        try:
+            if cities and self.V.get("nodes"):
+                self.rebuild_model()  # the biomes follow the ground now
+        finally:
+            # the image is in whatever the model does after it: told to the page also when the rebuild fails (the
+            # page kept the old image until something else refreshed its state, CodeRabbit)
+            self.events.publish("terrain", self.terrain_version)
         return True
 
     def _labels_key(self) -> str:
