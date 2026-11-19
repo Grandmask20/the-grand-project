@@ -50,12 +50,13 @@ export function pageChanges(s: AppStoreState, before: AppStoreState): string[] {
  * listed"). Sent at once, so the lines keep their order with the app's own (a biome drawn after its selection). */
 export function usePageLog() {
 	const app = useAppClient();
-	useEffect(
-		() =>
-			useAppStore.subscribe((s, before) => {
-				const lines = pageChanges(s, before);
-				if (lines.length) app.log(lines).catch(() => {}); // (a log line never bothers you with an error)
-			}),
-		[app],
-	);
+	useEffect(() => {
+		// one request after another: sent side by side, two could be logged the wrong way round
+		let queue: Promise<unknown> = Promise.resolve();
+		return useAppStore.subscribe((s, before) => {
+			const lines = pageChanges(s, before);
+			if (!lines.length) return;
+			queue = queue.then(() => app.log(lines)).catch(() => {}); // (a log line never bothers you with an error)
+		});
+	}, [app]);
 }

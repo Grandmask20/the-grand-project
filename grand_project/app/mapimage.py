@@ -184,7 +184,7 @@ class MapImageMixin:
         except Exception:
             LOG.debug("map image cache not usable, rebuilding", exc_info=True)
         atlas, scope = opened.atlas, opened.scope  # (the record taken in the claim above)
-        self.events.set_progress("building the map image (first time for this atlas)…")
+        self.events.set_progress("building the map image (first time for this atlas)…", scope)
 
         def failed(e: Exception) -> None:
             """Report the map image as failed (its log line always; the part only for the build still current: an
@@ -494,7 +494,7 @@ class MapImageMixin:
             """Pass the process's progress lines on, then show the clean map (background thread)."""
             for line in proc.stdout:
                 if line.strip() and line.strip() != "done":
-                    self.events.set_progress(line.strip())
+                    self.events.set_progress(line.strip(), scope)
             proc.wait()
             try:
                 if proc.returncode == 0 and out.exists() and self.owns(gen) and not self._seams_stopped:

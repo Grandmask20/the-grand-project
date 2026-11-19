@@ -421,8 +421,12 @@ class Handler(BaseHTTPRequestHandler):
     @route("POST", "/api/log")
     def post_log(self, q) -> None:
         """What was done on the page (tabs, modes, selections, dialogs, errors shown): into the log file."""
-        for line in self._body().get("lines", [])[:50]:
-            self.S.events.log(str(line)[:500])  # (the Log tab and the log file: user)
+        lines = self._body().get("lines", [])
+        if not isinstance(lines, list):
+            raise ValueError("lines must be a list")
+        for line in lines[:50]:
+            # one line each (a line break in a name made two), not too long
+            self.S.events.log(" ".join(str(line).split())[:500])  # (the Log tab and the log file: user)
         self._json({"ok": True})
 
     @route("POST", "/api/quit")
@@ -813,7 +817,10 @@ class Handler(BaseHTTPRequestHandler):
     @route("POST", "/api/groups/delete")
     def post_delete_groups(self, q) -> None:
         """Delete empty groups."""
-        self._json({"deleted": self.S.delete_groups(list(self._body().get("names", [])))})
+        names = self._body().get("names", [])
+        if not isinstance(names, list):
+            raise ValueError("names must be a list")
+        self._json({"deleted": self.S.delete_groups([n for n in names if isinstance(n, str)])})
 
     @route("POST", "/api/groups/toggle")
     def post_toggle_group(self, q) -> None:

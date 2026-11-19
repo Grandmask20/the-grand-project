@@ -59,3 +59,12 @@ def test_progress_steps_reach_the_log_each_new_step_and_every_tenth():
     assert lines[0] == "placing"  # (user: "it should list ongoing processes")
     seams = [line for line in lines if line.startswith("fixing seams")]
     assert seams[0] == "fixing seams 1 / 500" and seams[-1] == "fixing seams 500 / 500" and len(seams) == 11
+
+
+def test_two_jobs_reporting_at_once_log_each_step_once():
+    ev = Events()
+    for i in range(1, 11):  # adding and Fix seams interleaved
+        ev.set_progress(f"adding {i} / 10")
+        ev.set_progress("fixing seams: building the clean map...")
+    lines = [line.split("  ", 1)[1] for line in ev.log_lines]
+    assert lines.count("fixing seams: building the clean map...") == 1 and len(lines) == 11

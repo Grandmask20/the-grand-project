@@ -153,13 +153,15 @@ def biome_polygons(nodes: list[dict], potential: dict) -> list[tuple[str, list]]
         mine[rr[own_cell], cc[own_cell]] = 1.0
         sm = max(1, round(WEBMAP_BIOME_SMOOTH / C))
         mask = (cv2.GaussianBlur(mine, (2 * sm + 1,) * 2, 0) > 0.5).astype(np.uint8) * 255
-        own, own_tree = set(idx), cKDTree(pts)
+        own = set(idx)
         lo, hi = np.array([ox, oy]), np.array([ox + w * C, oy + h * C])
-        for j in tree.query_ball_point((lo + hi) / 2, float(np.hypot(*(hi - lo))) / 2 + WEBMAP_BIOME_KEEP):
-            i = int(alive[j])
-            if i not in own:
-                x, y = nodes[i]["x"], nodes[i]["y"]
-                r = min(WEBMAP_BIOME_KEEP, own_tree.query([x, y])[0] / 2)
+        near_box = tree.query_ball_point((lo + hi) / 2, float(np.hypot(*(hi - lo))) / 2 + WEBMAP_BIOME_KEEP)
+        others = [int(alive[j]) for j in near_box if int(alive[j]) not in own]
+        if others:
+            xy = np.array([[nodes[i]["x"], nodes[i]["y"]] for i in others], float)
+            gap, _ = cKDTree(pts).query(xy)  # (all at once: one lookup per map was most of the time)
+            for (x, y), d in zip(xy, gap, strict=True):
+                r = min(WEBMAP_BIOME_KEEP, d / 2)
                 cv2.circle(mask, (round((x - ox) / C), round((y - oy) / C)), max(1, round(r / C)), 0, -1, cv2.LINE_AA)
         mask = (mask > 127).astype(np.uint8) * 255
         polys = _trace(mask, lambda c, r, ox=ox, oy=oy: (ox + c * C, oy + r * C), 1.0)

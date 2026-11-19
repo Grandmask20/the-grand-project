@@ -351,3 +351,12 @@ def test_the_log_skips_tiles_and_takes_the_page_s_lines(app, caplog):
     assert "/api/tiles/" not in text and "GET /api/state" in text  # thousands of tiles a session hid the rest
     assert "Opened the Bookmarks tab" in text and "Add bookmark started" in text and "POST /api/log" not in text
     assert "click at" in text and "node 5" in text
+
+
+def test_the_page_s_log_lines_and_group_names_are_checked(app, caplog):
+    srv, _pts = app
+    assert call(srv, "/api/log", "POST", {"lines": "not a list"})[0] == 400
+    assert call(srv, "/api/groups/delete", "POST", {"names": "Farm"})[0] == 400
+    with caplog.at_level(logging.INFO, logger=S.LOG.name):
+        call(srv, "/api/log", "POST", {"lines": ["two\nlines"]})
+    assert "two lines" in caplog.text

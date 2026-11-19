@@ -577,7 +577,8 @@ def settings_change_text(changes: dict, hidden_before: set) -> str:
                         f"your position map #{vv['node']}" if isinstance(vv, dict) else "your position forgotten"
                     )
                     continue
-                val = f"{round(100 * vv)}%" if kk == "path_freq" else _say(vv)
+                share = kk == "path_freq" and isinstance(vv, (int, float)) and not isinstance(vv, bool)
+                val = f"{round(100 * vv)}%" if share else _say(vv)
                 parts.append(f"{_WORDS.get(kk, kk.replace('_', ' '))} {val}")
         else:
             parts.append(f"{_WORDS.get(k, k)} {_say(v)}")
