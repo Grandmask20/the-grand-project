@@ -1,16 +1,14 @@
-import type { CustomLayerInterface, Map as MapLibreMap } from "maplibre-gl";
-import { useCallback, useEffect, useState } from "react";
-import type { Meta } from "@/domain/app/Meta";
-import type { MapInfo } from "@/domain/map/MapInfo";
+import { useCallback, useEffect } from "react";
 import { scenePick, selection3d } from "@/domain/map/Scene3D";
 import { useAppClient } from "@/hooks/app/UseAppClient";
 import { useSettings } from "@/hooks/app/UseSettings";
+import { useCustomLayer } from "@/hooks/map/UseCustomLayer";
+import { useMapLibre } from "@/hooks/map/UseMapLibre";
+import { useMapView } from "@/hooks/map/UseMapView";
 import { useScene3D } from "@/hooks/map/UseScene3D";
 import { styleColour } from "@/logic/Colours";
-import type { Geo } from "@/logic/Geo";
 import { GroundFade } from "@/logic/GroundFade";
 import { IconLayer3D } from "@/logic/IconLayer3D";
-import { LAYERS_3D, layerBelow } from "@/logic/Layers3D";
 import { ModelLayer3D } from "@/logic/ModelLayer3D";
 import { PathLayer3D } from "@/logic/PathLayer3D";
 import { useAppStore } from "@/store/AppStore";
@@ -21,25 +19,6 @@ const BEAMS = ["#ff8c1a", "#9fe8ff"];
 const rgb = (h: string): [number, number, number] =>
 	[1, 3, 5].map((k) => Number.parseInt(h.slice(k, k + 2), 16) / 255) as [number, number, number];
 
-/** Make a 3D layer while `on`, in its place in the stack, and hand it out (null while off). */
-function useLayer<L extends CustomLayerInterface>(map: MapLibreMap, on: boolean, make: () => L): L | null {
-	const [layer, setLayer] = useState<L | null>(null);
-	useEffect(() => {
-		if (!on) return;
-		const l = make();
-		map.addLayer(
-			l,
-			layerBelow(l.id, (id) => !!map.getLayer(id)),
-		);
-		setLayer(l);
-		return () => {
-			if (map.getLayer(l.id)) map.removeLayer(l.id);
-			setLayer(null);
-		};
-	}, [map, on, make]);
-	return layer;
-}
-
 /**
  * The 3D view while the map is tilted: models, paths and icons as WebGL layers of our own (ModelLayer3D, PathLayer3D,
  * IconLayer3D), and the ground fading out far off. Their data is the app's 3D scene, whole and once per version
@@ -47,8 +26,10 @@ function useLayer<L extends CustomLayerInterface>(map: MapLibreMap, on: boolean,
  * the tiles on screen after every move before, they lagged, missed what tiles left out zoomed out and doubled at tile
  * edges.
  */
-export function Icons3D({ map, geo, info, meta }: { map: MapLibreMap; geo: Geo; info: MapInfo; meta: Meta }) {
+export function Scene3D() {
 	const app = useAppClient();
+	const map = useMapLibre();
+	const { geo, info, meta } = useMapView();
 	const settings = useSettings();
 	const tilted = useAppStore((s) => (s.camera?.pitch ?? map.getPitch()) > 1);
 	const replayPos = useAppStore((s) => (s.replay ? s.replay.pos : null));
@@ -76,20 +57,14 @@ export function Icons3D({ map, geo, info, meta }: { map: MapLibreMap; geo: Geo; 
 			}),
 		[map, app, k, iconStyle, art],
 	);
-	const modelLayer = useLayer(map, tilted && layers?.["3D models"] !== false, makeModels);
-	const pathLayer = useLayer(map, tilted && layers?.Paths !== false, makePaths);
-	const iconLayer = useLayer(map, tilted && layers?.Icons !== false, makeIcons);
+	const modelLayer = useCustomLayer(tilted && layers?.["3D models"] !== false, makeModels);
+	const pathLayer = useCustomLayer(tilted && layers?.Paths !== false, makePaths);
+	const iconLayer = useCustomLayer(tilted && layers?.Icons !== false, makeIcons);
 
 	// the ground fading into black far off (View: 3D view settings, Ground): over the flat layers, under ours
 	const groundFar = tilted ? Number(st?.d3_ground_far ?? 2.4) : 0;
-	useEffect(() => {
-		if (!groundFar) return;
-		const fade = new GroundFade(groundFar);
-		map.addLayer(fade, LAYERS_3D.find((id) => map.getLayer(id)) ?? "bookmarks");
-		return () => {
-			if (map.getLayer(fade.id)) map.removeLayer(fade.id);
-		};
-	}, [map, groundFar]);
+	const makeFade = useCallback(() => new GroundFade(groundFar), [groundFar]);
+	useCustomLayer(groundFar > 0, makeFade);
 
 	// --- their data: the scene, when it comes (and what the View tab changes in it)
 	useEffect(() => {
