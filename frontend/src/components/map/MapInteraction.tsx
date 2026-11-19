@@ -312,6 +312,7 @@ export function MapInteraction({ map, geo, meta }: { map: MapLibreMap; geo: Geo;
 		setLasso(null);
 		setData(map, "lasso", EMPTY);
 		setMode({ kind: "normal" });
+		if (l && biome === null) app.log(["Biome select: cancelled, nothing changed"]).catch(() => {});
 		if (!l || biome === null) return;
 		try {
 			await app.setBiome(l.polygon, biome);

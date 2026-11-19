@@ -4,7 +4,7 @@ import type { MapMode } from "@/store/AppStore";
 export function modeHint(mode: MapMode): string {
 	switch (mode.kind) {
 		case "lasso":
-			return "Draw around the maps of the biome (hold the left button); Esc cancels";
+			return "Biome select: draw around the maps (hold the left button); Esc cancels";
 		case "bookmark":
 			return "Click a map, or a spot, for the new bookmark; Esc cancels";
 		case "player":

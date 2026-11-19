@@ -280,6 +280,7 @@ class BookmarksMixin:
         """
         if name.strip():
             self._extra_groups.add(name.strip())
+            self.events.log(f"new bookmark group {name.strip()!r}")
             self.events.publish("bookmarks", None)
 
     def rename_group(self, old: str, new: str) -> None:
@@ -298,7 +299,39 @@ class BookmarksMixin:
         if old in self._extra_groups:
             self._extra_groups.discard(old)
             self._extra_groups.add(new)
+        # a hidden group stays hidden under its new name (user: renaming showed it again)
+        key = str(self.path) if self.path else ""
+        hg = self.settings.setdefault("hidden_groups", {})
+        if old in hg.get(key, []):
+            hg[key] = sorted((set(hg[key]) - {old}) | {new})
+            self.save_settings()
+        self.events.log(f"bookmark group {old!r} renamed to {new!r}")
         self._bookmarks_changed()
+
+    def delete_groups(self, names: list[str]) -> int:
+        """Delete empty groups (a group with bookmarks goes when its last bookmark does).
+
+        Args:
+            names: The group names.
+
+        Returns:
+            How many were deleted.
+        """
+        if not self.atlas:
+            return 0
+        used = {bm_group(b) for b in self.atlas.bookmarks}
+        gone = [n for n in names if n in self._extra_groups and n not in used]
+        for n in gone:
+            self._extra_groups.discard(n)
+        if gone:
+            key = str(self.path) if self.path else ""
+            hg = self.settings.setdefault("hidden_groups", {})
+            if set(gone) & set(hg.get(key, [])):
+                hg[key] = sorted(set(hg[key]) - set(gone))
+                self.save_settings()
+            self.events.log(f"deleted empty bookmark group(s): {', '.join(gone)}")
+            self.events.publish("bookmarks", None)
+        return len(gone)
 
     def toggle_group(self, g: str) -> None:
         """Hide a group on the map, or show it again (kept per atlas in the settings).
@@ -312,6 +345,7 @@ class BookmarksMixin:
         cur.symmetric_difference_update({g})
         hg[key] = sorted(cur)
         self.save_settings()
+        self.events.log(f"bookmark group {g!r} {'hidden' if g in cur else 'shown'} on the map")
         self.events.publish("bookmarks", None)  # (drawn by the page: no tiles made again, user: it was slow)
 
     def toggle_bookmark(self, i: int) -> None:

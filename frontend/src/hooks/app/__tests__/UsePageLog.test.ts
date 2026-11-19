@@ -13,11 +13,15 @@ describe("pageChanges", () => {
 			selected: nodeInfo,
 			error: "no maps inside the lasso",
 		};
+		// in plain words, no ids (user: the log has to make sense to players)
 		expect(pageChanges(after, before)).toEqual([
-			"tab bookmarks",
-			"mode bookmark",
-			"selected node 12: Map #12: Breach",
-			"error shown: no maps inside the lasso",
+			"Opened the Bookmarks tab",
+			"Add bookmark started",
+			"Selected Map #12: Breach",
+			"Error shown: no maps inside the lasso",
+		]);
+		expect(pageChanges({ ...before, mode: { kind: "normal" } }, { ...before, mode: { kind: "lasso" } })).toEqual([
+			"Biome select ended",
 		]);
 		expect(pageChanges(before, before)).toEqual([]);
 	});

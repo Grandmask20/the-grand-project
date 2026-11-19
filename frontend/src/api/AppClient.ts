@@ -114,6 +114,7 @@ export function createAppClient(http: Http) {
 		newGroup: (name: string) => http.send<Ok>("POST", "/api/groups", { name }),
 		renameGroup: (old: string, name: string) => http.send<Ok>("POST", "/api/groups/rename", { old, new: name }),
 		toggleGroup: (name: string) => http.send<Ok>("POST", "/api/groups/toggle", { name }),
+		deleteGroups: (names: string[]) => http.send<{ deleted: number }>("POST", "/api/groups/delete", { names }),
 
 		// debug marks
 		getDebug: () => http.get<DebugMarks>("/api/debug"),

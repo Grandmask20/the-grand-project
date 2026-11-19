@@ -1,4 +1,4 @@
-import { act, screen } from "@testing-library/react";
+import { act, screen, waitFor } from "@testing-library/react";
 import { afterEach, describe, expect, it } from "vitest";
 import { SelectedBox } from "@/components/find/SelectedBox";
 import { useAppStore } from "@/store/AppStore";
@@ -51,7 +51,8 @@ describe("SelectedBox", () => {
 		await user.click(screen.getByRole("button", { name: "Remove bookmark" }));
 		expect(useAppStore.getState().confirm?.text).toBe('Remove the bookmark "big boss"?');
 		act(() => useAppStore.getState().confirm?.onYes());
-		await screen.findByText("Map #12: Breach");
-		expect(calls.some((c) => c.path === "/api/bookmarks/delete")).toBe(true);
+		await waitFor(() => expect(calls.some((c) => c.path === "/api/bookmarks/delete")).toBe(true));
+		// the map stays selected (user: removing its bookmark unselected it)
+		expect(useAppStore.getState().selected?.id).toBe(12);
 	});
 });

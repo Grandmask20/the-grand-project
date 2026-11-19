@@ -12,6 +12,9 @@ export function BookmarksTab() {
 	const app = useAppClient();
 	const bookmarks = useBookmarks();
 	const [picked, setPicked] = useState<Set<number>>(new Set());
+	// groups ticked: all their bookmarks are picked, and an empty one is deleted with Delete (user: no way to delete
+	// an empty group)
+	const [pickedGroups, setPickedGroups] = useState<Set<string>>(new Set());
 	const s = useAppStoreCalm();
 	const groups = bookmarks.data?.groups ?? [];
 	const fail = (e: unknown) => s.showError(e);
@@ -23,18 +26,46 @@ export function BookmarksTab() {
 		else next.delete(id);
 		setPicked(next);
 	};
+	const toggleGroupPick = (name: string, on: boolean) => {
+		const g = groups.find((x) => x.name === name);
+		const next = new Set(picked);
+		for (const b of g?.items ?? []) {
+			if (on) next.add(b.id);
+			else next.delete(b.id);
+		}
+		setPicked(next);
+		const gs = new Set(pickedGroups);
+		if (on) gs.add(name);
+		else gs.delete(name);
+		setPickedGroups(gs);
+	};
+	const allIds = groups.flatMap((g) => g.items.map((b) => b.id));
+	const everything = allIds.length > 0 && allIds.every((id) => picked.has(id));
+	const emptyPicked = groups.filter((g) => !g.items.length && pickedGroups.has(g.name)).map((g) => g.name);
 
 	const adding = s.mode.kind === "bookmark";
-	const remove = (ids: number[], name?: string) =>
+	const remove = (ids: number[], name?: string, emptyGroups: string[] = []) =>
 		s.askConfirm({
 			title: "Delete bookmarks",
-			text: name ? `Delete "${name}"?` : `Delete ${plural(ids.length, "bookmark")}?`,
+			text: name
+				? `Delete "${name}"?`
+				: `Delete ${[
+						ids.length ? plural(ids.length, "bookmark") : "",
+						emptyGroups.length ? plural(emptyGroups.length, "empty group") : "",
+					]
+						.filter(Boolean)
+						.join(" and ")}?`,
 			yes: "Delete",
 			danger: true,
 			onYes: () =>
-				void app
-					.deleteBookmarks(ids)
-					.then(() => setPicked((p) => new Set([...p].filter((id) => !ids.includes(id)))))
+				void Promise.all([
+					ids.length ? app.deleteBookmarks(ids) : null,
+					emptyGroups.length ? app.deleteGroups(emptyGroups) : null,
+				])
+					.then(() => {
+						setPicked((p) => new Set([...p].filter((id) => !ids.includes(id))));
+						setPickedGroups((g) => new Set([...g].filter((n) => !emptyGroups.includes(n))));
+					})
 					.catch(fail),
 		});
 
@@ -91,7 +122,12 @@ export function BookmarksTab() {
 				>
 					Move to…
 				</Button>
-				<Button size="xs" variant="destructive" disabled={!ids.length} onClick={() => remove(ids)}>
+				<Button
+					size="xs"
+					variant="destructive"
+					disabled={!ids.length && !emptyPicked.length}
+					onClick={() => remove(ids, undefined, emptyPicked)}
+				>
 					Delete
 				</Button>
 			</div>
@@ -99,8 +135,18 @@ export function BookmarksTab() {
 			{!groups.length && (
 				<p className="text-muted-foreground">No bookmarks yet. Right-click the map, or Add bookmark.</p>
 			)}
-			{groups.length > 1 && (
+			{groups.length > 0 && (
 				<div className="flex gap-1.5">
+					<Button
+						size="xs"
+						variant="ghost"
+						onClick={() => {
+							setPicked(everything ? new Set() : new Set(allIds));
+							setPickedGroups(everything ? new Set() : new Set(groups.map((g) => g.name)));
+						}}
+					>
+						{everything ? "Select none" : "Select all"}
+					</Button>
 					<Button
 						size="xs"
 						variant="ghost"
@@ -126,6 +172,11 @@ export function BookmarksTab() {
 				return (
 					<div key={g.name} className="flex flex-col">
 						<div className="flex items-center gap-1.5 border-b py-1">
+							<Checkbox
+								checked={g.items.length ? g.items.every((b) => picked.has(b.id)) : pickedGroups.has(g.name)}
+								onCheckedChange={(v) => toggleGroupPick(g.name, v === true)}
+								aria-label={`Pick group ${g.name}`}
+							/>
 							<button
 								type="button"
 								aria-label={folded ? `Open ${g.name}` : `Fold ${g.name}`}

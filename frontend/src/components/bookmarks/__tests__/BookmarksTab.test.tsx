@@ -1,4 +1,4 @@
-import { screen, waitFor } from "@testing-library/react";
+import { act, screen, waitFor } from "@testing-library/react";
 import { afterEach, describe, expect, it } from "vitest";
 import { BookmarksTab } from "@/components/bookmarks/BookmarksTab";
 import { useAppStore } from "@/store/AppStore";
@@ -60,5 +60,29 @@ describe("BookmarksTab", () => {
 		await user.click(await screen.findByRole("checkbox", { name: "Pick big boss" }));
 		await user.click(screen.getByRole("button", { name: "Move to…" }));
 		expect(useAppStore.getState().prompt?.choices).toEqual(bookmarks.groups.map((g) => g.name));
+	});
+
+	it("a group's tick box picks all of it, and Delete takes an empty ticked group too", async () => {
+		const { user, calls } = renderWithApp(<BookmarksTab />, {
+			"GET /api/bookmarks": bookmarks,
+			"POST /api/bookmarks/delete": { deleted: ["big boss"] },
+			"POST /api/groups/delete": { deleted: 1 },
+		});
+		await user.click(await screen.findByRole("checkbox", { name: "Pick group Boss" }));
+		expect(screen.getByRole("checkbox", { name: "Pick big boss" })).toBeChecked();
+		await user.click(screen.getByRole("checkbox", { name: "Pick group Farm" })); // empty
+		await user.click(screen.getByRole("button", { name: "Delete" }));
+		expect(useAppStore.getState().confirm?.text).toBe("Delete 1 bookmark and 1 empty group?");
+		act(() => useAppStore.getState().confirm?.onYes());
+		await waitFor(() => expect(calls.find((c) => c.path === "/api/groups/delete")?.body).toEqual({ names: ["Farm"] }));
+		expect(calls.find((c) => c.path === "/api/bookmarks/delete")?.body).toEqual({ ids: [0] });
+	});
+
+	it("Select all picks every bookmark, and then picks none", async () => {
+		const { user } = renderWithApp(<BookmarksTab />, { "GET /api/bookmarks": bookmarks });
+		await user.click(await screen.findByRole("button", { name: "Select all" }));
+		expect(screen.getByRole("checkbox", { name: "Pick big boss" })).toBeChecked();
+		await user.click(screen.getByRole("button", { name: "Select none" }));
+		expect(screen.getByRole("checkbox", { name: "Pick big boss" })).not.toBeChecked();
 	});
 });

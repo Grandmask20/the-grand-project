@@ -149,7 +149,12 @@ class Handler(BaseHTTPRequestHandler):
         """Log requests at debug level; a map tile only when it failed (thousands a session: 6000 of a session's
         lines were tiles, hiding what happened, user)."""
         served = str(args[1]) if len(args) > 1 else ""
-        if args and " /api/tiles/" in str(args[0]) and served in ("200", "204", "304"):  # (204: no ground there)
+        # (204: no ground there; the page's own log lines are in the log already)
+        if (
+            args
+            and (" /api/tiles/" in str(args[0]) or " /api/log " in str(args[0]))
+            and served in ("200", "204", "304")
+        ):
             return
         LOG.debug("http: " + fmt, *args)
 
@@ -417,7 +422,7 @@ class Handler(BaseHTTPRequestHandler):
     def post_log(self, q) -> None:
         """What was done on the page (tabs, modes, selections, dialogs, errors shown): into the log file."""
         for line in self._body().get("lines", [])[:50]:
-            LOG.info("page: %s", str(line)[:500])
+            self.S.events.log(str(line)[:500])  # (the Log tab and the log file: user)
         self._json({"ok": True})
 
     @route("POST", "/api/quit")
@@ -733,7 +738,9 @@ class Handler(BaseHTTPRequestHandler):
     @route("POST", "/api/lasso")
     def post_lasso(self, q) -> None:
         """How many maps a lasso holds."""
-        self._json({"maps": len(self.S.lasso_nodes(self._body()["polygon"]))})
+        n = len(self.S.lasso_nodes(self._body()["polygon"]))
+        self.S.events.log(f"Biome select: {n} map{'' if n == 1 else 's'} inside the lasso")
+        self._json({"maps": n})
 
     @route("POST", "/api/biome")
     def post_biome(self, q) -> None:
@@ -802,6 +809,11 @@ class Handler(BaseHTTPRequestHandler):
         b = self._body()
         self.S.rename_group(b["old"], b["new"])
         self._json({"ok": True})
+
+    @route("POST", "/api/groups/delete")
+    def post_delete_groups(self, q) -> None:
+        """Delete empty groups."""
+        self._json({"deleted": self.S.delete_groups(list(self._body().get("names", [])))})
 
     @route("POST", "/api/groups/toggle")
     def post_toggle_group(self, q) -> None:

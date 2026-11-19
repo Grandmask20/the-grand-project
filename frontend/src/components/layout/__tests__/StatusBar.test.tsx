@@ -9,7 +9,7 @@ describe("StatusBar", () => {
 		renderWithApp(<StatusBar connected />);
 		expect(screen.getByText("opened atlas.json")).toBeInTheDocument();
 		act(() => useAppStore.getState().setMode({ kind: "lasso" }));
-		expect(screen.getByText(/Draw around the maps of the biome/)).toBeInTheDocument();
+		expect(screen.getByText(/Biome select: draw around the maps/)).toBeInTheDocument();
 	});
 
 	it("says when the app can't be reached", () => {

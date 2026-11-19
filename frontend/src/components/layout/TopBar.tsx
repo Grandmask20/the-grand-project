@@ -171,10 +171,11 @@ export function TopBar() {
 				variant={s.mode.kind === "lasso" ? "default" : "ghost"}
 				disabled={!open}
 				onClick={() => s.setMode(s.mode.kind === "lasso" ? { kind: "normal" } : { kind: "lasso" })}
-				title="Draw a city biome: draw around its maps"
+				title="Set the biome of maps (a city type, a Breach stronghold, or none): draw around them"
 			>
 				<LassoIcon />
-				City biome
+				{/* (not "City biome": strongholds aren't cities, user) */}
+				Biome select
 			</Button>
 			<Button
 				size="sm"

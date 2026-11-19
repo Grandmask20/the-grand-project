@@ -10,6 +10,7 @@ from __future__ import annotations
 import itertools
 import json
 import queue
+import re
 import threading
 import time
 from collections import deque
@@ -38,6 +39,7 @@ class Events:
         self._logs: dict[str, deque] = {"": deque(maxlen=LOG_KEEP)}
         self.history: deque = deque(maxlen=EVENT_HISTORY)  # recent events, for a page that reconnects
         self.progress: str | None = None
+        self._progress_step: tuple[str, int | None] | None = None  # the step last written to the log
         self.status = ""
         self._questions: dict[int, dict] = {}
 
@@ -90,6 +92,24 @@ class Events:
         """
         self.progress = text
         self.publish("progress", text)
+        self._log_progress(text)
+
+    def _log_progress(self, text: str | None) -> None:
+        """Write a progress line to the log when a new step starts, and every 10% of a counted one ("fixing seams
+        120 / 500"): what runs is in the log, not only in the progress box (user: "it should list ongoing processes").
+
+        Args:
+            text: The progress text, or None when it ended (how it ended its caller logs: done, stopped, failed).
+        """
+        if text is None:
+            self._progress_step = None
+            return
+        task = re.sub(r"\S*\d\S*", "#", text)  # the step without its numbers (and file names, which have digits)
+        m = re.search(r"(\d+)\s*/\s*(\d+)", text)
+        tenth = min(10, 10 * int(m[1]) // max(1, int(m[2]))) if m else None
+        if self._progress_step != (task, tenth):
+            self._progress_step = (task, tenth)
+            self.log(text)
 
     def set_status(self, text: str) -> None:
         """Set the status bar text.

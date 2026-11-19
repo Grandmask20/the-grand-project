@@ -345,9 +345,9 @@ def test_the_log_skips_tiles_and_takes_the_page_s_lines(app, caplog):
     with caplog.at_level(logging.DEBUG, logger=S.LOG.name):
         call(srv, f"/api/tiles/terrain/{s.grid.zmax}/{int(wx // 256)}/{int(wy // 256)}.jpg?v=1")
         call(srv, "/api/state")
-        call(srv, "/api/log", "POST", {"lines": ["tab bookmarks", "mode bookmark"]})
+        call(srv, "/api/log", "POST", {"lines": ["Opened the Bookmarks tab", "Add bookmark started"]})
         call(srv, "/api/pick", "POST", {"x": pts[5][0], "y": pts[5][1], "z": 1.0})
     text = caplog.text
     assert "/api/tiles/" not in text and "GET /api/state" in text  # thousands of tiles a session hid the rest
-    assert "page: tab bookmarks" in text and "page: mode bookmark" in text
+    assert "Opened the Bookmarks tab" in text and "Add bookmark started" in text and "POST /api/log" not in text
     assert "click at" in text and "node 5" in text

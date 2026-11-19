@@ -47,9 +47,9 @@ describe("TopBar", () => {
 
 	it("city biome switches the lasso on and off", async () => {
 		const { user } = renderWithApp(<TopBar />, { "GET /api/atlases": atlases });
-		await user.click(screen.getByRole("button", { name: "City biome" }));
+		await user.click(screen.getByRole("button", { name: "Biome select" }));
 		expect(useAppStore.getState().mode).toEqual({ kind: "lasso" });
-		await user.click(screen.getByRole("button", { name: "City biome" }));
+		await user.click(screen.getByRole("button", { name: "Biome select" }));
 		expect(useAppStore.getState().mode).toEqual({ kind: "normal" });
 	});
 

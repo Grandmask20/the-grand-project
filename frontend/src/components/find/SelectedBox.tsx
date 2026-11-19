@@ -66,19 +66,6 @@ export function SelectedBox() {
 							{mark ? "★ Edit bookmark" : "Bookmark"}
 						</Button>
 					)}
-					<Button size="xs" variant="outline" onClick={() => showSources([info.x, info.y])}>
-						Screenshots
-					</Button>
-					{node !== null && (
-						<>
-							<Button size="xs" variant="outline" onClick={() => routes.routeTo(node)}>
-								Route here
-							</Button>
-							<Button size="xs" variant="outline" onClick={() => routes.setPlayer(node)}>
-								I'm here
-							</Button>
-						</>
-					)}
 					{mark && (
 						<Button
 							size="xs"
@@ -92,8 +79,8 @@ export function SelectedBox() {
 									onYes: () =>
 										void app
 											.deleteBookmarks([mark.id as number])
-											// a bookmark pin goes away with it; a bookmarked map stays selected
-											.then(() => clearIf(info))
+											// a bookmark pin goes away with it; a bookmarked map stays selected (user)
+											.then(() => info.kind === "bookmark" && clearIf(info))
 											.catch(showError),
 								})
 							}
@@ -101,6 +88,19 @@ export function SelectedBox() {
 							Remove bookmark
 						</Button>
 					)}
+					{node !== null && (
+						<>
+							<Button size="xs" variant="outline" onClick={() => routes.routeTo(node)}>
+								Route here
+							</Button>
+							<Button size="xs" variant="outline" onClick={() => routes.setPlayer(node)}>
+								I'm here
+							</Button>
+						</>
+					)}
+					<Button size="xs" variant="outline" onClick={() => showSources([info.x, info.y])}>
+						Screenshots
+					</Button>
 					{info.kind === "landmark" && !info.removed && (
 						<Button
 							size="xs"

@@ -91,3 +91,14 @@ def test_bookmark_at_finds_the_nearest_on_the_spot(opened):
     i = s.add_bookmark(pts[4][0], pts[4][1], "here")
     assert s.bookmark_at(pts[4][0] + 1, pts[4][1]) == i
     assert s.bookmark_at(pts[4][0] + 10_000, pts[4][1]) is None
+
+
+def test_a_hidden_group_stays_hidden_when_renamed_and_an_empty_one_can_be_deleted(opened):
+    s, _path, pts = opened
+    s.new_group("Later")
+    s.toggle_group("Later")
+    s.rename_group("Later", "Tomorrow")  # (user: renaming showed it again)
+    assert s.hidden_groups() == {"Tomorrow"}
+    s.add_bookmark(pts[5][0], pts[5][1], "spot", "Kept")
+    assert s.delete_groups(["Tomorrow", "Kept", "nope"]) == 1  # only an empty one: a group with bookmarks stays
+    assert "Tomorrow" not in s.groups() and "Kept" in s.groups() and s.hidden_groups() == set()

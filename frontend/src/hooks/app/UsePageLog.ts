@@ -1,45 +1,61 @@
 import { useEffect } from "react";
 import { useAppClient } from "@/hooks/app/UseAppClient";
+import type { MapMode } from "@/store/AppStore";
 import { type AppStoreState, useAppStore } from "@/store/AppStore";
 
-/** What changed on the page between two store states, as log lines (tabs, modes, selections, dialogs, errors). */
+// the side panel's tabs as you see them
+const TABS: Record<string, string> = {
+	find: "Find",
+	view: "View",
+	auto: "Auto-add",
+	bookmarks: "Bookmarks",
+	atlases: "Saved atlases",
+	route: "Route",
+	log: "Log",
+	debug: "Debug",
+};
+
+// a map mode starting, in plain words (its end says "... ended")
+const MODES: Record<MapMode["kind"], string> = {
+	normal: "",
+	lasso: "Biome select",
+	bookmark: "Add bookmark",
+	player: "I'm here (click your map)",
+	ghost: "Placing a screenshot by hand",
+	"debug-link": "Debug: missing path (click the second map)",
+};
+
+/** What you did on the page between two store states, as log lines anyone can read ("Opened the Bookmarks tab",
+ * "Biome select started", "Selected Map #12: Breach"): no ids or app names (user: the log has to make sense to
+ * players, not only to developers). */
 export function pageChanges(s: AppStoreState, before: AppStoreState): string[] {
 	const out: string[] = [];
-	if (s.tab !== before.tab) out.push(`tab ${s.tab}`);
-	if (s.mode.kind !== before.mode.kind) out.push(`mode ${s.mode.kind}`);
+	if (s.tab !== before.tab) out.push(`Opened the ${TABS[s.tab] ?? s.tab} tab`);
+	if (s.mode.kind !== before.mode.kind) {
+		if (before.mode.kind !== "normal") out.push(`${MODES[before.mode.kind]} ended`);
+		if (s.mode.kind !== "normal") out.push(`${MODES[s.mode.kind]} started`);
+	}
 	const sel = s.selected;
 	const was = before.selected;
-	if (sel?.kind !== was?.kind || sel?.id !== was?.id)
-		out.push(sel ? `selected ${sel.kind} ${sel.id}: ${sel.title}` : "selection cleared");
+	if (sel?.kind !== was?.kind || sel?.id !== was?.id) out.push(sel ? `Selected ${sel.title}` : "Selection cleared");
 	if (s.bookmarkEdit && !before.bookmarkEdit)
-		out.push(`bookmark dialog: ${s.bookmarkEdit.id === null ? "new" : `bookmark ${s.bookmarkEdit.id}`}`);
-	if (s.prompt && !before.prompt) out.push(`asked: ${s.prompt.title}`);
-	if (s.confirm && !before.confirm) out.push(`confirm: ${s.confirm.title}`);
-	if (s.error && s.error !== before.error) out.push(`error shown: ${s.error}`);
+		out.push(s.bookmarkEdit.id === null ? "New bookmark: dialog opened" : `Editing bookmark "${s.bookmarkEdit.name}"`);
+	if (s.prompt && !before.prompt) out.push(`${s.prompt.title}: dialog opened`);
+	if (s.confirm && !before.confirm) out.push(`Asked: ${s.confirm.text}`);
+	if (s.error && s.error !== before.error) out.push(`Error shown: ${s.error}`);
 	return out;
 }
 
-/** Tell the app what is done on the page, for its log file (user: "logs are still not heavily detailed enough": the
- * page's own steps never reached it). Lines are sent together, a moment after they happen. */
+/** Tell the app what you do on the page, for the Log tab and the log file (user: "every user made change should be
+ * listed"). Sent at once, so the lines keep their order with the app's own (a biome drawn after its selection). */
 export function usePageLog() {
 	const app = useAppClient();
-	useEffect(() => {
-		let lines: string[] = [];
-		let timer: ReturnType<typeof setTimeout> | null = null;
-		const unsubscribe = useAppStore.subscribe((s, before) => {
-			const more = pageChanges(s, before);
-			if (!more.length) return;
-			lines.push(...more);
-			timer ??= setTimeout(() => {
-				const send = lines;
-				lines = [];
-				timer = null;
-				app.log(send).catch(() => {}); // (a log line never bothers you with an error)
-			}, 300);
-		});
-		return () => {
-			unsubscribe();
-			if (timer) clearTimeout(timer);
-		};
-	}, [app]);
+	useEffect(
+		() =>
+			useAppStore.subscribe((s, before) => {
+				const lines = pageChanges(s, before);
+				if (lines.length) app.log(lines).catch(() => {}); // (a log line never bothers you with an error)
+			}),
+		[app],
+	);
 }

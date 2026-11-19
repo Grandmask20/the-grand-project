@@ -162,7 +162,11 @@ class EditsMixin:
                         )
                         self.events.log(f"{lm['kind']} at ({lm['x']:.0f}, {lm['y']:.0f}) is now a {typ} city")
                     atlas_cities.set_type(self.atlas, lm["x"], lm["y"], typ)
-        self._edited(f"{len(ids)} maps " + (f"are now {biome}" if biome else "are no longer in a biome"))
+        n = f"{len(ids)} map" if len(ids) == 1 else f"{len(ids)} maps"
+        verb = "is" if len(ids) == 1 else "are"
+        self._edited(
+            f"Biome select: {n} {verb} now {biome}" if biome else f"Biome select: {n} {verb} no longer in a biome"
+        )
         return len(ids)
 
     def scan_locks(self) -> None:
