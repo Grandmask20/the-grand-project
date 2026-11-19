@@ -40,6 +40,7 @@ export function Scene3D() {
 	const sel = selection3d(selected);
 	const iconStyle = String(st?.icon_style ?? "game art");
 	const beams = st?.d3_beams !== false;
+	const freq = Number(st?.path_freq) || 0;
 	const strong = st ? styleColour(st, "path_col", meta.colours.path_multi) : meta.colours.path_multi;
 	const weak = st ? styleColour(st, "path_col1", meta.colours.path_single) : meta.colours.path_single;
 
@@ -90,14 +91,17 @@ export function Scene3D() {
 		const s = rgb(strong);
 		const w = rgb(weak);
 		pathLayer.setPaths(
-			scene.paths.map((p) => ({
-				id: p.id,
-				pts: p.pts.map(([x, y]) => geo.toLngLat(x, y)),
-				colour: p.abyss ? abyss : p.strong ? s : w,
-				step: p.step,
-			})),
+			scene.paths
+				// "drawn by at least", applied here (the scene holds every path with its share)
+				.filter((p) => p.abyss || (p.share ?? 1) >= freq - 1e-9)
+				.map((p) => ({
+					id: p.id,
+					pts: p.pts.map(([x, y]) => geo.toLngLat(x, y)),
+					colour: p.abyss ? abyss : p.strong ? s : w,
+					step: p.step,
+				})),
 		);
-	}, [pathLayer, geo, meta, scene, strong, weak]);
+	}, [pathLayer, geo, meta, scene, strong, weak, freq]);
 
 	useEffect(() => {
 		if (!iconLayer || !scene) return;

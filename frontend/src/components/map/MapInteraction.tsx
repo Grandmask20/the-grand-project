@@ -10,8 +10,10 @@ import { usePlayer, useSettings, useUpdateSettings } from "@/hooks/app/UseSettin
 import { useRouteGraph } from "@/hooks/map/UseGraph";
 import { useMapLibre } from "@/hooks/map/UseMapLibre";
 import { useMapView } from "@/hooks/map/UseMapView";
+import { bookmarkOf, newBookmark } from "@/logic/BookmarkOf";
 import type { Point } from "@/logic/Geo";
 import type { IconLayer3D } from "@/logic/IconLayer3D";
+import { modeCursor, modeHint } from "@/logic/ModeHint";
 import type { ModelLayer3D } from "@/logic/ModelLayer3D";
 import type { PathLayer3D } from "@/logic/PathLayer3D";
 import { pickItem } from "@/logic/Pick";
@@ -79,6 +81,12 @@ export function MapInteraction() {
 	useEffect(() => {
 		const onClick = async (e: MapMouseEvent) => {
 			const at = mode.kind === "normal" ? clickAt(e) : atlasAt(e);
+			// what was clicked, for a mode still on once the answer comes: left meanwhile (Esc, another tab, another
+			// mode), the click is dropped (it opened the bookmark dialog after Add bookmark had ended: CodeRabbit)
+			const pickHere = async () => {
+				const hit = await pick(at);
+				return useAppStore.getState().mode === mode ? { hit } : null;
+			};
 			try {
 				switch (mode.kind) {
 					case "normal": {
@@ -88,21 +96,18 @@ export function MapInteraction() {
 						break;
 					}
 					case "bookmark": {
-						const hit = await pick(at);
-						const spot = hit && hit.kind !== "path" ? ([hit.x, hit.y] as Point) : at;
-						editBookmark({
-							id: null,
-							x: spot[0],
-							y: spot[1],
-							name: hit?.suggest?.name ?? "",
-							group: hit?.suggest?.group ?? "Other",
-							note: "",
-						});
+						// a map that has a bookmark opens that one (before: a second bookmark on the same map)
+						const still = await pickHere();
+						if (!still) break;
+						const { hit } = still;
 						setMode({ kind: "normal" });
+						editBookmark(bookmarkOf(hit) ?? newBookmark(hit, at));
 						break;
 					}
 					case "player": {
-						const hit = await pick(at);
+						const still = await pickHere();
+						if (!still) break;
+						const { hit } = still;
 						const node = hit?.kind === "node" ? hit.id : (hit?.node ?? graph?.nearest(at[0], at[1]) ?? null);
 						const p = node !== null ? graph?.at(node) : undefined;
 						if (node !== null && p) update.mutate({ ui: { player: { x: p[0], y: p[1], node, atlas: atlasFile } } });
@@ -110,7 +115,9 @@ export function MapInteraction() {
 						break;
 					}
 					case "debug-link": {
-						const hit = await pick(at);
+						const still = await pickHere();
+						if (!still) break;
+						const { hit } = still;
 						const other = hit?.kind === "node" ? hit.id : (hit?.node ?? null);
 						if (other !== null && other !== mode.from) {
 							await app.addDebugMark({
@@ -193,7 +200,7 @@ export function MapInteraction() {
 				const { maps } = await app.lassoCount(polygon);
 				if (!current()) return;
 				if (!maps) {
-					showError("No maps inside the lasso.");
+					showError("No maps inside the lasso.", true); // (closes on the next click)
 					setMode({ kind: "normal" });
 					return;
 				}
@@ -211,8 +218,7 @@ export function MapInteraction() {
 
 	// --- drags: the ghost (panning is MapPan's, off in these modes)
 	useEffect(() => {
-		map.getCanvas().style.cursor =
-			mode.kind === "lasso" ? "crosshair" : mode.kind === "ghost" ? "move" : mode.kind === "normal" ? "" : "copy";
+		map.getCanvas().style.cursor = modeCursor(mode);
 		if (mode.kind !== "ghost") return;
 
 		const down = (e: MapMouseEvent) => {
@@ -308,6 +314,7 @@ export function MapInteraction() {
 		const l = lasso;
 		setLasso(null);
 		setMode({ kind: "normal" });
+		if (l && biome === null) app.log(["Biome select: cancelled, nothing changed"]).catch(() => {});
 		if (!l || biome === null) return;
 		try {
 			await app.setBiome(l.polygon, biome);
@@ -334,6 +341,12 @@ export function MapInteraction() {
 				/>
 			)}
 			{lasso && <BiomeMenu x={lasso.x} y={lasso.y} maps={lasso.maps} meta={meta} onChoose={chooseBiome} />}
+			{/* what a click does now, over the map itself (user: Add bookmark only said so in the side panel) */}
+			{mode.kind !== "normal" && !lasso && (
+				<div className="pointer-events-none absolute top-2 left-1/2 z-10 -translate-x-1/2 rounded-md border border-gold/60 bg-card/95 px-3 py-1.5 text-sm text-gold shadow">
+					{modeHint(mode)}
+				</div>
+			)}
 		</>
 	);
 }

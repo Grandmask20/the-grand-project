@@ -39,6 +39,18 @@ describe("RouteTab", () => {
 		expect(useAppStore.getState().fly).toMatchObject({ x: 440, y: 200, px: 0.5 });
 	});
 
+	it("forgets your position (an I'm here by mistake)", async () => {
+		const { user, calls } = renderWithApp(<RouteTab />, {
+			"GET /api/state": withPlayer,
+			"GET /api/graph": graph,
+			"GET /api/types": types,
+			"PATCH /api/settings": { ...state.settings, ui: { player: null } },
+		});
+		await user.click(screen.getByRole("button", { name: "Forget my position" }));
+		await waitFor(() => expect(calls.find((c) => c.method === "PATCH")?.body).toEqual({ ui: { player: null } }));
+		expect(await screen.findByText("not set")).toBeInTheDocument();
+	});
+
 	it("a position set in another atlas is not yours here", () => {
 		const elsewhere = {
 			...state,

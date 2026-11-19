@@ -42,8 +42,9 @@ class QueryMixin:
             "landmark": len(self.V["landmarks"]),
             "icon": len(self.V["icons"]),
             "path": len(self.V["paths"]),
-            "bookmark": len(self.atlas.bookmarks) if self.atlas else 0,
         }.get(kind, 0)
+        if kind == "bookmark":  # (an id, not a place in the list)
+            return any(u == i for u, _b in self.bookmarks_by_id())
         return 0 <= i < size
 
     def item_pos(self, kind: str, i: int) -> tuple[float, float]:
@@ -64,7 +65,7 @@ class QueryMixin:
         if kind == "icon" and pts is not None and i < len(pts):
             return float(pts[i][0]), float(pts[i][1])
         src = {"node": self.V["nodes"], "landmark": self.V["landmarks"], "icon": self.V["icons"]}.get(kind)
-        n = src[i] if src is not None else self.atlas.bookmarks[i]
+        n = src[i] if src is not None else self._bookmark(i)
         return float(n["x"]), float(n["y"])
 
     def item_node(self, kind: str, i: int) -> int | None:
@@ -234,7 +235,7 @@ class QueryMixin:
             out["node"] = v
             out["icon"] = ic["name"]
         else:
-            b = self.atlas.bookmarks[i]
+            b = self._bookmark(i)
             out["title"] = f"★ {b['name']}"
             lines.append(f"group: {bm_group(b)}")
             if b.get("note"):
@@ -246,6 +247,12 @@ class QueryMixin:
         if kind != "bookmark":
             bm = self.bookmark_at(x, y)
             out["bookmark"] = bm
+            # its own name, group and note with it: the page edits it from these (with the list's, which comes
+            # separately, an edit could pair this id with another moment's list, or guess them before it loaded:
+            # CodeRabbit)
+            if bm is not None:
+                b = self._bookmark(bm)
+                out["bookmark_of"] = {"id": bm, "name": b["name"], "group": bm_group(b), "note": b.get("note", "")}
             out["suggest"] = (
                 dict(zip(("name", "group"), self.default_name(kind, i), strict=True)) if kind != "path" else None
             )
@@ -272,7 +279,7 @@ class QueryMixin:
         style = self.ui_settings()["style"]
         best, bd = None, 1e9
         if L.get("Bookmarks", True):
-            for i, b in enumerate(self.atlas.bookmarks):
+            for i, b in self.bookmarks_by_id():
                 if self.bookmark_shown(b):
                     d = math.hypot((b["x"] - x) * z, (b["y"] - y) * z + 14)
                     if d < 16 and d < bd:
@@ -397,7 +404,7 @@ class QueryMixin:
         if m:
             return {"goto": [float(m.group(1)), float(m.group(2))]}
         hits, labels = [], []
-        for i, b in enumerate(self.atlas.bookmarks):
+        for i, b in self.bookmarks_by_id():
             if q in f"{b['name']} {bm_group(b)} {b.get('note', '')}".lower():
                 hits.append(("bookmark", i))
                 labels.append(f"[bookmark] {b['name']}  ({bm_group(b)})")

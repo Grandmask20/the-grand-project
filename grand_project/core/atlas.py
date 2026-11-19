@@ -86,7 +86,10 @@ class Atlas:
         self.nodes: list[dict] = []  # {x,y,n,frames,tower}
         self.edges: dict[tuple[int, int], dict] = {}
         self.landmarks: list[dict] = []
-        self.bookmarks: list[dict] = []  # {name,category,note,x,y} set in the viewer
+        self.bookmarks: list[dict] = []  # {uid,name,group,note,x,y,created,hidden?} (app.bookmarks)
+        # the id the next bookmark gets: one past every id this atlas has had, so a deleted one's id is never given
+        # again (a page still holding it would act on the new bookmark: CodeRabbit)
+        self.bookmark_next_uid = 0
         self.icons: list[dict] = []  # every badge, merged across screenshots
         self.final: dict | None = None  # atlas-wide clean-up result (atlas_finalize)
         self.city_types: list[dict] = []  # {x,y,type} cities whose type was set by hand
@@ -780,6 +783,7 @@ class Atlas:
             ],
             "landmarks": self.landmarks,
             "bookmarks": self.bookmarks,
+            "bookmark_next_uid": self.bookmark_next_uid,
             "icons": self.icons,
             "city_types": self.city_types,
             "city_auto": self.city_auto,
@@ -840,6 +844,7 @@ class Atlas:
         }
         at.landmarks = d["landmarks"]
         at.bookmarks = d.get("bookmarks", [])
+        at.bookmark_next_uid = int(d.get("bookmark_next_uid", 0))
         at.icons = d.get("icons", [])
         at.final = d.get("final")
         at.city_types = d.get("city_types", [])

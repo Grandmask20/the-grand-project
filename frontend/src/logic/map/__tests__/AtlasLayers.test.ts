@@ -1,7 +1,8 @@
+import { featureFilter } from "@maplibre/maplibre-gl-style-spec";
 import type { LayerSpecification } from "maplibre-gl";
 import { describe, expect, it } from "vitest";
 import { Geo } from "@/logic/Geo";
-import { ATLAS, atlasLayers, type Look, layerOn, NONE, visibility } from "@/logic/map/AtlasLayers";
+import { ATLAS, atlasLayers, type Look, layerOn, NONE, pathShareFilter, visibility } from "@/logic/map/AtlasLayers";
 import { mapInfo, meta, state } from "@/test/Fixtures";
 
 const geo = new Geo(mapInfo);
@@ -45,11 +46,27 @@ describe("AtlasLayers", () => {
 		expect(vector.biomes.paint?.["fill-opacity"]).toBe(0.8); // the biomes over it, stronger
 	});
 
+	it("hides paths drawn by too few screenshots on the page, without new tiles", () => {
+		expect(layers(look()).paths.filter).toEqual(pathShareFilter(0));
+		expect(layers(withStyle({ path_freq: 0.35 })).paths.filter).toEqual(pathShareFilter(0.35));
+	});
+
+	it("the share filter keeps paths at or above the share, Abyss chains, and tiles from before shares", () => {
+		// run by MapLibre's own filter evaluator, not compared with the helper that made it (CodeRabbit)
+		const keeps = (freq: number, props: Record<string, unknown>) =>
+			featureFilter(pathShareFilter(freq)).filter({ zoom: 10 }, { type: 2, properties: props, geometry: [] });
+		expect(keeps(0.35, { share: 0.2, abyss: false })).toBe(false);
+		expect(keeps(0.35, { share: 0.35, abyss: false })).toBe(true); // at the share: kept
+		expect(keeps(0.35, { share: 0.9, abyss: false })).toBe(true);
+		expect(keeps(1, { share: 0.2, abyss: true })).toBe(true); // an Abyss chain always
+		expect(keeps(0.35, { abyss: false })).toBe(true); // a tile from before paths carried their share
+		expect(keeps(0, { share: 0, abyss: false })).toBe(true); // 0%: every path
+	});
+
 	it("hides a switched off group", () => {
 		const off = layers(look({}, { layers: { ...state.settings.layers, Paths: false, Landmarks: false } }));
 		expect(off.paths.layout?.visibility).toBe("none");
 		expect(off.landmarks.layout?.visibility).toBe("none");
-		expect(off.towers.layout?.visibility).toBe("none");
 		expect(off.icons.layout?.visibility).toBe("visible");
 	});
 
@@ -93,14 +110,6 @@ describe("AtlasLayers", () => {
 		expect(found.highlight.filter).toEqual(["in", "|Boss|", ["get", "icons"]]);
 		expect(found["highlight-edge"].filter).toEqual(found.highlight.filter);
 		expect(layers(look()).highlight.filter).toEqual(NONE);
-	});
-
-	it("puts the tower picture over towers when asked, twice an icon", () => {
-		const towers = layers(withStyle({ ov_towers: true, icon_size: 1.5 }));
-		expect(towers.towers.layout?.visibility).toBe("visible");
-		const size = towers.towers.layout?.["icon-size"] as number[];
-		const icon = towers.icons.layout?.["icon-size"] as number[];
-		expect(size.at(-1)).toBeCloseTo(2 * Number(icon.at(-1)));
 	});
 
 	it("reads a toggle as on unless switched off", () => {

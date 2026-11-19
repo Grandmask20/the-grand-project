@@ -18,11 +18,13 @@ import { Button } from "@/components/ui/button";
 import { useAppState } from "@/hooks/app/UseAppState";
 import { useEventStream } from "@/hooks/app/UseEventStream";
 import { useMeta } from "@/hooks/app/UseMeta";
+import { usePageLog } from "@/hooks/app/UsePageLog";
 import { useAtlasActions } from "@/hooks/atlas/UseAtlasActions";
 
 /** The app's one page: top bar, side panel, the map, the status line, and the dialogs. */
 export function AtlasPage() {
 	const connected = useEventStream();
+	usePageLog();
 	const state = useAppState();
 	const meta = useMeta();
 	const actions = useAtlasActions();

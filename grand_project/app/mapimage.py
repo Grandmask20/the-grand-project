@@ -51,6 +51,22 @@ LOG = atlas_log.get("app")
 SESSION_RUN = os.urandom(4).hex()  # this run of the app: part of every tile URL (map_info "tile_key")
 
 
+def path_share(p: dict) -> float:
+    """How many of the screenshots that show both its map nodes drew a path, 0..1 (an Abyss chain: 1, always shown).
+
+    The page hides paths below "drawn by at least" with it, without new tiles.
+
+    Args:
+        p: Path dict ("seen_in", "frames", "abyss").
+
+    Returns:
+        The share, rounded to 3 places.
+    """
+    if p.get("abyss"):
+        return 1.0
+    return round(min(1.0, p.get("seen_in", 0) / max(1, p.get("frames", 0))), 3)
+
+
 class _LRU:
     """A small thread-safe least-recently-used cache."""
 
@@ -168,7 +184,7 @@ class MapImageMixin:
         except Exception:
             LOG.debug("map image cache not usable, rebuilding", exc_info=True)
         atlas, scope = opened.atlas, opened.scope  # (the record taken in the claim above)
-        self.events.set_progress("building the map image (first time for this atlas)…")
+        self.events.set_progress("building the map image (first time for this atlas)…", scope)
 
         def failed(e: Exception) -> None:
             """Report the map image as failed (its log line always; the part only for the build still current: an
@@ -478,7 +494,7 @@ class MapImageMixin:
             """Pass the process's progress lines on, then show the clean map (background thread)."""
             for line in proc.stdout:
                 if line.strip() and line.strip() != "done":
-                    self.events.set_progress(line.strip())
+                    self.events.set_progress(line.strip(), scope)
             proc.wait()
             try:
                 if proc.returncode == 0 and out.exists() and self.owns(gen) and not self._seams_stopped:
@@ -629,7 +645,7 @@ class MapImageMixin:
         """
         if fl["multi"] and p["frames"] < 2 and not p.get("abyss"):
             return False
-        if fl["freq"] > 0 and not p.get("abyss") and p.get("seen_in", 0) < fl["freq"] * max(1, p.get("frames", 0)):
+        if fl["freq"] > 0 and path_share(p) < fl["freq"] - 1e-9:
             return False  # drawn by too few of the screenshots that show both maps
         return node_ok[p["a"]] and node_ok[p["b"]]
 
@@ -869,7 +885,7 @@ class MapImageMixin:
 
         Returns:
             JSON {"icons": [[x, y, id, name, slot, lift, step, node]],
-            "paths": [{"id", "strong", "abyss", "step", "pts"}],
+            "paths": [{"id", "strong", "abyss", "share", "step", "pts"}],
             "models": [{"rings", "colour", "base", "height" (metres), "ax", "ay", "step", "pick"}]} (step -1: from
             the start; pick: what a click on it selects, "node:<i>" / "landmark:<i>" / "").
         """
@@ -893,7 +909,7 @@ class MapImageMixin:
         ]  # fmt: skip
         paths = [
             {"id": f["props"]["id"], "strong": f["props"]["strong"], "abyss": f["props"]["abyss"],
-             "step": st(f["props"]), "pts": [A(p) for p in f["pts"]]}
+             "share": f["props"]["share"], "step": st(f["props"]), "pts": [A(p) for p in f["pts"]]}
             for f in scene["paths"]
         ]  # fmt: skip
         models = [
@@ -919,7 +935,8 @@ class MapImageMixin:
         Returns:
             Layer name -> features: land, biomes, paths, removed, maps, icons, landmarks, bookmarks, solids.
         """
-        V, D, fl = self.V, self.D, self._flags()
+        # every path whatever "drawn by at least" says: each carries its share and the page hides the ones below it
+        V, D, fl = self.V, self.D, {**self._flags(), "freq": 0.0}
         nodes = V["nodes"]
         W = grid.world_px
         node_ok = [self.node_shown(n, fl) for n in nodes]
@@ -974,6 +991,7 @@ class MapImageMixin:
                         "id": k,
                         "abyss": bool(p.get("abyss")),
                         "strong": bool(strong),
+                        "share": path_share(p),
                         **({"step": max(step("node", p["a"])["step"], step("node", p["b"])["step"])} if rs else {}),
                     },
                 }
@@ -1043,10 +1061,10 @@ class MapImageMixin:
                 }
             )
         # (bookmarks: drawn by the page from its bookmark list, so hiding one doesn't make every tile again)
-        # the vector ground: land where screenshots show it, biome areas from the biomes and the influence icons
+        # the vector ground: land where screenshots show it, and the city / stronghold biome areas (no icon makes one)
         for poly in self._land():
             L["land"].append({"kind": "polygon", "rings": [[W(x, y) for x, y in r] for r in poly], "props": {}})
-        for kind, polys in biome_polygons(nodes, potential, lambda i: nodes[i].get("icons") or []):
+        for kind, polys in biome_polygons(nodes, potential):
             for poly in polys:
                 L["biomes"].append(
                     {"kind": "polygon", "rings": [[W(x, y) for x, y in r] for r in poly], "props": {"kind": kind}}

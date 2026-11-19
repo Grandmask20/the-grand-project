@@ -146,7 +146,16 @@ class Handler(BaseHTTPRequestHandler):
         return self.server.session  # type: ignore[attr-defined]
 
     def log_message(self, fmt, *args) -> None:
-        """Log requests at debug level only (tiles are many)."""
+        """Log requests at debug level; a map tile only when it failed (thousands a session: 6000 of a session's
+        lines were tiles, hiding what happened, user)."""
+        served = str(args[1]) if len(args) > 1 else ""
+        # (204: no ground there; the page's own log lines are in the log already)
+        if (
+            args
+            and (" /api/tiles/" in str(args[0]) or " /api/log " in str(args[0]))
+            and served in ("200", "204", "304")
+        ):
+            return
         LOG.debug("http: " + fmt, *args)
 
     def _host_ok(self) -> bool:
@@ -409,6 +418,17 @@ class Handler(BaseHTTPRequestHandler):
         """Change the page's settings."""
         self._json(self.S.set_ui_settings(self._body()))
 
+    @route("POST", "/api/log")
+    def post_log(self, q) -> None:
+        """What was done on the page (tabs, modes, selections, dialogs, errors shown): into the log file."""
+        lines = self._body().get("lines", [])
+        if not isinstance(lines, list):
+            raise ValueError("lines must be a list")
+        for line in lines[:50]:
+            # one line each (a line break in a name made two), not too long
+            self.S.events.log(" ".join(str(line).split())[:500])  # (the Log tab and the log file: user)
+        self._json({"ok": True})
+
     @route("POST", "/api/quit")
     def post_quit(self, q) -> None:
         """Save everything and stop the app."""
@@ -665,7 +685,14 @@ class Handler(BaseHTTPRequestHandler):
         """What is under a point."""
         b = self._body()
         hit = self.S.pick(float(b["x"]), float(b["y"]), float(b["z"]), b.get("layers"))
-        self._json(None if hit is None else self.S.info(*hit))
+        info = None if hit is None else self.S.info(*hit)
+        LOG.info(
+            "click at (%.0f, %.0f): %s",
+            float(b["x"]),
+            float(b["y"]),
+            f"{hit[0]} {hit[1]}: {info['title']}" if info else "nothing",
+        )
+        self._json(info)
 
     @route("GET", "/api/info")
     def get_info(self, q) -> None:
@@ -715,7 +742,9 @@ class Handler(BaseHTTPRequestHandler):
     @route("POST", "/api/lasso")
     def post_lasso(self, q) -> None:
         """How many maps a lasso holds."""
-        self._json({"maps": len(self.S.lasso_nodes(self._body()["polygon"]))})
+        n = len(self.S.lasso_nodes(self._body()["polygon"]))
+        self.S.events.log(f"Biome select: {n} map{'' if n == 1 else 's'} inside the lasso")
+        self._json({"maps": n})
 
     @route("POST", "/api/biome")
     def post_biome(self, q) -> None:
@@ -784,6 +813,14 @@ class Handler(BaseHTTPRequestHandler):
         b = self._body()
         self.S.rename_group(b["old"], b["new"])
         self._json({"ok": True})
+
+    @route("POST", "/api/groups/delete")
+    def post_delete_groups(self, q) -> None:
+        """Delete empty groups."""
+        names = self._body().get("names", [])
+        if not isinstance(names, list):
+            raise ValueError("names must be a list")
+        self._json({"deleted": self.S.delete_groups([n for n in names if isinstance(n, str)])})
 
     @route("POST", "/api/groups/toggle")
     def post_toggle_group(self, q) -> None:

@@ -24,6 +24,21 @@ describe("ErrorBanner", () => {
 		expect(screen.queryByRole("alert")).not.toBeInTheDocument();
 	});
 
+	it("a brief note closes on the next click anywhere; an error stays", async () => {
+		render(
+			<>
+				<button type="button">elsewhere</button>
+				<ErrorBanner />
+			</>,
+		);
+		act(() => useAppStore.getState().showError("No maps inside the lasso.", true));
+		await userEvent.click(screen.getByRole("button", { name: "elsewhere" }));
+		expect(screen.queryByRole("alert")).not.toBeInTheDocument(); // (user: it stayed up for its 12 s)
+		act(() => useAppStore.getState().showError("the atlas could not be saved"));
+		await userEvent.click(screen.getByRole("button", { name: "elsewhere" }));
+		expect(screen.getByRole("alert")).toBeInTheDocument();
+	});
+
 	it("goes away by itself after 12 s", () => {
 		vi.useFakeTimers();
 		useAppStore.getState().showError("no space left");

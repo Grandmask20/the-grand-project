@@ -4,6 +4,7 @@ import { Button } from "@/components/ui/button";
 import { useAppClient } from "@/hooks/app/UseAppClient";
 import { useInfo } from "@/hooks/find/UseInfo";
 import { useRoutes } from "@/hooks/map/UseRoutes";
+import { bookmarkOf, newBookmark } from "@/logic/BookmarkOf";
 import { useAppStore } from "@/store/AppStore";
 
 /** The selected map, path, landmark, icon or bookmark: its details and what can be done with it. */
@@ -29,6 +30,8 @@ export function SelectedBox() {
 		if (fresh.isError) select(null);
 	}, [fresh.isError, select]);
 	const info = fresh.data ?? selected;
+	// the bookmark this is, or the one on this map ("★ Bookmarked" made a second one: user)
+	const mark = bookmarkOf(info);
 	// a new selection: the panel scrolls down to show it (user: it stayed out of view under the lists)
 	const box = useRef<HTMLDivElement>(null);
 	const key = selected ? `${selected.kind}-${selected.id}` : "";
@@ -57,65 +60,53 @@ export function SelectedBox() {
 						<Button
 							size="xs"
 							variant="outline"
-							onClick={() =>
-								editBookmark(
-									info.kind === "bookmark"
-										? {
-												id: info.id,
-												x: info.x,
-												y: info.y,
-												name: info.name ?? "",
-												group: info.group ?? "Other",
-												note: info.note ?? "",
-											}
-										: {
-												id: null,
-												x: info.x,
-												y: info.y,
-												name: info.suggest?.name ?? info.title,
-												group: info.suggest?.group ?? "Other",
-												note: "",
-											},
-								)
-							}
+							onClick={() => editBookmark(mark ?? newBookmark(info, [info.x, info.y]))}
 						>
-							{info.kind === "bookmark" ? "Edit" : info.bookmark != null ? "★ Bookmarked" : "Bookmark"}
+							{mark ? "★ Edit bookmark" : "Bookmark"}
 						</Button>
 					)}
-					<Button size="xs" variant="outline" onClick={() => showSources([info.x, info.y])}>
-						Screenshots
-					</Button>
-					{node !== null && (
-						<>
-							<Button size="xs" variant="outline" onClick={() => routes.routeTo(node)}>
-								Route here
-							</Button>
-							<Button size="xs" variant="outline" onClick={() => routes.setPlayer(node)}>
-								I'm here
-							</Button>
-						</>
-					)}
-					{info.kind === "bookmark" && (
+					{mark && (
 						<Button
 							size="xs"
 							variant="destructive"
 							onClick={() =>
 								askConfirm({
-									title: "Delete bookmark",
-									text: `Delete "${info.name}"?`,
-									yes: "Delete",
+									title: "Remove bookmark",
+									text: `Remove the bookmark "${mark.name}"?`,
+									yes: "Remove",
 									danger: true,
 									onYes: () =>
 										void app
-											.deleteBookmarks([info.id])
-											.then(() => clearIf(info))
+											.deleteBookmarks([mark.id as number])
+											// a bookmark pin goes away with it; a bookmarked map stays selected (user)
+											.then(() => info.kind === "bookmark" && clearIf(info))
 											.catch(showError),
 								})
 							}
 						>
-							Delete
+							Remove bookmark
 						</Button>
 					)}
+					{node !== null && (
+						<>
+							<Button size="xs" variant="outline" onClick={() => routes.routeTo(node)}>
+								Route here
+							</Button>
+							{/* on your own position it takes it back (an "I'm here" by mistake stayed: user) */}
+							{routes.player?.node === node ? (
+								<Button size="xs" variant="outline" onClick={routes.clearPlayer}>
+									I'm not here
+								</Button>
+							) : (
+								<Button size="xs" variant="outline" onClick={() => routes.setPlayer(node)}>
+									I'm here
+								</Button>
+							)}
+						</>
+					)}
+					<Button size="xs" variant="outline" onClick={() => showSources([info.x, info.y])}>
+						Screenshots
+					</Button>
 					{info.kind === "landmark" && !info.removed && (
 						<Button
 							size="xs"

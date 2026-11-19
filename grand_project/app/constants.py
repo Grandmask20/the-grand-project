@@ -78,7 +78,6 @@ STYLE_DEFAULT = {
     "map_fill": "solid",  # circles / squares: "solid" (filled with the map's colour) or "bordered" (icon colour inside)
     "map_border": "",  # the border's colour when bordered ("" = by status)
     "path_freq": 0.0,
-    "ov_towers": False,
     "age_tint": "off",  # View tab "Colour by": one of COLOUR_BY
     "colour_spread": "plasma",  # ...its colours for oldest to newest / times seen: one of COLOUR_SPREADS
     # the 3D view (View tab, while tilted; user): paths' height above the ground (atlas units), how far they reach

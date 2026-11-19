@@ -4,7 +4,6 @@ import type { Background, UiSettings } from "@/domain/app/UiSettings";
 import type { MapInfo } from "@/domain/map/MapInfo";
 import { cityColours, landmarkColours, styleColour } from "@/logic/Colours";
 import type { Geo } from "@/logic/Geo";
-import { TOWER } from "./Pictures";
 import { iconMinZoom, iconSize, nodeRadius, ringRadius, worldSize, zoomAt } from "./Sizes";
 
 /** Everything that decides how the atlas's own layers look besides their tiles. */
@@ -96,6 +95,12 @@ export function groundLayers(meta: Meta, look: Look): LayerSpecification[] {
 	];
 }
 
+/** The paths drawn by at least `freq` of the screenshots that show both their map nodes (Abyss chains always; tiles
+ * from before paths carried their share show every path). */
+export function pathShareFilter(freq: number): FilterSpecification {
+	return ["any", ["get", "abyss"], [">=", ["coalesce", ["get", "share"], 1], freq - 1e-9]] as FilterSpecification;
+}
+
 /** The paths between map nodes in the View tab's colours and style (flat only: tilted, PathLayer3D draws them). */
 export function pathLayer(geo: Geo, meta: Meta, look: Look): Spec<"line"> {
 	const st = look.settings.style;
@@ -108,6 +113,9 @@ export function pathLayer(geo: Geo, meta: Meta, look: Look): Spec<"line"> {
 		type: "line",
 		source: ATLAS,
 		"source-layer": "paths",
+		// "drawn by at least": hidden here by each path's share, not in new tiles, so the slider is live while dragged
+		// (user: each step remade every tile)
+		filter: pathShareFilter(Number(st.path_freq) || 0),
 		layout: {
 			visibility: visibility(layerOn(look.settings, "Paths") && !look.tilted),
 			"line-cap": st.path_style === "dotted" ? "round" : "butt",
@@ -235,9 +243,8 @@ export function iconLayer(geo: Geo, info: MapInfo, look: Look): Spec<"symbol"> {
 	};
 }
 
-/** Landmarks ringed by kind (locked strongholds and removed ones in their own colours), and the tower picture over
- * Towers (View: Pictures on the map; off by default). */
-export function landmarkLayers(geo: Geo, info: MapInfo, meta: Meta, look: Look): LayerSpecification[] {
+/** Landmarks ringed by kind (locked strongholds and removed ones in their own colours). */
+export function landmarkLayers(geo: Geo, meta: Meta, look: Look): LayerSpecification[] {
 	const st = look.settings.style;
 	const on = layerOn(look.settings, "Landmarks");
 	const lm = landmarkColours(meta, st);
@@ -260,22 +267,6 @@ export function landmarkLayers(geo: Geo, info: MapInfo, meta: Meta, look: Look):
 					lm["Locked stronghold"] ?? "#966496",
 					["match", ["get", "kind"], ...Object.entries(lm).flat(), "#c8c8c8"],
 				] as unknown as ExpressionSpecification,
-			},
-		},
-		{
-			id: "towers",
-			type: "symbol",
-			source: ATLAS,
-			"source-layer": "landmarks",
-			filter: ["==", ["get", "kind"], "Tower"],
-			minzoom: iconMinZoom(geo, info),
-			layout: {
-				visibility: visibility(!!st.ov_towers && on),
-				"icon-image": TOWER,
-				"icon-size": iconSize(geo, info, 2 * (Number(st.icon_size) || 1)), // twice an icon
-				"icon-allow-overlap": true,
-				"icon-ignore-placement": true,
-				"icon-anchor": "bottom",
 			},
 		},
 	];
@@ -312,7 +303,7 @@ export function atlasLayers(geo: Geo, info: MapInfo, meta: Meta, look: Look): La
 		removedLayer(geo, meta, look),
 		iconLayer(geo, info, look),
 		...nodeLayers(geo, meta, look),
-		...landmarkLayers(geo, info, meta, look),
+		...landmarkLayers(geo, meta, look),
 		...highlightLayers(geo, meta, look),
 	];
 }

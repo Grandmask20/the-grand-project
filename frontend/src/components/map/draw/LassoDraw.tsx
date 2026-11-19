@@ -7,7 +7,7 @@ import { useMapView } from "@/hooks/map/UseMapView";
 import type { Geo, Point } from "@/logic/Geo";
 import { slotOf } from "@/logic/map/LayerOrder";
 
-/** The lasso's look: the City biome button's gold. */
+/** The lasso's look: the Biome select button's gold. */
 const GOLD = "#c8a45c";
 
 /**
@@ -45,7 +45,7 @@ interface Props {
 }
 
 /**
- * Drawing the lasso round the maps of a city biome (City biome): held left button, drawn freehand by Terra Draw. The
+ * Drawing the lasso round the maps of a biome (Biome select): held left button, drawn freehand by Terra Draw. The
  * drawn lasso stays on the map until this goes (the biome is picked, or Esc), and a new one replaces it. Mounted while
  * the lasso mode is on.
  */

@@ -36,6 +36,7 @@ export function createAppClient(http: Http) {
 		updateSettings: (change: SettingsChange) => http.send<UiSettings>("PATCH", "/api/settings", change),
 		answer: (id: number, yes: boolean) => http.send<Ok>("POST", `/api/questions/${id}`, { yes }),
 		quit: () => http.send<Ok>("POST", "/api/quit"),
+		log: (lines: string[]) => http.send<Ok>("POST", "/api/log", { lines }),
 		eventsUrl: () => http.url("/api/events"),
 
 		// atlases
@@ -113,6 +114,7 @@ export function createAppClient(http: Http) {
 		newGroup: (name: string) => http.send<Ok>("POST", "/api/groups", { name }),
 		renameGroup: (old: string, name: string) => http.send<Ok>("POST", "/api/groups/rename", { old, new: name }),
 		toggleGroup: (name: string) => http.send<Ok>("POST", "/api/groups/toggle", { name }),
+		deleteGroups: (names: string[]) => http.send<{ deleted: number }>("POST", "/api/groups/delete", { names }),
 
 		// debug marks
 		getDebug: () => http.get<DebugMarks>("/api/debug"),

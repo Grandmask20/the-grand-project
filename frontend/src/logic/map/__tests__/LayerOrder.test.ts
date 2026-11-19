@@ -52,7 +52,7 @@ describe("LAYER_ORDER", () => {
 		const at = (id: string) => LAYER_ORDER.indexOf(id as (typeof LAYER_ORDER)[number]);
 		expect(at("terrain")).toBeLessThan(at("tint-picture")); // Colour by over the ground, under the biomes
 		expect(at("tint-picture")).toBeLessThan(at("biomes"));
-		expect(at("towers")).toBeLessThan(at("fog-picture")); // the fog over the map's own layers
+		expect(at("landmarks")).toBeLessThan(at("fog-picture")); // the fog over the map's own layers
 		expect(at("fog-picture")).toBeLessThan(at("outline")); // the screenshots coming in over it
 		expect(at("ground-fade-gl")).toBeLessThan(at("models-3d-gl"));
 		expect(at("models-3d-gl")).toBeLessThan(at("paths-3d-gl")); // (toggled off and on: CodeRabbit)
