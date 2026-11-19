@@ -1,6 +1,6 @@
 import type { IControl } from "maplibre-gl";
 
-/** A one-button map control (Fit, 3D). */
+/** A one-button map control (Fit, 3D), in MapLibre's control look. */
 export class ButtonControl implements IControl {
 	private el: HTMLDivElement | null = null;
 	private button: HTMLButtonElement | null = null;
@@ -8,7 +8,7 @@ export class ButtonControl implements IControl {
 	constructor(
 		private readonly text: string,
 		private readonly title: string,
-		private readonly onClick: () => void,
+		private onClick: () => void,
 	) {}
 
 	onAdd(): HTMLElement {
@@ -20,7 +20,7 @@ export class ButtonControl implements IControl {
 		b.title = this.title;
 		b.setAttribute("aria-label", this.title);
 		b.textContent = this.text;
-		b.onclick = this.onClick;
+		b.onclick = () => this.onClick();
 		el.appendChild(b);
 		this.el = el;
 		this.button = b;
@@ -30,6 +30,11 @@ export class ButtonControl implements IControl {
 	onRemove(): void {
 		this.el?.remove();
 		this.el = null;
+	}
+
+	/** What a click does (the latest handler: the control is made once). */
+	setOnClick(onClick: () => void): void {
+		this.onClick = onClick;
 	}
 
 	setOn(on: boolean): void {

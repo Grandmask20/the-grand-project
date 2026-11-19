@@ -1,25 +1,37 @@
-import type { Map as MapLibreMap, MapStyleImageMissingEvent } from "maplibre-gl";
+import type { MapStyleImageMissingEvent } from "maplibre-gl";
 import { useEffect, useRef } from "react";
-import type { MapInfo } from "@/domain/map/MapInfo";
+import nodePicture from "@/assets/map_node_icon.webp";
 import { useAppClient } from "@/hooks/app/UseAppClient";
 import { useSettings } from "@/hooks/app/UseSettings";
-import type { Geo } from "@/logic/Geo";
-import { iconSize, OWN_IMAGES } from "@/logic/MapStyle";
+import { mapAlive, useMapLibre } from "@/hooks/map/UseMapLibre";
+import { useMapView } from "@/hooks/map/UseMapView";
+import { OWN_IMAGES, squareImage } from "@/logic/map/Pictures";
 
 /**
- * The map content icons' pictures. The icon layers are in the map's style from the start (MapStyle); a picture
- * MapLibre asks for is handed out blank at once (styleimagemissing), and the real one replaces it when it has come in
- * (the tiles using it are laid out again: an update in place left the ones on screen with the old picture). Before, the layers were added once every picture had loaded, the look applied
- * again after them, and the icons made to lay out anew whenever pictures arrived.
+ * The pictures the map's layers draw: its own (the squares map style, the game's map node picture) and the map
+ * content icons'. An icon picture MapLibre asks for is handed out blank at once (styleimagemissing), and the real one
+ * replaces it when it has come in (the tiles using it are laid out again: an update in place left the ones on screen
+ * with the old picture). Another icon style or art loads every picture again.
  */
-export function MapIcons({ map, geo, info }: { map: MapLibreMap; geo: Geo; info: MapInfo }) {
+export function MapSprites() {
+	const map = useMapLibre();
 	const app = useAppClient();
-	const settings = useSettings();
-	const style = String(settings?.style.icon_style ?? "game art");
-	const scale = Number(settings?.style.icon_size) || 1;
+	const { info } = useMapView();
+	const style = String(useSettings()?.style.icon_style ?? "game art");
 	const art = info.sprite.art;
 	const S = info.sprite.size;
 	const asked = useRef(new Set<string>()); // the pictures MapLibre asked for
+
+	useEffect(() => {
+		if (!map.hasImage("node-square")) map.addImage("node-square", squareImage(), { sdf: true });
+		if (!map.hasImage("node-square-solid")) map.addImage("node-square-solid", squareImage(true), { sdf: true });
+		void map
+			.loadImage(nodePicture)
+			.then((img) => {
+				if (mapAlive(map) && !map.hasImage("node-picture")) map.addImage("node-picture", img.data);
+			})
+			.catch(() => undefined); // the "map icons" style then draws nothing
+	}, [map]);
 
 	// the picture of `name` in the current style, into the blank (or older) one; another style or art loads every
 	// picture again (the effect anew: the older one's late pictures are dropped by `live`, not by comparing a ref
@@ -30,7 +42,7 @@ export function MapIcons({ map, geo, info }: { map: MapLibreMap; geo: Geo; info:
 			void map
 				.loadImage(app.spriteUrl(name, style, art))
 				.then((r) => {
-					if (!live || !map.hasImage(name)) return;
+					if (!live || !mapAlive(map) || !map.hasImage(name)) return;
 					// replaced, not updated in place: updateImage reached only tiles laid out after it, and the ones on
 					// screen kept the older picture, so the map showed the style picked before (user: "lagged behind by
 					// 1 step"; a size change, laying the icons out again, put it right). A removed and added picture
@@ -47,19 +59,12 @@ export function MapIcons({ map, geo, info }: { map: MapLibreMap; geo: Geo; info:
 			load(e.id);
 		};
 		map.on("styleimagemissing", missing);
-		for (const name of asked.current) load(name); // another style or art: every picture again, in place
+		for (const name of asked.current) load(name);
 		return () => {
 			live = false;
 			map.off("styleimagemissing", missing);
 		};
 	}, [map, app, S, style, art]);
-
-	// their size times the View tab's setting
-	useEffect(() => {
-		const size = iconSize(geo, info, scale);
-		if (map.getLayer("icons")) map.setLayoutProperty("icons", "icon-size", size);
-		if (map.getLayer("towers")) map.setLayoutProperty("towers", "icon-size", iconSize(geo, info, 2 * scale)); // the tower picture: twice
-	}, [map, geo, info, scale]);
 
 	return null;
 }
