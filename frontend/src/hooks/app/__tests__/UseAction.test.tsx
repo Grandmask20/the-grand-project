@@ -12,9 +12,12 @@ function Probe({ report, onSuccess }: { report?: boolean; onSuccess?: (r: unknow
 		report,
 	});
 	return (
-		<button type="button" onClick={() => save.mutate("Run 2")}>
-			go
-		</button>
+		<>
+			<button type="button" onClick={() => save.mutate("Run 2")}>
+				go
+			</button>
+			<p data-testid="status">{save.status}</p>
+		</>
 	);
 }
 
@@ -42,7 +45,8 @@ describe("useAction", () => {
 		resetStore();
 		const quiet = renderWithApp(<Probe report={false} />, routes);
 		await quiet.user.click(screen.getByRole("button", { name: "go" }));
-		await new Promise((r) => setTimeout(r, 20));
+		// once it has failed (not after a guessed 20 ms), nothing is in the error box
+		await waitFor(() => expect(screen.getByTestId("status").textContent).toBe("error"));
 		expect(useAppStore.getState().error).toBeNull();
 	});
 });

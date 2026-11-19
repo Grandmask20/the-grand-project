@@ -105,3 +105,17 @@ def test_a_screenshot_that_cant_be_read_is_not_kept(tmp_path):
     cv2.imwrite(str(shot), np.full((1080, 1920, 3), 90, np.uint8))
     img = at.image(str(shot))  # put back: read now, not the missing one remembered
     assert img is not None and img.shape[:2] == (1080, 1920)
+
+
+def test_a_screenshot_put_back_after_being_missing_is_read_again(tmp_path):
+    import cv2
+    import numpy as np
+
+    from grand_project import core
+
+    atlas = core.Atlas()
+    shot = tmp_path / "2694490_20250101120000_1.png"
+    assert atlas.image(str(shot)) is None  # missing: nothing, and nothing kept
+    cv2.imwrite(str(shot), np.full((1080, 1920, 3), 90, np.uint8))
+    img = atlas.image(str(shot))  # (a kept None was returned until the cache dropped it: CodeRabbit)
+    assert img is not None and img.shape == (1080, 1920, 3)

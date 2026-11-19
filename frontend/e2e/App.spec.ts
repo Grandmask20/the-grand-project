@@ -19,6 +19,9 @@ async function open(page: Page) {
 	const box = await canvas.boundingBox();
 	expect(box?.width ?? 0).toBeGreaterThan(400);
 	expect(box?.height ?? 0).toBeGreaterThan(300);
+	// the map is drawn: its loading cover goes once every part is ready and the tiles of the view have loaded (an
+	// event of the page, not a guessed wait)
+	await expect(page.getByText("Loading atlas…", { exact: true })).toBeHidden({ timeout: 60_000 });
 	return canvas;
 }
 
@@ -37,7 +40,7 @@ test.afterEach(() => {
 test("opens the atlas and draws the map", async ({ page }) => {
 	await open(page);
 	await expect(page.getByText(/\d+ maps · \d+ icons · \d+ landmarks · 1\s+screenshots/)).toBeVisible();
-	await page.waitForTimeout(1500); // the tiles
+	// (the tiles are in: open() waited for the loading cover to go, a fixed 1.5 s before)
 	await page.screenshot({ path: test.info().outputPath("map.png") });
 });
 
