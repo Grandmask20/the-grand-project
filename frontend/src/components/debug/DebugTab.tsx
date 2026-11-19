@@ -1,3 +1,4 @@
+import { Trash2Icon } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { useAppClient } from "@/hooks/app/UseAppClient";
 import { useSettings, useUpdateSettings } from "@/hooks/app/UseSettings";
@@ -41,23 +42,31 @@ export function DebugTab() {
 					Clear all…
 				</Button>
 			</div>
-			<ul className="flex flex-col gap-0.5 text-xs">
-				{list.map((m) => (
-					<li key={m.id} className="flex items-center gap-2">
-						<button
-							type="button"
-							className="flex-1 truncate text-left hover:text-gold"
-							onClick={() => s.flyTo(m.x, m.y, 1)}
-						>
-							D{m.id} {m.kind}: {m.reason}
-							{m.note && ` - ${m.note}`} ({m.x.toFixed(0)}, {m.y.toFixed(0)})
-						</button>
-						<Button size="xs" variant="ghost" onClick={() => void app.deleteDebugMark(m.id).catch(fail)}>
-							Delete
-						</Button>
-					</li>
-				))}
-			</ul>
+			{/* in a box of its own, as the icon list and the bookmarks are (user: the marks were a bare list) */}
+			{list.length > 0 && (
+				<ul className="flex max-h-96 flex-col overflow-y-auto rounded border p-1 text-xs">
+					{list.map((m) => (
+						<li key={m.id} className="flex items-center gap-2 rounded px-1 py-0.5 hover:bg-accent">
+							<span className="w-8 shrink-0 font-mono text-muted-foreground">D{m.id}</span>
+							<button
+								type="button"
+								className="flex-1 truncate text-left hover:text-gold"
+								title={`${m.kind}: ${m.reason}${m.note ? ` - ${m.note}` : ""} (${m.x.toFixed(0)}, ${m.y.toFixed(0)})`}
+								onClick={() => s.flyTo(m.x, m.y, 1)}
+							>
+								{`${m.kind}: ${m.reason}${m.note ? ` - ${m.note}` : ""}`}
+							</button>
+							<button
+								type="button"
+								aria-label={`Delete D${m.id}`}
+								onClick={() => void app.deleteDebugMark(m.id).catch(fail)}
+							>
+								<Trash2Icon className="size-3.5 text-muted-foreground hover:text-destructive" />
+							</button>
+						</li>
+					))}
+				</ul>
+			)}
 		</div>
 	);
 }

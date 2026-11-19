@@ -326,6 +326,13 @@ class LibraryMixin:
             raise ValueError("not an atlas in the list")
         folder = Path(known["json"]).parent
         if sys.platform == "win32":
+            # Windows lets only the program in use bring a window to the front; the app runs in the background, so
+            # the folder opened behind the browser (user). Any process may now take the front once (ASFW_ANY), so
+            # Explorer's window comes up on top.
+            with contextlib.suppress(Exception):
+                import ctypes
+
+                ctypes.windll.user32.AllowSetForegroundWindow(-1)  # type: ignore[attr-defined]
             os.startfile(folder)  # type: ignore[attr-defined]  # noqa: S606 (a known folder, no shell)
         else:
             subprocess.Popen(["open" if sys.platform == "darwin" else "xdg-open", str(folder)])  # noqa: S603

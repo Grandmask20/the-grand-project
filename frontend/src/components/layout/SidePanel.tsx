@@ -37,7 +37,6 @@ const TABS: [string, string, LucideIcon][] = [
 const SIDE_MIN = 300;
 const SIDE_MAX = 720;
 const SIDE_DEFAULT = 400;
-const SIDE_COMPACT = 380; // narrower: the tabs show their icons only
 
 /** The side panel: its tabs, and the layers ("Show on the map") always at its bottom, as in the old window. */
 export function SidePanel({ debug }: { debug: boolean }) {
@@ -53,7 +52,6 @@ export function SidePanel({ debug }: { debug: boolean }) {
 	const drag = useRef<{ x: number; w: number } | null>(null);
 
 	useEffect(() => setWidth(saved), [saved]);
-	const compact = width < SIDE_COMPACT;
 
 	const onDown = (e: ReactPointerEvent) => {
 		drag.current = { x: e.clientX, w: width };
@@ -77,18 +75,14 @@ export function SidePanel({ debug }: { debug: boolean }) {
 		>
 			<Tabs value={tab} onValueChange={setTab} className="flex min-h-0 flex-1 flex-col">
 				{/* one row that scrolls sideways when the panel is narrow (it wrapped onto the panel before) */}
-				<TabsList className="m-2 mb-0 flex h-auto w-auto shrink-0 flex-nowrap justify-start overflow-x-auto pb-2.5 [scrollbar-width:thin]">
-					{/* a narrow panel shows the icons only, the names as tooltips (five tabs with names need ~370 px) */}
+				<TabsList className="@container m-2 mb-0 flex h-auto w-auto shrink-0 flex-nowrap justify-start overflow-x-auto pb-2.5 [scrollbar-width:thin]">
+					{/* the tabs share the row's width, with their names or without: the names go only when the row itself is
+					    too narrow for them (a container query, ~23.5rem), so narrowing the panel doesn't make the icons jump
+					    or bunch up at the left (user: "a bit too jumpy") */}
 					{TABS.map(([k, label, Icon]) => (
-						<TabsTrigger
-							key={k}
-							value={k}
-							className="shrink-0 grow-0 gap-1 px-2"
-							title={label}
-							aria-label={compact ? label : undefined}
-						>
-							<Icon className="size-4" aria-hidden="true" />
-							{!compact && label}
+						<TabsTrigger key={k} value={k} className="min-w-0 flex-auto gap-1 px-2" title={label} aria-label={label}>
+							<Icon className="size-4 shrink-0" aria-hidden="true" />
+							<span className="hidden @min-[23.5rem]:inline">{label}</span>
 						</TabsTrigger>
 					))}
 				</TabsList>

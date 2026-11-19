@@ -186,3 +186,19 @@ def test_an_atlas_folder_opens_in_the_file_browser_only_for_a_listed_atlas(sessi
     with pytest.raises(ValueError):
         session.show_atlas_folder(str(tmp_path / "elsewhere" / "atlas.json"))  # (no other folder: not in the list)
     assert len(opened) == 1
+
+
+def test_on_windows_the_folder_may_come_to_the_front(session, tmp_path, monkeypatch):
+    # the app runs in the background: without leave to take the front, Explorer opened behind the browser (user)
+    path, _pts, _img = make_atlas(tmp_path)
+    session.open_atlas(path)
+    calls = []
+    monkeypatch.setattr(library.sys, "platform", "win32")
+    monkeypatch.setattr(library.os, "startfile", lambda f: calls.append(("open", str(f))), raising=False)
+    import ctypes
+    import types
+
+    user32 = types.SimpleNamespace(AllowSetForegroundWindow=lambda who: calls.append(("front", who)))
+    monkeypatch.setattr(ctypes, "windll", types.SimpleNamespace(user32=user32), raising=False)
+    session.show_atlas_folder(str(path))
+    assert calls == [("front", -1), ("open", str(path.parent))]  # leave first (ASFW_ANY), then the folder
