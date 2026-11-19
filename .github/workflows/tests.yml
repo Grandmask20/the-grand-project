@@ -272,3 +272,25 @@ jobs:
         with:
           name: python-coverage-comment-action
           path: python-coverage-comment-action.txt
+
+  # the one check to require before merging (branch protection): every test passed on at least one system and none
+  # failed anywhere. GitHub's macOS runners are few on a free account, and a job waiting for one is sometimes cancelled
+  # without having run, which blocked merging with every other job green (user). Always runs, so it never ends
+  # "skipped" (which branch protection counts as passed).
+  passed:
+    name: tests passed
+    needs: [offline, testdata, data, e2e, page, coverage]
+    if: ${{ always() }}
+    runs-on: ubuntu-latest
+    permissions:
+      actions: read # the run's jobs
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+      - name: every test passed somewhere, none failed
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh api --paginate "repos/${{ github.repository }}/actions/runs/${{ github.run_id }}/jobs?filter=latest&per_page=100" \
+            --jq '.jobs[] | [.name, (.conclusion // "")] | @tsv' > jobs.tsv
+          python3 -m tools.ci_tests_passed jobs.tsv
