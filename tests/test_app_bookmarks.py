@@ -163,3 +163,17 @@ def test_showing_one_bookmark_of_a_hidden_group_after_a_deletion(opened):
     s.toggle_bookmark(keep)
     shown = {b["name"] for _u, b in s.bookmarks_by_id() if b["group"] == "G" and s.bookmark_shown(b)}
     assert shown == {"keep"} and other != keep
+
+
+def test_a_saved_route_is_a_bookmark_with_its_line_and_no_pin(opened):
+    s, path, pts = opened
+    line = [[pts[1][0], pts[1][1]], [pts[2][0], pts[2][1]], [pts[3][0], pts[3][1]]]
+    r = s.add_bookmark(pts[1][0], pts[1][1], "route1", "Routes", route={"from": 1, "to": 3, "maps": 2, "line": line})
+    # no pin: the map it starts on can still be bookmarked, and a click there picks the map, not the route
+    assert s.add_bookmark(pts[1][0], pts[1][1], "the map") >= 0
+    assert s.pick(pts[1][0], pts[1][1], 1.0)[0] != "bookmark" or s.pick(pts[1][0], pts[1][1], 1.0)[1] != r
+    item = next(b for g in s.bookmarks_payload()["groups"] for b in g["items"] if b["id"] == r)
+    assert item["route"] == {"from": 1, "to": 3, "maps": 2, "line": [[round(x, 1), round(y, 1)] for x, y in line]}
+    assert core.Atlas.load(path).bookmarks[-2]["route"]["to"] == 3  # kept in the atlas
+    with pytest.raises(ValueError):
+        s.add_bookmark(0, 0, "bad", route={"from": 1, "to": 2, "line": [[0, 0]]})  # one point: no route

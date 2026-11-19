@@ -95,4 +95,44 @@ describe("BookmarksTab", () => {
 		expect(screen.getByRole("checkbox", { name: "Pick group Later" })).toBeChecked();
 		expect(screen.getByRole("button", { name: "Select none" })).toBeInTheDocument();
 	});
+
+	it("a saved route: a path symbol, its ends in the name, and a click fits it in view", async () => {
+		const withRoute = {
+			groups: [
+				{
+					name: "Routes",
+					hidden: false,
+					items: [
+						{
+							id: 5,
+							name: "route1",
+							note: "",
+							x: 0,
+							y: 0,
+							created: "",
+							hidden: false,
+							shown: true,
+							route: {
+								from: 252,
+								to: 262,
+								maps: 2,
+								line: [
+									[0, 0],
+									[100, 0],
+									[100, 300],
+								] as [number, number][],
+							},
+						},
+					],
+				},
+			],
+		};
+		const { user } = renderWithApp(<BookmarksTab />, { "GET /api/bookmarks": withRoute });
+		await user.click(await screen.findByRole("button", { name: "route1 (map #252 -> map #262)" }));
+		expect(screen.getByLabelText("Route")).toBeInTheDocument();
+		expect(screen.getByLabelText("Routes")).toBeInTheDocument(); // on its group too (user)
+		const box = useAppStore.getState().fitTo?.box ?? [];
+		expect(box[0]).toBeLessThan(0);
+		expect(box[3]).toBeGreaterThan(300);
+	});
 });

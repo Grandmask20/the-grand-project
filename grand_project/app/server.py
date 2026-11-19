@@ -769,7 +769,7 @@ class Handler(BaseHTTPRequestHandler):
         """Add a bookmark."""
         b = self._body()
         i = self.S.add_bookmark(float(b["x"]), float(b["y"]), b.get("name", ""), b.get("group", "Other"),
-                                b.get("note", ""), gen=self._req_gen)  # fmt: skip
+                                b.get("note", ""), gen=self._req_gen, route=b.get("route"))  # fmt: skip
         if i < 0:
             raise ApiError("there is already a bookmark on that spot", 409)
         self._json({"id": i})

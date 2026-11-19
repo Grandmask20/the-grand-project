@@ -280,7 +280,7 @@ class QueryMixin:
         best, bd = None, 1e9
         if L.get("Bookmarks", True):
             for i, b in self.bookmarks_by_id():
-                if self.bookmark_shown(b):
+                if self.bookmark_shown(b) and not b.get("route"):  # (a saved route has no pin to click)
                     d = math.hypot((b["x"] - x) * z, (b["y"] - y) * z + 14)
                     if d < 16 and d < bd:
                         best, bd = ("bookmark", i), d

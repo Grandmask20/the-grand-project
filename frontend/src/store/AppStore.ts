@@ -3,6 +3,7 @@ import { create } from "zustand";
 import { useShallow } from "zustand/shallow";
 import { isStale } from "@/api/Http";
 import type { Ghost } from "@/domain/adding/Ghost";
+import type { SavedRoute } from "@/domain/bookmarks/Bookmarks";
 import type { ResultRow } from "@/domain/find/SearchResult";
 import type { ItemInfo } from "@/domain/map/ItemInfo";
 import type { ReplayPlan } from "@/domain/replay/ReplayPlan";
@@ -23,7 +24,9 @@ export type MapMode =
 	| { kind: "bookmark" }
 	| { kind: "player" }
 	| { kind: "ghost"; ghost: Ghost; centre: Point }
-	| { kind: "debug-link"; from: number; note: string };
+	| { kind: "debug-link"; from: number; note: string }
+	// Route (top bar): the first map picked, then the last
+	| { kind: "route"; from: number | null };
 
 export type FilePick = {
 	title: string;
@@ -52,7 +55,16 @@ export type Confirm = {
 	onYes: () => void;
 };
 
-export type BookmarkEdit = { id: number | null; x: number; y: number; name: string; group: string; note: string };
+export type BookmarkEdit = {
+	id: number | null;
+	x: number;
+	y: number;
+	name: string;
+	group: string;
+	note: string;
+	/** Saving a route (Save route): it goes in as a route bookmark. */
+	route?: SavedRoute;
+};
 
 export type Camera = { x: number; y: number; px: number; bearing: number; pitch: number };
 
@@ -100,10 +112,14 @@ export interface AppStoreState {
 	flyTo: (x: number, y: number, px?: number) => void;
 	fitAtlas: number;
 	requestFit: () => void;
+	/** Fit an area of the atlas in the view (a saved route: its whole line, with room round it). */
+	fitTo: { box: [number, number, number, number]; n: number } | null;
+	fitArea: (box: [number, number, number, number]) => void;
 	goto: Point | null;
 	setGoto: (p: Point | null) => void;
-	route: { path: number[]; message: string } | null;
-	setRoute: (r: { path: number[]; message: string } | null) => void;
+	/** The route shown; `at` while tracking it (Track now): the place in it of the map you are on. */
+	route: { path: number[]; message: string; at?: number } | null;
+	setRoute: (r: { path: number[]; message: string; at?: number } | null) => void;
 	replay: ReplayUi | null;
 	setReplay: (r: ReplayUi | null) => void;
 	patchReplay: (r: Partial<ReplayUi>) => void;
@@ -182,6 +198,8 @@ export const useAppStore = create<AppStoreState>()((set) => ({
 	flyTo: (x, y, px) => set((s) => ({ fly: { x, y, px, n: (s.fly?.n ?? 0) + 1 } })),
 	fitAtlas: 0,
 	requestFit: () => set((s) => ({ fitAtlas: s.fitAtlas + 1 })),
+	fitTo: null,
+	fitArea: (box) => set((s) => ({ fitTo: { box, n: (s.fitTo?.n ?? 0) + 1 } })),
 	goto: null,
 	setGoto: (goto) => set({ goto }),
 	route: null,
@@ -231,6 +249,7 @@ export const useAppStore = create<AppStoreState>()((set) => ({
 			highlight: null,
 			mode: { kind: "normal" },
 			fly: null,
+			fitTo: null,
 			goto: null,
 			route: null,
 			replay: null,

@@ -103,6 +103,16 @@ export const bookmarkLayer = (geo: Geo, meta: Meta, on: boolean): Spec => ({
 	},
 });
 
+/** The saved routes shown (Bookmarks: a route's eye): their lines, dashed in the bookmarks' colour, under the route
+ * being tracked. */
+export const savedRouteLayer = (meta: Meta, on: boolean): Spec => ({
+	id: "saved-routes",
+	type: "line",
+	source: "saved-routes",
+	layout: { visibility: visibility(on), "line-cap": "round", "line-join": "round" },
+	paint: { "line-color": meta.colours.bookmark, "line-width": 3, "line-opacity": 0.85, "line-dasharray": [2, 1.5] },
+});
+
 /** The debug marks: lines between two maps (dashed for a missing path) and rings on the spot. */
 export function markLayers(on: boolean): Spec[] {
 	const layout = { visibility: visibility(on) };

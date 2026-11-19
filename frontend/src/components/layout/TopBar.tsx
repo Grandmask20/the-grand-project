@@ -1,5 +1,5 @@
 import { useQueryClient } from "@tanstack/react-query";
-import { ClapperboardIcon, LassoIcon, MenuIcon, Undo2Icon } from "lucide-react";
+import { ClapperboardIcon, LassoIcon, MenuIcon, RouteIcon, Undo2Icon } from "lucide-react";
 import { AppQueryKeys } from "@/api/AppQueryKeys";
 import tablet from "@/assets/tablet.png";
 import { Button } from "@/components/ui/button";
@@ -186,6 +186,17 @@ export function TopBar() {
 			>
 				<ClapperboardIcon />
 				Replay
+			</Button>
+			{/* a route between two maps you click: track it, or save it with the bookmarks (user) */}
+			<Button
+				size="sm"
+				variant={s.mode.kind === "route" ? "default" : "ghost"}
+				disabled={!state?.atlas}
+				onClick={() => s.setMode(s.mode.kind === "route" ? { kind: "normal" } : { kind: "route", from: null })}
+				title="Route: click the map it starts from, then the one it goes to"
+			>
+				<RouteIcon />
+				Route
 			</Button>
 			<span className="flex-1" />
 			{state?.atlas && (

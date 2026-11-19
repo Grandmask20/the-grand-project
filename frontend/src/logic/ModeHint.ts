@@ -13,6 +13,10 @@ export function modeHint(mode: MapMode): string {
 			return "Drag the screenshot roughly where it belongs, then Enter or double-click; Esc cancels";
 		case "debug-link":
 			return "Debug: now click the map this one should have a path to";
+		case "route":
+			return mode.from === null
+				? "Route: click the map it starts from; Esc cancels"
+				: `Route from map #${mode.from}: now click the map it goes to; Esc cancels`;
 		default:
 			return "";
 	}

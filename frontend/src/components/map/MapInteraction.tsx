@@ -7,9 +7,11 @@ import type { ItemInfo } from "@/domain/map/ItemInfo";
 import { useAppClient } from "@/hooks/app/UseAppClient";
 import { useAppState } from "@/hooks/app/UseAppState";
 import { usePlayer, useSettings, useUpdateSettings } from "@/hooks/app/UseSettings";
+import { useBookmarks } from "@/hooks/bookmarks/UseBookmarks";
 import { useRouteGraph } from "@/hooks/map/UseGraph";
 import { useMapLibre } from "@/hooks/map/UseMapLibre";
 import { useMapView } from "@/hooks/map/UseMapView";
+import { savedRoute, useRoutes } from "@/hooks/map/UseRoutes";
 import { bookmarkOf, newBookmark } from "@/logic/BookmarkOf";
 import type { Point } from "@/logic/Geo";
 import type { IconLayer3D } from "@/logic/IconLayer3D";
@@ -18,9 +20,11 @@ import type { ModelLayer3D } from "@/logic/ModelLayer3D";
 import type { PathLayer3D } from "@/logic/PathLayer3D";
 import { pickItem } from "@/logic/Pick";
 import { useAppStore } from "@/store/AppStore";
+import { plural } from "@/utils/Format";
 import { BiomeMenu } from "./BiomeMenu";
 import { LassoDraw } from "./draw/LassoDraw";
 import { MapMenu } from "./MapMenu";
+import { RouteMenu } from "./RouteMenu";
 
 const HOVER = ["maps", "landmarks", "bookmarks", "icons", "paths"];
 
@@ -36,15 +40,20 @@ export function MapInteraction() {
 	const select = useAppStore((s) => s.select);
 	const setTab = useAppStore((s) => s.setTab);
 	const editBookmark = useAppStore((s) => s.editBookmark);
+	const setRoute = useAppStore((s) => s.setRoute);
+	const bookmarks = useBookmarks();
 	const showError = useAppStore((s) => s.showError);
 	const settings = useSettings();
 	const update = useUpdateSettings();
 	const atlasFile = usePlayer().atlas; // your position is kept with the atlas it was set in
 	const debug = !!useAppState().data?.debug;
-	const graph = useRouteGraph(mode.kind === "player");
+	const graph = useRouteGraph(mode.kind === "player" || mode.kind === "route");
+	const routes = useRoutes();
 	const [menu, setMenu] = useState<{ x: number; y: number; at: Point; hit: ItemInfo | null } | null>(null);
 	const lassoSeq = useRef(0);
 	const [lasso, setLasso] = useState<{ polygon: Point[]; x: number; y: number; maps: number } | null>(null);
+	// a route found between the two maps clicked (Route), waiting for Track now or Save route
+	const [routeMenu, setRouteMenu] = useState<{ path: number[]; x: number; y: number } | null>(null);
 	const drag = useRef<{ start: Point; centre: Point } | null>(null);
 
 	const atlasAt = useCallback((e: MapMouseEvent): Point => geo.toAtlas(e.lngLat.lng, e.lngLat.lat), [geo]);
@@ -114,6 +123,27 @@ export function MapInteraction() {
 						setMode({ kind: "normal" });
 						break;
 					}
+					case "route": {
+						// the first map, then the last: the route between them, fewest maps (user)
+						const still = await pickHere();
+						if (!still || !graph) break;
+						const { hit } = still;
+						const node = hit?.kind === "node" ? hit.id : (hit?.node ?? graph.nearest(at[0], at[1]));
+						if (node === null) break;
+						if (mode.from === null) {
+							setMode({ kind: "route", from: node });
+							break;
+						}
+						setMode({ kind: "normal" });
+						const path = node === mode.from ? null : graph.shortest(mode.from, (u) => u === node);
+						if (!path) {
+							showError(`No known path from map #${mode.from} to map #${node}.`, true);
+							break;
+						}
+						setRoute({ path, message: `${plural(path.length - 1, "map")} to run` });
+						setRouteMenu({ path, x: e.point.x, y: e.point.y });
+						break;
+					}
 					case "debug-link": {
 						const still = await pickHere();
 						if (!still) break;
@@ -149,6 +179,7 @@ export function MapInteraction() {
 		select,
 		setTab,
 		editBookmark,
+		setRoute,
 		setMode,
 		graph,
 		update,
@@ -310,6 +341,27 @@ export function MapInteraction() {
 		};
 	}, [map]);
 
+	const chooseRoute = (what: "track" | "save" | null) => {
+		const r = routeMenu;
+		setRouteMenu(null);
+		if (!r) return;
+		if (what === "track") routes.trackRoute(r.path);
+		else if (what === "save" && graph) {
+			const start = graph.at(r.path[0]) ?? [0, 0];
+			// numbered after the routes saved so far: route1, route2, ...
+			const saved = (bookmarks.data?.groups ?? []).flatMap((g) => g.items).filter((b) => b.route).length;
+			editBookmark({
+				id: null,
+				x: start[0],
+				y: start[1],
+				name: `route${saved + 1}`,
+				group: "Routes",
+				note: "",
+				route: savedRoute(graph, r.path),
+			});
+		} else setRoute(null);
+	};
+
 	const chooseBiome = async (biome: string | null) => {
 		const l = lasso;
 		setLasso(null);
@@ -341,6 +393,16 @@ export function MapInteraction() {
 				/>
 			)}
 			{lasso && <BiomeMenu x={lasso.x} y={lasso.y} maps={lasso.maps} meta={meta} onChoose={chooseBiome} />}
+			{routeMenu && (
+				<RouteMenu
+					x={routeMenu.x}
+					y={routeMenu.y}
+					from={routeMenu.path[0]}
+					to={routeMenu.path[routeMenu.path.length - 1]}
+					maps={routeMenu.path.length - 1}
+					onChoose={chooseRoute}
+				/>
+			)}
 			{/* what a click does now, over the map itself (user: Add bookmark only said so in the side panel) */}
 			{mode.kind !== "normal" && !lasso && (
 				<div className="pointer-events-none absolute top-2 left-1/2 z-10 -translate-x-1/2 rounded-md border border-gold/60 bg-card/95 px-3 py-1.5 text-sm text-gold shadow">

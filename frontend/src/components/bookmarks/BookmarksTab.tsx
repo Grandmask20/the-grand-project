@@ -1,9 +1,18 @@
-import { ChevronDownIcon, ChevronRightIcon, EyeIcon, EyeOffIcon, PencilIcon, Trash2Icon } from "lucide-react";
+import {
+	ChevronDownIcon,
+	ChevronRightIcon,
+	EyeIcon,
+	EyeOffIcon,
+	PencilIcon,
+	RouteIcon,
+	Trash2Icon,
+} from "lucide-react";
 import { useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import { useAppClient } from "@/hooks/app/UseAppClient";
 import { useBookmarks } from "@/hooks/bookmarks/UseBookmarks";
+import { routeBox, routeTitle } from "@/hooks/map/UseRoutes";
 import { useAppStoreCalm } from "@/store/AppStore";
 import { plural } from "@/utils/Format";
 
@@ -193,6 +202,12 @@ export function BookmarksTab() {
 							>
 								{folded ? <ChevronRightIcon className="size-4" /> : <ChevronDownIcon className="size-4" />}
 							</button>
+							{/* a group holding routes: the path symbol before its eye too (user); the others keep the room */}
+							{g.items.some((b) => b.route) ? (
+								<RouteIcon className="size-4 shrink-0 text-gold" aria-label="Routes" />
+							) : (
+								<span className="size-4 shrink-0" />
+							)}
 							<button
 								type="button"
 								aria-label={g.hidden ? `Show ${g.name}` : `Hide ${g.name}`}
@@ -241,6 +256,13 @@ export function BookmarksTab() {
 										onCheckedChange={(v) => toggle(b.id, v === true)}
 										aria-label={`Pick ${b.name}`}
 									/>
+									{/* a saved route: a path symbol before its eye, to tell it from a map's bookmark (user); the
+									    others keep the room, so the eyes line up */}
+									{b.route ? (
+										<RouteIcon className="size-3.5 shrink-0 text-gold" aria-label="Route" />
+									) : (
+										<span className="size-3.5 shrink-0" />
+									)}
 									<button
 										type="button"
 										aria-label={b.hidden ? `Show ${b.name}` : `Hide ${b.name}`}
@@ -255,8 +277,10 @@ export function BookmarksTab() {
 									<button
 										type="button"
 										className="flex-1 truncate text-left hover:text-gold"
-										title={b.note || b.name}
+										title={b.note || (b.route ? routeTitle(b.name, b.route) : b.name)}
 										onClick={async () => {
+											// a route: the whole of it in view, with room round it (user)
+											if (b.route) return s.fitArea(routeBox(b.route));
 											s.flyTo(b.x, b.y, 1);
 											try {
 												await s.selectLoaded(app.getInfo("bookmark", b.id));
@@ -265,7 +289,7 @@ export function BookmarksTab() {
 											}
 										}}
 									>
-										{b.name}
+										{b.route ? routeTitle(b.name, b.route) : b.name}
 									</button>
 									<button
 										type="button"

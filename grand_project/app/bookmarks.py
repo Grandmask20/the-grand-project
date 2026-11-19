@@ -1,6 +1,9 @@
 """app.bookmarks: part of AtlasSession (a mixin; see app/session.py): bookmarks and their groups.
 
-Bookmarks are kept in the atlas file ({uid, name, group, note, x, y, created, hidden?}). A bookmark's id is its uid,
+Bookmarks are kept in the atlas file ({uid, name, group, note, x, y, created, hidden?, route?}). A saved route is a
+bookmark with a "route" ({from, to, maps, line}: its first and last map's numbers when saved, how many maps it runs,
+and the line along its paths in atlas units, kept so it draws and fits after the atlas is rebuilt); it has no pin on
+the map and doesn't hold its spot. A bookmark's id is its uid,
 which stays when others are deleted (it was its place in the list: a page still holding an old number deleted or
 edited the bookmark that moved into that place, CodeRabbit); atlases from before get uids when first read.
 Groups hidden on the map are kept per atlas in the settings (settings["hidden_groups"][atlas path]). Empty groups
@@ -14,7 +17,7 @@ import time
 
 from grand_project import logs as atlas_log
 
-from .constants import CATEGORIES, SAME_SPOT
+from .constants import CATEGORIES, ROUTE_POINTS_MAX, SAME_SPOT
 from .events import StaleAtlas
 from .icons import icon_label, icon_name
 
@@ -31,6 +34,25 @@ def bm_group(b: dict) -> str:
         The group name ("Other" when it has none).
     """
     return b.get("group") or b.get("category") or "Other"
+
+
+def clean_route(route: dict) -> dict:
+    """Check a route sent to be saved and keep only what a saved route holds.
+
+    Args:
+        route: {"from", "to", "maps", "line": [[x, y], ...]} from the page.
+
+    Returns:
+        The route, with plain numbers.
+
+    Raises:
+        ValueError: When it isn't a route (no line of at least two points, or too long).
+    """
+    line = route.get("line")
+    if not isinstance(line, list) or not 2 <= len(line) <= ROUTE_POINTS_MAX:
+        raise ValueError("a route needs its line (2 points or more)")
+    pts = [[round(float(p[0]), 1), round(float(p[1]), 1)] for p in line]
+    return {"from": int(route["from"]), "to": int(route["to"]), "maps": int(route.get("maps", 0)), "line": pts}
 
 
 class BookmarksMixin:
@@ -126,6 +148,7 @@ class BookmarksMixin:
                     "created": b.get("created", ""),
                     "hidden": bool(b.get("hidden")),
                     "shown": self.bookmark_shown(b),
+                    **({"route": b["route"]} if b.get("route") else {}),
                 }
             )
         return {
@@ -147,6 +170,8 @@ class BookmarksMixin:
         """
         best, bd = None, SAME_SPOT
         for i, b in self.bookmarks_by_id():
+            if b.get("route"):  # (a saved route is no pin on its first map)
+                continue
             d = math.hypot(b["x"] - x, b["y"] - y)
             if d < bd:
                 best, bd = i, d
@@ -174,7 +199,15 @@ class BookmarksMixin:
         return name, cat
 
     def add_bookmark(
-        self, x: float, y: float, name: str, group: str = "Other", note: str = "", quiet=False, gen: int | None = None
+        self,
+        x: float,
+        y: float,
+        name: str,
+        group: str = "Other",
+        note: str = "",
+        quiet=False,
+        gen: int | None = None,
+        route: dict | None = None,
     ) -> int:
         """Add a bookmark unless one already sits on that spot.
 
@@ -199,7 +232,8 @@ class BookmarksMixin:
         with self._lock:  # the spot check and the append together (CodeRabbit)
             if gen is not None and not self.owns(gen):  # made for an atlas no longer open (CodeRabbit)
                 raise StaleAtlas()
-            if self.bookmark_at(x, y) is not None:
+            route = clean_route(route) if route else None
+            if route is None and self.bookmark_at(x, y) is not None:
                 return -1
             # one past every id this atlas has had, kept in the atlas (a deleted one's id is never given again)
             self.bookmarks_by_id()
@@ -214,6 +248,7 @@ class BookmarksMixin:
                     "x": float(x),
                     "y": float(y),
                     "created": time.strftime("%Y-%m-%d %H:%M"),
+                    **({"route": route} if route else {}),
                 }
             )
         if not quiet:

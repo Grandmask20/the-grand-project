@@ -16,6 +16,7 @@ export const LAYER_ORDER = [
 	"recent",
 	"paths",
 	"removed",
+	"saved-routes", // routes saved with the bookmarks: under the one tracked
 	"route-casing",
 	"route",
 	"icons",

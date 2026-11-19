@@ -13,6 +13,7 @@ import {
 	previewLayers,
 	recentLayer,
 	routeLayers,
+	savedRouteLayer,
 	selectionLayers,
 } from "@/logic/map/OverlayLayers";
 import { mapInfo, meta, state } from "@/test/Fixtures";
@@ -32,6 +33,7 @@ function everyLayer(): string[] {
 		route.nodes,
 		recentLayer(meta, true),
 		bookmarkLayer(geo, meta, true),
+		savedRouteLayer(meta, true),
 		...markLayers(true),
 		ghostLineLayer(),
 		...previewLayers(),

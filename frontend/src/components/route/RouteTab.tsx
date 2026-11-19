@@ -63,6 +63,25 @@ export function RouteTab() {
 				</Select>
 			</Section>
 
+			{/* a route tracked (Route in the top bar, Track now): how many maps are left, and on to the next (user) */}
+			{route?.at !== undefined && (
+				<Section title="Tracking">
+					<p className="font-medium">{route.message}</p>
+					<p className="text-xs text-muted-foreground">
+						On map #{route.path[route.at]}
+						{route.at + 1 < route.path.length && <>, next: map #{route.path[route.at + 1]}</>}
+					</p>
+					<div className="flex gap-1.5">
+						<Button size="xs" disabled={route.at + 1 >= route.path.length} onClick={routes.nextMap}>
+							Next map
+						</Button>
+						<Button size="xs" variant="outline" onClick={routes.clear}>
+							Stop tracking
+						</Button>
+					</div>
+				</Section>
+			)}
+
 			<Section title="Route">
 				<Select value="" onValueChange={(v) => routes.routeToNearest(v, iconOf.get(v))}>
 					<SelectTrigger size="sm" aria-label="Route to the nearest">
