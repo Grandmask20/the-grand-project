@@ -1,5 +1,5 @@
 """The detection dataset annotator (tools/detection_dataset_annotator): editor boxes map back to saved annotations,
-optional classes, the review state, export, and screenshots stay untouched."""
+optional classes, discovery, export, and screenshots stay untouched (the review store has ``test_store.py``)."""
 
 import base64
 import hashlib
@@ -19,6 +19,7 @@ from grand_project.detect import constants as detect_constants
 from grand_project.detect.icon_types import dataset_icon_types, icon_class
 from tools.detection_dataset_annotator import (
     DetectionOptions,
+    ReviewStore,
     apply_editor_boxes,
     decode_image,
     detection_annotations,
@@ -31,14 +32,9 @@ from tools.detection_dataset_annotator import (
     image_key,
     label_names,
     label_palette,
-    merge_discovered_images,
     neighbour_key,
-    new_state,
-    read_state,
     relative_source,
     resolve_input_paths,
-    save_items,
-    save_state,
 )
 from tools.detection_dataset_annotator import constants as K
 from tools.detection_dataset_annotator import export as export_module
@@ -204,23 +200,24 @@ def test_sure_city_types_are_right(test_data: Path) -> None:
 
 
 def test_label_names_follow_options_and_used_labels() -> None:
-    """Core labels first (and the derived ones for the editor), then labels in use; named icons drop ``icon``."""
-    state = {"images": {"a": {"annotations": [{"label": "icon_map_boss"}, {"label": "map_node"}, {"label": ""}]}}}
-    assert label_names(state, named_icons=False, derived=False) == [*K.ANNOTATOR_CORE_LABELS, "icon_map_boss"]
-    named = label_names(state, named_icons=True, derived=True)
+    """Core labels first (and the derived ones for the editor), then the other labels in use in alphabetical order;
+    named icons drop ``icon``."""
+    used = ["icon_map_boss", "map_node", "", "custom"]
+    assert label_names(used, named_icons=False, derived=False) == [*K.ANNOTATOR_CORE_LABELS, "custom", "icon_map_boss"]
+    named = label_names(used, named_icons=True, derived=True)
     assert "icon" not in named
-    assert named[-1] == "icon_map_boss"
+    assert named[-2:] == ["custom", "icon_map_boss"]
 
 
 def test_named_icons_list_every_icon_type() -> None:
     """User: every map content icon can be labelled, whether or not the classical detector named one yet; the icon
     types come in ICON_INFO order after the core labels, so an export numbers them the same every time."""
-    state = {"images": {"a": {"annotations": [{"label": "icon_unidentified"}, {"label": "icon_breachhive"}]}}}
+    used = ["icon_unidentified", "icon_breachhive"]
     icons = [icon_class(name) for name in dataset_icon_types()]
     assert {"icon_breachhive", "icon_wisdomsteachings", "icon_arcanehordes", "icon_hideoutred"} <= set(icons)
     core = [label for label in K.ANNOTATOR_CORE_LABELS if label != "icon"]
-    assert label_names(state, named_icons=True, derived=False) == [*core, *icons, "icon_unidentified"]
-    assert label_names({"images": {}}, named_icons=True, derived=False) == [*core, *icons]  # nothing labelled yet
+    assert label_names(used, named_icons=True, derived=False) == [*core, *icons, "icon_unidentified"]
+    assert label_names([], named_icons=True, derived=False) == [*core, *icons]  # nothing labelled yet
 
 
 def test_label_palette_shows_icon_pictures_and_names() -> None:
@@ -263,8 +260,8 @@ def test_detection_options_round_trip() -> None:
     assert options.derived and not DetectionOptions(named_icons=True).derived
 
 
-def test_review_state_round_trip(tmp_path: Path) -> None:
-    """Discovery finds images recursively without duplicates; a saved state reads back; other versions are refused."""
+def test_discovery_finds_images_once(tmp_path: Path) -> None:
+    """Discovery finds images recursively, without duplicates, under folders and single-file roots."""
     (tmp_path / "shots" / "deep").mkdir(parents=True)
     for name in ("shots/a.png", "shots/deep/b.JPG", "shots/notes.txt"):
         (tmp_path / name).write_bytes(b"x")
@@ -272,19 +269,8 @@ def test_review_state_round_trip(tmp_path: Path) -> None:
     found = discover_images(roots)
     assert [path.name for path in found] == ["a.png", "b.JPG"]
 
-    state_path = tmp_path / "out" / K.ANNOTATOR_STATE_FILE
-    state = read_state(state_path, roots)
-    assert merge_discovered_images(state, found) == (2, 0)
-    assert merge_discovered_images(state, found) == (0, 2)
-    save_state(state_path, state)
-    assert read_state(state_path, []) == state
 
-    state_path.write_text(json.dumps({"schema_version": 99}), encoding="utf-8")
-    with pytest.raises(ValueError, match="version"):
-        read_state(state_path, [])
-
-
-def test_editor_never_changes_the_screenshot(tmp_path: Path) -> None:
+def test_editor_never_changes_the_screenshot(tmp_path: Path, review_store: ReviewStore) -> None:
     """Issue: boxes looked baked into the screenshot. The editor's copy and the file itself stay clean."""
     shot = tmp_path / "shot.png"
     rows, columns = np.mgrid[0:360, 0:640]
@@ -301,18 +287,17 @@ def test_editor_never_changes_the_screenshot(tmp_path: Path) -> None:
     difference = np.abs(shown.astype(int) - image.astype(int))
     assert difference.mean() < 2 and np.percentile(difference, 99.9) < 40, (difference.mean(),)
 
-    state = {"images": {}}
-    merge_discovered_images(state, [shot])
-    item = state["images"][image_key(shot)]
+    review_store.add_images([shot])
+    key = image_key(shot)
     detection = {"nodes": [{"x": 100, "y": 100, "score": 0.9}], "icons": [{"x": 300, "y": 200}]}
-    item.update(
-        detected=True, width=640, height=360, reviewed=True, annotations=detection_annotations(detection, image, image)
-    )
-    ensure_annotation_ids(item)
+    annotations = detection_annotations(detection, image, image)
+    review_store.record_detection(key, {"width": 640, "height": 360, "annotations": annotations}, force=False)
+    item = review_store.item(key)
     boxes = editor_boxes(item["annotations"])
     boxes[0]["x"] += 5
-    item["annotations"] = apply_editor_boxes(item["annotations"], boxes, width=640, height=360)
-    result = export_dataset(state, tmp_path / "export")
+    edited = apply_editor_boxes(item["annotations"], boxes, width=640, height=360)
+    assert review_store.save_review(key, item["edit_version"], annotations=edited, reviewed=True)
+    result = export_dataset(review_store, tmp_path / "export")
     assert result.images == 1 and result.annotations == 2
     assert hashlib.sha256(shot.read_bytes()).hexdigest() == before
     assert sorted(path.name for path in (tmp_path / "export").iterdir()) == [
@@ -325,19 +310,13 @@ def test_editor_never_changes_the_screenshot(tmp_path: Path) -> None:
     assert manifest["images"][0]["source_type"] == "annotator_reviewed"
 
     # with named icons the export lists every icon type, used or not, in a fixed order (user)
-    state["settings"] = DetectionOptions(named_icons=True).as_settings()
-    item["annotations"][1]["label"] = "icon_breachhive"
-    named = export_dataset(state, tmp_path / "named")
+    review_store.set_settings(DetectionOptions(named_icons=True))
+    edited[1]["label"] = "icon_breachhive"
+    assert review_store.save_review(key, item["edit_version"], annotations=edited)
+    named = export_dataset(review_store, tmp_path / "named")
     labels = json.loads(named.manifest_path.read_text(encoding="utf-8"))["labels"]
     core = [label for label in K.ANNOTATOR_CORE_LABELS if label != "icon"]
     assert list(labels.values()) == [*core, *(icon_class(name) for name in dataset_icon_types())]
-
-
-def test_a_review_state_that_is_not_an_object_is_refused(tmp_path: Path) -> None:
-    state_path = tmp_path / K.ANNOTATOR_STATE_FILE
-    state_path.write_text("[]", encoding="utf-8")
-    with pytest.raises(ValueError, match="not a JSON object"):
-        read_state(state_path, [])
 
 
 @pytest.mark.skipif(sys.platform == "win32", reason="POSIX file names can hold bytes that are not UTF-8")
@@ -349,27 +328,6 @@ def test_image_key_takes_file_names_that_are_not_utf8(tmp_path: Path) -> None:
     assert image_key(plain) == hashlib.sha256(str(plain.resolve()).encode("utf-8")).hexdigest()[:24]
 
 
-def test_saving_a_run_keeps_edits_saved_meanwhile(tmp_path: Path) -> None:
-    """A detection run writes back only its own screenshots: an edit another session saved during it is kept."""
-    state_path = tmp_path / K.ANNOTATOR_STATE_FILE
-    state = new_state([])
-    state["images"] = {key: {"path": str(tmp_path / f"{key}.png"), "annotations": []} for key in ("a", "b")}
-    save_state(state_path, state)
-    run = read_state(state_path, [])  # what the run loaded at its start
-    other = read_state(state_path, [])
-    other["images"]["b"]["annotations"] = [{"label": "icon", "bbox": [1, 2, 3, 4]}]
-    save_state(state_path, other)  # the editor's autosave, during the run
-
-    run["images"]["a"].update(detected=True, annotations=[{"label": "map_node", "bbox": [5, 6, 7, 8]}])
-    run["settings"] = DetectionOptions(named_icons=True).as_settings()
-    save_items(state_path, run, ["a"])
-
-    saved = read_state(state_path, [])
-    assert saved["images"]["a"] == run["images"]["a"]
-    assert saved["images"]["b"] == other["images"]["b"]
-    assert saved["settings"] == run["settings"]
-
-
 def test_unreadable_images_decode_to_none(tmp_path: Path) -> None:
     empty, junk = tmp_path / "empty.png", tmp_path / "junk.png"
     empty.write_bytes(b"")
@@ -379,8 +337,9 @@ def test_unreadable_images_decode_to_none(tmp_path: Path) -> None:
     assert decode_image(tmp_path / "missing.png") is None
 
 
-def _export_state(tmp_path: Path) -> dict:
-    """A review state of four screenshots, each with its size saved, under one discovery root and outside it."""
+def _export_store(tmp_path: Path, store: ReviewStore) -> dict[str, str]:
+    """Four screenshots in the store, the detected ones with their size saved, under one discovery root and outside
+    it; return name -> image key."""
     root, other = tmp_path / "shots", tmp_path / "elsewhere"
     for folder in (root / "atlas1", other):
         folder.mkdir(parents=True)
@@ -392,24 +351,27 @@ def _export_state(tmp_path: Path) -> dict:
     }
     for path in paths.values():
         path.write_bytes(b"x")
+    store.set_input_roots([root])
+    store.add_images(paths.values())
+    keys = {name: image_key(path) for name, path in paths.items()}
     box = {"label": "icon", "bbox": [10, 20, 34, 34], "source": "classical"}
-    items = {
-        "done": {"detected": True, "annotations": [box, {**box, "bbox": [float("nan"), 20, 34, 34]},
-                                                    {**box, "bbox": [10, 20, 0.001, 34]}]},
-        "reviewed_empty": {"detected": True, "reviewed": True, "annotations": []},
-        "never_detected": {"detected": False, "annotations": []},
-        "outside": {"detected": True, "annotations": [box]},
-    }  # fmt: skip
-    state = new_state([root])
-    state["images"] = {key: {"path": str(paths[key]), "width": 1920, "height": 1080, **items[key]} for key in items}
-    return state
+    detected = {
+        "done": [box, {**box, "bbox": [float("nan"), 20, 34, 34]}, {**box, "bbox": [10, 20, 0.001, 34]}],
+        "reviewed_empty": [],
+        "outside": [box],
+    }
+    for name, annotations in detected.items():
+        result = {"width": 1920, "height": 1080, "annotations": annotations}
+        store.record_detection(keys[name], result, force=False)
+    store.save_review(keys["reviewed_empty"], 1, reviewed=True)
+    return keys
 
 
-def test_export_takes_processed_screenshots_and_finite_boxes(tmp_path: Path) -> None:
+def test_export_takes_processed_screenshots_and_finite_boxes(tmp_path: Path, review_store: ReviewStore) -> None:
     """Screenshots never detected are left out (a reviewed one with no box stays); boxes that are not finite or round
     to nothing are skipped; each screenshot's source group is its discovery root, else its folder."""
-    state = _export_state(tmp_path)
-    result = export_dataset(state, tmp_path / "export", reviewed_only=False)
+    _export_store(tmp_path, review_store)
+    result = export_dataset(review_store, tmp_path / "export", reviewed_only=False)
 
     assert (result.images, result.annotations, result.skipped_annotations) == (3, 2, 2)
     text = result.manifest_path.read_text(encoding="utf-8")
@@ -420,17 +382,21 @@ def test_export_takes_processed_screenshots_and_finite_boxes(tmp_path: Path) -> 
         "empty.png": relative_source(tmp_path / "shots"),
         "outside.png": relative_source(tmp_path / "elsewhere"),
     }
+    reviewed = export_dataset(review_store, tmp_path / "reviewed")
+    assert (reviewed.images, reviewed.annotations) == (1, 0)  # only the reviewed screenshot
 
 
-def test_a_failed_export_keeps_the_previous_one(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_a_failed_export_keeps_the_previous_one(
+    tmp_path: Path, review_store: ReviewStore, monkeypatch: pytest.MonkeyPatch
+) -> None:
     """The three export files are one generation: when moving the new manifest into place fails, the files of the
     previous export are all back, and no staging folder is left behind."""
-    state = _export_state(tmp_path)
+    keys = _export_store(tmp_path, review_store)
     output = tmp_path / "export"
-    export_dataset(state, output, reviewed_only=False)
+    export_dataset(review_store, output, reviewed_only=False)
     before = {path.name: path.read_bytes() for path in output.iterdir()}
 
-    state["images"]["outside"]["annotations"] = []  # the next export differs
+    assert review_store.save_review(keys["outside"], 1, annotations=[])  # the next export differs
     real_replace = os.replace
 
     def failing_replace(source, destination):
@@ -440,6 +406,6 @@ def test_a_failed_export_keeps_the_previous_one(tmp_path: Path, monkeypatch: pyt
 
     monkeypatch.setattr(export_module.os, "replace", failing_replace)
     with pytest.raises(OSError, match="disk full"):
-        export_dataset(state, output, reviewed_only=False)
+        export_dataset(review_store, output, reviewed_only=False)
 
     assert {path.name: path.read_bytes() for path in output.iterdir()} == before

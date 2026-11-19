@@ -1,7 +1,6 @@
-"""The annotator's review state: screenshot discovery, the ``review_state.json`` file and the review queue.
-
-The state is plain JSON (``schema_version``, ``input_roots``, ``settings``, ``images``) keyed by ``image_key``, so
-it can be read without this program. It never holds pixels; screenshots are referenced by path.
+"""What the annotator's review state is made of: screenshot discovery and keys, the detection options, the labels
+and the review queue. The state itself is kept by ``store.py``; it never holds pixels, screenshots are referenced by
+path.
 """
 
 from __future__ import annotations
@@ -99,36 +98,6 @@ def relative_source(path: Path, root: Path = paths.ROOT) -> str:
         return str(resolved)
 
 
-def new_state(input_roots: Iterable[Path]) -> dict[str, Any]:
-    """An empty review state with the default detection options."""
-    return {
-        "schema_version": K.ANNOTATOR_SCHEMA_VERSION,
-        "input_roots": [str(path) for path in input_roots],
-        "settings": DetectionOptions().as_settings(),
-        "images": {},
-    }
-
-
-def read_state(path: Path, input_roots: Iterable[Path]) -> dict[str, Any]:
-    """Load a review state, or a fresh one when the file does not exist yet.
-
-    Raises:
-        ValueError: The file is from another schema version, or its JSON is not an object.
-        json.JSONDecodeError: The file is not JSON.
-    """
-    if not path.is_file():
-        return new_state(input_roots)
-    state = json.loads(path.read_text(encoding="utf-8"))
-    if not isinstance(state, dict):
-        raise ValueError(f"Review state is not a JSON object: {path}")
-    if state.get("schema_version") != K.ANNOTATOR_SCHEMA_VERSION:
-        raise ValueError(f"Unsupported review state version: {state.get('schema_version')}")
-    state.setdefault("input_roots", [str(root) for root in input_roots])
-    state.setdefault("settings", {})
-    state.setdefault("images", {})
-    return state
-
-
 def write_json_atomic(path: Path, value: Any) -> None:
     """Write JSON through a neighbouring temporary file, so an interrupted write never leaves half a file."""
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -144,63 +113,21 @@ def write_json_atomic(path: Path, value: Any) -> None:
         raise
 
 
-def save_state(path: Path, state: dict[str, Any]) -> None:
-    """Persist the review state."""
-    write_json_atomic(path, state)
-
-
-def save_items(path: Path, state: dict[str, Any], keys: Iterable[str]) -> None:
-    """Write the given screenshots' items and the settings of ``state`` into the state saved now.
-
-    A long run (detection) works on the state it loaded at its start; writing that whole snapshot back would undo
-    what another session saved meanwhile (the editor autosaves every edit). Only this run's screenshots are taken.
-    """
-    latest = read_state(path, state.get("input_roots", []))
-    images = latest.setdefault("images", {})
-    for key in keys:
-        if key in state.get("images", {}):
-            images[key] = state["images"][key]
-    latest["settings"] = state.get("settings", latest.get("settings", {}))
-    save_state(path, latest)
-
-
-def merge_discovered_images(state: dict[str, Any], images: Iterable[Path]) -> tuple[int, int]:
-    """Add newly discovered screenshots, keeping every existing detection and edit; return (added, existing)."""
-    added = existing = 0
-    items = state.setdefault("images", {})
-    for path in images:
-        key = image_key(path)
-        if key in items:
-            existing += 1
-            continue
-        items[key] = {
-            "path": str(path),
-            "source": relative_source(path),
-            "reviewed": False,
-            "detected": False,
-            "annotations": [],
-        }
-        added += 1
-    return added, existing
-
-
-def label_names(state: dict[str, Any], *, named_icons: bool, derived: bool) -> list[str]:
-    """The labels of a state: the core labels (and the derived ones), every icon type, then every other label in use.
+def label_names(used: Iterable[str], *, named_icons: bool, derived: bool) -> list[str]:
+    """The dataset's labels: the core labels (and the derived ones), every icon type, then the other labels in use.
 
     With named icons the generic ``icon`` label is left out: icons are labelled ``icon_<name>`` instead, one label
     per icon type (``dataset_icon_types``, in ``ICON_INFO`` order) whether or not a screenshot has one yet, so every
-    type can be labelled and an export numbers the classes the same way every time (user). Labels in use that are
-    not one of them (``icon_unidentified``, an old type, a custom label) follow.
+    type can be labelled and an export numbers the classes the same way every time (user). Labels in ``used`` (the
+    store's ``used_labels``) that are not one of them (``icon_unidentified``, an old type, a custom label) follow in
+    alphabetical order, so their numbers do not depend on which screenshot happens to use them first.
     """
     labels = list(K.ANNOTATOR_ALL_LABELS if derived else K.ANNOTATOR_CORE_LABELS)
     if named_icons:
         labels.remove("icon")
         labels.extend(icon_class(name) for name in dataset_icon_types())
-    for image in state.get("images", {}).values():
-        for annotation in image.get("annotations", []):
-            label = str(annotation.get("label", ""))
-            if label and label not in labels:
-                labels.append(label)
+    known = set(labels)
+    labels.extend(label for label in sorted(set(used)) if label and label not in known)
     return labels
 
 

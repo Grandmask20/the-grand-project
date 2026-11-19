@@ -9,7 +9,7 @@ Streamlit runs this file as a script, not as part of its package, so it imports 
 from __future__ import annotations
 
 import copy
-import time
+import sqlite3
 from dataclasses import dataclass
 from functools import partial
 from pathlib import Path
@@ -24,7 +24,6 @@ from tools.detection_dataset_annotator.boxes import (
     editor_boxes,
     editor_image_url,
     editor_payload_matches,
-    ensure_annotation_ids,
     label_palette,
 )
 from tools.detection_dataset_annotator.component import annotate
@@ -35,15 +34,12 @@ from tools.detection_dataset_annotator.state import (
     discover_images,
     image_key,
     label_names,
-    merge_discovered_images,
     neighbour_key,
-    read_state,
     relative_source,
     resolve_input_paths,
     resolve_path,
-    save_items,
-    save_state,
 )
+from tools.detection_dataset_annotator.store import QueueEntry, ReviewStore
 
 
 @dataclass(frozen=True)
@@ -58,8 +54,8 @@ class Settings:
     reviewed_only: bool
 
     @property
-    def state_path(self) -> Path:
-        return self.output_dir / K.ANNOTATOR_STATE_FILE
+    def store_path(self) -> Path:
+        return self.output_dir / K.ANNOTATOR_STORE_FILE
 
 
 # ---- the editor's autosave and navigation ----------------------------------------------------------------------
@@ -72,13 +68,13 @@ def _image_url(path: str, modified_ns: int) -> str | None:
     return editor_image_url(Path(path))
 
 
-def _dataset_id(state_path: Path) -> str:
-    """A short id of the review state file: two output folders can hold the same screenshot at the same revision."""
-    return image_key(state_path)
+def _dataset_id(store_path: Path) -> str:
+    """A short id of the review store: two output folders can hold the same screenshot at the same revision."""
+    return image_key(store_path)
 
 
-def _editor_key(state_path: Path, key: str, revision: int) -> str:
-    return f"annotator-{_dataset_id(state_path)}-{key}-{revision}"
+def _editor_key(store_path: Path, key: str, revision: int) -> str:
+    return f"annotator-{_dataset_id(store_path)}-{key}-{revision}"
 
 
 def _saved_seq_key(editor_key: str) -> str:
@@ -95,15 +91,17 @@ def _remember(editor_key: str, annotations: list[dict[str, Any]]) -> None:
     known.update({str(a["id"]): copy.deepcopy(a) for a in annotations if a.get("id") is not None})
 
 
-def _save_from_editor(
-    state: dict[str, Any], image_key: str, revision: int, editor_key: str, payload: Any
-) -> dict[str, Any] | None:
-    """Apply an editor message to ``state``; return the item, or None when the message is stale."""
-    item = state.get("images", {}).get(image_key)
-    if item is None or int(item.get("edit_version", 0)) != revision:
-        return None
+def _message_item(store: ReviewStore, image_key: str, revision: int, payload: Any) -> dict[str, Any] | None:
+    """The screenshot an editor message is about, or None when the message is stale: from another screenshot, or
+    from before a detector rerun (whose new boxes it must not overwrite)."""
     if not editor_payload_matches(payload, image_key, revision):
         return None
+    item = store.item(image_key)
+    return item if item is not None and item["edit_version"] == revision else None
+
+
+def _edited_annotations(item: dict[str, Any], editor_key: str, payload: dict[str, Any]) -> list[dict[str, Any]] | None:
+    """The annotations an editor message leaves on ``item``, or None when its boxes change nothing."""
     saved = item.get("annotations", [])
     _remember(editor_key, saved)
     edited = apply_editor_boxes(
@@ -113,51 +111,64 @@ def _save_from_editor(
         height=int(item["height"]),
         known=st.session_state[_known_key(editor_key)].values(),
     )
-    if annotations_changed(saved, edited):
-        item["annotations"] = edited
-        ensure_annotation_ids(item)
-        _remember(editor_key, item["annotations"])
+    return edited if annotations_changed(saved, edited) else None
+
+
+def _accepted(editor_key: str, payload: dict[str, Any], edited: list[dict[str, Any]] | None) -> None:
+    """Note a saved editor message: its boxes join the undo memory, and the editor is told its edits up to the
+    message's ``seq`` are saved."""
+    if edited is not None:
+        _remember(editor_key, edited)
     st.session_state[_saved_seq_key(editor_key)] = int(payload.get("seq", 0))
-    return item
 
 
-def _on_edit(state_path: Path, image_key: str, revision: int, editor_key: str) -> None:
+def _on_edit(store_path: Path, image_key: str, revision: int, editor_key: str) -> None:
     """Autosave: runs before the script whenever the editor sends its boxes."""
-    result = st.session_state.get(editor_key) or {}
-    state = read_state(state_path, [])
-    if _save_from_editor(state, image_key, revision, editor_key, result.get("edit")) is not None:
-        save_state(state_path, state)
+    payload = (st.session_state.get(editor_key) or {}).get("edit")
+    with ReviewStore.open(store_path) as store:
+        item = _message_item(store, image_key, revision, payload)
+        if item is None:
+            return
+        edited = _edited_annotations(item, editor_key, payload)
+        if edited is not None and not store.save_review(image_key, revision, annotations=edited):
+            return  # a detector rerun landed in between
+    _accepted(editor_key, payload, edited)
 
 
-def _action_target(kind: str, item: dict[str, Any], keys: list[str], image_key: str) -> str:
-    """Apply a review action to ``item`` and return the screenshot to show next."""
+def _action_target(kind: str, reviewed: bool, keys: list[str], image_key: str) -> tuple[bool | None, str]:
+    """A review action's new review flag (None: unchanged) and the screenshot to show next."""
     if kind in {"review_next", "toggle_review"}:
-        item["reviewed"] = kind == "review_next" or not item.get("reviewed", False)
-        leaves_queue = bool(st.session_state.get(K.ANNOTATOR_SESSION_HIDE_REVIEWED, True)) and item["reviewed"]
+        reviewed = kind == "review_next" or not reviewed
+        leaves_queue = bool(st.session_state.get(K.ANNOTATOR_SESSION_HIDE_REVIEWED, True)) and reviewed
         if kind == "review_next" or leaves_queue:
             fallback = neighbour_key(keys, image_key, -1) if leaves_queue else image_key
-            return neighbour_key(keys, image_key, 1) or fallback or image_key
-        return image_key
+            return reviewed, neighbour_key(keys, image_key, 1) or fallback or image_key
+        return reviewed, image_key
     step = {"next": 1, "prev": -1}.get(kind)
-    return (neighbour_key(keys, image_key, step) if step else None) or image_key
+    return None, (neighbour_key(keys, image_key, step) if step else None) or image_key
 
 
-def _on_action(state_path: Path, image_key: str, revision: int, editor_key: str, keys: list[str]) -> None:
+def _on_action(store_path: Path, image_key: str, revision: int, editor_key: str, keys: list[str]) -> None:
     """Navigation and review keys: save the boxes the action carries, then move through the queue."""
-    result = st.session_state.get(editor_key) or {}
-    action = result.get("action")
-    state = read_state(state_path, [])
-    item = _save_from_editor(state, image_key, revision, editor_key, action)
-    if item is None:
-        return
-    target = _action_target(str(action.get("type")), item, keys, image_key)
-    save_state(state_path, state)
+    action = (st.session_state.get(editor_key) or {}).get("action")
+    with ReviewStore.open(store_path) as store:
+        item = _message_item(store, image_key, revision, action)
+        if item is None:
+            return
+        edited = _edited_annotations(item, editor_key, action)
+        reviewed, target = _action_target(str(action.get("type")), bool(item.get("reviewed")), keys, image_key)
+        changes = edited is not None or reviewed is not None
+        if changes and not store.save_review(image_key, revision, annotations=edited, reviewed=reviewed):
+            return  # a detector rerun landed in between
+    _accepted(editor_key, action, edited)
     st.session_state[K.ANNOTATOR_SESSION_SELECTED] = target
 
 
-def _render_editor(state: dict[str, Any], key: str, keys: list[str], settings: Settings) -> None:
+def _render_editor(store: ReviewStore, key: str, keys: list[str], settings: Settings) -> None:
     """Show the box editor for one screenshot."""
-    item = state["images"][key]
+    item = store.item(key)
+    if item is None:
+        return
     path = Path(item["path"])
     if item.get("error"):
         st.error(item["error"])
@@ -172,10 +183,8 @@ def _render_editor(state: dict[str, Any], key: str, keys: list[str], settings: S
         st.error(f"The screenshot could not be read: `{relative_source(path)}`")
         return
 
-    if ensure_annotation_ids(item):
-        save_state(settings.state_path, state)
-    revision = int(item.get("edit_version", 0))
-    editor_key = _editor_key(settings.state_path, key, revision)
+    revision = int(item["edit_version"])  # the store gives every box an id, so the editor can refer to it
+    editor_key = _editor_key(settings.store_path, key, revision)
     if st.session_state.get(K.ANNOTATOR_SESSION_MOUNTED_EDITOR) != editor_key:
         # A freshly mounted editor counts its edits from zero and its undo history starts here.
         st.session_state[K.ANNOTATOR_SESSION_MOUNTED_EDITOR] = editor_key
@@ -183,9 +192,9 @@ def _render_editor(state: dict[str, Any], key: str, keys: list[str], settings: S
         st.session_state[_known_key(editor_key)] = {}
     _remember(editor_key, item.get("annotations", []))
     index = keys.index(key) if key in keys else -1
-    labels = label_names(state, named_icons=settings.options.named_icons, derived=True)
+    labels = label_names(store.used_labels(), named_icons=settings.options.named_icons, derived=True)
     payload = {
-        "dataset": _dataset_id(settings.state_path),
+        "dataset": _dataset_id(settings.store_path),
         "image_key": key,
         "revision": revision,
         "image_url": image_url,
@@ -205,8 +214,8 @@ def _render_editor(state: dict[str, Any], key: str, keys: list[str], settings: S
     annotate(
         payload,
         key=editor_key,
-        on_edit_change=partial(_on_edit, settings.state_path, key, revision, editor_key),
-        on_action_change=partial(_on_action, settings.state_path, key, revision, editor_key, keys),
+        on_edit_change=partial(_on_edit, settings.store_path, key, revision, editor_key),
+        on_action_change=partial(_on_action, settings.store_path, key, revision, editor_key, keys),
     )
     st.caption(
         f"`{relative_source(path)}` · {item['width']} × {item['height']} · boxes are saved as source-image pixels; "
@@ -269,60 +278,48 @@ def _sidebar() -> Settings:
 
 
 def _run_detection(
-    state: dict[str, Any], settings: Settings, *, keys: list[str] | None = None, force: bool = False
+    store: ReviewStore, settings: Settings, *, keys: list[str] | None = None, force: bool = False
 ) -> None:
-    """Detect screenshots with progress, save the state, and rerun the page to show the results."""
+    """Detect screenshots with progress, then rerun the page to show the results.
+
+    Each screenshot's result is saved as it arrives (``ReviewStore.record_detection``), so a run that is stopped keeps
+    what it finished, and the editor (another browser tab) can keep saving meanwhile.
+    """
     progress_bar = st.progress(0.0) if keys is None or len(keys) > 1 else None
     status = st.empty()
-    last_save = time.monotonic()
-    # Saves write only the screenshots this run finished into the state saved now: the editor (another browser tab)
-    # may have saved edits since this snapshot was loaded.
-    key_of = {str(item["path"]): key for key, item in state["images"].items()}
-    finished: set[str] = set()
 
     def progress(done: int, total: int, path: str) -> None:
-        nonlocal last_save
-        finished.add(key_of[path])  # first: the UI calls below may raise Streamlit's stop
         if progress_bar is not None:
             progress_bar.progress(done / max(1, total), text=f"{done:,}/{total:,} complete")
         status.caption(f"Finished {Path(path).name}")
-        # By time, not by count: with many workers a save every few screenshots would take most of the time.
-        if time.monotonic() - last_save >= K.ANNOTATOR_SAVE_EVERY_S:
-            save_items(settings.state_path, state, finished)
-            last_save = time.monotonic()
 
     with st.spinner("Running the classical detector…"):
         completed, errors = detect_pending(
-            state, settings.options, keys=keys, force=force, max_workers=settings.max_workers, progress=progress
+            store, settings.options, keys=keys, force=force, max_workers=settings.max_workers, progress=progress
         )
-    save_items(settings.state_path, state, finished)
     st.session_state[K.ANNOTATOR_SESSION_NOTICE] = (
         f"Processed {completed} screenshots; {errors} failed. Failed items remain retryable."
     )
     st.rerun()
 
 
-def _sidebar_actions(state: dict[str, Any], settings: Settings) -> None:
+def _sidebar_actions(store: ReviewStore, queue: list[QueueEntry], settings: Settings) -> None:
     """Discover, detect, export and rerun-all buttons."""
-    images = state["images"]
-    pending_count = sum(not item.get("detected") for item in images.values())
+    pending_count = sum(not entry.detected for entry in queue)
     with st.sidebar:
         discover, detect_new = st.columns(2)
         if discover.button("Discover", use_container_width=True, help="Find screenshots below the roots"):
             found = discover_images(settings.roots)
-            # merged into the state saved now, not the one loaded before the (slow) search: keeps edits saved meanwhile
-            latest = read_state(settings.state_path, settings.roots)
-            added, existing = merge_discovered_images(latest, found)
-            latest["input_roots"] = [str(root) for root in settings.roots]
-            save_state(settings.state_path, latest)
+            added, existing = store.add_images(found)  # new screenshots only: every detection and edit is kept
+            store.set_input_roots(settings.roots)
             st.session_state[K.ANNOTATOR_SESSION_NOTICE] = (
                 f"Discovered {len(found)} images ({added} new, {existing} already in the queue)."
             )
             st.rerun()
         if detect_new.button(f"Detect new ({pending_count})", use_container_width=True, disabled=not pending_count):
-            _run_detection(state, settings)
+            _run_detection(store, settings)
         if st.button("Export dataset", type="primary", use_container_width=True):
-            result = export_dataset(state, settings.output_dir, reviewed_only=settings.reviewed_only)
+            result = export_dataset(store, settings.output_dir, reviewed_only=settings.reviewed_only)
             st.success(
                 f"Exported {result.images} images and {result.annotations} boxes to "
                 f"`{result.manifest_path}` and `{result.coco_path}`."
@@ -340,31 +337,31 @@ def _sidebar_actions(state: dict[str, Any], settings: Settings) -> None:
                     "detections and review flag are kept."
                 ),
             )
-            if st.button("Rerun all", use_container_width=True, disabled=not images or not confirmed):
-                _run_detection(state, settings, keys=list(images), force=True)
+            if st.button("Rerun all", use_container_width=True, disabled=not queue or not confirmed):
+                _run_detection(store, settings, keys=[entry.key for entry in queue], force=True)
 
 
-def _queue_picker(state: dict[str, Any], settings: Settings, keys: list[str]) -> str:
+def _queue_picker(store: ReviewStore, queue: list[QueueEntry], settings: Settings, keys: list[str]) -> str:
     """The screenshot select box and its detect / rerun button; return the selected image key."""
-    images = state["images"]
+    entries = {entry.key: entry for entry in queue}
     if st.session_state.get(K.ANNOTATOR_SESSION_SELECTED) not in keys:
         st.session_state[K.ANNOTATOR_SESSION_SELECTED] = keys[0]
 
     def option_text(key: str) -> str:
-        item = images[key]
-        marker = "✓" if item.get("reviewed") else ("·" if item.get("detected") else "○")
-        return f"{marker} {item.get('source', item.get('path', key))}"
+        entry = entries[key]
+        marker = "✓" if entry.reviewed else ("·" if entry.detected else "○")
+        return f"{marker} {entry.source}"
 
-    processed = sum(1 for item in images.values() if item.get("detected"))
-    reviewed = sum(1 for item in images.values() if item.get("reviewed"))
+    processed = sum(entry.detected for entry in queue)
+    reviewed = sum(entry.reviewed for entry in queue)
     pick, detect = st.columns([5, 1], vertical_alignment="bottom")
     selected = pick.selectbox(
-        f"Screenshot · {len(images)} images · {processed} processed · {reviewed} reviewed",
+        f"Screenshot · {len(queue)} images · {processed} processed · {reviewed} reviewed",
         keys,
         format_func=option_text,
         key=K.ANNOTATOR_SESSION_SELECTED,
     )
-    detected = bool(images[selected].get("detected"))
+    detected = entries[selected].detected
     if detected:
         run = detect.button(
             "Rerun detection",
@@ -374,8 +371,31 @@ def _queue_picker(state: dict[str, Any], settings: Settings, keys: list[str]) ->
     else:
         run = detect.button("Detect", type="primary", use_container_width=True)
     if run:
-        _run_detection(state, settings, keys=[selected], force=detected)
+        _run_detection(store, settings, keys=[selected], force=detected)
     return selected
+
+
+def _page(store: ReviewStore, settings: Settings) -> None:
+    """Everything below the sidebar's settings, for the open review store."""
+    queue = store.queue()
+    if queue and store.settings() != settings.options:
+        st.sidebar.warning(
+            "Settings affect new detections only. Rerun selected/all screenshots to apply them; "
+            "rerunning replaces edits."
+        )
+    _sidebar_actions(store, queue, settings)
+    if notice := st.session_state.pop(K.ANNOTATOR_SESSION_NOTICE, None):
+        st.toast(notice)
+
+    keys = [entry.key for entry in queue if not settings.hide_reviewed or not entry.reviewed]
+    if not keys:
+        st.info(
+            "Nothing to review: press **Discover** and **Detect new** in the sidebar, or turn off "
+            "‘Hide reviewed screenshots’ to revisit completed work."
+        )
+        return
+    selected = _queue_picker(store, queue, settings, keys)
+    _render_editor(store, selected, keys, settings)
 
 
 def main() -> None:
@@ -383,30 +403,13 @@ def main() -> None:
     st.set_page_config(page_title="Detection Dataset Annotator", layout="wide")
     settings = _sidebar()
     try:
-        state = read_state(settings.state_path, settings.roots)
-    except (OSError, ValueError) as exc:  # json.JSONDecodeError is a ValueError
+        # One connection per script run: it belongs to this thread (the detection pool runs in it too).
+        store = ReviewStore.open(settings.store_path, settings.roots)
+    except (OSError, ValueError, sqlite3.Error) as exc:  # ValueError: a store made by a newer annotator
         st.error(f"Could not load review state: {exc}")
         return
-
-    if state["images"] and DetectionOptions.from_settings(state["settings"]) != settings.options:
-        st.sidebar.warning(
-            "Settings affect new detections only. Rerun selected/all screenshots to apply them; "
-            "rerunning replaces edits."
-        )
-    _sidebar_actions(state, settings)
-    if notice := st.session_state.pop(K.ANNOTATOR_SESSION_NOTICE, None):
-        st.toast(notice)
-
-    images = state["images"]
-    keys = [key for key, item in images.items() if not settings.hide_reviewed or not item.get("reviewed", False)]
-    if not keys:
-        st.info(
-            "Nothing to review: press **Discover** and **Detect new** in the sidebar, or turn off "
-            "‘Hide reviewed screenshots’ to revisit completed work."
-        )
-        return
-    selected = _queue_picker(state, settings, keys)
-    _render_editor(state, selected, keys, settings)
+    with store:
+        _page(store, settings)
 
 
 if __name__ == "__main__":

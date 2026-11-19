@@ -1,4 +1,4 @@
-"""Export of the review state: COCO ``annotations.json``, the project-native ``manifest.json`` and ``labels.json``.
+"""Export of the review store: COCO ``annotations.json``, the project-native ``manifest.json`` and ``labels.json``.
 
 ``grand_project.detect.rf_detr.load_annotator_manifest`` reads the manifest (``make prepare_rf_detr_data
 RF_DETR_ANNOTATOR_MANIFEST=...``). Both files point at the original screenshots; nothing is copied.
@@ -14,11 +14,14 @@ import tempfile
 from collections.abc import Iterable
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from . import constants as K
 from .detection import decode_image
-from .state import DetectionOptions, label_names, relative_source, write_json_atomic
+from .state import label_names, relative_source, write_json_atomic
+
+if TYPE_CHECKING:
+    from .store import ReviewStore
 
 
 @dataclass(frozen=True)
@@ -113,7 +116,7 @@ def _publish(output_dir: Path, files: dict[str, Any]) -> None:
                 shutil.rmtree(backup)
 
 
-def export_dataset(state: dict[str, Any], output_dir: Path, *, reviewed_only: bool = True) -> ExportResult:
+def export_dataset(store: ReviewStore, output_dir: Path, *, reviewed_only: bool = True) -> ExportResult:
     """Export the (reviewed) annotations as COCO JSON and a project-native RF-DETR manifest.
 
     Screenshots that no longer exist are left out. Labels are the core labels, with named icons every icon type
@@ -121,18 +124,15 @@ def export_dataset(state: dict[str, Any], output_dir: Path, *, reviewed_only: bo
     the core classes and the icon types keep their ids from one export to the next.
     """
     output_dir.mkdir(parents=True, exist_ok=True)
-    options = DetectionOptions.from_settings(state.get("settings", {}))
-    labels = label_names(state, named_icons=options.named_icons, derived=False)
+    labels = label_names(store.used_labels(), named_icons=store.settings().named_icons, derived=False)
     label_ids = {label: index for index, label in enumerate(labels)}
     image_rows: list[dict[str, Any]] = []
     annotation_rows: list[dict[str, Any]] = []
     manifest_rows: list[dict[str, Any]] = []
     skipped = 0
-    roots = state.get("input_roots", [])
-    for key, item in state.get("images", {}).items():
+    roots = store.input_roots()
+    for key, item in store.items(reviewed_only=reviewed_only):
         reviewed = bool(item.get("reviewed", False))
-        if reviewed_only and not reviewed:
-            continue
         if not (reviewed or item.get("detected")):
             continue  # never processed: its empty box list is not a labelling
         path = Path(item["path"])

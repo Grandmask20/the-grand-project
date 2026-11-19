@@ -23,11 +23,18 @@ ANNOTATOR_DEFAULT_INPUT_DIRS = (
 )
 """Screenshot roots of the first annotation pass (in the test data, so ``local_paths.json`` applies)."""
 
-ANNOTATOR_DEFAULT_OUTPUT_DIR = "runs/detection-dataset"
-"""Project-relative folder holding the review state and the exported training data."""
+ANNOTATOR_DEFAULT_OUTPUT_DIR = "tools/detection_dataset_annotator/detection-dataset"
+"""Project-relative folder holding the review store and the exported training data (git-ignored: local data)."""
 
-ANNOTATOR_STATE_FILE = "review_state.json"
-"""Filename for the editable detector results and review flags."""
+ANNOTATOR_STORE_FILE = "review_state.sqlite3"
+"""Filename of the review store (``store.py``): the editable detector results, review flags and dataset settings."""
+
+ANNOTATOR_STORE_SCHEMA_VERSION = 1
+"""``PRAGMA user_version`` of the review store; a store made by a newer annotator is refused."""
+
+ANNOTATOR_STORE_BUSY_S = 10.0
+"""Seconds a store write waits while another session (a browser tab, a detection run) writes. Writes are one
+screenshot each and take milliseconds; the wait only matters when several land at once."""
 
 ANNOTATOR_MANIFEST_FILE = "manifest.json"
 """Filename for the project-native RF-DETR manifest export (read by ``rf_detr.load_annotator_manifest``)."""
@@ -39,7 +46,7 @@ ANNOTATOR_LABELS_FILE = "labels.json"
 """Filename for the exported numeric label ids."""
 
 ANNOTATOR_SCHEMA_VERSION = 1
-"""Version of the review-state and manifest schemas."""
+"""Version of the manifest schema."""
 
 ANNOTATOR_MANIFEST_FORMAT = "the-grand-project-rf-detr-manifest"
 """The manifest's ``format`` value; ``rf_detr.load_annotator_manifest`` refuses other files."""
@@ -68,7 +75,7 @@ ANNOTATOR_WORKER_FALLBACK = 8
 
 ANNOTATOR_WORKER_IN_FLIGHT = 2
 """Requests written ahead to each worker, so it starts its next screenshot while the annotator handles an answer
-(progress, saving the state) instead of waiting for it."""
+(progress, saving the result) instead of waiting for it."""
 
 ANNOTATOR_WORKER_LINE_LIMIT = 16 * 1024 * 1024
 """Longest worker answer line in bytes (asyncio's default 64 KiB is too short for a screenshot with every path)."""
@@ -79,9 +86,6 @@ fail (they can be retried). A screenshot takes ~2-10 s, plus a few seconds of mo
 
 ANNOTATOR_WORKER_EXIT_S = 10.0
 """Seconds a worker may take to exit after its input closes before it is terminated."""
-
-ANNOTATOR_SAVE_EVERY_S = 30.0
-"""Seconds between saves of the review state during a detection run (a full state is ~40 MB of JSON, ~2 s)."""
 
 # ---- labels ----------------------------------------------------------------------------------------------------
 

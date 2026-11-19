@@ -6,9 +6,11 @@ viewer starts ``grand_project.core.seams``), so it imports the project like any 
 one JSON line per screenshot, in order (see ``worker.py``).
 
 The pool is one asyncio task per worker, run with ``asyncio.run`` from the Streamlit script thread. All tasks take
-screenshots from one queue; only the event-loop thread touches it and the review state, so no locks are needed. The
-speed comes from the processes, not from asyncio: each worker is given its share of the CPU's threads (OpenMP and
-BLAS included) and is kept ``ANNOTATOR_WORKER_IN_FLIGHT`` requests ahead, so it never waits for the annotator.
+screenshots from one queue; only the event-loop thread touches it and the review store's connection (the thread that
+opened it), so no locks are needed. Each answer is committed to the store as it arrives, so a stopped run keeps every
+screenshot it finished. The speed comes from the processes, not from asyncio: each worker is given its share of the
+CPU's threads (OpenMP and BLAS included) and is kept ``ANNOTATOR_WORKER_IN_FLIGHT`` requests ahead, so it never waits
+for the annotator.
 """
 
 from __future__ import annotations
@@ -21,18 +23,21 @@ import sys
 from collections import deque
 from collections.abc import Callable, Iterable
 from dataclasses import dataclass
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from grand_project import paths
 
 from . import constants as K
 from .state import DetectionOptions
 
+if TYPE_CHECKING:
+    from .store import ReviewStore
+
 Progress = Callable[[int, int, str], None]
 """Called with (finished, total, screenshot path) after each screenshot."""
 
-Job = tuple[str, dict[str, Any]]
-"""A screenshot's key and its review-state item."""
+Job = tuple[str, str]
+"""A screenshot's key and path."""
 
 
 def cpu_count() -> int:
@@ -73,8 +78,9 @@ class _Interrupted(Exception):
 
 @dataclass
 class _Run:
-    """Bookkeeping of one ``detect_pending`` call: results are written into the state items as they arrive."""
+    """Bookkeeping of one ``detect_pending`` call: results are written to the store as they arrive."""
 
+    store: ReviewStore
     pending: deque[Job]
     force: bool
     progress: Progress | None
@@ -83,41 +89,36 @@ class _Run:
     errors: int = 0
     interrupt: BaseException | None = None
 
-    def succeed(self, item: dict[str, Any], result: dict[str, Any]) -> None:
-        item.update(result)
-        # A new revision remounts the editor, so it shows these detections instead of autosaving old boxes.
-        item["edit_version"] = int(item.get("edit_version", 0)) + 1
-        if self.force:
-            item["reviewed"] = False
+    def succeed(self, job: Job, result: dict[str, Any]) -> None:
+        # The store raises the screenshot's revision: the editor remounts and shows these detections instead of
+        # autosaving old boxes over them.
+        self.store.record_detection(job[0], result, force=self.force)
         self.completed += 1
-        self._report(item)
+        self._report(job)
 
-    def fail(self, item: dict[str, Any], error: str) -> None:
-        if self.force and item.get("detected"):
-            item["error"] = f"Rerun failed; kept previous detections. {error}"
-        else:
-            item.update({"detected": False, "error": error})
+    def fail(self, job: Job, error: str) -> None:
+        self.store.record_failure(job[0], error, force=self.force)
         self.errors += 1
-        self._report(item)
+        self._report(job)
 
     def fail_remaining(self, error: str) -> None:
         while self.pending:
-            _key, item = self.pending.popleft()
-            self.fail(item, error)
+            self.fail(self.pending.popleft(), error)
 
-    def _report(self, item: dict[str, Any]) -> None:
+    def _report(self, job: Job) -> None:
         if not self.progress:
             return
         try:
-            self.progress(self.completed + self.errors, self.total, str(item["path"]))
+            self.progress(self.completed + self.errors, self.total, job[1])
         except BaseException as exc:
             # Streamlit's stop / rerun signals are BaseExceptions, which asyncio lets out of the event loop at once,
             # skipping the other workers' cleanup. Kept here and raised again once every worker is stopped.
             self.interrupt = exc
             raise _Interrupted from exc
 
-    def receive(self, key: str, item: dict[str, Any], line: str) -> None:
+    def receive(self, job: Job, line: str) -> None:
         """Apply one worker answer to its screenshot."""
+        key = job[0]
         try:
             message = json.loads(line)
             if not isinstance(message, dict):
@@ -125,13 +126,13 @@ class _Run:
             if message.get("key") != key:
                 raise ValueError(f"worker returned unexpected image key {message.get('key')!r}")
             if message.get("error"):
-                self.fail(item, str(message["error"]))
+                self.fail(job, str(message["error"]))
             elif isinstance(message.get("result"), dict):
-                self.succeed(item, message["result"])
+                self.succeed(job, message["result"])
             else:
                 raise ValueError("worker returned neither a result nor an error")
         except ValueError as exc:  # json.JSONDecodeError is a ValueError
-            self.fail(item, f"Invalid detection worker response: {exc}")
+            self.fail(job, f"Invalid detection worker response: {exc}")
 
 
 async def _start_worker(threads: int) -> asyncio.subprocess.Process:
@@ -168,11 +169,12 @@ async def _stop_worker(process: asyncio.subprocess.Process, *, graceful: bool) -
         await process.communicate()
 
 
-async def _send(process: asyncio.subprocess.Process, key: str, item: dict[str, Any], settings: dict) -> str | None:
+async def _send(process: asyncio.subprocess.Process, job: Job, settings: dict) -> str | None:
     """Write one request to the worker; return the error when it cannot be sent."""
     if process.stdin is None:
         return "Detection worker input was unavailable."
-    request = {"key": key, "path": item["path"], **settings}
+    key, path = job
+    request = {"key": key, "path": path, **settings}
     try:
         process.stdin.write((json.dumps(request) + "\n").encode("utf-8"))
         await process.stdin.drain()
@@ -190,12 +192,12 @@ async def _drive_worker(run: _Run, options: DetectionOptions, process: asyncio.s
     try:
         while True:
             while accepting and run.pending and len(in_flight) < K.ANNOTATOR_WORKER_IN_FLIGHT:
-                key, item = run.pending.popleft()
-                error = await _send(process, key, item, settings)
+                job = run.pending.popleft()
+                error = await _send(process, job, settings)
                 if error is None:
-                    in_flight.append((key, item))
+                    in_flight.append(job)
                 else:
-                    run.fail(item, error)
+                    run.fail(job, error)
                     accepting = False  # read what was already sent, then stop
             if not in_flight:
                 break
@@ -203,22 +205,21 @@ async def _drive_worker(run: _Run, options: DetectionOptions, process: asyncio.s
                 line = await asyncio.wait_for(process.stdout.readline(), K.ANNOTATOR_WORKER_ANSWER_S)
             except ValueError as exc:  # longer than ANNOTATOR_WORKER_LINE_LIMIT: the stream is out of step
                 while in_flight:
-                    run.fail(in_flight.popleft()[1], f"Detection worker answer could not be read: {exc}")
+                    run.fail(in_flight.popleft(), f"Detection worker answer could not be read: {exc}")
                 break
             except TimeoutError:  # stuck: its screenshots fail (retryable), it is stopped, the other workers go on
                 while in_flight:
                     error = f"Detection worker did not answer within {K.ANNOTATOR_WORKER_ANSWER_S:g} s; it was stopped."
-                    run.fail(in_flight.popleft()[1], error)
+                    run.fail(in_flight.popleft(), error)
                 break
             if not line:  # end of output: the worker exited
                 with contextlib.suppress(TimeoutError):
                     await asyncio.wait_for(process.wait(), K.ANNOTATOR_WORKER_EXIT_S)
                 while in_flight:
                     error = f"Detection worker exited unexpectedly (code {process.returncode})."
-                    run.fail(in_flight.popleft()[1], error)
+                    run.fail(in_flight.popleft(), error)
                 break
-            key, item = in_flight.popleft()
-            run.receive(key, item, line.decode("utf-8", errors="replace"))
+            run.receive(in_flight.popleft(), line.decode("utf-8", errors="replace"))
         graceful = True
     finally:
         await _stop_worker(process, graceful=graceful)
@@ -250,7 +251,7 @@ def _first_error(group: BaseExceptionGroup) -> BaseException:
 
 
 def detect_pending(
-    state: dict[str, Any],
+    store: ReviewStore,
     options: DetectionOptions,
     *,
     keys: Iterable[str] | None = None,
@@ -258,7 +259,7 @@ def detect_pending(
     max_workers: int | None = None,
     progress: Progress | None = None,
 ) -> tuple[int, int]:
-    """Detect the selected screenshots in worker processes, applying each result as it arrives.
+    """Detect the selected screenshots of the store in worker processes, saving each result as it arrives.
 
     Without ``keys`` every screenshot not detected yet runs. ``force`` reruns detected ones too and needs explicit
     keys, so a caller cannot replace every annotation in the dataset by accident. A failed rerun keeps the
@@ -271,20 +272,11 @@ def detect_pending(
         max_workers = default_workers()
     if max_workers < 1:
         raise ValueError("max_workers must be positive")
-    selected = set(keys) if keys is not None else None
-    if force and selected is None:
+    if force and keys is None:
         raise ValueError("Forced detection requires explicit image keys")
-    run = _Run(
-        pending=deque(
-            (key, item)
-            for key, item in state.get("images", {}).items()
-            if (selected is None or key in selected) and (force or not item.get("detected"))
-        ),
-        force=force,
-        progress=progress,
-    )
+    run = _Run(store=store, pending=deque(store.detection_jobs(keys, force=force)), force=force, progress=progress)
     run.total = len(run.pending)
-    state["settings"] = options.as_settings()
+    store.set_settings(options)
     if not run.total:
         return 0, 0
     try:

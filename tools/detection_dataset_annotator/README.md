@@ -66,8 +66,11 @@ finder above the list (`/`) narrows it down; clicking a label (or `Enter` in the
 
 ## Detection and export
 
-The app writes `review_state.json` in the output folder (default `runs/detection-dataset`) while work is in
-progress. Exporting writes:
+The work in progress (detections, edits, review flags, the detection settings) is kept in `review_state.sqlite3` in the
+output folder (default `tools/detection_dataset_annotator/detection-dataset`, which git ignores), a SQLite database
+(`store.py`). Each edit and each detection result saves only its own screenshot, in a few milliseconds however many
+screenshots are detected, and several browser tabs and a detection run can save at the same time. Exporting writes
+into the same folder:
 
 - `annotations.json`: COCO object-detection JSON with absolute `file_name` paths.
 - `manifest.json`: the project-native manifest accepted by `make prepare_rf_detr_data` through
@@ -124,8 +127,8 @@ tracer and wall mask.
 Detection runs in worker processes, by default one per CPU but two, as far as the memory allows (each worker needs
 about 1.3 GB; adjustable in the sidebar). Each worker gets its share of the CPU's threads for OpenCV, OpenMP and
 BLAS: left uncapped, every worker's map and tower models start one OpenMP thread per CPU, and four workers ran 4.2×
-slower. Each worker is kept two screenshots ahead, the review state is saved every 30 seconds, and the progress
-indicator updates as each screenshot finishes. On a 22-thread Ryzen 9 7900X, 1,265 screenshots take about half an
+slower. Each worker is kept two screenshots ahead, each result is saved as it arrives (a stopped run keeps what it
+finished), and the progress indicator updates as each screenshot finishes. On a 22-thread Ryzen 9 7900X, 1,265 screenshots take about half an
 hour. “Rerun detection” replaces one screenshot's boxes; “Rerun all screenshots” requires confirmation
 because successful reruns replace annotations and clear review flags. A failed rerun keeps its previous detections and
 review flag.
@@ -136,7 +139,8 @@ review flag.
 | --- | --- |
 | `app.py` | the Streamlit page (sidebar, queue, autosave and navigation callbacks) |
 | `component/` | the box editor: a small Streamlit component (plain JavaScript and CSS, no build step) |
-| `state.py` | screenshot discovery, `review_state.json`, detection options, labels, the review queue |
+| `state.py` | screenshot discovery, detection options, labels, the review queue |
+| `store.py` | the review state in `review_state.sqlite3`: one screenshot per save, safe between sessions |
 | `detection.py` | the classical detector's points and paths as boxes in source-image pixels; cities typed by look |
 | `icon_proposals.py` | the extra icons and hidden map nodes (above) |
 | `pool.py`, `worker.py` | detection in worker processes, driven by asyncio (`python -m tools.detection_dataset_annotator.worker`) |

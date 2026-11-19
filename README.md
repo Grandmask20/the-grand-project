@@ -1,4 +1,4 @@
-# The Grand Project — v1.18
+# The Grand Project — v1.19
 
 Builds one big map of your Path of Exile 2 atlas from your screenshots. Named after the in-game tablet, *The Grand Project*. It finds maps, paths, icons, towers and cities, and lets you search, bookmark and route through them.
 
@@ -64,7 +64,7 @@ established classical detector's boxes over each screenshot in a keyboard-driven
 and delete boxes; edits save themselves; press `?` for the shortcuts), lets you mark screenshots reviewed, and hides
 reviewed screenshots. Screenshots are never changed. Exported reviewed annotations include COCO `annotations.json` and
 a project-native `manifest.json`; use the latter with
-`make prepare_rf_detr_data RF_DETR_ANNOTATOR_MANIFEST=runs/detection-dataset/manifest.json`.
+`make prepare_rf_detr_data RF_DETR_ANNOTATOR_MANIFEST=tools/detection_dataset_annotator/detection-dataset/manifest.json`.
 
 ---
 
