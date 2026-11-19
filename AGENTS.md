@@ -90,7 +90,9 @@ worker processes, the job queue, refusals while busy, auto-add) and `RealAdding.
 (skipped without it): run them after changing how detection or adding runs in parallel. They keep the app's settings in `e2e-run/user_data` (`GRAND_PROJECT_USER_DATA`),
 never the player's. Coverage: `make coverage` (Python, settings in `pyproject.toml`) and `npm run coverage` (the
 page); CI runs the tests on Windows, macOS and Linux, measures coverage on the Ubuntu jobs, shows the Python and page tables
-on the `tests` run's page and comments the Python one on pull requests. A new
+on the `tests` run's page and comments the Python one on pull requests. Its last job, "tests passed"
+(`tools/ci_tests_passed.py`), is the check to require before merging: every test passed on at least one system and
+none failed (a macOS job cancelled before a runner took it doesn't block). A new
 module gets its own test file (one per module or class under test).
 
 ## Git workflow
