@@ -189,6 +189,14 @@ def sheet(path: Path, new: list[str], matches: list[Match]) -> None:
     cv2.imwrite(str(path), np.vstack(rows))
 
 
+def _write_json(path: Path, value) -> None:
+    """Rewrite a truth file as grand_project/truth.py writes it (indent 1), keeping its line endings (the files
+    written on Windows have CRLF ones: rewritten with LF, every line would show as changed)."""
+    crlf = b"\r\n" in path.read_bytes()
+    text = json.dumps(value, indent=1)
+    path.write_bytes((text.replace("\n", "\r\n") if crlf else text).encode("utf-8"))
+
+
 def main(argv: list[str] | None = None) -> int:
     """Run the split (see the module docstring); returns the exit status."""
     ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
@@ -245,9 +253,9 @@ def main(argv: list[str] | None = None) -> int:
             kb = key["badges"].get(b.get("id", "")) if key else None
             if kb and kb.get("detector") == a.old:
                 kb["detector"] = m.name
-        tf.write_text(json.dumps(data, indent=1), encoding="utf-8")  # as grand_project/truth.py writes them
+        _write_json(tf, data)
         if key:
-            key_file.write_text(json.dumps(key, indent=1), encoding="utf-8")
+            _write_json(key_file, key)
     print("relabelled: " + ", ".join(f"{n} {sum(m.name == n for m in matches)}" for n in a.new))
     return 0
 

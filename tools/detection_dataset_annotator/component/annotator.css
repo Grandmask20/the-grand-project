@@ -136,6 +136,11 @@
   display: block;
 }
 
+/* Ctrl+drag moves the box: no handles, so a small box stays visible while it moves. */
+.ann-translating .ann-box .ann-handle {
+  display: none;
+}
+
 .ann-handle.nw { left: 0; top: 0; }
 .ann-handle.n { left: 50%; top: 0; }
 .ann-handle.ne { left: 100%; top: 0; }

@@ -49,6 +49,7 @@ const SHORTCUTS = [
   ["Click / Shift+click", "select / add to selection (smallest box under the pointer)"],
   ["Alt+click", "cycle through boxes stacked under the pointer"],
   ["Drag box / handle", "move / resize"],
+  ["Ctrl+drag", "move the selected boxes, even from a handle (small boxes)"],
   ["1 … 9, 0", "label the selected boxes, or pick the label for new boxes"],
   ["/", "find a label by its name, icon name or other names (Enter: use the first one, Esc: clear)"],
   ["Del, Backspace", "delete selected"],
@@ -437,6 +438,18 @@ class Annotator {
     return null;
   }
 
+  selectedAt(point) {
+    // A selected box under the point, its handles' reach included (a handle sticks out past the box edge).
+    const reach = Math.max(HANDLE_PX, HIT_PAD_PX) / this.view.zoom;
+    return this.selectedBoxes().find(
+      (box) =>
+        point.x >= box.x - reach &&
+        point.x <= box.x + box.w + reach &&
+        point.y >= box.y - reach &&
+        point.y <= box.y + box.h + reach,
+    );
+  }
+
   handlePoint(box, handle) {
     const x = handle.includes("w") ? box.x : handle.includes("e") ? box.x + box.w : box.x + box.w / 2;
     const y = handle.includes("n") ? box.y : handle.includes("s") ? box.y + box.h : box.y + box.h / 2;
@@ -512,6 +525,9 @@ class Annotator {
       return;
     } else {
       this.drag = this.startBoxDrag(event, point);
+      // A Ctrl move hides the handles, so the box itself shows where it lands (they hide a small box).
+      const translating = this.drag.kind === "move" && (event.ctrlKey || event.metaKey);
+      this.viewport.classList.toggle("ann-translating", translating);
     }
     this.viewport.setPointerCapture(event.pointerId);
     this.drag.moved = false;
@@ -520,7 +536,12 @@ class Annotator {
 
   startBoxDrag(event, point) {
     // A press on a handle resizes, on a box selects and moves, elsewhere draws a new box.
-    const handle = this.handleAt(point);
+    // Ctrl (Cmd) skips the handles: on a small box they cover the whole box, so it could only be resized.
+    const translate = event.ctrlKey || event.metaKey;
+    if (translate && this.selectedAt(point)) {
+      return { kind: "move", start: point, originals: cloneBoxes(this.selectedBoxes()) };
+    }
+    const handle = translate ? null : this.handleAt(point);
     if (handle) {
       this.select(handle.box.id);
       return { kind: "resize", handle: handle.handle, start: point, box: { ...handle.box }, id: handle.box.id };
@@ -548,7 +569,7 @@ class Annotator {
     const point = this.toImage(event);
     const drag = this.drag;
     if (!drag) {
-      this.hoverAt(point);
+      this.hoverAt(point, event);
       return;
     }
     if (drag.kind === "pan") {
@@ -570,13 +591,15 @@ class Annotator {
     else if (drag.kind === "draw") this.dragDraw(drag, point);
   }
 
-  hoverAt(point) {
+  hoverAt(point, event) {
     if (!this.showBoxes) return;
-    const handle = this.handleAt(point);
+    const translate = (event?.ctrlKey || event?.metaKey) && this.selectedAt(point);
+    const handle = translate ? null : this.handleAt(point);
     const under = this.boxesAt(point);
     this.setHover(handle?.box.id ?? under[0]?.id ?? null);
     let cursor = "crosshair";
     if (this.spaceDown) cursor = "grab";
+    else if (translate) cursor = "move";
     else if (handle) cursor = HANDLE_CURSORS[handle.handle];
     else if (under.length) cursor = "move";
     this.viewport.style.cursor = cursor;
@@ -631,6 +654,7 @@ class Annotator {
   pointerUp(event) {
     const drag = this.drag;
     this.drag = null;
+    this.viewport.classList.remove("ann-translating");
     if (this.viewport.hasPointerCapture(event.pointerId)) this.viewport.releasePointerCapture(event.pointerId);
     this.drawEl.hidden = true;
     if (!drag) return;
@@ -650,6 +674,7 @@ class Annotator {
     const drag = this.drag;
     if (!drag) return;
     this.drag = null;
+    this.viewport.classList.remove("ann-translating");
     this.drawEl.hidden = true;
     if ((drag.kind === "move" || drag.kind === "resize") && drag.moved) {
       this.boxes = this.history.pop() ?? this.boxes;

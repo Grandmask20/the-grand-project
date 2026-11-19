@@ -32,6 +32,7 @@ in the side panel says when they are saved.
 | Click / Shift+click | select / add to the selection (the smallest box under the pointer wins) |
 | Alt+click | cycle through boxes stacked under the pointer |
 | Drag a box / a handle | move / resize |
+| `Ctrl`+drag | move the selected boxes, even from a handle (small boxes are all handle) |
 | `1` … `9`, `0` | label the selected boxes, or pick the label for new boxes (numbers shown in the side panel) |
 | `/` | find a label: type words of its name, its icon's poe2db name or other names; `Enter` uses the first match, `Esc` clears |
 | `Del`, `Backspace` | delete selected |
