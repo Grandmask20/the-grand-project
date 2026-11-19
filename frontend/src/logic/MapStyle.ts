@@ -484,6 +484,10 @@ export function applyLook(map: MapLibreMap, geo: Geo, meta: Meta, look: Look): v
 	// the width is the px at 1 px per atlas unit; it scales with the map (up to 1.6 px per unit), so dashes keep
 	// their place along the path as you zoom
 	const w = Number(st.path_width) || 2.5;
+	// "drawn by at least": hidden here by each path's share, not in new tiles, so the slider is live while dragged
+	// (user: each step remade every tile); tiles from before the share (no "share") stay shown
+	const freq = Number(st.path_freq) || 0;
+	setFilter(map, "paths", freq > 0 ? pathShareFilter(freq) : null);
 	// at least 1 px, like the old window's (thinner paths were hard to see zoomed out: user)
 	setPaint(map, "paths", "line-width", worldSize(geo, st.path_style === "dotted" ? 1.6 * w : w, 1, 1.6));
 	setPaint(
@@ -576,6 +580,11 @@ export function applyLook(map: MapLibreMap, geo: Geo, meta: Meta, look: Look): v
 	// the page fell seconds behind and kept going after a pause (user). The 3D layers reveal by step themselves.
 	// bookmarks are not part of how the atlas was made: hidden while replaying (user: they showed from the start)
 	if (look.replayPos !== null) visible(map, "bookmarks", false);
+}
+
+/** The paths drawn by at least `freq` of the screenshots that show both their map nodes (Abyss chains always). */
+export function pathShareFilter(freq: number): FilterSpecification {
+	return ["any", ["get", "abyss"], [">=", ["coalesce", ["get", "share"], 1], freq - 1e-9]] as FilterSpecification;
 }
 
 /** Put a GeoJSON source's data. */

@@ -50,6 +50,9 @@ export function useUpdateSettings() {
 			// session, a slider drag sending one per step)
 			if ("near_only" in change || "hidden_types" in change || change.layers)
 				void queryClient.invalidateQueries({ queryKey: AppQueryKeys.types });
+			// routes go along the paths shown
+			if (change.style && "path_freq" in change.style)
+				void queryClient.invalidateQueries({ queryKey: AppQueryKeys.graph });
 			// Colour by's colours come with the screenshots' outlines and the heat picture (user: switching them
 			// changed nothing on the map)
 			if (change.style && ("colour_spread" in change.style || "age_tint" in change.style || change.style.reset)) {

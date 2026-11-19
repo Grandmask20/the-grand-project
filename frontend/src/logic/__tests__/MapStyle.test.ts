@@ -12,6 +12,7 @@ import {
 	LAYER_GROUPS,
 	type Look,
 	nodeRadius,
+	pathShareFilter,
 	setData,
 	setImage,
 	squareImage,
@@ -146,6 +147,16 @@ describe("applyLook", () => {
 		applyLook(vector.map, geo, meta, look({ background: "vector" }));
 		expect(vector.layout.terrain.visibility).toBe("none");
 		expect(vector.layout.land.visibility).toBe("visible");
+	});
+
+	it("hides paths drawn by too few screenshots on the page, without new tiles", () => {
+		const { map, filters } = fakeMap(ids);
+		const l = look();
+		applyLook(map, geo, meta, l);
+		expect(filters.paths).toBeNull();
+		l.settings.style = { ...l.settings.style, path_freq: 0.35 };
+		applyLook(map, geo, meta, l);
+		expect(filters.paths).toEqual(pathShareFilter(0.35));
 	});
 
 	it("hides a switched off group", () => {

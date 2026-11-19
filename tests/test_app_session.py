@@ -256,6 +256,26 @@ def test_a_settings_change_is_one_log_line():
     from grand_project.app.session import settings_change_text
 
     text = settings_change_text(
-        {"style": {"path_freq": 0.25}, "hidden_types": ["Breach", "Ritual"], "near_only": True}, {"Ritual", "Abyss"}
+        {
+            "style": {"path_freq": 0.35},
+            "hidden_types": ["Breach", "Ritual"],
+            "near_only": True,
+            "layers": {"Paths": False},
+        },
+        {"Ritual", "Abyss"},
     )
-    assert text == "style.path_freq=0.25, hidden +Breach -Abyss, near_only=True"
+    assert text == (
+        "paths drawn by at least 35%, types shown: Abyss, types hidden: Breach, "
+        "Find: only potential city maps on, Paths layer off"
+    )
+
+
+def test_drawn_by_at_least_makes_no_tile_again_and_paths_carry_their_share(session, tmp_path):
+    path, _pts, _img = make_atlas(tmp_path)
+    session.open_atlas(path)
+    v = session.filter_version
+    session.set_ui_settings({"style": {"path_freq": 0.5}})  # (user: each step remade every tile and the 3D scene)
+    assert session.filter_version == v
+    shares = [p["share"] for _g, _pts2, p, _id in features(session, "paths")]
+    assert shares and all(0 <= s <= 1 for s in shares)
+    assert "Changed: paths drawn by at least 50%" in session.events.log_lines[-1]

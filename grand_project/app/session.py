@@ -167,17 +167,9 @@ class AtlasSession(
         if "style" in changes and changes["style"].get("reset"):
             s["style"] = {}
         self.save_settings()
-        # what Find and the map show (not how they look): logged in the Log tab too (user: the log said little)
-        words = {"multi_only": "only what 2+ screenshots show", "only_icon_maps": "only maps with a ticked icon",
-                 "near_only": "only potential city maps"}  # fmt: skip
-        for k, label in words.items():
-            if k in changes:
-                self.events.log(f"Find: {label} {'on' if s[k] else 'off'}")
-        if "hidden_types" in changes:
-            self.events.log(f"Find: {len(s['icon_hidden'])} type(s) hidden")
-        # every change in the log file, in one line (user: "logs are still not heavily detailed enough")
-        LOG.info("settings: %s", settings_change_text(changes, hidden_before))
-        if self._flags() != before:  # what the tiles hold changed (not only how the page draws it)
+        # every change you make, in one line of the Log tab (user: "every user made change should be listed")
+        self.events.log(f"Changed: {settings_change_text(changes, hidden_before)}")
+        if tile_flags(self._flags()) != tile_flags(before):  # what the tiles hold changed (not how the page draws it)
             self.filters_changed()
         return self.ui_settings()
 
@@ -235,7 +227,6 @@ class AtlasSession(
             if before.scope and before.scope != now.scope:
                 self.events.log(f"switched to atlas {name}", before.scope)
         maps = len((atlas.final or {}).get("nodes", []))
-        LOG.info(f"opened atlas {p}: {len(atlas.frames)} screenshots, {maps} maps")
         self.events.log(f"opened atlas {name} ({p}): {len(atlas.frames)} screenshots, {maps} maps", now.scope)
         if atlas.frames and atlas.final is None:
             self.events.log("this atlas predates the atlas-wide check: running it now")
@@ -531,8 +522,32 @@ class AtlasSession(
         self._fog = None
 
 
+# how a settings key reads in the log (others: their own name)
+_WORDS = {
+    "multi_only": "Find: only what 2+ screenshots show",
+    "only_icon_maps": "Find: only maps with a ticked icon",
+    "near_only": "Find: only potential city maps",
+    "path_freq": "paths drawn by at least",
+    "path_width": "path width",
+    "path_style": "path style",
+    "icon_size": "icon size",
+    "icon_style": "icon style",
+    "map_size": "map size",
+    "map_style": "map style",
+    "age_tint": "colour by",
+    "side_width": "side panel width",
+}
+
+
+def _say(v) -> str:
+    """A setting's value as the log says it: on / off, 35% for a share, else as it is."""
+    if isinstance(v, bool):
+        return "on" if v else "off"
+    return str(v)
+
+
 def settings_change_text(changes: dict, hidden_before: set) -> str:
-    """Say a settings change in one log line: "style.path_freq=0.25, hidden +Breach -Ritual, layers.Removed=True".
+    """Say a settings change in one log line: "Paths layer off, paths drawn by at least 35%, types shown: Breach".
 
     Args:
         changes: The change the page sent (set_ui_settings).
@@ -545,14 +560,37 @@ def settings_change_text(changes: dict, hidden_before: set) -> str:
     for k, v in changes.items():
         if k == "hidden_types":
             now = set(v)
-            plus, minus = sorted(now - hidden_before), sorted(hidden_before - now)
-            moved = [*(f"+{t}" for t in plus), *(f"-{t}" for t in minus)]
-            parts.append("hidden " + (" ".join(moved[:12]) + (" ..." if len(moved) > 12 else "") if moved else "same"))
+            shown, hidden = sorted(hidden_before - now), sorted(now - hidden_before)
+            for word, names in (("types shown", shown), ("types hidden", hidden)):
+                if names:
+                    parts.append(
+                        f"{word}: " + ", ".join(names[:8]) + (f" and {len(names) - 8} more" if len(names) > 8 else "")
+                    )
+        elif k == "layers" and isinstance(v, dict):
+            parts += [f"{kk} layer {_say(vv)}" for kk, vv in v.items()]
+        elif k == "style" and isinstance(v, dict) and v.get("reset"):
+            parts.append("styles reset")
         elif isinstance(v, dict):
-            parts += [f"{k}.{kk}={vv!r}" for kk, vv in v.items()] or [f"{k}={{}}"]
+            for kk, vv in v.items():
+                val = f"{round(100 * vv)}%" if kk == "path_freq" else _say(vv)
+                parts.append(f"{_WORDS.get(kk, kk.replace('_', ' '))} {val}")
         else:
-            parts.append(f"{k}={v!r}")
+            parts.append(f"{_WORDS.get(k, k)} {_say(v)}")
     return ", ".join(parts) or "nothing"
+
+
+def tile_flags(fl: dict) -> dict:
+    """The filters the map's tiles hold: all but the paths' "drawn by at least" share, which the page applies itself
+    (each path carries its share), so moving that slider makes no tile again (user: it lagged, each step remade every
+    tile and the 3D scene).
+
+    Args:
+        fl: _flags().
+
+    Returns:
+        The filters without "freq".
+    """
+    return {k: v for k, v in fl.items() if k != "freq"}
 
 
 def potential_kind(label: str) -> str:

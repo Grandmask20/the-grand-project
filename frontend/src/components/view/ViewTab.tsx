@@ -243,13 +243,14 @@ export function ViewTab() {
 				</div>
 				<div className="flex items-center gap-2">
 					<span className="w-24 text-xs text-muted-foreground">drawn by at least</span>
-					{/* saved when let go: which paths show is the app's filter (no preview while dragging) */}
+					{/* live while dragged (the page hides paths by their share), saved when let go */}
 					<SettingSlider
 						label="drawn by at least"
 						min={0}
 						max={100}
 						step={5}
 						value={Math.round((Number(st.path_freq) || 0) * 100)}
+						onPreview={(v) => look({ path_freq: v / 100 })}
 						onCommit={(v) => set({ path_freq: v / 100 })}
 						format={(v) => `${v}%`}
 						valueWidth="w-10"

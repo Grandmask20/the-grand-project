@@ -8,7 +8,8 @@ export interface Scene3D {
 	/** [x, y, id, name, slot (place in its row), lift (atlas units: the model top under it), step (-1: always),
 	 * node (its map node, -1 for none)] */
 	icons: [number, number, number, string, number, number, number, number][];
-	paths: { id: number; strong: boolean; abyss: boolean; step: number; pts: [number, number][] }[];
+	/** share: how many of the screenshots that show both map nodes drew it, 0..1 (hidden below "drawn by at least"). */
+	paths: { id: number; strong: boolean; abyss: boolean; share?: number; step: number; pts: [number, number][] }[];
 	models: {
 		rings: [number, number][][];
 		colour: string;
