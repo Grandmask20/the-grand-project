@@ -1,4 +1,4 @@
-import { ChevronDownIcon, ChevronRightIcon, EyeIcon, EyeOffIcon, PencilIcon } from "lucide-react";
+import { ChevronDownIcon, ChevronRightIcon, EyeIcon, EyeOffIcon, PencilIcon, Trash2Icon } from "lucide-react";
 import { useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
@@ -24,11 +24,37 @@ export function BookmarksTab() {
 		setPicked(next);
 	};
 
+	const adding = s.mode.kind === "bookmark";
+	const remove = (ids: number[], name?: string) =>
+		s.askConfirm({
+			title: "Delete bookmarks",
+			text: name ? `Delete "${name}"?` : `Delete ${plural(ids.length, "bookmark")}?`,
+			yes: "Delete",
+			danger: true,
+			onYes: () =>
+				void app
+					.deleteBookmarks(ids)
+					.then(() => setPicked((p) => new Set([...p].filter((id) => !ids.includes(id)))))
+					.catch(fail),
+		});
+
 	return (
-		<div className="flex flex-col gap-3">
+		// anything else done here ends "Add bookmark" (user: it stayed on after editing and deleting bookmarks, and the
+		// next click on the map added one instead of selecting)
+		<div
+			className="flex flex-col gap-3"
+			onClickCapture={(e) => {
+				if (adding && !(e.target as HTMLElement).closest("[data-add-bookmark]")) s.setMode({ kind: "normal" });
+			}}
+		>
 			<div className="flex flex-wrap gap-1.5">
-				<Button size="xs" onClick={() => s.setMode({ kind: "bookmark" })}>
-					Add bookmark
+				<Button
+					size="xs"
+					data-add-bookmark
+					variant={adding ? "outline" : "default"}
+					onClick={() => s.setMode(adding ? { kind: "normal" } : { kind: "bookmark" })}
+				>
+					{adding ? "Cancel adding" : "Add bookmark"}
 				</Button>
 				<Button
 					size="xs"
@@ -53,7 +79,8 @@ export function BookmarksTab() {
 							title: "Move bookmarks",
 							label: `Move ${plural(ids.length, "bookmark")} to group:`,
 							value: "",
-							options: groups.map((g) => g.name),
+							// a dropdown of the groups (user: "moveto needs a dropdown"); New group makes another
+							choices: groups.map((g) => g.name),
 							onOk: (g) =>
 								void app
 									.moveBookmarks(ids, g)
@@ -64,30 +91,11 @@ export function BookmarksTab() {
 				>
 					Move to…
 				</Button>
-				<Button
-					size="xs"
-					variant="destructive"
-					disabled={!ids.length}
-					onClick={() =>
-						s.askConfirm({
-							title: "Delete bookmarks",
-							text: `Delete ${plural(ids.length, "bookmark")}?`,
-							yes: "Delete",
-							danger: true,
-							onYes: () =>
-								void app
-									.deleteBookmarks(ids)
-									.then(() => setPicked(new Set()))
-									.catch(fail),
-						})
-					}
-				>
+				<Button size="xs" variant="destructive" disabled={!ids.length} onClick={() => remove(ids)}>
 					Delete
 				</Button>
 			</div>
-			{s.mode.kind === "bookmark" && (
-				<p className="text-xs text-gold">Click on the map where the bookmark goes (Esc cancels).</p>
-			)}
+			{adding && <p className="text-xs text-gold">Click a map, or a spot, for the new bookmark (Esc cancels).</p>}
 			{!groups.length && (
 				<p className="text-muted-foreground">No bookmarks yet. Right-click the map, or Add bookmark.</p>
 			)}
@@ -199,6 +207,10 @@ export function BookmarksTab() {
 										}
 									>
 										<PencilIcon className="size-3.5 text-muted-foreground" />
+									</button>
+									{/* one at a time, without ticking it first (user: deleting needed the box or the pin) */}
+									<button type="button" aria-label={`Delete ${b.name}`} onClick={() => remove([b.id], b.name)}>
+										<Trash2Icon className="size-3.5 text-muted-foreground hover:text-destructive" />
 									</button>
 								</div>
 							))}

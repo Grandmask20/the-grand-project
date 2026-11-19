@@ -2,8 +2,10 @@ import { useEffect, useRef } from "react";
 import { Section } from "@/components/common/Section";
 import { Button } from "@/components/ui/button";
 import { useAppClient } from "@/hooks/app/UseAppClient";
+import { useBookmarks } from "@/hooks/bookmarks/UseBookmarks";
 import { useInfo } from "@/hooks/find/UseInfo";
 import { useRoutes } from "@/hooks/map/UseRoutes";
+import { bookmarkOf, newBookmark } from "@/logic/BookmarkOf";
 import { useAppStore } from "@/store/AppStore";
 
 /** The selected map, path, landmark, icon or bookmark: its details and what can be done with it. */
@@ -29,6 +31,8 @@ export function SelectedBox() {
 		if (fresh.isError) select(null);
 	}, [fresh.isError, select]);
 	const info = fresh.data ?? selected;
+	// the bookmark this is, or the one on this map ("★ Bookmarked" made a second one: user)
+	const mark = bookmarkOf(info, useBookmarks().data);
 	// a new selection: the panel scrolls down to show it (user: it stayed out of view under the lists)
 	const box = useRef<HTMLDivElement>(null);
 	const key = selected ? `${selected.kind}-${selected.id}` : "";
@@ -57,29 +61,9 @@ export function SelectedBox() {
 						<Button
 							size="xs"
 							variant="outline"
-							onClick={() =>
-								editBookmark(
-									info.kind === "bookmark"
-										? {
-												id: info.id,
-												x: info.x,
-												y: info.y,
-												name: info.name ?? "",
-												group: info.group ?? "Other",
-												note: info.note ?? "",
-											}
-										: {
-												id: null,
-												x: info.x,
-												y: info.y,
-												name: info.suggest?.name ?? info.title,
-												group: info.suggest?.group ?? "Other",
-												note: "",
-											},
-								)
-							}
+							onClick={() => editBookmark(mark ?? newBookmark(info, [info.x, info.y]))}
 						>
-							{info.kind === "bookmark" ? "Edit" : info.bookmark != null ? "★ Bookmarked" : "Bookmark"}
+							{mark ? "★ Edit bookmark" : "Bookmark"}
 						</Button>
 					)}
 					<Button size="xs" variant="outline" onClick={() => showSources([info.x, info.y])}>
@@ -95,25 +79,26 @@ export function SelectedBox() {
 							</Button>
 						</>
 					)}
-					{info.kind === "bookmark" && (
+					{mark && (
 						<Button
 							size="xs"
 							variant="destructive"
 							onClick={() =>
 								askConfirm({
-									title: "Delete bookmark",
-									text: `Delete "${info.name}"?`,
-									yes: "Delete",
+									title: "Remove bookmark",
+									text: `Remove the bookmark "${mark.name}"?`,
+									yes: "Remove",
 									danger: true,
 									onYes: () =>
 										void app
-											.deleteBookmarks([info.id])
+											.deleteBookmarks([mark.id as number])
+											// a bookmark pin goes away with it; a bookmarked map stays selected
 											.then(() => clearIf(info))
 											.catch(showError),
 								})
 							}
 						>
-							Delete
+							Remove bookmark
 						</Button>
 					)}
 					{info.kind === "landmark" && !info.removed && (

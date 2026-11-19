@@ -7,10 +7,13 @@ import type { ItemInfo } from "@/domain/map/ItemInfo";
 import { useAppClient } from "@/hooks/app/UseAppClient";
 import { useAppState } from "@/hooks/app/UseAppState";
 import { usePlayer, useSettings, useUpdateSettings } from "@/hooks/app/UseSettings";
+import { useBookmarks } from "@/hooks/bookmarks/UseBookmarks";
 import { useRouteGraph } from "@/hooks/map/UseGraph";
+import { bookmarkOf, newBookmark } from "@/logic/BookmarkOf";
 import type { Geo, Point } from "@/logic/Geo";
 import type { IconLayer3D } from "@/logic/IconLayer3D";
 import { EMPTY, setData } from "@/logic/MapStyle";
+import { modeCursor, modeHint } from "@/logic/ModeHint";
 import type { ModelLayer3D } from "@/logic/ModelLayer3D";
 import type { PathLayer3D } from "@/logic/PathLayer3D";
 import { pickItem } from "@/logic/Pick";
@@ -30,6 +33,7 @@ export function MapInteraction({ map, geo, meta }: { map: MapLibreMap; geo: Geo;
 	const select = useAppStore((s) => s.select);
 	const setTab = useAppStore((s) => s.setTab);
 	const editBookmark = useAppStore((s) => s.editBookmark);
+	const bookmarks = useBookmarks();
 	const showError = useAppStore((s) => s.showError);
 	const settings = useSettings();
 	const update = useUpdateSettings();
@@ -85,17 +89,10 @@ export function MapInteraction({ map, geo, meta }: { map: MapLibreMap; geo: Geo;
 						break;
 					}
 					case "bookmark": {
+						// a map that has a bookmark opens that one (before: a second bookmark on the same map)
 						const hit = await pick(at);
-						const spot = hit && hit.kind !== "path" ? ([hit.x, hit.y] as Point) : at;
-						editBookmark({
-							id: null,
-							x: spot[0],
-							y: spot[1],
-							name: hit?.suggest?.name ?? "",
-							group: hit?.suggest?.group ?? "Other",
-							note: "",
-						});
 						setMode({ kind: "normal" });
+						editBookmark(bookmarkOf(hit, bookmarks.data) ?? newBookmark(hit, at));
 						break;
 					}
 					case "player": {
@@ -139,6 +136,7 @@ export function MapInteraction({ map, geo, meta }: { map: MapLibreMap; geo: Geo;
 		select,
 		setTab,
 		editBookmark,
+		bookmarks.data,
 		setMode,
 		graph,
 		update,
@@ -178,8 +176,7 @@ export function MapInteraction({ map, geo, meta }: { map: MapLibreMap; geo: Geo;
 	useEffect(() => {
 		const dragging = mode.kind === "lasso" || mode.kind === "ghost";
 		void dragging; // panning is AtlasMap's own drag (it stays off in these modes)
-		map.getCanvas().style.cursor =
-			mode.kind === "lasso" ? "crosshair" : mode.kind === "ghost" ? "move" : mode.kind === "normal" ? "" : "copy";
+		map.getCanvas().style.cursor = modeCursor(mode);
 
 		const down = (e: MapMouseEvent) => {
 			if (e.originalEvent.button !== 0) return;
@@ -340,6 +337,12 @@ export function MapInteraction({ map, geo, meta }: { map: MapLibreMap; geo: Geo;
 				/>
 			)}
 			{lasso && <BiomeMenu x={lasso.x} y={lasso.y} maps={lasso.maps} meta={meta} onChoose={chooseBiome} />}
+			{/* what a click does now, over the map itself (user: Add bookmark only said so in the side panel) */}
+			{mode.kind !== "normal" && !lasso && (
+				<div className="pointer-events-none absolute top-2 left-1/2 z-10 -translate-x-1/2 rounded-md border border-gold/60 bg-card/95 px-3 py-1.5 text-sm text-gold shadow">
+					{modeHint(mode)}
+				</div>
+			)}
 		</>
 	);
 }

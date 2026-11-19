@@ -31,6 +31,8 @@ export type Prompt = {
 	label: string;
 	value: string;
 	options?: string[];
+	/** Pick one of these (a dropdown) instead of typing. */
+	choices?: string[];
 	onOk: (value: string) => void;
 };
 
@@ -125,7 +127,12 @@ export const useAppStore = create<AppStoreState>()((set) => ({
 	camera: null,
 	setCamera: (camera) => set({ camera }),
 	tab: "find",
-	setTab: (tab) => set({ tab }),
+	// leaving the Bookmarks tab ends "Add bookmark" (user: it stayed on, and a later click on the map added one)
+	setTab: (tab) =>
+		set((st) => ({
+			tab,
+			...(st.mode.kind === "bookmark" && tab !== "bookmarks" ? { mode: { kind: "normal" } as MapMode } : {}),
+		})),
 	selected: null,
 	select: (selected) => {
 		selectSeq++;

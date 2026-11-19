@@ -13,8 +13,10 @@ import {
 import type { Meta } from "@/domain/app/Meta";
 import type { ItemInfo } from "@/domain/map/ItemInfo";
 import { useAppClient } from "@/hooks/app/UseAppClient";
+import { useBookmarks } from "@/hooks/bookmarks/UseBookmarks";
 import { useDebugMarks } from "@/hooks/debug/UseDebugMarks";
 import { useRoutes } from "@/hooks/map/UseRoutes";
+import { bookmarkOf, newBookmark } from "@/logic/BookmarkOf";
 import type { Point } from "@/logic/Geo";
 import { useAppStoreCalm } from "@/store/AppStore";
 
@@ -36,6 +38,9 @@ export function MapMenu({ x, y, at, hit, meta, debug, onClose }: Props) {
 	const routes = useRoutes();
 	const node = hit?.kind === "node" ? hit.id : (hit?.node ?? null);
 	const reasons: Record<string, string[]> = useDebugMarks(debug).data?.reasons ?? {};
+	// the bookmark this is, or the one on this map (user: a bookmarked map offered to bookmark it again, and had no
+	// way to remove it)
+	const mark = bookmarkOf(hit, useBookmarks().data);
 
 	const run = (fn: () => Promise<unknown>) => () => {
 		fn().catch((e) => s.showError(e));
@@ -55,52 +60,35 @@ export function MapMenu({ x, y, at, hit, meta, debug, onClose }: Props) {
 				<span className="pointer-events-none absolute size-px" style={{ left: x, top: y }} />
 			</DropdownMenuTrigger>
 			<DropdownMenuContent align="start" className="w-60">
-				{hit && hit.kind !== "path" && (
-					<DropdownMenuItem
-						onSelect={() =>
-							s.editBookmark({
-								id: hit.kind === "bookmark" ? hit.id : null,
-								x: hit.x,
-								y: hit.y,
-								name: hit.kind === "bookmark" ? (hit.name ?? "") : (hit.suggest?.name ?? hit.title),
-								group: hit.kind === "bookmark" ? (hit.group ?? "Other") : (hit.suggest?.group ?? "Other"),
-								note: hit.note ?? "",
-							})
-						}
-					>
-						{hit.kind === "bookmark" ? "Edit bookmark…" : "Bookmark this…"}
-					</DropdownMenuItem>
+				{mark ? (
+					<>
+						<DropdownMenuItem onSelect={() => s.editBookmark(mark)}>Edit bookmark…</DropdownMenuItem>
+						<DropdownMenuItem
+							variant="destructive"
+							onSelect={() =>
+								s.askConfirm({
+									title: "Remove bookmark",
+									text: `Remove the bookmark "${mark.name}"?`,
+									yes: "Remove",
+									danger: true,
+									onYes: run(() => app.deleteBookmarks([mark.id as number])),
+								})
+							}
+						>
+							Remove bookmark
+						</DropdownMenuItem>
+					</>
+				) : hit && hit.kind !== "path" ? (
+					<DropdownMenuItem onSelect={() => s.editBookmark(newBookmark(hit, at))}>Bookmark this…</DropdownMenuItem>
+				) : (
+					<DropdownMenuItem onSelect={() => s.editBookmark(newBookmark(null, at))}>Add bookmark here…</DropdownMenuItem>
 				)}
-				<DropdownMenuItem
-					onSelect={() => s.editBookmark({ id: null, x: at[0], y: at[1], name: "", group: "Other", note: "" })}
-				>
-					Add bookmark here…
-				</DropdownMenuItem>
 				<DropdownMenuItem onSelect={() => s.showSources(at)}>Screenshots of this spot</DropdownMenuItem>
 				{node !== null && (
 					<>
 						<DropdownMenuSeparator />
 						<DropdownMenuItem onSelect={() => routes.setPlayer(node)}>I'm here</DropdownMenuItem>
 						<DropdownMenuItem onSelect={() => routes.routeTo(node)}>Route here</DropdownMenuItem>
-					</>
-				)}
-				{hit?.kind === "bookmark" && (
-					<>
-						<DropdownMenuSeparator />
-						<DropdownMenuItem
-							variant="destructive"
-							onSelect={() =>
-								s.askConfirm({
-									title: "Delete bookmark",
-									text: `Delete "${hit.name}"?`,
-									yes: "Delete",
-									danger: true,
-									onYes: run(() => app.deleteBookmarks([hit.id])),
-								})
-							}
-						>
-							Delete bookmark
-						</DropdownMenuItem>
 					</>
 				)}
 				{hit?.kind === "landmark" && (
