@@ -14,8 +14,9 @@ export function PromptDialog() {
 
 	useEffect(() => setValue(prompt?.value || prompt?.choices?.[0] || ""), [prompt]);
 	if (!prompt) return null;
+	// an empty answer is an answer (a debug mark's note is optional: OK did nothing without one, user); a dropdown
+	// always has a choice, and an empty group or atlas name is refused by the app
 	const ok = () => {
-		if (!value.trim()) return;
 		close(null);
 		prompt.onOk(value.trim());
 	};

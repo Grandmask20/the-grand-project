@@ -122,6 +122,7 @@ TERRAIN_PIXELS = 40_000_000  # stitched map size limit
 
 
 SAME_SPOT = 28.0  # atlas units: a bookmark this close to a thing IS that thing's bookmark
+FOLDER_FRONT_WAIT = 3.0  # s: how long an atlas folder's Explorer window is looked for, to bring it to the front
 ROUTE_POINTS_MAX = 20_000  # a saved route's line: at most this many points (a route across a 14k-map atlas ~2k)
 
 

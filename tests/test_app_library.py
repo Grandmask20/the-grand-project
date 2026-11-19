@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import os
+import time
 
 import numpy as np
 import pytest
@@ -188,17 +189,18 @@ def test_an_atlas_folder_opens_in_the_file_browser_only_for_a_listed_atlas(sessi
     assert len(opened) == 1
 
 
-def test_on_windows_the_folder_may_come_to_the_front(session, tmp_path, monkeypatch):
-    # the app runs in the background: without leave to take the front, Explorer opened behind the browser (user)
+def test_on_windows_the_folder_opens_in_front_in_the_background(session, tmp_path, monkeypatch):
+    # (Explorer opened behind the browser, or stayed on the other monitor: user) app.winfront does it, off the request
+    from grand_project.app import winfront
+
     path, _pts, _img = make_atlas(tmp_path)
     session.open_atlas(path)
-    calls = []
+    opened = []
     monkeypatch.setattr(library.sys, "platform", "win32")
-    monkeypatch.setattr(library.os, "startfile", lambda f: calls.append(("open", str(f))), raising=False)
-    import ctypes
-    import types
-
-    user32 = types.SimpleNamespace(AllowSetForegroundWindow=lambda who: calls.append(("front", who)))
-    monkeypatch.setattr(ctypes, "windll", types.SimpleNamespace(user32=user32), raising=False)
+    monkeypatch.setattr(winfront, "open_folder_in_front", lambda f: opened.append(f))
     session.show_atlas_folder(str(path))
-    assert calls == [("front", -1), ("open", str(path.parent))]  # leave first (ASFW_ANY), then the folder
+    for _ in range(50):
+        if opened:
+            break
+        time.sleep(0.02)
+    assert opened == [path.parent]
