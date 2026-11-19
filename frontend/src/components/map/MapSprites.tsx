@@ -33,35 +33,53 @@ export function MapSprites() {
 			.catch(() => undefined); // the "map icons" style then draws nothing
 	}, [map]);
 
-	// the picture of `name` in the current style, into the blank (or older) one; another style or art loads every
-	// picture again (the effect anew: the older one's late pictures are dropped by `live`, not by comparing a ref
-	// made anew every render, which dropped pictures after any re-render: CodeRabbit)
+	// the pictures in the current style replace the blank (or older) ones, several at once: another style or art loads
+	// every picture again (the effect anew: the older one's late pictures are dropped by `live`, not by comparing a
+	// ref made anew every render, which dropped pictures after any re-render: CodeRabbit)
 	useEffect(() => {
 		let live = true;
-		const load = (name: string) => {
-			void map
-				.loadImage(app.spriteUrl(name, style, art))
-				.then((r) => {
-					if (!live || !mapAlive(map) || !map.hasImage(name)) return;
-					// replaced, not updated in place: updateImage reached only tiles laid out after it, and the ones on
-					// screen kept the older picture, so the map showed the style picked before (user: "lagged behind by
-					// 1 step"; a size change, laying the icons out again, put it right). A removed and added picture
-					// has MapLibre lay out again the tiles that use it.
-					map.removeImage(name);
-					map.addImage(name, r.data);
-				})
-				.catch(() => undefined); // no picture: it stays blank
+		const fetch = (name: string) => map.loadImage(app.spriteUrl(name, style, art)).then((r) => [name, r.data] as const);
+		// replaced, not updated in place: updateImage reached only tiles laid out after it, and the ones on screen kept
+		// the older picture, so the map showed the style picked before (user: "lagged behind by 1 step"; a size change,
+		// laying the icons out again, put it right). A removed and added picture has MapLibre lay out again the tiles
+		// that use it; all of a batch in one go, so that happens once (one by one, a new style took ~6 s to show).
+		const put = (pics: (readonly [string, HTMLImageElement | ImageBitmap])[]) => {
+			if (!live || !mapAlive(map)) return;
+			for (const [name, data] of pics) {
+				if (!map.hasImage(name)) continue;
+				map.removeImage(name);
+				map.addImage(name, data);
+			}
 		};
+		// pictures MapLibre asks for while laying out: gathered for a moment, then put in together
+		let waiting: (readonly [string, HTMLImageElement | ImageBitmap])[] = [];
+		let timer: ReturnType<typeof setTimeout> | null = null;
 		const missing = (e: MapStyleImageMissingEvent) => {
 			if (OWN_IMAGES.has(e.id) || map.hasImage(e.id)) return;
 			map.addImage(e.id, { width: S, height: S, data: new Uint8Array(S * S * 4) });
 			asked.current.add(e.id);
-			load(e.id);
+			fetch(e.id)
+				.then((pic) => {
+					waiting.push(pic);
+					timer ??= setTimeout(() => {
+						timer = null;
+						const batch = waiting;
+						waiting = [];
+						put(batch);
+					}, 50);
+				})
+				.catch(() => undefined); // no picture: it stays blank
 		};
 		map.on("styleimagemissing", missing);
-		for (const name of asked.current) load(name);
+		// another style or art: every picture asked for so far, all put in once they have all come
+		const names = [...asked.current];
+		if (names.length)
+			void Promise.allSettled(names.map(fetch)).then((all) =>
+				put(all.flatMap((r) => (r.status === "fulfilled" ? [r.value] : []))),
+			);
 		return () => {
 			live = false;
+			if (timer) clearTimeout(timer);
 			map.off("styleimagemissing", missing);
 		};
 	}, [map, app, S, style, art]);
