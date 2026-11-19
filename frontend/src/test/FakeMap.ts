@@ -148,6 +148,7 @@ export function fakeMap() {
 		hasImage: (id: string) => images.has(id),
 		addImage: vi.fn((id: string, img: unknown) => images.set(id, img)),
 		updateImage: vi.fn((id: string, img: unknown) => images.set(id, img)),
+		removeImage: vi.fn((id: string) => images.delete(id)),
 		loadImage: vi.fn(async (_url: string) => ({ data: { width: 1, height: 1, data: new Uint8Array(4) } })),
 		addControl: vi.fn((c: { onAdd?: (m: unknown) => HTMLElement }) => {
 			controls.add(c);

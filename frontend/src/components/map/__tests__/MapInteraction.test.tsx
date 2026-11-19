@@ -2,6 +2,7 @@ import { act, screen, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { MapInteraction } from "@/components/map/MapInteraction";
 import type { Point } from "@/logic/Geo";
+import { modeCursor, modeHint } from "@/logic/ModeHint";
 import { useAppStore } from "@/store/AppStore";
 import { fakeMap } from "@/test/FakeMap";
 import { nodeInfo } from "@/test/Fixtures";
@@ -68,6 +69,35 @@ describe("MapInteraction", () => {
 		act(() => fm.fire("click", at(400, 190)));
 		await waitFor(() => expect(useAppStore.getState().bookmarkEdit).toMatchObject({ x: 440, y: 200, name: "Breach" }));
 		expect(useAppStore.getState().mode.kind).toBe("normal");
+	});
+
+	it("adding a bookmark on a bookmarked map opens that bookmark", async () => {
+		const marked = { ...nodeInfo, bookmark: 3, bookmark_of: { id: 3, name: "boss", group: "Boss", note: "" } };
+		const { fm } = setup({ "POST /api/pick": marked });
+		act(() => useAppStore.getState().setMode({ kind: "bookmark" }));
+		act(() => fm.fire("click", at(440, 200)));
+		await waitFor(() =>
+			expect(useAppStore.getState().bookmarkEdit).toMatchObject({ id: 3, name: "boss", group: "Boss" }),
+		);
+	});
+
+	it("a click answered after its mode ended is dropped", async () => {
+		let answer: (v: unknown) => void = () => {};
+		const { fm } = setup({ "POST /api/pick": () => new Promise((done) => (answer = done)) });
+		act(() => useAppStore.getState().setMode({ kind: "bookmark" }));
+		act(() => fm.fire("click", at(440, 200)));
+		act(() => useAppStore.getState().setMode({ kind: "normal" })); // Esc, before the answer
+		await act(async () => answer(nodeInfo));
+		expect(useAppStore.getState().bookmarkEdit).toBeNull();
+	});
+
+	it("in a mode: says what a click does over the map, with its pointer", () => {
+		const { fm } = setup();
+		expect(screen.queryByText(modeHint({ kind: "bookmark" }))).toBeNull();
+		act(() => useAppStore.getState().setMode({ kind: "bookmark" }));
+		expect(screen.getByText(modeHint({ kind: "bookmark" }))).toBeInTheDocument();
+		expect(fm.map.getCanvas().style.cursor).toBe(modeCursor({ kind: "bookmark" }));
+		expect(fm.map.getCanvas().style.cursor).toContain("svg"); // the pin
 	});
 
 	it("adding a bookmark on empty ground: where clicked, in Other", async () => {
@@ -182,6 +212,28 @@ describe("MapInteraction", () => {
 		expect(useAppStore.getState().mode.kind).toBe("normal");
 	});
 
+	it("a biome menu cancelled changes nothing, and says so in the log", async () => {
+		const { calls, user } = setup({ "POST /api/lasso": { maps: 3 }, "POST /api/log": { ok: true } });
+		act(() => useAppStore.getState().setMode({ kind: "lasso" }));
+		await act(async () =>
+			lasso.drawn?.(
+				[
+					[0, 0],
+					[10, 0],
+					[10, 10],
+				],
+				{ x: 5, y: 5 },
+			),
+		);
+		await user.click(await screen.findByRole("menuitem", { name: "Cancel" }));
+		await waitFor(() =>
+			expect(calls.find((c) => c.path === "/api/log")?.body).toEqual({
+				lines: ["Biome select: cancelled, nothing changed"],
+			}),
+		);
+		expect(calls.some((c) => c.path === "/api/biome")).toBe(false);
+	});
+
 	it("a lasso with no maps, or too small, ends it", async () => {
 		setup({ "POST /api/lasso": { maps: 0 } });
 		act(() => useAppStore.getState().setMode({ kind: "lasso" }));
@@ -196,6 +248,7 @@ describe("MapInteraction", () => {
 			),
 		);
 		expect(String(useAppStore.getState().error)).toContain("No maps inside the lasso");
+		expect(useAppStore.getState().errorBrief).toBe(true); // a brief note: it closes on the next click
 		expect(useAppStore.getState().mode.kind).toBe("normal");
 		act(() => useAppStore.getState().setMode({ kind: "lasso" }));
 		await act(async () => lasso.drawn?.([[0, 0]], { x: 0, y: 0 }));

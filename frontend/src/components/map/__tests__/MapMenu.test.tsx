@@ -109,12 +109,38 @@ describe("MapMenu", () => {
 		await waitFor(() => expect(calls.find((c) => c.path === "/api/city-type")?.body).toEqual({ id: 4, type: null }));
 	});
 
-	it("on a bookmark: edit it, or delete it after asking", async () => {
+	it("on a bookmark: edit it, or remove it after asking", async () => {
 		const { user, calls } = menu(bookmark, false, { "POST /api/bookmarks/delete": { deleted: ["farm"] } });
 		expect(screen.getByRole("menuitem", { name: "Edit bookmark…" })).toBeInTheDocument();
-		await user.click(screen.getByRole("menuitem", { name: "Delete bookmark" }));
-		useAppStore.getState().confirm?.onYes();
+		await user.click(screen.getByRole("menuitem", { name: "Remove bookmark" }));
+		const ask = useAppStore.getState().confirm;
+		expect(ask?.text).toBe('Remove the bookmark "farm"?');
+		ask?.onYes();
 		await waitFor(() => expect(calls.find((c) => c.path === "/api/bookmarks/delete")?.body).toEqual({ ids: [9] }));
+	});
+
+	it("on a bookmarked map: its bookmark, not a second one", async () => {
+		const marked: ItemInfo = {
+			...nodeInfo,
+			bookmark: 3,
+			bookmark_of: { id: 3, name: "boss", group: "Boss", note: "n" },
+		};
+		const { user } = menu(marked);
+		expect(screen.queryByRole("menuitem", { name: "Bookmark this…" })).toBeNull();
+		await user.click(screen.getByRole("menuitem", { name: "Edit bookmark…" }));
+		expect(useAppStore.getState().bookmarkEdit).toEqual({
+			id: 3,
+			x: 440,
+			y: 200,
+			name: "boss",
+			group: "Boss",
+			note: "n",
+		});
+	});
+
+	it("on a path: a new bookmark where clicked", () => {
+		menu({ ...nodeInfo, kind: "path", node: null });
+		expect(screen.getByRole("menuitem", { name: "Add bookmark here…" })).toBeInTheDocument();
 	});
 
 	it("debug: marks with a note, and a missing path from here", async () => {

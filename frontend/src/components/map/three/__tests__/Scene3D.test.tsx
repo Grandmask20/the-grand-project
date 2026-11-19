@@ -16,10 +16,33 @@ const scene = {
 			id: 7,
 			strong: true,
 			abyss: false,
+			share: 0.9,
 			step: -1,
 			pts: [
 				[0, 0],
 				[10, 0],
+			],
+		},
+		{
+			id: 8,
+			strong: false,
+			abyss: false,
+			share: 0.2,
+			step: -1,
+			pts: [
+				[0, 0],
+				[0, 10],
+			],
+		},
+		{
+			id: 9,
+			strong: false,
+			abyss: true,
+			share: 0.1,
+			step: -1,
+			pts: [
+				[0, 0],
+				[5, 5],
 			],
 		},
 	],
@@ -82,8 +105,17 @@ describe("Scene3D", () => {
 		const models = impl<{ pending: unknown[] }>(fm, "models-3d-gl");
 		await waitFor(() => expect(models?.pending).toHaveLength(2));
 		const paths = impl<{ pending: unknown[] }>(fm, "paths-3d-gl");
-		await waitFor(() => expect(paths?.pending).toHaveLength(1));
+		await waitFor(() => expect(paths?.pending).toHaveLength(3)); // drawn by at least 0: every path
 		expect(impl<IconLayer3D>(fm, "icons-3d-gl")?.models).toBe(true);
+	});
+
+	it('hides the paths drawn by fewer screenshots than "drawn by at least" (Abyss chains always shown)', async () => {
+		const settings = { ...state.settings, style: { ...state.settings.style, path_freq: 0.5 } };
+		const { fm } = renderOnMap(<Scene3D />, app({ ...state, settings }));
+		tilt();
+		await waitFor(() =>
+			expect(impl<{ pending: { id: number }[] }>(fm, "paths-3d-gl")?.pending.map((p) => p.id)).toEqual([7, 9]),
+		);
 	});
 
 	it("beams off: the beams' models are left out", async () => {
