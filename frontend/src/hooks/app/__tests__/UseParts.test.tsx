@@ -16,8 +16,11 @@ const parts: Parts = {
 };
 
 function Probe({ watching }: { watching: boolean }) {
-	const data = useParts(watching).data;
-	return <p>{data ? `${data.parts.map_image?.state} / ${data.parts.model?.state}` : "none yet"}</p>;
+	const q = useParts(watching);
+	// "loading" until the answer is in: "none yet" only for an answer given but not usable (it matched before the
+	// answer came, so the generation check went untested: CodeRabbit)
+	if (!q.isSuccess) return <p>loading</p>;
+	return <p>{q.data ? `${q.data.parts.map_image?.state} / ${q.data.parts.model?.state}` : "none yet"}</p>;
 }
 
 /** The cover: watching until the map is shown. */
