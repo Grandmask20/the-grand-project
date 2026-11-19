@@ -92,7 +92,10 @@ class EditsMixin:
         self._edited(f"city type at ({lm['x']:.0f}, {lm['y']:.0f}) set to {typ or 'automatic'}")
 
     def lasso_nodes(self, polygon: list) -> list[int]:
-        """Return the shown map nodes inside a lasso.
+        """Return the map nodes inside a lasso: every one not removed, whatever the filters show.
+
+        A biome area is drawn around every such map, so the lasso takes them all: with only the shown ones, a map the
+        filters hid (doubtful, or seen once) kept its biome and its area stayed (user: painting didn't stick).
 
         Args:
             polygon: [[x, y], ...] in atlas units.
@@ -103,11 +106,10 @@ class EditsMixin:
         if len(polygon) < 3 or not len(self.D.get("node_pts", [])):
             return []
         P = np.array(polygon, np.float32).reshape(-1, 1, 2)
-        fl = self._flags()
         return [
             i
             for i, n in enumerate(self.V["nodes"])
-            if self.node_shown(n, fl) and cv2.pointPolygonTest(P, (float(n["x"]), float(n["y"])), False) >= 0
+            if n["status"] != "removed" and cv2.pointPolygonTest(P, (float(n["x"]), float(n["y"])), False) >= 0
         ]
 
     def set_biome(self, polygon: list, biome: str) -> int:

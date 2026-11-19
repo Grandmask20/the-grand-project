@@ -157,6 +157,11 @@ def test_hand_edits(session, tmp_path):
     poly = [[1700, 1300], [2100, 1300], [2100, 1500], [1700, 1500]]
     assert session.lasso_nodes(poly) and session.set_biome(poly, "Vaal city") == len(session.lasso_nodes(poly))
     assert session.D["potential"][session.lasso_nodes(poly)[0]] == ("Vaal city", 0)
+    # a map the filters hide (doubtful, the Doubtful layer off) is still inside: its biome area is drawn all the same
+    inside = session.lasso_nodes(poly)
+    session.V["nodes"][inside[0]]["status"] = "doubtful"
+    session.set_ui_settings({"layers": {"Doubtful": False}, "multi_only": True})
+    assert session.lasso_nodes(poly) == inside
     with pytest.raises(ValueError):
         session.set_biome([[9000, 9000], [9100, 9000], [9100, 9100]], "Vaal city")  # no maps inside
     saved = core.Atlas.load(path)
