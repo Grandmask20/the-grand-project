@@ -43,6 +43,8 @@ WEBMAP_ICON_RING = (87, 141, 176)  # BGR brass ring drawn around "inner__" art, 
 WEBMAP_SHAPE_CELL = 16.0  # atlas units per grid cell the shapes are traced on
 WEBMAP_BIOME_R = 140.0  # atlas units: disc around each map of a biome (maps are ~200-250 apart)
 WEBMAP_BIOME_JOIN = 120.0  # atlas units: gaps up to about this between discs of one biome are closed
+WEBMAP_BIOME_KEEP = 30.0  # atlas units: ground kept clear around a map outside a biome (a map's ring is ~24 across)
+WEBMAP_BIOME_SMOOTH = 48.0  # atlas units: how far a biome area's cut edge is rounded off
 WEBMAP_LAND_JOIN = 64.0  # atlas units: small holes in the land (fog specks between screenshots) are closed
 WEBMAP_BIOME_COLOUR = {  # CSS colours; the city ones follow app.constants CITY_COL
     "Ezomyte": "#5ad25a",
@@ -50,23 +52,8 @@ WEBMAP_BIOME_COLOUR = {  # CSS colours; the city ones follow app.constants CITY_
     "Faridun": "#82d7f0",
     "City": "#c8c8c8",  # a city of unknown type
     "Breach": "#eb50e1",
-    "Forest": "#2f6b34",
-    "Grass": "#7aa84a",
-    "Mountain": "#8a8f99",
-    "Water": "#2d6fa8",
-    "Swamp": "#4f6b4a",
-    "Desert": "#c9a66b",
 }
 WEBMAP_LAND_COLOUR = "#2a2d30"
-# map content that tells a map's own ground (an "<X>Influence" icon): drawn as a biome area of that kind
-WEBMAP_INFLUENCE = {
-    "ForestInfluence": "Forest",
-    "GrassInfluence": "Grass",
-    "MountainInfluence": "Mountain",
-    "WaterInfluence": "Water",
-    "SwampInfluence": "Swamp",
-    "DesertInfluence": "Desert",
-}
 
 # 3D view: map node pillars (atlas units; one atlas unit is about one screenshot pixel). The landmark models'
 # own sizes are in webmap/solids.py, next to their shapes.

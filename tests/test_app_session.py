@@ -86,7 +86,8 @@ def test_biomes_ground_icons_and_models(session, tmp_path):
     path, at = biome_atlas(tmp_path)
     session.open_atlas(path)
     kinds = {p["kind"] for _g, _pts, p, _id in features(session, "biomes")}
-    assert {"Vaal", "Faridun", "Breach", "Forest", "Desert"} <= kinds, kinds
+    assert {"Vaal", "Faridun", "Breach"} <= kinds, kinds
+    assert not kinds & {"Forest", "Desert"}  # no icon makes a biome (user: Influence icons drew areas)
     assert all(g == 3 for g, *_ in features(session, "land"))
     icons = points(session, "icons")
     assert sorted(p["name"] for *_xy, p in icons.values()) == sorted(ic["name"] for ic in at.final["icons"])

@@ -1043,10 +1043,10 @@ class MapImageMixin:
                 }
             )
         # (bookmarks: drawn by the page from its bookmark list, so hiding one doesn't make every tile again)
-        # the vector ground: land where screenshots show it, biome areas from the biomes and the influence icons
+        # the vector ground: land where screenshots show it, and the city / stronghold biome areas (no icon makes one)
         for poly in self._land():
             L["land"].append({"kind": "polygon", "rings": [[W(x, y) for x, y in r] for r in poly], "props": {}})
-        for kind, polys in biome_polygons(nodes, potential, lambda i: nodes[i].get("icons") or []):
+        for kind, polys in biome_polygons(nodes, potential):
             for poly in polys:
                 L["biomes"].append(
                     {"kind": "polygon", "rings": [[W(x, y) for x, y in r] for r in poly], "props": {"kind": kind}}
