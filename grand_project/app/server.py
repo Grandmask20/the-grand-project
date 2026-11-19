@@ -146,7 +146,11 @@ class Handler(BaseHTTPRequestHandler):
         return self.server.session  # type: ignore[attr-defined]
 
     def log_message(self, fmt, *args) -> None:
-        """Log requests at debug level only (tiles are many)."""
+        """Log requests at debug level; a map tile only when it failed (thousands a session: 6000 of a session's
+        lines were tiles, hiding what happened, user)."""
+        served = str(args[1]) if len(args) > 1 else ""
+        if args and " /api/tiles/" in str(args[0]) and served in ("200", "204", "304"):  # (204: no ground there)
+            return
         LOG.debug("http: " + fmt, *args)
 
     def _host_ok(self) -> bool:
@@ -409,6 +413,13 @@ class Handler(BaseHTTPRequestHandler):
         """Change the page's settings."""
         self._json(self.S.set_ui_settings(self._body()))
 
+    @route("POST", "/api/log")
+    def post_log(self, q) -> None:
+        """What was done on the page (tabs, modes, selections, dialogs, errors shown): into the log file."""
+        for line in self._body().get("lines", [])[:50]:
+            LOG.info("page: %s", str(line)[:500])
+        self._json({"ok": True})
+
     @route("POST", "/api/quit")
     def post_quit(self, q) -> None:
         """Save everything and stop the app."""
@@ -665,7 +676,14 @@ class Handler(BaseHTTPRequestHandler):
         """What is under a point."""
         b = self._body()
         hit = self.S.pick(float(b["x"]), float(b["y"]), float(b["z"]), b.get("layers"))
-        self._json(None if hit is None else self.S.info(*hit))
+        info = None if hit is None else self.S.info(*hit)
+        LOG.info(
+            "click at (%.0f, %.0f): %s",
+            float(b["x"]),
+            float(b["y"]),
+            f"{hit[0]} {hit[1]}: {info['title']}" if info else "nothing",
+        )
+        self._json(info)
 
     @route("GET", "/api/info")
     def get_info(self, q) -> None:

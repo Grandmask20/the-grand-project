@@ -155,6 +155,7 @@ class AtlasSession(
         """
         s = self.settings
         before = self._flags()
+        hidden_before = set(s.get("icon_hidden", []))
         for k in ("layers", "style", "replay", "ui"):
             if k in changes and isinstance(changes[k], dict):
                 s[k] = {**s.get(k, {}), **changes[k]}
@@ -166,7 +167,7 @@ class AtlasSession(
         if "style" in changes and changes["style"].get("reset"):
             s["style"] = {}
         self.save_settings()
-        # what Find and the map show (not how they look): logged (user: the log said little)
+        # what Find and the map show (not how they look): logged in the Log tab too (user: the log said little)
         words = {"multi_only": "only what 2+ screenshots show", "only_icon_maps": "only maps with a ticked icon",
                  "near_only": "only potential city maps"}  # fmt: skip
         for k, label in words.items():
@@ -174,6 +175,8 @@ class AtlasSession(
                 self.events.log(f"Find: {label} {'on' if s[k] else 'off'}")
         if "hidden_types" in changes:
             self.events.log(f"Find: {len(s['icon_hidden'])} type(s) hidden")
+        # every change in the log file, in one line (user: "logs are still not heavily detailed enough")
+        LOG.info("settings: %s", settings_change_text(changes, hidden_before))
         if self._flags() != before:  # what the tiles hold changed (not only how the page draws it)
             self.filters_changed()
         return self.ui_settings()
@@ -526,6 +529,30 @@ class AtlasSession(
         self._extra_groups = set()
         self._replay_on, self._plan, self._replay_steps = False, None, None
         self._fog = None
+
+
+def settings_change_text(changes: dict, hidden_before: set) -> str:
+    """Say a settings change in one log line: "style.path_freq=0.25, hidden +Breach -Ritual, layers.Removed=True".
+
+    Args:
+        changes: The change the page sent (set_ui_settings).
+        hidden_before: The hidden types before it (only what changed is named).
+
+    Returns:
+        The line.
+    """
+    parts = []
+    for k, v in changes.items():
+        if k == "hidden_types":
+            now = set(v)
+            plus, minus = sorted(now - hidden_before), sorted(hidden_before - now)
+            moved = [*(f"+{t}" for t in plus), *(f"-{t}" for t in minus)]
+            parts.append("hidden " + (" ".join(moved[:12]) + (" ..." if len(moved) > 12 else "") if moved else "same"))
+        elif isinstance(v, dict):
+            parts += [f"{k}.{kk}={vv!r}" for kk, vv in v.items()] or [f"{k}={{}}"]
+        else:
+            parts.append(f"{k}={v!r}")
+    return ", ".join(parts) or "nothing"
 
 
 def potential_kind(label: str) -> str:

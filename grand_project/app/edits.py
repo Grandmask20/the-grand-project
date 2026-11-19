@@ -40,8 +40,7 @@ class EditsMixin:
         Args:
             msg: What changed (log line).
         """
-        LOG.info(msg)
-        self.events.log(msg)
+        self.events.log(msg)  # (into the log file too: written here as well, each edit was in it twice)
         if self.path:
             with self._lock:
                 self.atlas.save(self.path)

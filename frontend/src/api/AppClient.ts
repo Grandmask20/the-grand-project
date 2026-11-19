@@ -36,6 +36,7 @@ export function createAppClient(http: Http) {
 		updateSettings: (change: SettingsChange) => http.send<UiSettings>("PATCH", "/api/settings", change),
 		answer: (id: number, yes: boolean) => http.send<Ok>("POST", `/api/questions/${id}`, { yes }),
 		quit: () => http.send<Ok>("POST", "/api/quit"),
+		log: (lines: string[]) => http.send<Ok>("POST", "/api/log", { lines }),
 		eventsUrl: () => http.url("/api/events"),
 
 		// atlases

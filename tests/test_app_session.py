@@ -250,3 +250,12 @@ def test_new_atlas_and_close(session, tmp_path):
         session.new_atlas(tmp_path / "fresh" / "atlas.json")  # exists
     session.close()
     assert session.atlas is None and session.map_info() is None
+
+
+def test_a_settings_change_is_one_log_line():
+    from grand_project.app.session import settings_change_text
+
+    text = settings_change_text(
+        {"style": {"path_freq": 0.25}, "hidden_types": ["Breach", "Ritual"], "near_only": True}, {"Ritual", "Abyss"}
+    )
+    assert text == "style.path_freq=0.25, hidden +Breach -Abyss, near_only=True"
