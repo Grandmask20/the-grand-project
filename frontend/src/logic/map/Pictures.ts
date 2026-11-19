@@ -1,9 +1,6 @@
 /** The map's own pictures (MapSprites adds them); every other picture a layer asks for is an icon's. */
 export const OWN_IMAGES = new Set(["node-square", "node-square-solid", "node-picture"]);
 
-/** The tower picture over Tower landmarks (View: Pictures on the map). */
-export const TOWER = "LostTower";
-
 /** A white square for the "squares" map style, tinted by icon-color (an SDF image): hollow, or filled. */
 export function squareImage(filled = false): { width: number; height: number; data: Uint8Array } {
 	const n = 32;

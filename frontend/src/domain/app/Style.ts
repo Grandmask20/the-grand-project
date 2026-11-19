@@ -12,7 +12,6 @@ export interface Style {
 	/** The border's colour when bordered ("" = by status). */
 	map_border: string;
 	path_freq: number;
-	ov_towers: boolean;
 	age_tint: string;
 	colour_spread: string;
 	[key: string]: string | number | boolean;

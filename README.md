@@ -104,24 +104,24 @@ A screenshot that might be placed wrong is shown on the map, see-through and out
   - **Maps:** colour, size and style (circles / squares / hidden).
   - **City biomes and landmarks:** their colours.
   - **Colour by:** each screenshot's area by session, oldest to newest, or *times seen* (a heatmap), in a colour spread you pick.
-  - **Pictures on the map** (zoomed in): the tower picture.
   - **Reset styles** puts everything back.
 - **Find tab:**
   - Search by icon name, City / Hall / Tower, bookmark, `#map`, or `x, y` to go to a spot.
   - Tick types to show them; click a type's name to list (and ring) every one of them.
   - *Only what 2+ screenshots show*, *only maps with a ticked icon* and *only potential city maps* narrow the view.
 - **Screenshots** (Find tab), or right-click → *Screenshots of this spot*, lists the source screenshots for a spot.
-- **Route tab:** set where you are (or right-click a map → *I'm here*), then right-click a map → *Route here*, or route to the nearest map with an icon. Routes take the fewest maps.
+- **Route tab:** set where you are (or right-click a map → *I'm here*; *I'm not here* / *Forget my position* takes it back), then right-click a map → *Route here*, or route to the nearest map with an icon. Routes take the fewest maps.
 - **Replay** (top bar): the atlas being made as a timelapse, by time or swept out from where you started (spiral / distance / scan lines), with a camera that follows. **Record video** saves it as a `.webm` file.
 
 ## 4. Manage the atlas
 
 - **Bookmarks:**
   - To add one: **Add bookmark** (top bar), then click the map. You can also right-click → *Add bookmark here…*, or use *Bookmark all results…* for a search.
-  - The **Bookmarks tab** has groups, notes, edit, move to group and delete. Click a bookmark to go to it; the eye column hides or shows a bookmark or group.
+  - The **Bookmarks tab** has groups, notes, edit, move to group and delete. Click a bookmark to go to it; the eye column hides or shows a bookmark or group. Tick a group to pick all of it (an empty group ticked is deleted with *Delete*), or *Select all*.
+  - On a bookmarked map, right-click or the Selected box has *Edit bookmark* and *Remove bookmark*.
 - **Fix landmarks:** right-click a map → *This map is a…* (City / Hall / Tower / …), or right-click a landmark → *Delete* / *Restore landmark*. Edits are kept when the atlas is rebuilt.
 - **City type:** right-click a City → *City type* (Vaal / Faridun / Ezomyte / … or Automatic).
-- **City biomes:** click **City biome** (top bar), circle the maps with the mouse, and pick the city type. Halls, Deadly maps and Cities inside the circle become that city.
+- **Biomes:** click **Biome select** (top bar), circle the maps with the mouse, and pick a city type, a Breach stronghold, or *Not a biome*. Halls, Deadly maps and Cities inside the circle become that city.
 - **Several atlases:** with the **Atlas ▾** button you can:
   - switch atlas
   - add a new atlas (choose its screenshot folder)
@@ -141,7 +141,7 @@ A screenshot that might be placed wrong is shown on the map, see-through and out
 
 ## 5. Other things
 
-- **Log tab:** what the program did and any problems (*Save log*); the *Frame log* records how long the map takes to draw and saves it as CSV. The full log is `user_data/atlas_debug.log`.
+- **Log tab:** what you did (settings changed, Biome select, bookmarks, tabs, selections) and what the program did and is doing (progress, done / stopped / failed), in plain words, with any problems (*Save log*); the *Frame log* records how long the map takes to draw and saves it as CSV. The full log is `user_data/atlas_debug.log`.
 - **Settings** (last atlas, layers, styles, watched folders) are in `user_data/viewer_settings.json`. Delete that file to start fresh.
 - **Port:** the app uses port 8765, or the next free one. `python -m grand_project --port N` picks another; `--no-browser` doesn't open the browser.
 - **Detector database:** `references/atlas_references.sqlite3`. It holds only the trained detector models and the icon (badge) reference pictures, with no data from anyone's atlas. Another one can be used by setting `DATABASE` in `local_paths.json`. The models are stored as skops archives, and the program only trusts the scikit-learn / numpy classes a trained model is made of. Still, only use detector databases from people you trust.

@@ -28,7 +28,6 @@ export const LAYER_ORDER = [
 	"hits-edge",
 	"hits",
 	"route-nodes",
-	"towers",
 	"fog-picture", // the timelapse's fog: over the map's own layers, so it hides what isn't revealed yet
 	"outline", // the screenshots coming in, over the fog
 	"ground-fade-gl", // the 3D view: the ground fading out far off, over the flat layers and under the 3D ones

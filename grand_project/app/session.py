@@ -136,9 +136,7 @@ class AtlasSession(
             "only_icon_maps": bool(s.get("only_icon_maps", False)),
             "near_only": bool(s.get("near_only", False)),
             "hidden_types": sorted(s.get("icon_hidden", [])),
-            # the tower picture's switch left the View tab (user, banner agreed: the 3D view shows towers): kept off for
-            # settings saved with it on
-            "style": {**STYLE_DEFAULT, **s.get("style", {}), "ov_towers": False},
+            "style": _style(s),
             "replay": s.get("replay", {}),
             "ui": s.get("ui", {}),
         }
@@ -544,6 +542,21 @@ def _say(v) -> str:
     if isinstance(v, bool):
         return "on" if v else "off"
     return str(v)
+
+
+def _style(s: dict) -> dict:
+    """The saved style over the defaults, without settings that are gone ("ov_towers": the tower picture, left with
+    its switch: the 3D view shows towers, user and banner).
+
+    Args:
+        s: The settings.
+
+    Returns:
+        The style the page gets.
+    """
+    style = {**STYLE_DEFAULT, **s.get("style", {})}
+    style.pop("ov_towers", None)
+    return style
 
 
 def settings_change_text(changes: dict, hidden_before: set) -> str:

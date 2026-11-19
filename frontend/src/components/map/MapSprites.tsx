@@ -38,7 +38,8 @@ export function MapSprites() {
 	// ref made anew every render, which dropped pictures after any re-render: CodeRabbit)
 	useEffect(() => {
 		let live = true;
-		const fetch = (name: string) => map.loadImage(app.spriteUrl(name, style, art)).then((r) => [name, r.data] as const);
+		const loadPicture = (name: string) =>
+			map.loadImage(app.spriteUrl(name, style, art)).then((r) => [name, r.data] as const);
 		// replaced, not updated in place: updateImage reached only tiles laid out after it, and the ones on screen kept
 		// the older picture, so the map showed the style picked before (user: "lagged behind by 1 step"; a size change,
 		// laying the icons out again, put it right). A removed and added picture has MapLibre lay out again the tiles
@@ -58,7 +59,7 @@ export function MapSprites() {
 			if (OWN_IMAGES.has(e.id) || map.hasImage(e.id)) return;
 			map.addImage(e.id, { width: S, height: S, data: new Uint8Array(S * S * 4) });
 			asked.current.add(e.id);
-			fetch(e.id)
+			loadPicture(e.id)
 				.then((pic) => {
 					waiting.push(pic);
 					timer ??= setTimeout(() => {
@@ -74,7 +75,7 @@ export function MapSprites() {
 		// another style or art: every picture asked for so far, all put in once they have all come
 		const names = [...asked.current];
 		if (names.length)
-			void Promise.allSettled(names.map(fetch)).then((all) =>
+			void Promise.allSettled(names.map(loadPicture)).then((all) =>
 				put(all.flatMap((r) => (r.status === "fulfilled" ? [r.value] : []))),
 			);
 		return () => {

@@ -54,7 +54,6 @@ describe("AtlasLayers", () => {
 		const off = layers(look({}, { layers: { ...state.settings.layers, Paths: false, Landmarks: false } }));
 		expect(off.paths.layout?.visibility).toBe("none");
 		expect(off.landmarks.layout?.visibility).toBe("none");
-		expect(off.towers.layout?.visibility).toBe("none");
 		expect(off.icons.layout?.visibility).toBe("visible");
 	});
 
@@ -98,14 +97,6 @@ describe("AtlasLayers", () => {
 		expect(found.highlight.filter).toEqual(["in", "|Boss|", ["get", "icons"]]);
 		expect(found["highlight-edge"].filter).toEqual(found.highlight.filter);
 		expect(layers(look()).highlight.filter).toEqual(NONE);
-	});
-
-	it("puts the tower picture over towers when asked, twice an icon", () => {
-		const towers = layers(withStyle({ ov_towers: true, icon_size: 1.5 }));
-		expect(towers.towers.layout?.visibility).toBe("visible");
-		const size = towers.towers.layout?.["icon-size"] as number[];
-		const icon = towers.icons.layout?.["icon-size"] as number[];
-		expect(size.at(-1)).toBeCloseTo(2 * Number(icon.at(-1)));
 	});
 
 	it("reads a toggle as on unless switched off", () => {

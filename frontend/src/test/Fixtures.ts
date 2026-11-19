@@ -17,7 +17,6 @@ export const style = {
 	map_fill: "solid",
 	map_border: "",
 	path_freq: 0,
-	ov_towers: false,
 	age_tint: "off",
 	colour_spread: "plasma",
 } as const;

@@ -4,7 +4,6 @@ import type { Background, UiSettings } from "@/domain/app/UiSettings";
 import type { MapInfo } from "@/domain/map/MapInfo";
 import { cityColours, landmarkColours, styleColour } from "@/logic/Colours";
 import type { Geo } from "@/logic/Geo";
-import { TOWER } from "./Pictures";
 import { iconMinZoom, iconSize, nodeRadius, ringRadius, worldSize, zoomAt } from "./Sizes";
 
 /** Everything that decides how the atlas's own layers look besides their tiles. */
@@ -244,9 +243,8 @@ export function iconLayer(geo: Geo, info: MapInfo, look: Look): Spec<"symbol"> {
 	};
 }
 
-/** Landmarks ringed by kind (locked strongholds and removed ones in their own colours), and the tower picture over
- * Towers (View: Pictures on the map; off by default). */
-export function landmarkLayers(geo: Geo, info: MapInfo, meta: Meta, look: Look): LayerSpecification[] {
+/** Landmarks ringed by kind (locked strongholds and removed ones in their own colours). */
+export function landmarkLayers(geo: Geo, meta: Meta, look: Look): LayerSpecification[] {
 	const st = look.settings.style;
 	const on = layerOn(look.settings, "Landmarks");
 	const lm = landmarkColours(meta, st);
@@ -269,22 +267,6 @@ export function landmarkLayers(geo: Geo, info: MapInfo, meta: Meta, look: Look):
 					lm["Locked stronghold"] ?? "#966496",
 					["match", ["get", "kind"], ...Object.entries(lm).flat(), "#c8c8c8"],
 				] as unknown as ExpressionSpecification,
-			},
-		},
-		{
-			id: "towers",
-			type: "symbol",
-			source: ATLAS,
-			"source-layer": "landmarks",
-			filter: ["==", ["get", "kind"], "Tower"],
-			minzoom: iconMinZoom(geo, info),
-			layout: {
-				visibility: visibility(!!st.ov_towers && on),
-				"icon-image": TOWER,
-				"icon-size": iconSize(geo, info, 2 * (Number(st.icon_size) || 1)), // twice an icon
-				"icon-allow-overlap": true,
-				"icon-ignore-placement": true,
-				"icon-anchor": "bottom",
 			},
 		},
 	];
@@ -321,7 +303,7 @@ export function atlasLayers(geo: Geo, info: MapInfo, meta: Meta, look: Look): La
 		removedLayer(geo, meta, look),
 		iconLayer(geo, info, look),
 		...nodeLayers(geo, meta, look),
-		...landmarkLayers(geo, info, meta, look),
+		...landmarkLayers(geo, meta, look),
 		...highlightLayers(geo, meta, look),
 	];
 }
