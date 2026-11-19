@@ -133,20 +133,27 @@ class MapImageMixin:
             cities: Rebuild the model when the map image arrives (its biomes follow the ground).
             background: Build on a background thread (False: now, on this thread; tests).
         """
-        if not self.atlas or not self.atlas.frames:
-            self._reset_mapimage()
-            self.parts.done("map_image", self.generation)  # (nothing to show: not waited for)
+        with self._lock:  # the build claimed, then its part started: in one step (a replacement started its part
+            # first, and an older build failing in between still counted as current, CodeRabbit). The atlas is
+            # read once, here, as one record: read field by field after it, a switch between gave A's cached image
+            # B's generation, and it was shown for B (CodeRabbit)
+            opened = self.opened
+            if not opened.atlas or not opened.atlas.frames:
+                self._reset_mapimage()
+                self.parts.done("map_image", opened.gen)  # (nothing to show: not waited for)
+                empty = True
+            else:
+                empty = False
+                self._terrain_job += 1
+                job = self._terrain_job
+                self.parts.start("map_image", opened.gen)
+        if empty:
             self.events.publish("terrain", self.terrain_version)
             return
-        with self._lock:  # the build claimed, then its part started: in one step (a replacement started its part
-            # first, and an older build failing in between still counted as current, CodeRabbit)
-            self._terrain_job += 1
-            job = self._terrain_job
-            self.parts.start("map_image", self.generation)
-        png, npz = core.map_image_files(self.path)
-        key = self.atlas.terrain_key()
+        png, npz = core.map_image_files(opened.path)
+        key = opened.atlas.terrain_key()
+        gen = opened.gen
         try:
-            gen = self.generation  # (read for this atlas: a switch meanwhile drops it, CodeRabbit)
             with np.load(npz) as meta:
                 if str(meta["key"]) == key:
                     import cv2
@@ -160,8 +167,7 @@ class MapImageMixin:
                         return
         except Exception:
             LOG.debug("map image cache not usable, rebuilding", exc_info=True)
-        opened = self.opened  # (one record: its atlas, generation and log together)
-        atlas, gen, scope = opened.atlas, opened.gen, opened.scope
+        atlas, scope = opened.atlas, opened.scope  # (the record taken in the claim above)
         self.events.set_progress("building the map image (first time for this atlas)…")
 
         def failed(e: Exception) -> None:

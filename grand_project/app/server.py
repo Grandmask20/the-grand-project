@@ -41,6 +41,7 @@ from .constants import (
     APP_PORT_TRIES,
     APP_QUIT_WAIT,
     APP_STOP_PROBE,
+    APP_URL_FILE,
     HELLO_APP,
     UPLOAD_MAX,
     VERSION,
@@ -1199,6 +1200,15 @@ def take_app_lock():
     return f
 
 
+def _recorded_port() -> int | None:
+    """Return the port the start lock's holder wrote it serves on (user_data/app.url), or None."""
+    try:
+        url = (rc_paths.USER_DATA / APP_URL_FILE).read_text(encoding="utf-8").strip()
+        return int(url.rstrip("/").rsplit(":", 1)[1])
+    except (OSError, ValueError, IndexError):
+        return None
+
+
 def _say(text: str) -> None:
     """Print a line when there is a console (pythonw, the Windows launcher, has none).
 
@@ -1264,10 +1274,13 @@ def main(argv: list[str] | None = None) -> int:
         # CodeRabbit)
         t0 = time.monotonic()
         while lock is None and time.monotonic() - t0 < APP_QUIT_WAIT:
-            if args.port and running_app(args.port):
-                outcome = reuse_running(args.port, args.atlas, not args.no_browser)
-                if outcome != START:
-                    return 0 if outcome == HANDED else 1
+            # where the lock's holder serves (any port it was started on, also --port 0), else the default range
+            at = _recorded_port()
+            for port in [p for p in (at, args.port) if p]:
+                if running_app(port):
+                    outcome = reuse_running(port, args.atlas, not args.no_browser)
+                    if outcome != START:
+                        return 0 if outcome == HANDED else 1
             time.sleep(0.25)
             lock = take_app_lock()
         if lock is None:
@@ -1280,6 +1293,10 @@ def main(argv: list[str] | None = None) -> int:
         LOG.error(f"could not start the app's server: {e}")
         _say(f"could not start the app's server: {e}")
         return 1
+    # beside the lock (not in it: on Windows its locked byte can't be read), for a launch that finds the lock taken:
+    # a copy started on another port was not found, and that launch gave up (CodeRabbit)
+    with contextlib.suppress(OSError):
+        (rc_paths.USER_DATA / APP_URL_FILE).write_text(server.url, encoding="utf-8")
     _say(f"The Grand Project {VERSION}: {server.url}  (Ctrl+C to quit)")
     LOG.info(f"serving on {server.url}")
     if not args.no_browser:
