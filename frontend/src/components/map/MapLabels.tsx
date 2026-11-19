@@ -1,19 +1,20 @@
-import type { MapGeoJSONFeature, Map as MapLibreMap } from "maplibre-gl";
+import type { MapGeoJSONFeature } from "maplibre-gl";
 import { useEffect, useRef, useState } from "react";
-import type { Meta } from "@/domain/app/Meta";
-import type { MapInfo } from "@/domain/map/MapInfo";
 import { useSettings } from "@/hooks/app/UseSettings";
+import { useMapLibre } from "@/hooks/map/UseMapLibre";
+import { useMapView } from "@/hooks/map/UseMapView";
 import { landmarkColours } from "@/logic/Colours";
-import type { Geo } from "@/logic/Geo";
 import { type PlacedLabel, placeLabels } from "@/logic/Labels";
-import { iconPx } from "@/logic/MapStyle";
+import { iconPx } from "@/logic/map/Sizes";
 import { useAppStore } from "@/store/AppStore";
 
 const ICON_LABEL_ZOOM_PX = 18; // icon names show once an icon is this many px across on screen
 
 /** Names on the map (landmarks, bookmarks, debug marks; icon names zoomed in), drawn as page text over the map so
  * no font server is needed. Labels that would overlap are left out, the most important kept. */
-export function MapLabels({ map, geo, info, meta }: { map: MapLibreMap; geo: Geo; info: MapInfo; meta: Meta }) {
+export function MapLabels() {
+	const map = useMapLibre();
+	const { geo, info, meta } = useMapView();
 	const settings = useSettings();
 	const on = settings?.layers.Labels !== false;
 	const [labels, setLabels] = useState<PlacedLabel[]>([]);

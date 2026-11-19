@@ -1,7 +1,7 @@
 import { useQuery } from "@tanstack/react-query";
-import { vectorVersion } from "@/components/map/MapTiles";
 import { useAppClient } from "@/hooks/app/UseAppClient";
 import { useAppState } from "@/hooks/app/UseAppState";
+import { vectorVersion } from "@/logic/map/Tiles";
 import { useAppStore } from "@/store/AppStore";
 
 /**

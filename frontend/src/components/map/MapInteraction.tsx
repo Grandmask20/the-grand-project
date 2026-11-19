@@ -1,28 +1,31 @@
 import { useQueryClient } from "@tanstack/react-query";
-import type { MapLayerMouseEvent, Map as MapLibreMap, MapMouseEvent } from "maplibre-gl";
+import type { MapLayerMouseEvent, MapMouseEvent } from "maplibre-gl";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { AppQueryKeys } from "@/api/AppQueryKeys";
-import type { Meta } from "@/domain/app/Meta";
 import type { ItemInfo } from "@/domain/map/ItemInfo";
 import { useAppClient } from "@/hooks/app/UseAppClient";
 import { useAppState } from "@/hooks/app/UseAppState";
 import { usePlayer, useSettings, useUpdateSettings } from "@/hooks/app/UseSettings";
 import { useRouteGraph } from "@/hooks/map/UseGraph";
-import type { Geo, Point } from "@/logic/Geo";
+import { useMapLibre } from "@/hooks/map/UseMapLibre";
+import { useMapView } from "@/hooks/map/UseMapView";
+import type { Point } from "@/logic/Geo";
 import type { IconLayer3D } from "@/logic/IconLayer3D";
-import { EMPTY, setData } from "@/logic/MapStyle";
 import type { ModelLayer3D } from "@/logic/ModelLayer3D";
 import type { PathLayer3D } from "@/logic/PathLayer3D";
 import { pickItem } from "@/logic/Pick";
 import { useAppStore } from "@/store/AppStore";
 import { BiomeMenu } from "./BiomeMenu";
+import { LassoLayers } from "./layers/LassoLayers";
 import { MapMenu } from "./MapMenu";
 
 const HOVER = ["maps", "landmarks", "bookmarks", "icons", "paths"];
 
 /** Clicks, drags and keys on the map, by mode: select, draw a city biome, add a bookmark, place a screenshot by
  * hand, set your position, link two maps for a debug mark; and the right-click menu. */
-export function MapInteraction({ map, geo, meta }: { map: MapLibreMap; geo: Geo; meta: Meta }) {
+export function MapInteraction() {
+	const map = useMapLibre();
+	const { geo, meta } = useMapView();
 	const app = useAppClient();
 	const queryClient = useQueryClient();
 	const mode = useAppStore((s) => s.mode);
@@ -40,6 +43,7 @@ export function MapInteraction({ map, geo, meta }: { map: MapLibreMap; geo: Geo;
 	const lassoSeq = useRef(0);
 	const [lasso, setLasso] = useState<{ polygon: Point[]; x: number; y: number; maps: number } | null>(null);
 	const drawing = useRef<Point[] | null>(null);
+	const [shape, setShape] = useState<Point[] | null>(null); // the lasso as drawn so far
 	const drag = useRef<{ start: Point; centre: Point } | null>(null);
 
 	const atlasAt = useCallback((e: MapMouseEvent): Point => geo.toAtlas(e.lngLat.lng, e.lngLat.lat), [geo]);
@@ -191,12 +195,7 @@ export function MapInteraction({ map, geo, meta }: { map: MapLibreMap; geo: Geo;
 		const move = (e: MapMouseEvent) => {
 			if (mode.kind === "lasso" && drawing.current) {
 				drawing.current.push(atlasAt(e));
-				const ring = geo.ring(drawing.current);
-				setData(map, "lasso", {
-					type: "Feature",
-					geometry: { type: "Polygon", coordinates: [ring.length > 3 ? ring : [...ring, ...ring]] },
-					properties: {},
-				});
+				setShape([...drawing.current]);
 			} else if (mode.kind === "ghost" && drag.current) {
 				const [x, y] = atlasAt(e);
 				const { start, centre } = drag.current;
@@ -212,7 +211,7 @@ export function MapInteraction({ map, geo, meta }: { map: MapLibreMap; geo: Geo;
 			const polygon = drawing.current;
 			drawing.current = null;
 			if (polygon.length < 3) {
-				setData(map, "lasso", EMPTY);
+				setShape(null);
 				setMode({ kind: "normal" });
 				return;
 			}
@@ -222,7 +221,7 @@ export function MapInteraction({ map, geo, meta }: { map: MapLibreMap; geo: Geo;
 				if (mine !== lassoSeq.current) return; // another lasso was drawn meanwhile (CodeRabbit)
 				if (!maps) {
 					showError("No maps inside the lasso.");
-					setData(map, "lasso", EMPTY);
+					setShape(null);
 					setMode({ kind: "normal" });
 					return;
 				}
@@ -239,7 +238,7 @@ export function MapInteraction({ map, geo, meta }: { map: MapLibreMap; geo: Geo;
 			map.off("mousemove", move);
 			map.off("mouseup", up);
 		};
-	}, [map, geo, mode, atlasAt, setMode, app, showError]);
+	}, [map, mode, atlasAt, setMode, app, showError]);
 
 	// --- keys: Esc cancels, Enter places the ghost
 	useEffect(() => {
@@ -250,7 +249,7 @@ export function MapInteraction({ map, geo, meta }: { map: MapLibreMap; geo: Geo;
 				drawing.current = null;
 				drag.current = null; // a ghost drag ends too (it moved the next ghost: CodeRabbit)
 				lassoSeq.current++;
-				setData(map, "lasso", EMPTY);
+				setShape(null);
 				setLasso(null);
 				setMode({ kind: "normal" });
 			} else if (e.key === "Escape") {
@@ -267,7 +266,7 @@ export function MapInteraction({ map, geo, meta }: { map: MapLibreMap; geo: Geo;
 		};
 		window.addEventListener("keydown", onKey);
 		return () => window.removeEventListener("keydown", onKey);
-	}, [map, mode, setMode, app, showError]);
+	}, [mode, setMode, app, showError]);
 
 	// --- right click
 	useEffect(() => {
@@ -313,7 +312,7 @@ export function MapInteraction({ map, geo, meta }: { map: MapLibreMap; geo: Geo;
 	const chooseBiome = async (biome: string | null) => {
 		const l = lasso;
 		setLasso(null);
-		setData(map, "lasso", EMPTY);
+		setShape(null);
 		setMode({ kind: "normal" });
 		if (!l || biome === null) return;
 		try {
@@ -325,6 +324,7 @@ export function MapInteraction({ map, geo, meta }: { map: MapLibreMap; geo: Geo;
 
 	return (
 		<>
+			<LassoLayers points={shape} />
 			{menu && (
 				<MapMenu
 					x={menu.x}

@@ -4,6 +4,7 @@ import type { AtlasCard } from "@/domain/atlas/AtlasCard";
 import type { Bookmarks } from "@/domain/bookmarks/Bookmarks";
 import type { TypeList } from "@/domain/find/TypeList";
 import type { ItemInfo } from "@/domain/map/ItemInfo";
+import type { MapInfo } from "@/domain/map/MapInfo";
 
 export const style = {
 	path_style: "solid",
@@ -161,4 +162,23 @@ export const nodeInfo: ItemInfo = {
 	node: 12,
 	bookmark: null,
 	suggest: { name: "Breach", group: "Breach" },
+};
+
+/** A map image's grid and tiles (the map's tests). */
+export const mapInfo: MapInfo = {
+	grid: { x0: -300, y0: -200, scale: 0.5, width: 4000, height: 3000 },
+	zmax: 6,
+	zdeep: 8,
+	world: 16384,
+	offset: 4096,
+	maxzoom: 9,
+	bounds: [
+		[-90, -40],
+		[0, 60],
+	],
+	tile_key: "k",
+	terrain_version: 1,
+	model_version: 1,
+	filter_version: 1,
+	sprite: { size: 64, units: 30, min_px: 8 },
 };

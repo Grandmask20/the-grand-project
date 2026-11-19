@@ -1,11 +1,12 @@
-import type { Map as MapLibreMap } from "maplibre-gl";
 import { useEffect, useRef } from "react";
-import type { MapInfo } from "@/domain/map/MapInfo";
-import type { Geo } from "@/logic/Geo";
+import { useMapLibre } from "@/hooks/map/UseMapLibre";
+import { useMapView } from "@/hooks/map/UseMapView";
 import { useAppStore } from "@/store/AppStore";
 
 /** Moves the map when asked (Find, lists, Fit) and remembers where it is (kept when the map is made again). */
-export function MapCamera({ map, geo, info }: { map: MapLibreMap; geo: Geo; info: MapInfo }) {
+export function MapCamera() {
+	const map = useMapLibre();
+	const { geo, info } = useMapView();
 	const fly = useAppStore((s) => s.fly);
 	const fit = useAppStore((s) => s.fitAtlas);
 	const setCamera = useAppStore((s) => s.setCamera);

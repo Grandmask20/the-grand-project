@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { groundAhead } from "@/components/map/MapTiles";
+import { groundAhead } from "@/logic/map/Tiles";
 
 describe("groundAhead", () => {
 	it("lists the zoomed-out ground tiles, coarsest first, within the cap", () => {
