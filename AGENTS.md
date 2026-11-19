@@ -80,8 +80,9 @@ README's developer section). `tools/` are developer helpers, `tests/` regression
 
 pytest, from the program folder. `pytest` alone runs the offline tests and the ones that need the test screenshots
 (those skip themselves without the Git LFS data: marker `data`); `pytest -m slow` runs the waiting-islands test
-(~10 minutes), `pytest -m ""` everything. The page: `npm test` in `frontend/` (Vitest; a test module can't import
-`maplibre-gl`, so keep testable logic in modules without it). Randomised tests
+(~10 minutes), `pytest -m ""` everything. The page: `npm test` in `frontend/` (Vitest). The map's parts are tested on a
+fake map (`src/test/`: `renderOnMap` with react-map-gl mocked by `ReactMapGlMock`, `FakeMap`, `FakeGl` for the 3D
+view's WebGL layers); their looks stay plain functions in `logic/map/`. Randomised tests
 take `--runs N --seed S` and print their seed. Shared fixtures and helpers live in `tests/conftest.py` (test data
 paths, the crawl atlas, `check` for scenario tests that report every failed check, `copy_cache`, `seed` / `rng`);
 use them instead of module-level setup, and `tmp_path` instead of temporary folders made by hand. Detector changes:
