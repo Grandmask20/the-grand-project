@@ -142,8 +142,10 @@ def test_a_deleted_id_is_not_given_again_after_a_restart(opened):
     before = {u for u, _b in s.bookmarks_by_id()}  # (the test atlas has one of its own)
     a = s.add_bookmark(pts[1][0], pts[1][1], "a")
     b = s.add_bookmark(pts[2][0], pts[2][1], "b")
-    s.open_atlas(path)  # as after a restart: read from the file
     s.delete_bookmarks([b])
+    # as after a restart, with the highest id gone from the file: only the saved counter knows it was given
+    # (reopened before the deletion, the next id was worked out from b again: CodeRabbit)
+    s.open_atlas(path)
     c = s.add_bookmark(pts[3][0], pts[3][1], "c")
     assert c not in (a, b)
     s.open_atlas(path)
