@@ -7,11 +7,14 @@ from pathlib import Path
 import numpy as np
 from PIL import Image
 
+from grand_project import cities
 from grand_project.detect import constants as K
+from grand_project.detect import rf_detr_model
 from grand_project.detect.constants import RF_DETR_CORE_LABELS
 from grand_project.detect.rf_detr import (
     Record,
     _box,
+    _truth_annotations,
     augment_detection_example,
     load_annotator_manifest,
     slug,
@@ -137,3 +140,45 @@ def test_random_crop_clips_visible_boxes_and_recomputes_area(monkeypatch) -> Non
         assert x + width <= augmented.width
         assert y + height <= augmented.height
     assert transformed["area"] == [box[2] * box[3] for box in transformed["bbox"]]
+
+
+def test_truth_cities_get_typed_classes(monkeypatch) -> None:
+    """User: cities are always learned by type. A truth city's own type wins; an untyped one takes the look guess."""
+    monkeypatch.setattr(cities, "look_distances", lambda feats: [0.7, 0.6, 0.2])  # looks Faridun
+    labels = {
+        "landmarks": [
+            {"kind": "City", "x": 400, "y": 400, "city_type": "Vaal", "flags": []},
+            {"kind": "City", "x": 1500, "y": 600, "city_type": None, "flags": []},
+            {"kind": "Hall", "x": 900, "y": 300, "flags": []},
+        ]
+    }
+    annotations = _truth_annotations(
+        labels,
+        np.zeros((1080, 1920, 3), np.uint8),
+        map_box=K.RF_DETR_MAP_BOX,
+        icon_box=K.RF_DETR_ICON_BOX,
+        landmark_box=K.RF_DETR_LANDMARK_BOX,
+        tower_width=K.RF_DETR_TOWER_WIDTH,
+        tower_height=K.RF_DETR_TOWER_HEIGHT,
+        stronghold_box=K.RF_DETR_STRONGHOLD_BOX,
+        badge_granularity="all",
+        include_soft=False,
+        include_paths=False,
+        include_path_dashes=False,
+        provenance="hand_truth",
+    )
+    assert [a["category_name"] for a in annotations] == ["city_vaal", "city_faridun", "hall"]
+    assert "city" not in RF_DETR_CORE_LABELS
+    assert set(K.RF_DETR_CITY_LABELS.values()) <= set(RF_DETR_CORE_LABELS)
+
+
+def test_rf_detr_typed_city_comes_back_as_a_typed_city(monkeypatch) -> None:
+    """A typed city class gives a City with its city_type; an older checkpoint's plain ``city`` an untyped City."""
+    predictions = [
+        {"label": "city_vaal", "box": [100.0, 100.0, 172.0, 172.0], "score": 0.9},
+        {"label": "city", "box": [400.0, 100.0, 472.0, 172.0], "score": 0.8},
+    ]
+    monkeypatch.setattr(rf_detr_model, "_predict", lambda img: predictions)
+    result = rf_detr_model.detect_rf_detr(np.zeros((360, 640, 3), np.uint8))
+    cities_found = sorted((lm["x"], lm.get("city_type")) for lm in result["landmarks"] if lm["kind"] == "City")
+    assert cities_found == [(136.0, "Vaal"), (436.0, None)]

@@ -21,7 +21,7 @@ The screenshot is shown as a plain picture and every box is a separate element a
 the screenshot, the file is never changed, and boxes are saved as numbers in original-image pixels (also for 1440p
 and 4K screenshots). Boxes are coloured by label; a box's label chip shows when you hover over it or select it
 (`L` shows them all), so the chips don't hide the map nodes around it. Classical boxes are solid, boxes you changed or
-drew are dashed.
+drew are dashed, and cities whose type is an unsure guess are dotted (below).
 
 Edits save themselves half a second after the last change, and before moving to another screenshot. The status line
 in the side panel says when they are saved.
@@ -74,7 +74,19 @@ progress. Exporting writes:
 - `labels.json`: the numeric class ids and their labels (with named icons: the same for every export).
 
 Only reviewed screenshots are exported by default. The classical detector provides map nodes, icons, towers, cities,
-halls, deadly-boss maps, and Breach strongholds. City subtype is not a separate detection class.
+halls, deadly-boss maps, and Breach strongholds.
+
+Cities are always labelled by type: `city_ezomyte`, `city_vaal` or `city_faridun` (keys `3`, `4`, `5`). The
+classical detector only finds that a map node is a city (its brass barrel); the type comes from the look of the
+ground around it, as in the program's atlas-wide city types (`grand_project/cities.py`): the ~540×360 px window
+above the city's map node (colour histogram plus edge directions) is matched against the labelled city looks in
+`references/city_refs.npz`. On one screenshot there are no hand-set types and usually no complete trio, so only the
+look and one trio rule apply: two cities closer than `TRIO_GAP` (680 px) never share a type, and the clearest city is
+decided first. Faridun (sand) is easy; Ezomyte and Vaal look alike. A guess whose two best types are less than
+`CITY_LOOK_SURE` apart (every leave-one-out guess above it was right), or whose window is cut off by the screenshot
+edge, gets the source `city_guess` and a dotted box: check its citadel (Vaal: stepped pyramid; Ezomyte: dark walled
+ring; Faridun: green-roofed fortress in sand). Relabelling or editing the box makes it `manual`. Screenshots detected
+before typed cities keep their plain `city` boxes until they are rerun.
 
 Icons and the map nodes under them get two extra steps (`icon_proposals.py`). The classical finder's frozen classifier
 was trained on the crawl screenshots' small gold-rimmed icons and rejects most of the larger silver-rimmed ones (on a
@@ -89,7 +101,8 @@ res atlas screenshot it finds 4 of about 35), and the map finder misses dim, fog
    there is one. As in the classical finder, a visible map node within 45 px (`HIDDEN_SNAP`) is already the row's map
    node. Ship buttons and markers pinned above another icon never get one.
 
-The side panel shows each box's source: `classical`, `icon_match` (step 1) or `icon_row` (step 2). Review them like
+The side panel shows each box's source: `classical`, `city_guess` (above), `icon_match` (step 1) or `icon_row`
+(step 2). Review them like
 any other box. This changes only the annotator's boxes, never what the program's own detector finds. Screenshots
 detected before these steps have to be rerun to get the extra boxes. The thresholds are `ANNOTATOR_ICON_...`,
 `ANNOTATOR_SPOT_MIN` and `ANNOTATOR_HIDDEN_...` in `constants.py`.
@@ -123,7 +136,7 @@ review flag.
 | `app.py` | the Streamlit page (sidebar, queue, autosave and navigation callbacks) |
 | `component/` | the box editor: a small Streamlit component (plain JavaScript and CSS, no build step) |
 | `state.py` | screenshot discovery, `review_state.json`, detection options, labels, the review queue |
-| `detection.py` | the classical detector's points and paths as boxes in source-image pixels |
+| `detection.py` | the classical detector's points and paths as boxes in source-image pixels; cities typed by look |
 | `icon_proposals.py` | the extra icons and hidden map nodes (above) |
 | `pool.py`, `worker.py` | detection in worker processes, driven by asyncio (`python -m tools.detection_dataset_annotator.worker`) |
 | `boxes.py` | the editor's boxes mapped back to saved annotations by stable id |

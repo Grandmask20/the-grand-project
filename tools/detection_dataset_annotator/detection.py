@@ -13,7 +13,7 @@ from typing import Any
 import cv2
 import numpy as np
 
-from grand_project import core
+from grand_project import cities, core
 from grand_project.detect import constants as detect_constants
 from grand_project.detect.icon_types import icon_class
 
@@ -129,15 +129,23 @@ def detection_annotations(
     for node in detection.get("nodes", []):
         box = _box_at_point(float(node["x"]), float(node["y"]), map_box, map_box, width, height)
         add("map_node", box, node, K.ANNOTATOR_HIDDEN_SOURCE if node.get("proposal") else K.ANNOTATOR_CLASSICAL_SOURCE)
-    for landmark in detection.get("landmarks", []):
+    landmarks = detection.get("landmarks", [])
+    # Cities are always labelled by type (user's rule); an unsure look-alike guess is flagged for the reviewer.
+    city_types = cities.landmark_city_types(detector_image, landmarks)
+    for index, landmark in enumerate(landmarks):
         spec = K.ANNOTATOR_LANDMARK_LABELS.get(str(landmark.get("kind", "")))
         if spec is None:
             continue
         label, box_width, box_height, anchor = spec
+        source = K.ANNOTATOR_CLASSICAL_SOURCE
+        if index in city_types:
+            city_type, sure = city_types[index]
+            label = detect_constants.RF_DETR_CITY_LABELS[city_type]
+            source = K.ANNOTATOR_CLASSICAL_SOURCE if sure else K.ANNOTATOR_CITY_GUESS_SOURCE
         box = _box_at_point(
             float(landmark["x"]), float(landmark["y"]), box_width, box_height, width, height, anchor=anchor
         )
-        add(label, box, landmark)
+        add(label, box, landmark, source)
     icon_box = detect_constants.RF_DETR_ICON_BOX
     for icon in detection.get("icons", []):
         box = _box_at_point(float(icon["x"]), float(icon["y"]), icon_box, icon_box, width, height)

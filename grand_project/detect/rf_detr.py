@@ -18,10 +18,11 @@ from typing import Any
 import cv2
 import numpy as np
 
-from grand_project import core
+from grand_project import cities, core
 
 from . import constants as K
 from .constants import (
+    RF_DETR_CITY_LABELS,
     RF_DETR_CORE_LABELS,
     RF_DETR_ICON_BOX,
     RF_DETR_LANDMARK_BOX,
@@ -174,15 +175,23 @@ def _icon_category(name: str, granularity: str) -> str:
 
 
 def _landmark_category(kind: str) -> str | None:
-    """Map the detector's landmark vocabulary to stable RF-DETR classes."""
+    """Map the detector's landmark vocabulary to stable RF-DETR classes (a City's typed class: _city_categories)."""
     return {
         "Tower": "tower",
-        "City": "city",
         "Hall": "hall",
         "Deadly boss map": "deadly_boss_map",
         "Breach stronghold": "breach_stronghold",
         "Locked stronghold": "locked_stronghold",
     }.get(kind)
+
+
+def _city_categories(landmarks: list[dict[str, Any]], image: np.ndarray) -> dict[int, str]:
+    """The typed class (``city_vaal`` ...) of every City landmark, by its index in ``landmarks``.
+
+    Cities are always labelled by type (user's rule): a landmark's own ``city_type`` (named in the truth notes) wins;
+    the others take the look-alike guess on this screenshot, as the dataset annotator's first pass does.
+    """
+    return {i: RF_DETR_CITY_LABELS[t] for i, (t, _sure) in cities.landmark_city_types(image, landmarks).items()}
 
 
 def _path_dash_points(dashes: np.ndarray, edges: list[dict[str, Any]]) -> np.ndarray:
@@ -245,10 +254,11 @@ def _truth_annotations(
         for item in labels.get("landmarks", [])
         if item.get("kind") == "Tower" and _allowed(item, include_soft)
     ]
-    for item in labels.get("landmarks", []):
+    city_categories = _city_categories(labels.get("landmarks", []), image)
+    for index, item in enumerate(labels.get("landmarks", [])):
         if not _allowed(item, include_soft, exclude_offcenter=False):
             continue
-        category = _landmark_category(str(item.get("kind", "")))
+        category = city_categories.get(index) or _landmark_category(str(item.get("kind", "")))
         if category is None:
             continue
         x, y = float(item["x"]), float(item["y"])
@@ -543,8 +553,9 @@ def _load_cached_records(
                 )
                 if item:
                     annotations.append(item)
-        for landmark in cached.get("landmarks", []):
-            category = _landmark_category(str(landmark.get("kind", "")))
+        city_categories = _city_categories(cached.get("landmarks", []), image)
+        for index, landmark in enumerate(cached.get("landmarks", [])):
+            category = city_categories.get(index) or _landmark_category(str(landmark.get("kind", "")))
             if category is None or category == "tower":
                 continue
             size = (

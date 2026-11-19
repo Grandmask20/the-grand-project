@@ -83,6 +83,12 @@
   border-style: dashed;
 }
 
+/* An unsure city type (source city_guess): dotted, so it stands out for checking; relabelling makes it manual. */
+.ann-box.guess {
+  border-style: dotted;
+  border-width: calc(2px * var(--inv));
+}
+
 .ann-box.hover {
   border-width: calc(2.5px * var(--inv));
 }

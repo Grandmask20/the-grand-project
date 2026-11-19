@@ -31,6 +31,7 @@ const SCALE_WHEEL_DELTA = 100; // wheel delta per resize step: one mouse-wheel n
 const SCALE_UNDO_MS = 600; // resize steps closer together than this are one undo step (one wheel gesture)
 const REVEAL_MARGIN_PX = 24; // Tab pans when the box comes closer than this to the viewport edge
 const MANUAL = "manual"; // box source of drawn or changed boxes (constants.ANNOTATOR_MANUAL_SOURCE)
+const CITY_GUESS = "city_guess"; // box source of an unsure city type (constants.ANNOTATOR_CITY_GUESS_SOURCE)
 
 const HANDLES = ["nw", "n", "ne", "e", "se", "s", "sw", "w"];
 const HANDLE_CURSORS = {
@@ -1035,6 +1036,7 @@ class Annotator {
     if (!node) return;
     Object.assign(node.style, { left: `${box.x}px`, top: `${box.y}px`, width: `${box.w}px`, height: `${box.h}px` });
     node.classList.toggle("manual", box.source === MANUAL);
+    node.classList.toggle("guess", box.source === CITY_GUESS);
   }
 
   renderSide() {

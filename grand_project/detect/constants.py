@@ -19,15 +19,15 @@ RF_DETR_DEFAULT_MODEL_DIR = rc_paths.ROOT / "runs" / "rf-detr-small" / "best"
 RF_DETR_SCORE_THRESHOLD = 0.35  # confidence: tuned as a safe starting point for the small fine-tuned checkpoint
 RF_DETR_NMS_IOU = 0.50  # overlap: remove duplicate predictions of the same RF-DETR class
 RF_DETR_MAX_TARGETS = 300  # objects/image: RF-DETR Small's default decoder query count; path dashes can exceed it
-RF_DETR_BOX_SHRINK = 0.9  # factor: user's rule, the classical detector's fixed-size boxes below are 10% smaller per
-# side than first set (reviewers found them too large); paths and walls follow what they cover and are not shrunk
-RF_DETR_MAP_BOX = 43.0 * RF_DETR_BOX_SHRINK  # px: square around a map node's centre: the 1080p map-base glow
-# measured 48, which reviewers found too large; 43 is 20% less area (48 * sqrt(0.8))
-RF_DETR_ICON_BOX = 34.0 * RF_DETR_BOX_SHRINK  # px: square around an icon centre, inside the standard icon rim
-RF_DETR_LANDMARK_BOX = 80.0 * RF_DETR_BOX_SHRINK  # px: square around a city / hall / deadly-boss map point
-RF_DETR_TOWER_WIDTH = 80.0 * RF_DETR_BOX_SHRINK  # px: tower box width around its map node
-RF_DETR_TOWER_HEIGHT = 220.0 * RF_DETR_BOX_SHRINK  # px: tower box extends upward from its map node to the spire
-RF_DETR_STRONGHOLD_BOX = 150.0 * RF_DETR_BOX_SHRINK  # px: square around a Breach stronghold structure
+RF_DETR_MAP_BOX_SHRINK = 0.9  # factor: user's rule, the map node box is 10% smaller per side than first set
+# (reviewers found it too large); only map nodes: every other box keeps its size
+RF_DETR_MAP_BOX = 43.0 * RF_DETR_MAP_BOX_SHRINK  # px: square around a map node's centre: the 1080p map-base glow
+# measured 48, which reviewers found too large; 43 is 20% less area (48 * sqrt(0.8)), then shrunk as above
+RF_DETR_ICON_BOX = 34.0  # px: square around an icon centre, inside the standard icon rim
+RF_DETR_LANDMARK_BOX = 80.0  # px: square around a city / hall / deadly-boss map point
+RF_DETR_TOWER_WIDTH = 80.0  # px: tower box width around its map node
+RF_DETR_TOWER_HEIGHT = 220.0  # px: tower box extends upward from its map node to the spire
+RF_DETR_STRONGHOLD_BOX = 150.0  # px: square around a Breach stronghold structure
 RF_DETR_PATH_PAD = 8.0  # px: padding around a traced path centre line
 RF_DETR_PATH_DASH_BOX = 18.0  # px: square around one path dash for the low-level path detector
 RF_DETR_WALL_MIN_AREA = 12000  # px²: ignore tiny connected components in optional painted wall masks
@@ -43,10 +43,24 @@ RF_DETR_AUGMENT_CROP_ATTEMPTS = 10  # attempts: find a crop retaining at least o
 
 # Stable classes shared by every generated dataset. Icon names are appended as icon_<slug> classes when naming is
 # enabled; keeping these first means adding a new icon does not renumber the detector's core tasks.
+# City type (cities.TYPES) -> its RF-DETR class: cities are always labelled by type (user's rule), so a model can tell
+# Ezomyte, Vaal and Faridun cities apart. Older checkpoints with one plain "city" class still load (rf_detr_model).
+RF_DETR_CITY_LABELS = {"Ezomyte": "city_ezomyte", "Vaal": "city_vaal", "Faridun": "city_faridun"}
+# RF-DETR landmark class -> the classical detector's landmark kind (towers are handled apart: their box stands on
+# the map node). "city" is the untyped class of older checkpoints; a typed city class also gives the City its
+# city_type (rf_detr_model).
+RF_DETR_LANDMARK_KINDS = {
+    "city": "City",
+    **{label: "City" for label in RF_DETR_CITY_LABELS.values()},
+    "hall": "Hall",
+    "deadly_boss_map": "Deadly boss map",
+    "breach_stronghold": "Breach stronghold",
+    "locked_stronghold": "Locked stronghold",
+}
 RF_DETR_CORE_LABELS = (
     "map_node",
     "tower",
-    "city",
+    *RF_DETR_CITY_LABELS.values(),
     "hall",
     "deadly_boss_map",
     "breach_stronghold",

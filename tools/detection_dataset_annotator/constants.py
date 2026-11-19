@@ -82,7 +82,7 @@ ANNOTATOR_SAVE_EVERY_S = 30.0
 # ---- labels ----------------------------------------------------------------------------------------------------
 
 ANNOTATOR_CORE_LABELS = tuple(RF_DETR_CORE_LABELS)
-"""The eight sparse object classes used by the current RF-DETR training run."""
+"""The ten sparse object classes used by the current RF-DETR training run (cities by type: ``city_vaal`` ...)."""
 
 ANNOTATOR_DERIVED_LABELS = ("path", "fortress_wall")
 """Optional derived labels: traced paths (including dashes) and fortress walls."""
@@ -92,14 +92,15 @@ ANNOTATOR_ALL_LABELS = ANNOTATOR_CORE_LABELS + ANNOTATOR_DERIVED_LABELS
 
 ANNOTATOR_LANDMARK_LABELS = {
     "Tower": ("tower", RF_DETR_TOWER_WIDTH, RF_DETR_TOWER_HEIGHT, "base"),
-    "City": ("city", RF_DETR_LANDMARK_BOX, RF_DETR_LANDMARK_BOX, "center"),
+    "City": ("city", RF_DETR_LANDMARK_BOX, RF_DETR_LANDMARK_BOX, "center"),  # label: city_<type>, see detection.py
     "Hall": ("hall", RF_DETR_LANDMARK_BOX, RF_DETR_LANDMARK_BOX, "center"),
     "Deadly boss map": ("deadly_boss_map", RF_DETR_LANDMARK_BOX, RF_DETR_LANDMARK_BOX, "center"),
     "Breach stronghold": ("breach_stronghold", RF_DETR_STRONGHOLD_BOX, RF_DETR_STRONGHOLD_BOX, "center"),
     "Locked stronghold": ("locked_stronghold", RF_DETR_STRONGHOLD_BOX, RF_DETR_STRONGHOLD_BOX, "center"),
 }
 """Classical landmark kind -> (label, box width, box height, anchor) in detector px. A tower's point is its base,
-so its box stands on the point; every other box is centred on it."""
+so its box stands on the point; every other box is centred on it. A City's label is replaced by its typed one
+(``RF_DETR_CITY_LABELS``)."""
 
 ANNOTATOR_CLASSICAL_SOURCE = "classical"
 """Annotation source of boxes the classical detector found."""
@@ -107,17 +108,25 @@ ANNOTATOR_CLASSICAL_SOURCE = "classical"
 ANNOTATOR_MANUAL_SOURCE = "manual"
 """Annotation source of boxes a reviewer drew or changed."""
 
+ANNOTATOR_CITY_GUESS_SOURCE = "city_guess"
+"""Annotation source of a classical city whose type is an unsure look-alike guess (``cities.screenshot_city_types``:
+margin under ``CITY_LOOK_SURE`` or a window cut off by the screenshot edge); the editor draws these boxes dashed."""
+
 ANNOTATOR_LABEL_COLORS = (
     (255, 100, 80),
     (80, 190, 255),
-    (100, 230, 120),
+    (90, 210, 90),
+    (60, 90, 235),
+    (110, 170, 210),
     (190, 120, 255),
     (255, 190, 50),
     (80, 220, 220),
     (220, 100, 180),
     (130, 180, 255),
 )
-"""BGR box colours for the eight core labels, in ``ANNOTATOR_CORE_LABELS`` order, chosen to read on the atlas."""
+"""BGR box colours for the ten core labels, in ``ANNOTATOR_CORE_LABELS`` order, chosen to read on the atlas. The
+city types are green (Ezomyte, grass), red (Vaal) and tan (Faridun, sand): the tower's orange and the yellows of
+paths and icons are taken."""
 
 ANNOTATOR_EXTRA_LABEL_COLORS = {"path": (60, 230, 255), "fortress_wall": (170, 170, 170)}
 """BGR box colours for the optional derived labels (yellow like the paths themselves, grey for walls)."""

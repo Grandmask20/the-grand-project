@@ -11,6 +11,8 @@ City types
     labelled city in city_refs.npz (colour + edge-direction look of the ground around the city,
     "look-alike"). Faridun is easy to tell by its sand; Vaal vs Ezomyte by look alone is weak, so
     the trio rule and hand-set types (atlas.city_types, right-click in the viewer) win over it.
+    On ONE screenshot (screenshot_city_types: the dataset annotator's first pass, the RF-DETR dataset) only the look
+    and "close cities differ" apply; a guess under CITY_LOOK_SURE is reported as unsure.
 
 Potential maps
     Maps within a few path steps of a City or a Breach stronghold may take on its biome.
@@ -35,6 +37,10 @@ REFS = rc_paths.ref("city_refs.npz")
 LOCK_ICON = rc_paths.ref("lock_icon.png")  # the hand badge of a locked Breach stronghold
 LOCK_SAME = 150.0  # atlas units: hand badges this close are the same one
 COLOR_W = 2.0  # weight of the colour histogram against the edge directions
+# Look-alike distance margin (second-best type minus best) from which one screenshot's guess counts as sure:
+# leave-one-out over the 173 looks in city_refs.npz was 95% right overall (mostly Ezomyte <-> Vaal mix-ups) and
+# 100% right (124 of 173) at a margin of 0.1 or more.
+CITY_LOOK_SURE = 0.10
 _refs = None
 
 
@@ -100,10 +106,92 @@ def city_features(atlas, x: float, y: float, n: int = 3) -> list[np.ndarray]:
         im = atlas.image(f["path"])
         if im is None:
             continue
-        X, Y = int(p[0]), int(p[1])
-        win = im[max(0, Y - 220) : Y + 140, max(0, X - 270) : X + 270]
+        win, _whole = city_window(im, p[0], p[1])
         if win.shape[0] >= 200 and win.shape[1] >= 300:
             out.append(window_feature(win))
+    return out
+
+
+def city_window(img: np.ndarray, x: float, y: float) -> tuple[np.ndarray, bool]:
+    """Cut the ground window around a city base out of a 1080p screenshot (what window_feature describes).
+
+    Args:
+        img: BGR screenshot (detector pixels, as core.read_screenshot gives).
+        x: x of the city's map node in the screenshot.
+        y: y of the city's map node in the screenshot.
+
+    Returns:
+        (the window, ~540x360 px with the base at the bottom middle; True when it lies wholly inside the screenshot).
+    """
+    X, Y = int(x), int(y)
+    H, W = img.shape[:2]
+    whole = Y - 220 >= 0 and X - 270 >= 0 and Y + 140 <= H and X + 270 <= W
+    return img[max(0, Y - 220) : Y + 140, max(0, X - 270) : X + 270], whole
+
+
+def screenshot_city_types(img: np.ndarray, points: list[tuple[float, float]]) -> list[tuple[str, bool]]:
+    """Guess the type of each city seen in ONE screenshot (no atlas: no hand-set types and no trio partners).
+
+    The look-alike part of city_types on a single view: each city's ground window is matched against city_refs.npz,
+    the clearest city (biggest margin between its two best allowed types) is decided first, and cities closer than
+    TRIO_GAP never share a type (screenshot px are about atlas units).
+
+    Args:
+        img: BGR screenshot in detector pixels (1080p, core.read_screenshot / core.scale_screenshot).
+        points: (x, y) of each city's map node in the screenshot.
+
+    Returns:
+        One (type, sure) per point; sure is False when the margin is under CITY_LOOK_SURE, the window is cut off by
+        the screenshot edge, or there is nothing to compare with (then the type is TYPES[0]).
+    """
+    n = len(points)
+    dist: list[list[float] | None] = [None] * n
+    whole = [False] * n
+    for k, (x, y) in enumerate(points):
+        win, whole[k] = city_window(img, x, y)
+        if win.shape[0] >= 8 and win.shape[1] >= 8:
+            dist[k] = look_distances([window_feature(win)])
+    P = np.array(points, float).reshape(-1, 2)
+    D = np.hypot(P[:, None, 0] - P[None, :, 0], P[:, None, 1] - P[None, :, 1])
+    out: list[tuple[str, bool] | None] = [None] * n
+    while True:
+        best = None
+        for k in range(n):
+            if out[k] is not None:
+                continue
+            taken = {out[j][0] for j in np.nonzero(D[k] < TRIO_GAP)[0] if j != k and out[j]}
+            al = [t for t in TYPES if t not in taken] or list(TYPES)
+            if dist[k] is None:
+                cand = (-1.0, k, al[0])
+            else:
+                ds = sorted((dist[k][TYPES.index(t)], t) for t in al)
+                cand = (ds[1][0] - ds[0][0] if len(ds) > 1 else 9.0, k, ds[0][1])
+            if best is None or cand[0] > best[0]:
+                best = cand
+        if best is None:
+            break
+        margin, k, t = best
+        out[k] = (t, bool(dist[k] is not None and whole[k] and margin >= CITY_LOOK_SURE))
+    return [o for o in out if o is not None]
+
+
+def landmark_city_types(img: np.ndarray, landmarks: list[dict]) -> dict[int, tuple[str, bool]]:
+    """The type of every City among one screenshot's landmarks: its own ``city_type`` when it has one (sure), else
+    the look-alike guess of screenshot_city_types.
+
+    Args:
+        img: BGR screenshot in detector pixels.
+        landmarks: landmark dicts with "kind", "x", "y" and maybe "city_type" (screenshot px).
+
+    Returns:
+        Index in landmarks -> (type, sure), for the City landmarks only.
+    """
+    found = [i for i, lm in enumerate(landmarks) if lm.get("kind") == "City"]
+    out = {i: (str(landmarks[i]["city_type"]), True) for i in found if landmarks[i].get("city_type") in TYPES}
+    open_ = [i for i in found if i not in out]
+    if open_:
+        points = [(float(landmarks[i]["x"]), float(landmarks[i]["y"])) for i in open_]
+        out.update(zip(open_, screenshot_city_types(img, points), strict=True))
     return out
 
 

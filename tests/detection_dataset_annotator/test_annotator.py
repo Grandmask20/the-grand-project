@@ -12,6 +12,7 @@ import numpy as np
 import pytest
 from PIL import Image
 
+from grand_project import cities, core
 from grand_project.detect import constants as detect_constants
 from grand_project.detect.icon_types import dataset_icon_types, icon_class
 from tools.detection_dataset_annotator import (
@@ -143,8 +144,56 @@ def test_label_palette_has_colours_and_number_keys() -> None:
     assert palette[10]["hotkey"] == ""
     colours = [entry["color"] for entry in palette]
     assert all(colour.startswith("#") and len(colour) == 7 for colour in colours)
-    assert len(set(colours[:8])) == 8
-    assert label_palette(["icon_map_boss"])[0]["color"] == palette[10]["color"]  # stable
+    assert len(set(colours[:10])) == 10
+    assert label_palette(["icon_map_boss"])[0]["color"] == palette[12]["color"]  # stable
+
+
+def test_cities_are_labelled_by_type(monkeypatch: pytest.MonkeyPatch) -> None:
+    """User: cities are always labelled by type. A city that already has a type keeps it; the others are typed by
+    look, an unsure look (small margin, or a window cut off by the screenshot edge) is flagged ``city_guess``, and
+    two cities closer than TRIO_GAP never share a type."""
+    # A: clearly Vaal. B, next to A: looks Vaal too, less clearly, so it takes the best type left (Ezomyte, unsure).
+    # E: clearly Faridun, but its window is cut off by the screenshot's corner (unsure).
+    looks = iter([[0.50, 0.30, 0.60], [0.60, 0.45, 0.62], [0.70, 0.70, 0.20]])
+    monkeypatch.setattr(cities, "look_distances", lambda feats: next(looks))
+    image = np.zeros((1080, 1920, 3), dtype=np.uint8)
+    detection = {
+        "landmarks": [
+            {"kind": "City", "x": 600, "y": 500},
+            {"kind": "City", "x": 900, "y": 500},
+            {"kind": "City", "x": 1500, "y": 500, "city_type": "Faridun"},
+            {"kind": "Hall", "x": 1200, "y": 900},
+            {"kind": "City", "x": 50, "y": 50},
+        ]
+    }
+    found = [(a["label"], a["source"]) for a in detection_annotations(detection, image, image)]
+    assert found == [
+        ("city_vaal", K.ANNOTATOR_CLASSICAL_SOURCE),
+        ("city_ezomyte", K.ANNOTATOR_CITY_GUESS_SOURCE),
+        ("city_faridun", K.ANNOTATOR_CLASSICAL_SOURCE),
+        ("hall", K.ANNOTATOR_CLASSICAL_SOURCE),
+        ("city_faridun", K.ANNOTATOR_CITY_GUESS_SOURCE),
+    ]
+    assert {label for label, _source in found} <= set(K.ANNOTATOR_CORE_LABELS)
+
+
+@pytest.mark.data
+def test_sure_city_types_are_right(test_data: Path) -> None:
+    """On the hand-typed cities of the truth screenshots, a city type the annotator does not flag as a guess is
+    right (unsure guesses may be wrong: the reviewer checks them)."""
+    truth = json.loads((test_data / "truth" / "truth.json").read_text(encoding="utf-8"))
+    checked = 0
+    for name, labels in truth.items():
+        typed = [lm for lm in labels.get("landmarks", []) if lm.get("kind") == "City" and lm.get("city_type")]
+        if not typed:
+            continue
+        image = core.read_screenshot(test_data / "screenshots" / "random_samples" / name)
+        guesses = cities.screenshot_city_types(image, [(lm["x"], lm["y"]) for lm in typed])
+        for landmark, (city_type, sure) in zip(typed, guesses, strict=True):
+            assert city_type in cities.TYPES
+            assert not sure or city_type == landmark["city_type"], (name, landmark, city_type)
+            checked += 1
+    assert checked
 
 
 def test_label_names_follow_options_and_used_labels() -> None:
@@ -169,7 +218,8 @@ def test_named_icons_list_every_icon_type() -> None:
 
 def test_label_palette_shows_icon_pictures_and_names() -> None:
     """Each icon label carries its icon's picture and poe2db name (the editor shows them next to the label)."""
-    palette = {e["name"]: e for e in label_palette(["map_node", "city", "icon_breachhive", "icon_unidentified", "x"])}
+    names = ["map_node", "city_vaal", "icon_breachhive", "icon_unidentified", "x"]
+    palette = {e["name"]: e for e in label_palette(names)}
     breach = palette["icon_breachhive"]
     assert breach["picture"].startswith("data:image/webp;base64,")
     picture = Image.open(io.BytesIO(base64.b64decode(breach["picture"].split(",", 1)[1])))  # OpenCV drops alpha
@@ -178,7 +228,7 @@ def test_label_palette_shows_icon_pictures_and_names() -> None:
     assert breach["title"] == "Breach Hive"
     assert "breach hive" in breach["search"] and "icon_breachhive" in breach["search"]
     assert palette["map_node"]["picture"]  # ANNOTATOR_LABEL_ART
-    assert palette["city"]["picture"] == palette["x"]["picture"] == palette["x"]["title"] == ""
+    assert palette["city_vaal"]["picture"] == palette["x"]["picture"] == palette["x"]["title"] == ""
     assert palette["icon_unidentified"]["picture"] == ""  # no art and no stored picture: only its colour
 
 

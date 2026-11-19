@@ -20,8 +20,10 @@ import numpy as np
 from grand_project import core
 
 from .constants import (
+    RF_DETR_CITY_LABELS,
     RF_DETR_DEFAULT_MODEL_DIR,
     RF_DETR_DEVICE_ENV,
+    RF_DETR_LANDMARK_KINDS,
     RF_DETR_MODEL_ENV,
     RF_DETR_NMS_IOU,
     RF_DETR_SCORE_THRESHOLD,
@@ -248,16 +250,18 @@ def detect_rf_detr(img: np.ndarray) -> dict:
             x = (item["box"][0] + item["box"][2]) / 2
             y = item["box"][3]
             towers.append((x, y, item["score"]))
-        elif label in {"city", "hall", "deadly_boss_map", "breach_stronghold", "locked_stronghold"}:
+        elif label in RF_DETR_LANDMARK_KINDS:
             x, y = _centre(item["box"])
-            kind = {
-                "city": "City",
-                "hall": "Hall",
-                "deadly_boss_map": "Deadly boss map",
-                "breach_stronghold": "Breach stronghold",
-                "locked_stronghold": "Locked stronghold",
-            }[label]
-            landmarks.append({"kind": kind, "x": round(x, 1), "y": round(y, 1), "score": round(item["score"], 3)})
+            landmark = {
+                "kind": RF_DETR_LANDMARK_KINDS[label],
+                "x": round(x, 1),
+                "y": round(y, 1),
+                "score": round(item["score"], 3),
+            }
+            city_type = next((t for t, city_label in RF_DETR_CITY_LABELS.items() if city_label == label), None)
+            if city_type:
+                landmark["city_type"] = city_type
+            landmarks.append(landmark)
 
     for x, y, score in towers:
         landmarks.append({"kind": "Tower", "x": round(x, 1), "y": round(y, 1), "score": round(score, 3)})
