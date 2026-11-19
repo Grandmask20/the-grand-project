@@ -307,3 +307,16 @@ def test_a_launch_that_cant_take_the_lock_starts_no_second_copy(tmp_path, monkey
         assert S.main(["--port", "1", "--no-browser"]) == 1  # (both started and wrote the same atlas)
     finally:
         held.close()
+
+
+def test_a_launch_without_the_lock_finds_the_copy_on_its_recorded_port(app, tmp_path, monkeypatch):
+    srv, _pts = app
+    monkeypatch.setattr(S.rc_paths, "USER_DATA", tmp_path)
+    (tmp_path / S.APP_URL_FILE).write_text(srv.url, encoding="utf-8")  # started on a port outside the default range
+    monkeypatch.setattr(S.webbrowser, "open", lambda url: None)
+    monkeypatch.setattr(S, "AtlasSession", lambda: pytest.fail("a second copy was started"))
+    held = S.take_app_lock()
+    try:
+        assert S.main(["--no-browser"]) == 0  # handed over (it waited out 40 s and gave up)
+    finally:
+        held.close()
