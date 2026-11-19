@@ -43,6 +43,7 @@ export function createAppClient(http: Http) {
 		getAtlases: () => http.get<AtlasCard[]>("/api/atlases"),
 		thumbUrl: (json: string, v: number) => http.url("/api/atlases/thumb", { json, v }),
 		renameAtlas: (json: string, name: string) => http.send<Ok>("POST", "/api/atlases/rename", { json, name }),
+		showAtlasFolder: (json: string) => http.send<Ok>("POST", "/api/atlases/show-folder", { json }),
 		forgetAtlas: (json: string) => http.send<Ok>("POST", "/api/atlases/forget", { json }),
 		deleteAtlas: (json: string) => http.send<{ failed: string[] }>("POST", "/api/atlases/delete", { json }),
 		openAtlas: (path: string) => http.send<AtlasSummary>("POST", "/api/atlas/open", { path }),

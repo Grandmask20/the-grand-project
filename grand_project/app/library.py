@@ -13,6 +13,8 @@ import json
 import os
 import shutil
 import string
+import subprocess
+import sys
 import threading
 from pathlib import Path
 
@@ -307,6 +309,27 @@ class LibraryMixin:
                 a["name"] = name.strip()
         self.save_settings()
         self.events.publish("atlases", None)
+
+    def show_atlas_folder(self, json_path: str) -> None:
+        """Open a known atlas's folder in the system's file browser (Saved atlases, right-click: user).
+
+        Only atlases in the list: the page can't have any other folder opened.
+
+        Args:
+            json_path: The atlas file.
+
+        Raises:
+            ValueError: For an atlas not in the list.
+        """
+        known = next((a for a in self.known_atlases() if same_file(a["json"], json_path)), None)
+        if known is None:
+            raise ValueError("not an atlas in the list")
+        folder = Path(known["json"]).parent
+        if sys.platform == "win32":
+            os.startfile(folder)  # type: ignore[attr-defined]  # noqa: S606 (a known folder, no shell)
+        else:
+            subprocess.Popen(["open" if sys.platform == "darwin" else "xdg-open", str(folder)])  # noqa: S603
+        self.events.log(f"Opened the folder of the atlas {known['name']}")
 
     def _close_if_open(self, json_path: str) -> None:
         """Close the atlas if it is the open one (before it is deleted or forgotten).

@@ -1,4 +1,5 @@
-import { type KeyboardEvent, useState } from "react";
+import type { KeyboardEvent } from "react";
+import { PagePicker } from "@/components/common/PagePicker";
 import { Section } from "@/components/common/Section";
 import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
@@ -36,7 +37,11 @@ export function ViewTab() {
 	const tilted = useAppStore((s) => (s.camera?.pitch ?? 0) > 1);
 	const iconStyle =
 		settings?.style.icon_style === "poe2db art" ? "game art" : String(settings?.style.icon_style ?? "game art");
-	const [page, setPage] = useState<"2d" | "3d">(() => (tilted ? "3d" : "2d"));
+	// the page kept in the store like the other tabs' pages (PagedTab); not picked yet, it follows the tilt
+	const picked = useAppStore((s) => s.pages.view);
+	const setPages = useAppStore((s) => s.setPage);
+	const page: "2d" | "3d" = picked === "2d" || picked === "3d" ? picked : tilted ? "3d" : "2d";
+	const setPage = (k: "2d" | "3d") => setPages("view", k);
 	// view settings stay as they are while the timelapse is open (user: changing them while playing or recording
 	// changed the replay under it); Colour by stays usable until recording
 	const replay = useAppStore((s) => (s.replay ? (s.replay.recording ? "recording" : "open") : null));
@@ -105,20 +110,15 @@ export function ViewTab() {
 	// two pages (user: the 3D view's settings mixed in with the flat map's): the flat map's, and what only the
 	// tilted 3D view uses
 	const tabs = (
-		<div className="flex gap-1.5" role="tablist" aria-label="View settings">
-			{(["2d", "3d"] as const).map((k) => (
-				<Button
-					key={k}
-					size="xs"
-					role="tab"
-					aria-selected={page === k}
-					variant={page === k ? "default" : "outline"}
-					onClick={() => setPage(k)}
-				>
-					{k === "2d" ? "Map settings" : "3D view settings"}
-				</Button>
-			))}
-		</div>
+		<PagePicker
+			label="View settings"
+			pages={[
+				["2d", "Map settings"],
+				["3d", "3D view settings"],
+			]}
+			value={page}
+			onChange={setPage}
+		/>
 	);
 
 	if (page === "3d")

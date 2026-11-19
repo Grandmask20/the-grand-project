@@ -1,4 +1,4 @@
-# The Grand Project — v1.19
+# The Grand Project — v1.20
 
 Builds one big map of your Path of Exile 2 atlas from your screenshots. Named after the in-game tablet, *The Grand Project*. It finds maps, paths, icons, towers and cities, and lets you search, bookmark and route through them.
 
@@ -66,7 +66,7 @@ Screenshots then land straight in the atlas folder as `2694490_<date>_1.png`, an
 
 ## 1. Start an atlas
 
-1. In the app, go to the **Auto-add tab** and turn on *Add new screenshots automatically*. The app watches the open atlas's own folder, which is where Steam is now saving.
+1. In the app, go to the **Atlases tab → Auto-add** page and turn on *Add new screenshots automatically*. The app watches the open atlas's own folder, which is where Steam is now saving.
 2. In game, open the atlas centred on the **fortress** (the giant walled structure in the middle) and press F12. The HUD can stay on screen; it is masked out.
 3. Pan a little (keep about half the screen overlapping) and press F12 again. Repeat outward from the fortress in any direction. Each screenshot is added while you play.
 
@@ -80,12 +80,12 @@ The fortress itself places poorly, because its walls cut the paths. Start right 
 
 Any of these adds screenshots. Screenshots already in the atlas are skipped.
 
-- **Auto-add tab → Add new screenshots automatically.** Each new screenshot that Steam saves into the atlas folder is added while you play. When the app starts (or you start watching), screenshots already in that folder that the atlas doesn't have yet are added too. **Watch another folder…** watches a different folder instead, and **Atlas folder** switches back.
+- **Atlases tab → Auto-add → Add new screenshots automatically.** Each new screenshot that Steam saves into the atlas folder is added while you play. When the app starts (or you start watching), screenshots already in that folder that the atlas doesn't have yet are added too. **Watch another folder…** watches a different folder instead, and **Atlas folder** switches back.
 - **Drag and drop** screenshot files onto the map: one is placed by hand where you drag it, several are added. (They are copied into the atlas folder.)
 - **File ▾ → Add screenshots…** (File ▾ is the first button on the toolbar)
 - **Atlas ▾ → (atlas) → Add new screenshots from its folder.**
 
-A screenshot that overlaps nothing yet goes to **Waiting** (Auto-add tab). Waiting screenshots are retried whenever another one is added, and you can also click **Retry** or **Retry all**.
+A screenshot that overlaps nothing yet goes to **Waiting** (Atlases tab → Auto-add). Waiting screenshots are retried whenever another one is added, and you can also click **Retry** or **Retry all**.
 
 A screenshot that might be placed wrong is shown on the map, see-through and outlined, while the app asks whether to add it.
 
@@ -97,6 +97,7 @@ A screenshot that might be placed wrong is shown on the map, see-through and out
 - **Mouse:** wheel to zoom at the cursor, drag to pan, right-drag (or Ctrl-drag) to tilt and turn, click a map or a path to select it (its details show in the Find tab). Zoomed in, the ground is built sharp from your screenshots themselves.
 - **Keys:** `+` / `-` zoom, `0` fit, arrows pan, Esc cancels what you were doing.
 - **Map buttons** (top right): zoom, compass, **⤢** fit the whole atlas, **3D** (tilted view with models of maps, towers, citadels, halls and strongholds), full screen.
+- **The side panel** has five tabs: Find, View, Bookmarks (with Route), Atlases (with Auto-add) and Log. A narrow panel shows their icons only.
 - **View tab:**
   - **Background:** *Picture* (the stitched screenshots), *Vector* (flat land with the city / stronghold / ground biomes as areas) or *Off*.
   - **Show on the map:** Ground, Paths, Maps, Icons, Landmarks, Bookmarks, Names, Biomes, Recent additions, Doubtful, Removed, 3D models, Route and Debug marks.
@@ -110,7 +111,7 @@ A screenshot that might be placed wrong is shown on the map, see-through and out
   - Tick types to show them; click a type's name to list (and ring) every one of them.
   - *Only what 2+ screenshots show*, *only maps with a ticked icon* and *only potential city maps* narrow the view.
 - **Screenshots** (Find tab), or right-click → *Screenshots of this spot*, lists the source screenshots for a spot.
-- **Route tab:** set where you are (or right-click a map → *I'm here*; *I'm not here* / *Forget my position* takes it back), then right-click a map → *Route here*, or route to the nearest map with an icon. Routes take the fewest maps.
+- **Route** (Bookmarks tab → Route): set where you are (or right-click a map → *I'm here*; *I'm not here* / *Forget my position* takes it back), then right-click a map → *Route here*, or route to the nearest map with an icon. Routes take the fewest maps.
 - **Replay** (top bar): the atlas being made as a timelapse, by time or swept out from where you started (spiral / distance / scan lines), with a camera that follows. **Record video** saves it as a `.webm` file.
 
 ## 4. Manage the atlas
@@ -129,7 +130,7 @@ A screenshot that might be placed wrong is shown on the map, see-through and out
   - remove an atlas from the list
   - add new screenshots from an atlas's folder
 
-  The **Atlases tab** shows every atlas as a card with a thumbnail of its map and its numbers of maps, icons and screenshots. Click a card to open it; the pencil renames it. The bin asks whether to *stop tracking* the atlas (its files stay) or *delete the whole atlas and its data* (its `atlas.json`, `atlas_frames/` and `atlas_files/`; your screenshots are never deleted).
+  The **Atlases tab** (its *Saved atlases* page) shows every atlas as a card with a thumbnail of its map and its numbers of maps, icons and screenshots. Click a card to open it; the pencil renames it; right-click it to *Open atlas folder*. The bin asks whether to *stop tracking* the atlas (its files stay) or *delete the whole atlas and its data* (its `atlas.json`, `atlas_frames/` and `atlas_files/`; your screenshots are never deleted).
 
   Each atlas lives in its own folder: `atlas.json`, plus `atlas_frames/` (detections) and `atlas_files/` (map image, exports, undo). The screenshots can sit in that same folder; the atlas never takes its own files for screenshots. Keep new ones in `atlases/`.
 - **File menu:**
@@ -141,7 +142,7 @@ A screenshot that might be placed wrong is shown on the map, see-through and out
 
 ## 5. Other things
 
-- **Log tab:** what you did (settings changed, Biome select, bookmarks, tabs, selections) and what the program did and is doing (progress, done / stopped / failed), in plain words, with any problems (*Save log*); the *Frame log* records how long the map takes to draw and saves it as CSV. The full log is `user_data/atlas_debug.log`.
+- **Log tab** (with a *Debug* page in the internal copy): what you did (settings changed, Biome select, bookmarks, tabs, selections) and what the program did and is doing (progress, done / stopped / failed), in plain words, with any problems (*Save log*); the *Frame log* records how long the map takes to draw and saves it as CSV. The full log is `user_data/atlas_debug.log`.
 - **Settings** (last atlas, layers, styles, watched folders) are in `user_data/viewer_settings.json`. Delete that file to start fresh.
 - **Port:** the app uses port 8765, or the next free one. `python -m grand_project --port N` picks another; `--no-browser` doesn't open the browser.
 - **Detector database:** `references/atlas_references.sqlite3`. It holds only the trained detector models and the icon (badge) reference pictures, with no data from anyone's atlas. Another one can be used by setting `DATABASE` in `local_paths.json`. The models are stored as skops archives, and the program only trusts the scikit-learn / numpy classes a trained model is made of. Still, only use detector databases from people you trust.

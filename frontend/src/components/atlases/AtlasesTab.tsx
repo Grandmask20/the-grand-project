@@ -1,5 +1,13 @@
 import { PencilIcon, Trash2Icon } from "lucide-react";
+import { useState } from "react";
 import { Button } from "@/components/ui/button";
+import {
+	DropdownMenu,
+	DropdownMenuContent,
+	DropdownMenuItem,
+	DropdownMenuSeparator,
+	DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 import { useAppClient } from "@/hooks/app/UseAppClient";
 import { useAppState } from "@/hooks/app/UseAppState";
 import { useAtlasActions } from "@/hooks/atlas/UseAtlasActions";
@@ -7,7 +15,8 @@ import { useAtlases } from "@/hooks/atlas/UseAtlases";
 import { useAppStoreCalm } from "@/store/AppStore";
 import { cn } from "@/utils/Cn";
 
-/** Saved atlases: a card per known atlas (its map, maps / icons / screenshots); click one to open it. */
+/** Saved atlases: a card per known atlas (its map, maps / icons / screenshots); click one to open it, right-click it
+ * to open its folder, rename or delete it. */
 export function AtlasesTab() {
 	const app = useAppClient();
 	const atlases = useAtlases();
@@ -15,6 +24,15 @@ export function AtlasesTab() {
 	const actions = useAtlasActions();
 	const s = useAppStoreCalm();
 	const fail = (e: unknown) => s.showError(e);
+	// the right-click menu: where, and for which atlas (user: "right click to open atlas folder")
+	const [menu, setMenu] = useState<{ x: number; y: number; json: string; name: string } | null>(null);
+	const rename = (json: string, name: string) =>
+		s.ask({
+			title: "Rename atlas",
+			label: "Name in this list:",
+			value: name,
+			onOk: (n) => void app.renameAtlas(json, n).catch(fail),
+		});
 
 	return (
 		<div className="flex flex-col gap-3">
@@ -31,6 +49,10 @@ export function AtlasesTab() {
 				<div
 					key={a.json}
 					className={cn("flex gap-3 rounded-md border p-2 hover:bg-accent", a.open && "border-gold bg-accent/60")}
+					onContextMenu={(e) => {
+						e.preventDefault();
+						setMenu({ x: e.clientX, y: e.clientY, json: a.json, name: a.name });
+					}}
 				>
 					<button
 						type="button"
@@ -67,14 +89,7 @@ export function AtlasesTab() {
 							size="icon-sm"
 							variant="ghost"
 							aria-label={`Rename ${a.name}`}
-							onClick={() =>
-								s.ask({
-									title: "Rename atlas",
-									label: "Name in this list:",
-									value: a.name,
-									onOk: (n) => void app.renameAtlas(a.json, n).catch(fail),
-								})
-							}
+							onClick={() => rename(a.json, a.name)}
 						>
 							<PencilIcon />
 						</Button>
@@ -89,6 +104,23 @@ export function AtlasesTab() {
 					</div>
 				</div>
 			))}
+			{menu && (
+				<DropdownMenu open onOpenChange={(open) => !open && setMenu(null)}>
+					<DropdownMenuTrigger asChild>
+						<span className="pointer-events-none fixed size-px" style={{ left: menu.x, top: menu.y }} />
+					</DropdownMenuTrigger>
+					<DropdownMenuContent align="start">
+						<DropdownMenuItem onSelect={() => void app.showAtlasFolder(menu.json).catch(fail)}>
+							Open atlas folder
+						</DropdownMenuItem>
+						<DropdownMenuItem onSelect={() => rename(menu.json, menu.name)}>Rename…</DropdownMenuItem>
+						<DropdownMenuSeparator />
+						<DropdownMenuItem variant="destructive" onSelect={() => s.askDeleteAtlas(menu.json)}>
+							Delete…
+						</DropdownMenuItem>
+					</DropdownMenuContent>
+				</DropdownMenu>
+			)}
 		</div>
 	);
 }

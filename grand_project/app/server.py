@@ -454,6 +454,12 @@ class Handler(BaseHTTPRequestHandler):
         self.S.rename_atlas(b["json"], b["name"])
         self._json({"ok": True})
 
+    @route("POST", "/api/atlases/show-folder")
+    def post_show_folder(self, q) -> None:
+        """Open a known atlas's folder in the system's file browser."""
+        self.S.show_atlas_folder(self._body()["json"])
+        self._json({"ok": True})
+
     @route("POST", "/api/atlases/forget")
     def post_forget(self, q) -> None:
         """Stop tracking an atlas."""

@@ -9,6 +9,14 @@ import type { ReplayPlan } from "@/domain/replay/ReplayPlan";
 import type { Point } from "@/logic/Geo";
 
 /** What a click on the map does. */
+/** The tabs that became pages of another (user's side panel: Find, View, Bookmarks, Atlases, Log): id -> [tab, page].
+ * The app still asks for "auto" (screenshots waiting for a place) and the page's own code for the others. */
+export const PAGE_OF: Record<string, [string, string]> = {
+	auto: ["atlases", "auto"],
+	route: ["bookmarks", "route"],
+	debug: ["log", "debug"],
+};
+
 export type MapMode =
 	| { kind: "normal" }
 	| { kind: "lasso" }
@@ -61,7 +69,11 @@ export interface AppStoreState {
 	camera: Camera | null;
 	setCamera: (c: Camera | null) => void;
 	tab: string;
+	/** Open a tab, or a page of one by its own id ("auto", "route", "debug": they were tabs of their own). */
 	setTab: (tab: string) => void;
+	/** The page each tab with pages shows (Atlases: atlases / auto; Bookmarks: bookmarks / route; Log: log / debug). */
+	pages: Record<string, string>;
+	setPage: (tab: string, page: string) => void;
 	selected: ItemInfo | null;
 	select: (info: ItemInfo | null) => void;
 	/** Select what a click loads, unless something else was selected (or clicked) meanwhile (CodeRabbit). */
@@ -130,11 +142,17 @@ export const useAppStore = create<AppStoreState>()((set) => ({
 	setCamera: (camera) => set({ camera }),
 	tab: "find",
 	// leaving the Bookmarks tab ends "Add bookmark" (user: it stayed on, and a later click on the map added one)
-	setTab: (tab) =>
-		set((st) => ({
-			tab,
-			...(st.mode.kind === "bookmark" && tab !== "bookmarks" ? { mode: { kind: "normal" } as MapMode } : {}),
-		})),
+	setTab: (asked) =>
+		set((st) => {
+			const [tab, page] = PAGE_OF[asked] ?? [asked, null];
+			return {
+				tab,
+				...(page ? { pages: { ...st.pages, [tab]: page } } : {}),
+				...(st.mode.kind === "bookmark" && tab !== "bookmarks" ? { mode: { kind: "normal" } as MapMode } : {}),
+			};
+		}),
+	pages: {},
+	setPage: (tab, page) => set((st) => ({ pages: { ...st.pages, [tab]: page } })),
 	selected: null,
 	select: (selected) => {
 		selectSeq++;
