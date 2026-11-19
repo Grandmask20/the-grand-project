@@ -130,6 +130,11 @@ class AtlasSession(
             {"layers", "multi_only", "only_icon_maps", "near_only", "hidden_types", "style", "replay", "ui"}.
         """
         s = self.settings
+        if s.get("style", {}).get("map_style") == "hidden":
+            # the "hidden" map style left the View tab (user: the same as unticking Maps): saved that way, it becomes
+            # the Maps switch off, kept from the next save on
+            s["style"]["map_style"] = "circles"
+            s.setdefault("layers", {})["Nodes"] = False
         return {
             "layers": {**LAYER_DEFAULTS, **s.get("layers", {})},
             "multi_only": bool(s.get("multi_only", False)),

@@ -1,6 +1,12 @@
 import type { Graph } from "@/domain/map/Graph";
 import type { Point } from "./Geo";
 
+/** The maps of a route shown that get a ring: every map but the first (your position's marker is there), or the first
+ * alone while the route's last map is being picked (user: nothing showed until the second map). */
+export function ringedMaps(path: number[]): number[] {
+	return path.length === 1 ? path : path.slice(1);
+}
+
 /** The maps and paths routes are found on: every map run costs 1 (fewest maps), the length only breaks ties. */
 export class RouteGraph {
 	private readonly adj = new Map<number, number[]>();

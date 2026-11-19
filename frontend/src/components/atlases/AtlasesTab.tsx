@@ -49,10 +49,6 @@ export function AtlasesTab() {
 				<div
 					key={a.json}
 					className={cn("flex gap-3 rounded-md border p-2 hover:bg-accent", a.open && "border-gold bg-accent/60")}
-					onContextMenu={(e) => {
-						e.preventDefault();
-						setMenu({ x: e.clientX, y: e.clientY, json: a.json, name: a.name });
-					}}
 				>
 					<button
 						type="button"
@@ -60,6 +56,10 @@ export function AtlasesTab() {
 						title={a.json}
 						disabled={state?.busy}
 						onClick={() => !a.open && void actions.openAtlas(a.json)}
+						onContextMenu={(e) => {
+							e.preventDefault();
+							setMenu({ x: e.clientX, y: e.clientY, json: a.json, name: a.name });
+						}}
 					>
 						{a.thumb ? (
 							<img

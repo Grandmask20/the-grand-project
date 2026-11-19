@@ -17,6 +17,7 @@ import type { Point } from "@/logic/Geo";
 import type { IconLayer3D } from "@/logic/IconLayer3D";
 import { modeCursor, modeHint } from "@/logic/ModeHint";
 import type { ModelLayer3D } from "@/logic/ModelLayer3D";
+import { layerOn } from "@/logic/map/AtlasLayers";
 import type { PathLayer3D } from "@/logic/PathLayer3D";
 import { pickItem } from "@/logic/Pick";
 import { useAppStore } from "@/store/AppStore";
@@ -40,6 +41,7 @@ export function MapInteraction() {
 	const select = useAppStore((s) => s.select);
 	const setTab = useAppStore((s) => s.setTab);
 	const editBookmark = useAppStore((s) => s.editBookmark);
+	const tab = useAppStore((s) => s.tab);
 	const setRoute = useAppStore((s) => s.setRoute);
 	const bookmarks = useBookmarks();
 	const showError = useAppStore((s) => s.showError);
@@ -132,6 +134,8 @@ export function MapInteraction() {
 						if (node === null) break;
 						if (mode.from === null) {
 							setMode({ kind: "route", from: node });
+							// ringed at once (user: nothing showed until the second map)
+							setRoute({ path: [node], message: `Route from map #${node}` });
 							break;
 						}
 						setMode({ kind: "normal" });
@@ -280,6 +284,7 @@ export function MapInteraction() {
 			const t = e.target as HTMLElement | null;
 			if (t && (t.tagName === "INPUT" || t.tagName === "TEXTAREA" || t.isContentEditable)) return;
 			if (e.key === "Escape" && mode.kind !== "normal") {
+				if (mode.kind === "route") useAppStore.getState().setRoute(null); // (its first map's ring goes too)
 				drag.current = null; // a ghost drag ends too (it moved the next ghost: CodeRabbit)
 				lassoSeq.current++;
 				setLasso(null);
@@ -404,11 +409,30 @@ export function MapInteraction() {
 				/>
 			)}
 			{/* what a click does now, over the map itself (user: Add bookmark only said so in the side panel) */}
-			{mode.kind !== "normal" && !lasso && (
-				<div className="pointer-events-none absolute top-2 left-1/2 z-10 -translate-x-1/2 rounded-md border border-gold/60 bg-card/95 px-3 py-1.5 text-sm text-gold shadow">
-					{modeHint(mode)}
-				</div>
-			)}
+			{/* the notes over the map: what a click does now, and that bookmarks are hidden while their tab is open
+			    (they have their own switch: a lasting notice, user) */}
+			<div className="pointer-events-none absolute top-2 left-1/2 z-10 flex -translate-x-1/2 flex-col items-center gap-1.5">
+				{mode.kind !== "normal" && !lasso && (
+					<div className="rounded-md border border-gold/60 bg-card/95 px-3 py-1.5 text-sm text-gold shadow">
+						{modeHint(mode)}
+					</div>
+				)}
+				{tab === "bookmarks" && settings && !layerOn(settings, "Bookmarks") && (
+					<div
+						role="status"
+						className="pointer-events-auto flex items-center gap-3 rounded-md border bg-card/95 px-3 py-1.5 text-sm shadow"
+					>
+						Bookmarks are currently hidden
+						<button
+							type="button"
+							className="text-gold hover:underline"
+							onClick={() => update.mutate({ layers: { Bookmarks: true } })}
+						>
+							Show them
+						</button>
+					</div>
+				)}
+			</div>
 		</>
 	);
 }

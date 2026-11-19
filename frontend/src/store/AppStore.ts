@@ -86,6 +86,9 @@ export interface AppStoreState {
 	/** The page each tab with pages shows (Atlases: atlases / auto; Bookmarks: bookmarks / route; Log: log / debug). */
 	pages: Record<string, string>;
 	setPage: (tab: string, page: string) => void;
+	/** Layers shown because you changed one of their View settings (cleared when you leave the tab). */
+	editing: string[];
+	reveal: (layer: string) => void;
 	selected: ItemInfo | null;
 	select: (info: ItemInfo | null) => void;
 	/** Select what a click loads, unless something else was selected (or clicked) meanwhile (CodeRabbit). */
@@ -163,12 +166,16 @@ export const useAppStore = create<AppStoreState>()((set) => ({
 			const [tab, page] = PAGE_OF[asked] ?? [asked, null];
 			return {
 				tab,
+				// leaving the View tab: the layers its settings showed go back to their switches
+				...(tab !== st.tab && st.editing.length ? { editing: [] } : {}),
 				...(page ? { pages: { ...st.pages, [tab]: page } } : {}),
 				...(st.mode.kind === "bookmark" && tab !== "bookmarks" ? { mode: { kind: "normal" } as MapMode } : {}),
 			};
 		}),
 	pages: {},
 	setPage: (tab, page) => set((st) => ({ pages: { ...st.pages, [tab]: page } })),
+	editing: [],
+	reveal: (layer) => set((st) => (st.editing.includes(layer) ? {} : { editing: [...st.editing, layer] })),
 	selected: null,
 	select: (selected) => {
 		selectSeq++;

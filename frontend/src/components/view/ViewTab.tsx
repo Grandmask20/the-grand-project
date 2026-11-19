@@ -7,6 +7,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import type { Background } from "@/domain/app/UiSettings";
 import { useMeta } from "@/hooks/app/UseMeta";
 import { usePreviewSettings, useSettings, useUpdateSettings } from "@/hooks/app/UseSettings";
+import { layerOfStyle } from "@/hooks/app/UseShownSettings";
 import { useFrames } from "@/hooks/replay/UseFrames";
 import { cityColours, landmarkColours, styleColour } from "@/logic/Colours";
 import { useAppStore } from "@/store/AppStore";
@@ -54,11 +55,26 @@ export function ViewTab() {
 		</p>
 	);
 	const frames = useFrames(tint !== "off");
+	const reveal = useAppStore((s) => s.reveal);
 	if (!meta || !settings) return null;
 	const st = settings.style;
-	const set = (style: Record<string, string | number | boolean>) => update.mutate({ style });
+	// a change shows the layer it shapes until you leave the tab, even if its switch is off (user: icons, paths and
+	// maps stayed hidden while you restyled them)
+	const showing = (style: Record<string, unknown>) => {
+		for (const k of Object.keys(style)) {
+			const layer = layerOfStyle(k);
+			if (layer) reveal(layer);
+		}
+	};
+	const set = (style: Record<string, string | number | boolean>) => {
+		showing(style);
+		update.mutate({ style });
+	};
 	// a look shown while its slider is dragged, saved when let go
-	const look = (style: Record<string, number>) => preview({ style });
+	const look = (style: Record<string, number>) => {
+		showing(style);
+		preview({ style });
+	};
 	const bg = settings.ui.background ?? "picture";
 
 	const choice = (label: string, value: string, values: string[], onChange: (v: string) => void) => (
@@ -278,7 +294,8 @@ export function ViewTab() {
 					value={styleColour(st, "map_col", meta.colours.node.confirmed)}
 					onChange={(c) => set({ map_col: c })}
 				/>
-				{choice("style", st.map_style, ["circles", "squares", "map icons", "hidden"], (v) => set({ map_style: v }))}
+				{/* (no "hidden": unticking Maps in "Show on the map" does that, user) */}
+				{choice("style", st.map_style, ["circles", "squares", "map icons"], (v) => set({ map_style: v }))}
 				{choice("fill", st.map_fill ?? "solid", ["solid", "bordered"], (v) => set({ map_fill: v }))}
 				{st.map_fill === "bordered" && (
 					<ColourSwatch

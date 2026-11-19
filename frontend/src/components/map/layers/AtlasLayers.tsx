@@ -1,5 +1,5 @@
 import { useMemo } from "react";
-import { useSettings } from "@/hooks/app/UseSettings";
+import { useShownSettings } from "@/hooks/app/UseShownSettings";
 import { useMapLibre } from "@/hooks/map/UseMapLibre";
 import { useMapView } from "@/hooks/map/UseMapView";
 import { useTilted } from "@/hooks/map/UseTilted";
@@ -12,7 +12,7 @@ import { MapLayers } from "./MapLayer";
 export function AtlasLayers() {
 	const map = useMapLibre();
 	const { geo, info, meta } = useMapView();
-	const settings = useSettings();
+	const settings = useShownSettings(); // (with the layers you're working on: user)
 	const highlight = useAppStore((s) => s.highlight);
 	const tilted = useTilted(map);
 	const specs = useMemo(

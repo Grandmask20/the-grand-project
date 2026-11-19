@@ -1,11 +1,12 @@
 import { useMemo } from "react";
 import { Source } from "react-map-gl/maplibre";
-import { useSettings } from "@/hooks/app/UseSettings";
+import { useShownSettings } from "@/hooks/app/UseShownSettings";
 import { useRouteGraph } from "@/hooks/map/UseGraph";
 import { useMapView } from "@/hooks/map/UseMapView";
 import { layerOn } from "@/logic/map/AtlasLayers";
 import { collection, EMPTY, line, point } from "@/logic/map/Features";
 import { routeLayers } from "@/logic/map/OverlayLayers";
+import { ringedMaps } from "@/logic/Routes";
 import { useAppStore } from "@/store/AppStore";
 import { MapLayer, MapLayers } from "./MapLayer";
 
@@ -14,7 +15,7 @@ export function RouteLayers() {
 	const { geo } = useMapView();
 	const route = useAppStore((s) => s.route);
 	const graph = useRouteGraph(!!route);
-	const settings = useSettings();
+	const settings = useShownSettings(); // (with the layers you're working on: user)
 	const on = !settings || layerOn(settings, "Route");
 
 	const { path, nodes } = useMemo(() => {
@@ -23,7 +24,7 @@ export function RouteLayers() {
 		return {
 			path: coords.length > 1 ? collection([line(coords)]) : EMPTY,
 			nodes: collection(
-				route.path.slice(1).flatMap((id) => {
+				ringedMaps(route.path).flatMap((id) => {
 					const p = graph.at(id);
 					return p ? [point(geo.toLngLat(p[0], p[1]), { id })] : [];
 				}),
