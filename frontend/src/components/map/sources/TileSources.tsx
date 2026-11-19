@@ -72,10 +72,11 @@ function useGroundAhead(template: string, atlasBounds: [[number, number], [numbe
 		let stop = false;
 		const next = async () => {
 			for (let url = urls.shift(); url && !stop; url = urls.shift())
-				await fetch(url).then(
-					(r) => r.arrayBuffer(),
-					() => undefined,
-				);
+				try {
+					await (await fetch(url)).arrayBuffer();
+				} catch {
+					// one tile that failed, also mid-body (CodeRabbit): the next one still comes
+				}
 		};
 		const start = setTimeout(() => {
 			for (let k = 0; k < PREFETCH_PARALLEL; k++) void next();

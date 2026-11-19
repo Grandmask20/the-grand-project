@@ -1,5 +1,5 @@
 import { LngLat, type Map as MapLibreMap } from "maplibre-gl";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { type ErrorEvent, type MapEvent, Map as MapGL } from "react-map-gl/maplibre";
 import { Button } from "@/components/ui/button";
 import type { Meta } from "@/domain/app/Meta";
@@ -48,7 +48,10 @@ export function AtlasMap({ info, meta }: Props) {
 	const setStoreMap = useAppStore((s) => s.setMap);
 	const [map, setMap] = useState<MapLibreMap | null>(null);
 	const [tileError, setTileError] = useState<string | null>(null);
-	const { shown, show, parts, failed, ready } = useShown(map, tileError);
+	// the map couldn't be made at all (no WebGL here): it never loads, so it says why, with a way to try again
+	const [startError, setStartError] = useState<string | null>(null);
+	const loaded = useRef(false);
+	const { shown, show, parts, failed, ready } = useShown(map, tileError ?? startError);
 
 	// made once: where the map was (kept when it is made again), else the whole atlas
 	const [initialViewState] = useState(() => {
@@ -62,6 +65,7 @@ export function AtlasMap({ info, meta }: Props) {
 
 	const onLoad = useCallback(
 		(e: MapEvent) => {
+			loaded.current = true;
 			setMap(e.target);
 			setStoreMap(e.target);
 		},
@@ -71,6 +75,9 @@ export function AtlasMap({ info, meta }: Props) {
 	// unseen, and the failure note never showed (CodeRabbit)
 	const onError = useCallback((e: ErrorEvent & { sourceId?: string }) => {
 		if (e.sourceId === "terrain" || e.sourceId === "atlas") setTileError(e.error?.message ?? "a map tile failed");
+		// before it loaded and not a tile's: MapLibre couldn't make the map (react-map-gl hands its error here, and the
+		// map was left blank behind "Show the map anyway": CodeRabbit)
+		else if (!e.sourceId && !loaded.current) setStartError(e.error?.message ?? "the map could not start");
 	}, []);
 	useEffect(() => () => setStoreMap(null), [setStoreMap]);
 
@@ -143,6 +150,17 @@ export function AtlasMap({ info, meta }: Props) {
 					{ready && <p>Map tiles: loading…</p>}
 					<Button variant="outline" size="sm" onClick={show}>
 						Show the map anyway
+					</Button>
+				</div>
+			)}
+			{startError && (
+				<div className="absolute inset-0 z-20 flex flex-col items-center justify-center gap-2 bg-background p-4 text-center text-sm">
+					<p className="text-destructive">The map could not start: {startError}</p>
+					<p className="text-muted-foreground">
+						It needs WebGL: check that hardware acceleration is on in the browser's settings.
+					</p>
+					<Button variant="outline" size="sm" onClick={() => window.location.reload()}>
+						Reload
 					</Button>
 				</div>
 			)}
