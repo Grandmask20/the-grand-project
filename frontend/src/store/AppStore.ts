@@ -108,7 +108,9 @@ export interface AppStoreState {
 	deleteAtlas: string | null;
 	askDeleteAtlas: (json: string | null) => void;
 	error: string | null;
-	showError: (e: unknown) => void;
+	/** The error is a brief note about the last click (no maps inside a lasso): it closes on the next click. */
+	errorBrief: boolean;
+	showError: (e: unknown, brief?: boolean) => void;
 	frameLog: boolean;
 	setFrameLog: (on: boolean) => void;
 	/** Bookmark groups folded shut in the Bookmarks tab (user: as in the old window). */
@@ -182,10 +184,11 @@ export const useAppStore = create<AppStoreState>()((set) => ({
 	deleteAtlas: null,
 	askDeleteAtlas: (deleteAtlas) => set({ deleteAtlas }),
 	error: null,
+	errorBrief: false,
 	// an answer for the atlas open before isn't an error: the page just draws the new one
-	showError: (e) => {
+	showError: (e, brief = false) => {
 		if (isStale(e)) return;
-		set({ error: e == null ? null : e instanceof Error ? e.message : String(e) });
+		set({ error: e == null ? null : e instanceof Error ? e.message : String(e), errorBrief: e != null && brief });
 	},
 	frameLog: false,
 	setFrameLog: (frameLog) => set({ frameLog }),

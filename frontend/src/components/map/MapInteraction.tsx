@@ -23,8 +23,6 @@ import { MapMenu } from "./MapMenu";
 
 const HOVER = ["maps", "landmarks", "bookmarks", "icons", "paths"];
 
-const NO_MAPS = "No maps inside the lasso.";
-
 /** Clicks, drags and keys on the map, by mode: select, draw a city biome, add a bookmark, place a screenshot by
  * hand, set your position, link two maps for a debug mark; and the right-click menu. */
 export function MapInteraction({ map, geo, meta }: { map: MapLibreMap; geo: Geo; meta: Meta }) {
@@ -174,12 +172,6 @@ export function MapInteraction({ map, geo, meta }: { map: MapLibreMap; geo: Geo;
 		};
 	}, [map, mode, app, setMode, showError]);
 
-	// a new Biome select: the last lasso's "no maps inside" is over (that lasso ended Biome select itself, so leaving
-	// it must not close the message)
-	useEffect(() => {
-		if (mode.kind === "lasso" && useAppStore.getState().error === NO_MAPS) showError(null);
-	}, [mode.kind, showError]);
-
 	// --- drags: the lasso, the ghost
 	useEffect(() => {
 		const dragging = mode.kind === "lasso" || mode.kind === "ghost";
@@ -191,8 +183,6 @@ export function MapInteraction({ map, geo, meta }: { map: MapLibreMap; geo: Geo;
 			if (mode.kind === "lasso") {
 				drawing.current = [atlasAt(e)];
 				setLasso(null);
-				// a new lasso: the last one's "no maps inside" is over (user: it stayed up for its 12 s)
-				if (useAppStore.getState().error === NO_MAPS) showError(null);
 			} else if (mode.kind === "ghost") drag.current = { start: atlasAt(e), centre: mode.centre };
 		};
 		const move = (e: MapMouseEvent) => {
@@ -228,7 +218,7 @@ export function MapInteraction({ map, geo, meta }: { map: MapLibreMap; geo: Geo;
 				const { maps } = await app.lassoCount(polygon);
 				if (mine !== lassoSeq.current) return; // another lasso was drawn meanwhile (CodeRabbit)
 				if (!maps) {
-					showError(NO_MAPS);
+					showError("No maps inside the lasso.", true); // (closes on the next click)
 					setData(map, "lasso", EMPTY);
 					setMode({ kind: "normal" });
 					return;
