@@ -2,7 +2,6 @@ import { useEffect, useRef } from "react";
 import { Section } from "@/components/common/Section";
 import { Button } from "@/components/ui/button";
 import { useAppClient } from "@/hooks/app/UseAppClient";
-import { useBookmarks } from "@/hooks/bookmarks/UseBookmarks";
 import { useInfo } from "@/hooks/find/UseInfo";
 import { useRoutes } from "@/hooks/map/UseRoutes";
 import { bookmarkOf, newBookmark } from "@/logic/BookmarkOf";
@@ -32,7 +31,7 @@ export function SelectedBox() {
 	}, [fresh.isError, select]);
 	const info = fresh.data ?? selected;
 	// the bookmark this is, or the one on this map ("★ Bookmarked" made a second one: user)
-	const mark = bookmarkOf(info, useBookmarks().data);
+	const mark = bookmarkOf(info);
 	// a new selection: the panel scrolls down to show it (user: it stayed out of view under the lists)
 	const box = useRef<HTMLDivElement>(null);
 	const key = selected ? `${selected.kind}-${selected.id}` : "";

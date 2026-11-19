@@ -23,6 +23,9 @@ describe("pageChanges", () => {
 		expect(pageChanges({ ...before, mode: { kind: "normal" } }, { ...before, mode: { kind: "lasso" } })).toEqual([
 			"Biome select ended",
 		]);
+		// a file or folder picker too (CodeRabbit: opening one wasn't logged)
+		const pick = { title: "Open your screenshot folder", folders: true, onPick: () => {} };
+		expect(pageChanges({ ...before, filePick: pick }, before)).toEqual(["Open your screenshot folder: dialog opened"]);
 		expect(pageChanges(before, before)).toEqual([]);
 	});
 });

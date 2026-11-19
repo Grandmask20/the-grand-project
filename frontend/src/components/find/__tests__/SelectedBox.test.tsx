@@ -2,7 +2,7 @@ import { act, screen, waitFor } from "@testing-library/react";
 import { afterEach, describe, expect, it } from "vitest";
 import { SelectedBox } from "@/components/find/SelectedBox";
 import { useAppStore } from "@/store/AppStore";
-import { bookmarks, nodeInfo } from "@/test/Fixtures";
+import { nodeInfo } from "@/test/Fixtures";
 import { renderWithApp, resetStore } from "@/test/RenderWithApp";
 
 describe("SelectedBox", () => {
@@ -32,18 +32,17 @@ describe("SelectedBox", () => {
 	});
 
 	it("a bookmarked map edits its bookmark and can remove it (no second bookmark)", async () => {
-		const marked = { ...nodeInfo, bookmark: 0 };
+		const marked = { ...nodeInfo, bookmark: 0, bookmark_of: { id: 0, name: "big boss", group: "Boss", note: "daily" } };
 		const { user, calls } = renderWithApp(<SelectedBox />, {
 			"GET /api/info": marked,
-			"GET /api/bookmarks": bookmarks,
 			"POST /api/bookmarks/delete": { ok: true },
 		});
 		act(() => useAppStore.getState().select(marked));
 		await user.click(await screen.findByRole("button", { name: "★ Edit bookmark" }));
 		expect(useAppStore.getState().bookmarkEdit).toEqual({
 			id: 0,
-			x: 10,
-			y: 20,
+			x: 440,
+			y: 200,
 			name: "big boss",
 			group: "Boss",
 			note: "daily",

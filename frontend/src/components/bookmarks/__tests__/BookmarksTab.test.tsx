@@ -85,4 +85,14 @@ describe("BookmarksTab", () => {
 		await user.click(screen.getByRole("button", { name: "Select none" }));
 		expect(screen.getByRole("checkbox", { name: "Pick big boss" })).not.toBeChecked();
 	});
+
+	it("Select all counts empty groups too", async () => {
+		// (with only empty groups it never turned into Select none: CodeRabbit)
+		const { user } = renderWithApp(<BookmarksTab />, {
+			"GET /api/bookmarks": { groups: [{ name: "Later", hidden: false, items: [] }] },
+		});
+		await user.click(await screen.findByRole("button", { name: "Select all" }));
+		expect(screen.getByRole("checkbox", { name: "Pick group Later" })).toBeChecked();
+		expect(screen.getByRole("button", { name: "Select none" })).toBeInTheDocument();
+	});
 });

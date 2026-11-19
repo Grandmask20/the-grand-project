@@ -13,7 +13,6 @@ import {
 import type { Meta } from "@/domain/app/Meta";
 import type { ItemInfo } from "@/domain/map/ItemInfo";
 import { useAppClient } from "@/hooks/app/UseAppClient";
-import { useBookmarks } from "@/hooks/bookmarks/UseBookmarks";
 import { useDebugMarks } from "@/hooks/debug/UseDebugMarks";
 import { useRoutes } from "@/hooks/map/UseRoutes";
 import { bookmarkOf, newBookmark } from "@/logic/BookmarkOf";
@@ -40,7 +39,7 @@ export function MapMenu({ x, y, at, hit, meta, debug, onClose }: Props) {
 	const reasons: Record<string, string[]> = useDebugMarks(debug).data?.reasons ?? {};
 	// the bookmark this is, or the one on this map (user: a bookmarked map offered to bookmark it again, and had no
 	// way to remove it)
-	const mark = bookmarkOf(hit, useBookmarks().data);
+	const mark = bookmarkOf(hit);
 
 	const run = (fn: () => Promise<unknown>) => () => {
 		fn().catch((e) => s.showError(e));

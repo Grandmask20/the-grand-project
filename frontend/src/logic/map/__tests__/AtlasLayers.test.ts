@@ -1,3 +1,4 @@
+import { featureFilter } from "@maplibre/maplibre-gl-style-spec";
 import type { LayerSpecification } from "maplibre-gl";
 import { describe, expect, it } from "vitest";
 import { Geo } from "@/logic/Geo";
@@ -48,6 +49,18 @@ describe("AtlasLayers", () => {
 	it("hides paths drawn by too few screenshots on the page, without new tiles", () => {
 		expect(layers(look()).paths.filter).toEqual(pathShareFilter(0));
 		expect(layers(withStyle({ path_freq: 0.35 })).paths.filter).toEqual(pathShareFilter(0.35));
+	});
+
+	it("the share filter keeps paths at or above the share, Abyss chains, and tiles from before shares", () => {
+		// run by MapLibre's own filter evaluator, not compared with the helper that made it (CodeRabbit)
+		const keeps = (freq: number, props: Record<string, unknown>) =>
+			featureFilter(pathShareFilter(freq)).filter({ zoom: 10 }, { type: 2, properties: props, geometry: [] });
+		expect(keeps(0.35, { share: 0.2, abyss: false })).toBe(false);
+		expect(keeps(0.35, { share: 0.35, abyss: false })).toBe(true); // at the share: kept
+		expect(keeps(0.35, { share: 0.9, abyss: false })).toBe(true);
+		expect(keeps(1, { share: 0.2, abyss: true })).toBe(true); // an Abyss chain always
+		expect(keeps(0.35, { abyss: false })).toBe(true); // a tile from before paths carried their share
+		expect(keeps(0, { share: 0, abyss: false })).toBe(true); // 0%: every path
 	});
 
 	it("hides a switched off group", () => {

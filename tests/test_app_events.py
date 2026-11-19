@@ -68,3 +68,12 @@ def test_two_jobs_reporting_at_once_log_each_step_once():
         ev.set_progress("fixing seams: building the clean map...")
     lines = [line.split("  ", 1)[1] for line in ev.log_lines]
     assert lines.count("fixing seams: building the clean map...") == 1 and len(lines) == 11
+
+
+def test_the_same_progress_step_reaches_each_atlas_log_once():
+    ev = Events()
+    for _ in range(3):
+        ev.set_progress("fixing seams 1 / 500", scope="a.json")
+        ev.set_progress("fixing seams 1 / 500", scope="b.json")
+    lines = [entry["data"]["scope"] for entry in ev.history if entry["kind"] == "log"]
+    assert lines == ["a.json", "b.json"]  # one in each atlas's log (one was skipped: CodeRabbit), no repeats

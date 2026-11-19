@@ -18,7 +18,10 @@ export function BookmarksTab() {
 	const s = useAppStoreCalm();
 	const groups = bookmarks.data?.groups ?? [];
 	const fail = (e: unknown) => s.showError(e);
-	const ids = [...picked];
+	// only bookmarks still in the list: a picked one deleted meanwhile (by another step, or a group delete that failed
+	// after its bookmarks went) doesn't count (CodeRabbit)
+	const listed = new Set(groups.flatMap((g) => g.items.map((b) => b.id)));
+	const ids = [...picked].filter((id) => listed.has(id));
 
 	const toggle = (id: number, on: boolean) => {
 		const next = new Set(picked);
@@ -40,7 +43,12 @@ export function BookmarksTab() {
 		setPickedGroups(gs);
 	};
 	const allIds = groups.flatMap((g) => g.items.map((b) => b.id));
-	const everything = allIds.length > 0 && allIds.every((id) => picked.has(id));
+	// every bookmark and every empty group picked, as the group tick boxes count them (with only empty groups, Select
+	// all never turned into Select none: CodeRabbit)
+	const everything =
+		groups.length > 0 &&
+		allIds.every((id) => picked.has(id)) &&
+		groups.every((g) => g.items.length || pickedGroups.has(g.name));
 	const emptyPicked = groups.filter((g) => !g.items.length && pickedGroups.has(g.name)).map((g) => g.name);
 
 	const adding = s.mode.kind === "bookmark";

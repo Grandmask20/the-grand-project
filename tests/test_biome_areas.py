@@ -55,3 +55,12 @@ def test_a_painted_biome_reaches_every_map_node_on_the_spot():
     assert pot == {0: ("Vaal city", 0), 1: ("Vaal city", 0)}  # before: only the nearer one
     at.biome_edits.append({"biome": "", "maps": [[500.0, 500.0]]})
     assert biomes(at, V)["potential"] == {}
+
+
+def test_a_one_map_biome_boxed_in_by_close_maps_stays():
+    # four maps 30 units around one Vaal map: its cut was 2 x 2 cells, and rounding it off took it all (CodeRabbit)
+    nodes = [node(0, 0), node(30, 0), node(-30, 0), node(0, 30), node(0, -30)]
+    ((kind, polys),) = biome_polygons(nodes, {0: ("Vaal city", 0)})
+    assert kind == "Vaal" and covered(polys, 0, 0)
+    for x, y in ((30, 0), (-30, 0), (0, 30), (0, -30)):
+        assert not covered(polys, x, y), (x, y)

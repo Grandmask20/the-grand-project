@@ -41,6 +41,7 @@ export function pageChanges(s: AppStoreState, before: AppStoreState): string[] {
 	if (s.bookmarkEdit && !before.bookmarkEdit)
 		out.push(s.bookmarkEdit.id === null ? "New bookmark: dialog opened" : `Editing bookmark "${s.bookmarkEdit.name}"`);
 	if (s.prompt && !before.prompt) out.push(`${s.prompt.title}: dialog opened`);
+	if (s.filePick && !before.filePick) out.push(`${s.filePick.title}: dialog opened`);
 	if (s.confirm && !before.confirm) out.push(`Asked: ${s.confirm.text}`);
 	if (s.error && s.error !== before.error) out.push(`Error shown: ${s.error}`);
 	return out;

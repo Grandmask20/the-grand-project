@@ -30,7 +30,9 @@ export function SettingSlider({
 	valueWidth?: string;
 }) {
 	const [draft, setDraft] = useState<number | null>(null);
-	// the saved value when the drag began (a preview changes `value` on the page while dragging)
+	// a pointer drag going on: the saved value when it began (its preview changes `value` on the page meanwhile), else
+	// null. Only drags are tracked: arrow keys save each step at once (Radix commits a key step before it reports the
+	// change, which left a stale start that skipped a later save: CodeRabbit)
 	const start = useRef<number | null>(null);
 	const shown = draft ?? value;
 	// gone in the middle of a drag (the tab switched): its preview is taken back, as nothing was saved
@@ -49,8 +51,11 @@ export function SettingSlider({
 				max={max}
 				step={step}
 				value={[shown]}
+				onPointerDown={() => {
+					start.current = value;
+				}}
 				onValueChange={([v]) => {
-					if (start.current === null) start.current = value;
+					if (start.current === null) return; // a key step: saved by its commit
 					setDraft(v);
 					onPreview?.(v);
 				}}

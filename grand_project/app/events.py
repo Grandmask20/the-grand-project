@@ -39,9 +39,10 @@ class Events:
         self._logs: dict[str, deque] = {"": deque(maxlen=LOG_KEEP)}
         self.history: deque = deque(maxlen=EVENT_HISTORY)  # recent events, for a page that reconnects
         self.progress: str | None = None
-        # progress steps already written to the log: step (numbers left out) -> its tenth; per step, so two jobs
-        # reporting at once (adding and Fix seams) don't each write every line
-        self._progress_logged: dict[str, int | None] = {}
+        # progress steps already written to the log: (atlas log, step with its numbers left out) -> its tenth; per step,
+        # so two jobs reporting at once (adding and Fix seams) don't each write every line, and per atlas, so the same
+        # step in another atlas's job still reaches that atlas's log (CodeRabbit)
+        self._progress_logged: dict[tuple[str, str], int | None] = {}
         self.status = ""
         self._questions: dict[int, dict] = {}
 
@@ -114,11 +115,12 @@ class Events:
         m = re.search(r"(\d+)\s*/\s*(\d+)", text)
         tenth = min(10, 10 * int(m[1]) // max(1, int(m[2]))) if m else None
         with self._lock:  # (set from several threads: the worker, Fix seams, the map image build)
-            if task in self._progress_logged and self._progress_logged[task] == tenth:
+            key = (self.scope if scope is None else scope, task)
+            if key in self._progress_logged and self._progress_logged[key] == tenth:
                 return
             if len(self._progress_logged) > 200:  # steps with names in them (one per screenshot)
                 self._progress_logged.clear()
-            self._progress_logged[task] = tenth
+            self._progress_logged[key] = tenth
         self.log(text, scope)
 
     def set_status(self, text: str) -> None:

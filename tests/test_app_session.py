@@ -142,7 +142,7 @@ def test_bookmarks(session, tmp_path):
     session.toggle_bookmark(0)  # shows the group again with only this one
     assert drawn() == ["farm <here>"]
     assert session.filter_version == fv and not points(session, "bookmarks")  # the tiles weren't made again
-    assert session.delete_bookmarks([0, 1]) == ["big boss", "farm <here>"]
+    assert sorted(session.delete_bookmarks([0, 1])) == ["big boss", "farm <here>"]
     assert core.Atlas.load(path).bookmarks == []  # saved
 
 

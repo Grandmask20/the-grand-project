@@ -7,7 +7,6 @@ import type { ItemInfo } from "@/domain/map/ItemInfo";
 import { useAppClient } from "@/hooks/app/UseAppClient";
 import { useAppState } from "@/hooks/app/UseAppState";
 import { usePlayer, useSettings, useUpdateSettings } from "@/hooks/app/UseSettings";
-import { useBookmarks } from "@/hooks/bookmarks/UseBookmarks";
 import { useRouteGraph } from "@/hooks/map/UseGraph";
 import { useMapLibre } from "@/hooks/map/UseMapLibre";
 import { useMapView } from "@/hooks/map/UseMapView";
@@ -37,7 +36,6 @@ export function MapInteraction() {
 	const select = useAppStore((s) => s.select);
 	const setTab = useAppStore((s) => s.setTab);
 	const editBookmark = useAppStore((s) => s.editBookmark);
-	const bookmarks = useBookmarks();
 	const showError = useAppStore((s) => s.showError);
 	const settings = useSettings();
 	const update = useUpdateSettings();
@@ -83,6 +81,12 @@ export function MapInteraction() {
 	useEffect(() => {
 		const onClick = async (e: MapMouseEvent) => {
 			const at = mode.kind === "normal" ? clickAt(e) : atlasAt(e);
+			// what was clicked, for a mode still on once the answer comes: left meanwhile (Esc, another tab, another
+			// mode), the click is dropped (it opened the bookmark dialog after Add bookmark had ended: CodeRabbit)
+			const pickHere = async () => {
+				const hit = await pick(at);
+				return useAppStore.getState().mode === mode ? { hit } : null;
+			};
 			try {
 				switch (mode.kind) {
 					case "normal": {
@@ -93,13 +97,17 @@ export function MapInteraction() {
 					}
 					case "bookmark": {
 						// a map that has a bookmark opens that one (before: a second bookmark on the same map)
-						const hit = await pick(at);
+						const still = await pickHere();
+						if (!still) break;
+						const { hit } = still;
 						setMode({ kind: "normal" });
-						editBookmark(bookmarkOf(hit, bookmarks.data) ?? newBookmark(hit, at));
+						editBookmark(bookmarkOf(hit) ?? newBookmark(hit, at));
 						break;
 					}
 					case "player": {
-						const hit = await pick(at);
+						const still = await pickHere();
+						if (!still) break;
+						const { hit } = still;
 						const node = hit?.kind === "node" ? hit.id : (hit?.node ?? graph?.nearest(at[0], at[1]) ?? null);
 						const p = node !== null ? graph?.at(node) : undefined;
 						if (node !== null && p) update.mutate({ ui: { player: { x: p[0], y: p[1], node, atlas: atlasFile } } });
@@ -107,7 +115,9 @@ export function MapInteraction() {
 						break;
 					}
 					case "debug-link": {
-						const hit = await pick(at);
+						const still = await pickHere();
+						if (!still) break;
+						const { hit } = still;
 						const other = hit?.kind === "node" ? hit.id : (hit?.node ?? null);
 						if (other !== null && other !== mode.from) {
 							await app.addDebugMark({
@@ -139,7 +149,6 @@ export function MapInteraction() {
 		select,
 		setTab,
 		editBookmark,
-		bookmarks.data,
 		setMode,
 		graph,
 		update,
