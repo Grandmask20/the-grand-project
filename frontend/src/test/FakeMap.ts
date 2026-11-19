@@ -109,13 +109,17 @@ export function fakeMap() {
 		getSource: (id: string) => sources.get(id),
 		removeSource: vi.fn((id: string) => sources.delete(id)),
 		addLayer: vi.fn((spec: Record<string, unknown> & { id: string }, before?: string) => {
-			layers.push({
+			const layer = {
 				id: spec.id,
 				before,
 				spec,
 				paint: { ...(spec.paint as object) },
 				layout: { ...(spec.layout as object) },
-			});
+			};
+			// as MapLibre: right under the layer it is put before (on top without one, or when that one isn't there)
+			const at = before === undefined ? -1 : layers.findIndex((l) => l.id === before);
+			if (at < 0) layers.push(layer);
+			else layers.splice(at, 0, layer);
 			const impl = spec as { onAdd?: (m: unknown, gl: unknown) => void };
 			impl.onAdd?.(map, gl.gl); // a custom (3D) layer
 		}),

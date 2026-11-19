@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { ModelLayer3D } from "@/logic/ModelLayer3D";
-import { fakeGl } from "@/test/FakeGl";
+import { fakeGl, settled } from "@/test/FakeGl";
 import { fakeMap } from "@/test/FakeMap";
 
 const frame = {
@@ -24,10 +24,10 @@ const model = (pick: number, step = -1) => ({
 
 function layer() {
 	const { map } = fakeMap();
-	const { gl, called } = fakeGl();
+	const { gl, called, draws } = fakeGl();
 	const l = new ModelLayer3D();
 	l.onAdd(map as never, gl);
-	return { l, gl, called, map };
+	return { l, gl, called, draws, map };
 }
 
 describe("ModelLayer3D", () => {
@@ -61,6 +61,17 @@ describe("ModelLayer3D", () => {
 		const answer = l.pickAt(10, 10);
 		l.render(gl, frame);
 		await expect(answer).resolves.toBe(0);
+	});
+
+	it("a click on a model: its pick code, read from the next frame drawn (not before)", async () => {
+		const { l, gl, draws } = layer();
+		l.setModels([model(5)]);
+		l.render(gl, frame);
+		const answer = l.pickAt(10, 10);
+		expect(await settled(answer)).toBe(false); // waits for the frame
+		draws(5);
+		l.render(gl, frame);
+		await expect(answer).resolves.toBe(5);
 	});
 
 	it("lets go of the GPU's things when taken off, and answers waiting clicks", async () => {

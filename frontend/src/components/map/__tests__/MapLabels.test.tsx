@@ -59,9 +59,11 @@ describe("MapLabels", () => {
 		await waitFor(() => expect(screen.queryByText("Breach")).toBeNull());
 	});
 
-	it("off with Names", () => {
-		const settings = { ...state.settings, layers: { ...state.settings.layers, Labels: false } };
-		renderOnMap(<MapLabels />, { "GET /api/state": { ...state, settings } }, withLayers());
-		expect(screen.queryByText("Old Tower")).toBeNull();
+	it("go when Names is switched off", async () => {
+		const { queryClient } = renderOnMap(<MapLabels />, {}, withLayers());
+		expect(await screen.findByText("Old Tower")).toBeInTheDocument();
+		const layers = { ...state.settings.layers, Labels: false };
+		act(() => queryClient.setQueryData(["state"], { ...state, settings: { ...state.settings, layers } }));
+		await waitFor(() => expect(screen.queryByText("Old Tower")).toBeNull());
 	});
 });

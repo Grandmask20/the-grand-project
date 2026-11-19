@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import { IconLayer3D } from "@/logic/IconLayer3D";
-import { fakeGl } from "@/test/FakeGl";
+import { fakeGl, settled } from "@/test/FakeGl";
 import { fakeMap } from "@/test/FakeMap";
 
 const frame = {
@@ -24,10 +24,10 @@ const picture = () => {
 
 function layer(load = vi.fn(async (_name: string) => picture() as CanvasImageSource | null)) {
 	const { map } = fakeMap();
-	const { gl, called } = fakeGl();
+	const { gl, called, draws } = fakeGl();
 	const l = new IconLayer3D(1e-4, load);
 	l.onAdd(map as never, gl);
-	return { l, gl, called, load, map };
+	return { l, gl, called, draws, load, map };
 }
 
 describe("IconLayer3D", () => {
@@ -44,16 +44,31 @@ describe("IconLayer3D", () => {
 		expect(load).toHaveBeenCalledTimes(2); // known already
 	});
 
-	it("draws the newest set only, and none once emptied", async () => {
-		const { l, gl, called } = layer();
-		const first = l.setIcons([icon(1, "A")]);
-		const second = l.setIcons([icon(1, "A"), icon(2, "B")]);
-		await Promise.all([first, second]);
+	it("an older set whose pictures come in late is never drawn over a newer one", async () => {
+		const later: Record<string, (c: CanvasImageSource) => void> = {};
+		const load = vi.fn((name: string) => new Promise<CanvasImageSource | null>((done) => (later[name] = done)));
+		const { l, gl, called } = layer(load);
+		const older = l.setIcons([icon(1, "A")]);
+		await Promise.resolve(); // its picture is being fetched
+		expect(load).toHaveBeenCalledWith("A");
+		const newer = l.setIcons([icon(1, "A"), icon(2, "B"), icon(3, "B")]);
+		later.A(picture());
+		await older;
 		l.render(gl, frame);
-		expect(called("drawArrays")[0]?.args[2]).toBe(12);
+		expect(called("drawArrays")).toHaveLength(0); // the older set: not drawn
+		await vi.waitFor(() => expect(load).toHaveBeenCalledWith("B"));
+		later.B(picture());
+		await newer;
+		l.render(gl, frame);
+		expect(called("drawArrays")[0]?.args[2]).toBe(18); // the newer: its 3 icons
+	});
+
+	it("emptied: none drawn", async () => {
+		const { l, gl, called } = layer();
+		await l.setIcons([icon(1, "A")]);
 		await l.setIcons([]);
 		l.render(gl, frame);
-		expect(called("drawArrays")).toHaveLength(1);
+		expect(called("drawArrays")).toHaveLength(0);
 	});
 
 	it("a picture that won't load: the icon is still drawn", async () => {
@@ -61,6 +76,17 @@ describe("IconLayer3D", () => {
 		await l.setIcons([icon(1, "Gone")]);
 		l.render(gl, frame);
 		expect(called("drawArrays")).toHaveLength(1);
+	});
+
+	it("a click on an icon: its id, read from the next frame drawn (not before)", async () => {
+		const { l, gl, draws } = layer();
+		await l.setIcons([icon(1, "Breach"), icon(7, "Breach", 1)]);
+		l.render(gl, frame);
+		const answer = l.pickAt(1, 1);
+		expect(await settled(answer)).toBe(false);
+		draws(7 + 1); // icon 7 drawn there (codes are ids + 1)
+		l.render(gl, frame);
+		await expect(answer).resolves.toBe(7);
 	});
 
 	it("answers a click from the next frame drawn", async () => {

@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { PathLayer3D } from "@/logic/PathLayer3D";
-import { fakeGl } from "@/test/FakeGl";
+import { fakeGl, settled } from "@/test/FakeGl";
 import { fakeMap } from "@/test/FakeMap";
 
 const frame = {
@@ -19,10 +19,10 @@ const path = (id: number, step = -1) => ({
 
 function layer() {
 	const { map } = fakeMap();
-	const { gl, called } = fakeGl();
+	const { gl, called, draws } = fakeGl();
 	const l = new PathLayer3D(1e-4);
 	l.onAdd(map as never, gl);
-	return { l, gl, called };
+	return { l, gl, called, draws };
 }
 
 describe("PathLayer3D", () => {
@@ -45,6 +45,17 @@ describe("PathLayer3D", () => {
 		l.render(gl, frame);
 		expect(called("drawArrays")).toHaveLength(0);
 		await expect(l.pickAt(5, 5)).resolves.toBeNull();
+	});
+
+	it("a click near a path: its id, read from the next frame drawn (not before)", async () => {
+		const { l, gl, draws } = layer();
+		l.setPaths([path(1), path(2)]);
+		l.render(gl, frame);
+		const answer = l.pickAt(5, 5);
+		expect(await settled(answer)).toBe(false);
+		draws(2 + 1); // path 2 drawn there (codes are ids + 1)
+		l.render(gl, frame);
+		await expect(answer).resolves.toBe(2);
 	});
 
 	it("answers a click from the next frame drawn", async () => {

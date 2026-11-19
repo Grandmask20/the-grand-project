@@ -6,6 +6,7 @@
 export function fakeGl() {
 	const calls: { name: string; args: unknown[] }[] = [];
 	let n = 0;
+	let drawn = [0, 0, 0, 0]; // what every pixel read back holds (pick colours)
 	const fns: Record<string, (...a: unknown[]) => unknown> = {
 		getShaderParameter: () => true,
 		getProgramParameter: () => true,
@@ -21,7 +22,7 @@ export function fakeGl() {
 		getError: () => 0,
 		readPixels: (...a: unknown[]) => {
 			const out = a[6] as Uint8Array | undefined;
-			out?.fill(0);
+			if (out) for (let k = 0; k < out.length; k += 4) out.set(drawn, k);
 		},
 	};
 	const gl = new Proxy(
@@ -47,5 +48,26 @@ export function fakeGl() {
 		gl: gl as unknown as WebGLRenderingContext,
 		calls,
 		called: (name: string) => calls.filter((c) => c.name === name),
+		/** Every pixel read back from now on holds this pick code, as the layers draw it (3 bytes and an opaque
+		 * alpha; 0: nothing drawn). */
+		draws: (code: number) => {
+			drawn = code ? [code % 256, Math.floor(code / 256) % 256, Math.floor(code / 65536), 255] : [0, 0, 0, 0];
+		},
 	};
+}
+
+/** Whether a promise has settled yet (after the microtasks queued so far). */
+export async function settled(p: Promise<unknown>): Promise<boolean> {
+	let done = false;
+	void p.then(
+		() => {
+			done = true;
+		},
+		() => {
+			done = true;
+		},
+	);
+	await Promise.resolve();
+	await Promise.resolve();
+	return done;
 }
