@@ -4,6 +4,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import { AppQueryKeys } from "@/api/AppQueryKeys";
 import type { Parts } from "@/domain/app/Parts";
 import { PARTS_ASK_MS, useParts } from "@/hooks/app/UseParts";
+import { state } from "@/test/Fixtures";
 import { renderWithApp, resetStore } from "@/test/RenderWithApp";
 
 const parts: Parts = {
@@ -36,12 +37,27 @@ describe("useParts", () => {
 	afterEach(resetStore);
 
 	it("reads how far the map's parts are", async () => {
-		renderWithApp(<Probe watching={false} />, { "GET /api/parts": parts });
+		renderWithApp(<Probe watching={false} />, {
+			"GET /api/state": { ...state, generation: 3 },
+			"GET /api/parts": parts,
+		});
 		expect(await screen.findByText("ready / building")).toBeInTheDocument();
 	});
 
+	it("gives nothing for another atlas than the one the page shows", async () => {
+		// the page shows generation 1 (the fixtures' state); a part that failed for atlas 3 skipped the new cover
+		renderWithApp(<Probe watching={false} />, {
+			"GET /api/state": { ...state, generation: 1 },
+			"GET /api/parts": parts,
+		});
+		expect(await screen.findByText("none yet")).toBeInTheDocument();
+	});
+
 	it("asks again on a schedule only while the loading cover watches", async () => {
-		const { user, queryClient } = renderWithApp(<Cover />, { "GET /api/parts": parts });
+		const { user, queryClient } = renderWithApp(<Cover />, {
+			"GET /api/state": { ...state, generation: 3 },
+			"GET /api/parts": parts,
+		});
 		await screen.findByText("ready / building");
 		const observer = () => queryClient.getQueryCache().find({ queryKey: AppQueryKeys.parts })?.observers[0];
 		expect(observer()?.options).toMatchObject({ refetchInterval: PARTS_ASK_MS });

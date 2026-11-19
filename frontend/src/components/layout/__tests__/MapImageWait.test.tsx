@@ -3,10 +3,11 @@ import { afterEach, describe, expect, it } from "vitest";
 import { MapImageWait } from "@/components/layout/MapImageWait";
 import type { Parts } from "@/domain/app/Parts";
 import { PART_QUIET_S } from "@/hooks/app/UseParts";
+import { state } from "@/test/Fixtures";
 import { renderWithApp, resetStore } from "@/test/RenderWithApp";
 
 const withImage = (map_image: NonNullable<Parts["parts"]["map_image"]>): Parts => ({
-	generation: 1,
+	generation: state.generation ?? 0, // (the generation the page shows: another one's answer is ignored)
 	parts: { map_image },
 });
 

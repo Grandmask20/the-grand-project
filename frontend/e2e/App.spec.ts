@@ -22,6 +22,10 @@ async function open(page: Page) {
 	// the map is drawn: its loading cover goes once every part is ready and the tiles of the view have loaded (an
 	// event of the page, not a guessed wait)
 	await expect(page.getByText("Loading atlas…", { exact: true })).toBeHidden({ timeout: 60_000 });
+	// ...and drawn whole: the cover also goes when a part fails, so every part is ready and no failure is shown
+	const parts = await api<{ parts: Record<string, { state: string; error: string | null }> }>(page, "/api/parts");
+	expect(Object.values(parts.parts).map((p) => p.state)).toEqual(Object.values(parts.parts).map(() => "ready"));
+	await expect(page.getByText(/could not be made|could not load/)).toHaveCount(0);
 	return canvas;
 }
 
