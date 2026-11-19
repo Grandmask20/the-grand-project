@@ -30,10 +30,12 @@ export function renderWithApp(ui: ReactNode, routes: Record<string, unknown> = {
 	queryClient.setQueryData(AppQueryKeys.state, structuredClone(start("GET /api/state", state)));
 	queryClient.setQueryData(AppQueryKeys.meta, structuredClone(start("GET /api/meta", meta)));
 	const user = userEvent.setup();
-	const view = render(
+	const wrap = (node: ReactNode) => (
 		<QueryClientProvider client={queryClient}>
-			<AppClientProvider client={client}>{ui}</AppClientProvider>
-		</QueryClientProvider>,
+			<AppClientProvider client={client}>{node}</AppClientProvider>
+		</QueryClientProvider>
 	);
-	return { user, calls, queryClient, ...view };
+	const view = render(wrap(ui));
+	// (rendered again inside the same app: the query cache and the fake app stay)
+	return { user, calls, queryClient, ...view, rerender: (node: ReactNode) => view.rerender(wrap(node)) };
 }
