@@ -1,7 +1,7 @@
 import { render } from "@testing-library/react";
 import type { GeoJSONStoreFeatures } from "terra-draw";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { LassoDraw, lassoOf } from "@/components/map/draw/LassoDraw";
+import { AtlasDrawAdapter, LassoDraw, lassoOf } from "@/components/map/draw/LassoDraw";
 import { MapViewContext } from "@/hooks/map/UseMapView";
 import { Geo } from "@/logic/Geo";
 import { mapInfo, meta } from "@/test/Fixtures";
@@ -51,7 +51,14 @@ vi.mock("terra-draw", () => ({
 }));
 vi.mock("terra-draw-maplibre-gl-adapter", () => ({
 	TerraDrawMapLibreGLAdapter: class {
+		draggable: boolean | null = null;
 		constructor(public config: unknown) {}
+		getLngLatFromEvent() {
+			return { lng: 1, lat: 2 };
+		}
+		setDraggability(on: boolean) {
+			this.draggable = on;
+		}
 	},
 }));
 const map = { _removed: false, project: ([lng, lat]: [number, number]) => ({ x: lng, y: lat }) };
@@ -99,6 +106,8 @@ describe("LassoDraw", () => {
 		const { unmount } = draw();
 		expect(td.started && td.mode).toBe("freehand");
 		expect(td.options).toMatchObject({ drawInteraction: "click-drag", keyEvents: null });
+		// a small lasso keeps its points (none near the start were kept: it came out as copies of its first point)
+		expect(td.options).toMatchObject({ preventPointsNearClose: false });
 		expect((td.adapter as { config: unknown }).config).toMatchObject({ renderBelowLayerId: "slot:lasso" });
 		// MapLibre's double-click zoom stays off when Terra Draw stops (the page's double-click is its own)
 		expect(() =>
@@ -106,6 +115,17 @@ describe("LassoDraw", () => {
 		).not.toThrow();
 		unmount();
 		expect(td.started).toBe(false);
+		// the map's turning back on, also for a lasso cancelled mid-drag (its release never came)
+		expect((td.adapter as { draggable: boolean }).draggable).toBe(true);
+	});
+
+	it("starts a lasso only on a plain left-button press (right- and Ctrl-drag turn and tilt the map)", () => {
+		const adapter = new AtlasDrawAdapter({ map: map as never });
+		const ev = (type: string, button: number, ctrlKey = false) => ({ type, button, ctrlKey }) as PointerEvent;
+		expect(adapter.getLngLatFromEvent(ev("pointerdown", 0))).toEqual({ lng: 1, lat: 2 });
+		expect(adapter.getLngLatFromEvent(ev("pointerdown", 2))).toBeNull();
+		expect(adapter.getLngLatFromEvent(ev("pointerdown", 0, true))).toBeNull();
+		expect(adapter.getLngLatFromEvent(ev("pointermove", -1))).toEqual({ lng: 1, lat: 2 }); // its moves pass
 	});
 
 	it("hands the lasso drawn to the page, and a new one replaces it", () => {

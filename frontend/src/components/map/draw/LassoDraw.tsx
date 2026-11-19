@@ -10,9 +10,23 @@ import { slotOf } from "@/logic/map/LayerOrder";
 /** The lasso's look: the City biome button's gold. */
 const GOLD = "#c8a45c";
 
-/** Terra Draw on our map. Double-click is the page's own (zoom in, place a screenshot by hand: MapInteraction), and
- * MapLibre's own double-click zoom stays off: Terra Draw turns it back on when it stops, which zoomed twice. */
-class AtlasDrawAdapter extends TerraDrawMapLibreGLAdapter<MapLibreMap> {
+/**
+ * Terra Draw on our map.
+ *
+ * - Only a plain left-button press starts a lasso: Terra Draw takes a drag of any button, and a right-drag or
+ *   Ctrl-drag (the map's turn and tilt) started one and closed the open biome menu (CodeRabbit). The press is
+ *   refused where it comes in, so Terra Draw never starts the drag; the moves and the release of a left-button
+ *   lasso pass as before.
+ * - Double-click is the page's own (zoom in, place a screenshot by hand: MapInteraction), and MapLibre's own
+ *   double-click zoom stays off: Terra Draw turns it back on when it stops, which zoomed twice.
+ */
+export class AtlasDrawAdapter extends TerraDrawMapLibreGLAdapter<MapLibreMap> {
+	override getLngLatFromEvent(event: PointerEvent | MouseEvent) {
+		if (event.type === "pointerdown" && (event.button !== 0 || event.ctrlKey))
+			return null as unknown as { lng: number; lat: number }; // (Terra Draw's own type allows none: it ignores it)
+		return super.getLngLatFromEvent(event);
+	}
+
 	override setDoubleClickToZoom(): void {}
 }
 
@@ -42,13 +56,17 @@ export function LassoDraw({ onStart, onDrawn }: Props) {
 	handlers.current = { onStart, onDrawn };
 
 	useEffect(() => {
+		// on top of the map, in the lasso's place (LAYER_ORDER)
+		const adapter = new AtlasDrawAdapter({ map, renderBelowLayerId: slotOf("lasso"), prefixId: "lasso-draw" });
 		const draw = new TerraDraw({
-			// on top of the map, in the lasso's place (LAYER_ORDER)
-			adapter: new AtlasDrawAdapter({ map, renderBelowLayerId: slotOf("lasso"), prefixId: "lasso-draw" }),
+			adapter,
 			modes: [
 				new TerraDrawFreehandMode({
 					drawInteraction: "click-drag", // as before: press, draw, let go
 					minDistance: 4, // px between points
+					// points near the start are kept: by default none within 40 px of it are, and a small lasso came out
+					// as copies of its first point (CodeRabbit)
+					preventPointsNearClose: false,
 					keyEvents: null, // Esc is the page's (MapInteraction: it leaves the mode)
 					styles: { fillColor: GOLD, fillOpacity: 0.12, outlineColor: GOLD, outlineWidth: 2 },
 				}),
@@ -79,7 +97,12 @@ export function LassoDraw({ onStart, onDrawn }: Props) {
 		return () => {
 			draw.off("change", changed);
 			draw.off("finish", finished);
-			if (mapAlive(map)) draw.stop();
+			if (!mapAlive(map)) return;
+			// a lasso cancelled mid-drag (Esc): Terra Draw turned the map's turning off for it and only turns it back on
+			// when the drag ends, which no longer comes (CodeRabbit). As it was before the lasso (MapLibre's own drag pan
+			// stays off: MapPan's).
+			adapter.setDraggability(true);
+			draw.stop();
 		};
 	}, [map, geo]);
 
