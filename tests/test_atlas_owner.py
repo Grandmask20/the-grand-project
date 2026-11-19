@@ -169,8 +169,10 @@ def test_a_map_image_built_for_a_is_dropped_once_b_is_open(session, two, monkeyp
     session.open_atlas(b)  # B's cached map image is shown at once
     terrain_b = session.terrain[0].copy()
     release.set()
-    assert wait_until(lambda: any(g == g_a for g, _ok in shown))
-    assert [ok for g, ok in shown if g == g_a] == [False]  # A's map image was dropped...
+    assert wait_until(lambda: session.events.progress is None)  # A's build has finished
+    # A's map image was dropped: a newer load claimed the build, so A's never reaches set_terrain (or is refused
+    # there)...
+    assert not any(ok for g, ok in shown if g == g_a)
     assert np.array_equal(session.terrain[0], terrain_b)  # ...B still shows its own
     assert core.map_image_files(b)[0].read_bytes() == b_png  # B's cache was not overwritten with A's picture
     assert not core.map_image_files(a)[0].exists()  # nor A's written from it (built again next time)

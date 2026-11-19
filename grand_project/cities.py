@@ -379,8 +379,10 @@ def ground_sampler(canvas: np.ndarray, weight: np.ndarray, origin, radius: float
         cx = np.round((P[:, 0] - x0) * s0).astype(int)
         cy = np.round((P[:, 1] - y0) * s0).astype(int)
         inside = np.nonzero((cx - r >= 0) & (cy - r >= 0) & (cx + r + 1 <= W) & (cy + r + 1 <= H))[0]
-        for k in range(0, len(inside), CITY_GROUND_CHUNK):
-            i = inside[k : k + CITY_GROUND_CHUNK]
+        # as many discs as fit the pixel budget (a fixed 512 was 300 MB with big discs: CodeRabbit), at least one
+        chunk = max(1, CITY_GROUND_PIXELS // (2 * r + 1) ** 2)
+        for k in range(0, len(inside), chunk):
+            i = inside[k : k + chunk]
             ys, xs = cy[i, None, None] + dy, cx[i, None, None] + dx  # (m, 2r+1, 2r+1) each
             m = (weight[ys, xs] > 0) & disc
             cnt = m.sum((1, 2))
@@ -402,7 +404,7 @@ def ground_sampler(canvas: np.ndarray, weight: np.ndarray, origin, radius: float
     return at
 
 
-CITY_GROUND_CHUNK = 512  # map nodes whose ground discs are read in one go (ground_sampler.many): ~8 MB of pixels
+CITY_GROUND_PIXELS = 600_000  # disc pixels read in one go (ground_sampler.many): ~7 MB of Lab pixels a chunk
 
 SHIP_BUTTON = rc_paths.ref("ship_button.png")  # the Expedition ship marker: same square button, ship symbol
 BUTTON_FRAME = 0.86  # frame match (symbol area masked): real buttons 0.87-1.0, anything else <= 0.854

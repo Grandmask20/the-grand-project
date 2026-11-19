@@ -1,6 +1,7 @@
 import { useQuery } from "@tanstack/react-query";
 import { AppQueryKeys } from "@/api/AppQueryKeys";
 import { useAppClient } from "@/hooks/app/UseAppClient";
+import { useAppState } from "@/hooks/app/UseAppState";
 
 /**
  * How far the map's parts are (map image, model). The app's events refresh it when a part changes; while
@@ -9,11 +10,16 @@ import { useAppClient } from "@/hooks/app/UseAppClient";
  */
 export function useParts(watching: boolean) {
 	const app = useAppClient();
-	return useQuery({
+	const generation = useAppState().data?.generation;
+	const q = useQuery({
 		queryKey: AppQueryKeys.parts,
 		queryFn: () => app.getParts(),
 		refetchInterval: watching ? PARTS_ASK_MS : false,
 	});
+	// only the atlas the page shows: the answer kept from the atlas before (a failed part) skipped the new atlas's
+	// cover for good (CodeRabbit)
+	const mine = q.data && (generation === undefined || q.data.generation === generation);
+	return { ...q, data: mine ? q.data : undefined };
 }
 
 /** How often the loading cover asks how far the parts are (ms). */

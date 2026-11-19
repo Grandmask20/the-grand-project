@@ -476,3 +476,14 @@ def test_the_timelapse_replans_in_the_models_locked_step(session, monkeypatch):
     monkeypatch.setattr(session, "_replan", lambda: held.append(session._lock._is_owned()))
     session.rebuild_model()
     assert held == [True]  # (a close between the check and the replan made the rebuild fail)
+
+
+def test_the_ground_batch_gives_the_same_looks_in_small_chunks(session, monkeypatch):
+    from grand_project import cities
+
+    ground = session.ground()
+    pts = np.array([[n["x"], n["y"]] for n in session.V["nodes"]], float)
+    whole, ok_whole = ground.many(pts)
+    monkeypatch.setattr(cities, "CITY_GROUND_PIXELS", 1)  # one disc a chunk (sized by pixels, not 512 points)
+    small, ok_small = ground.many(pts)
+    assert (ok_whole == ok_small).all() and np.allclose(whole, small)

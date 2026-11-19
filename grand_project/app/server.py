@@ -14,6 +14,7 @@ import contextlib
 import http.client
 import json
 import mimetypes
+import os
 import queue
 import re
 import select
@@ -35,6 +36,7 @@ from grand_project.webmap.constants import WEBMAP_ICON_SPRITE
 from .constants import (
     APP_HELLO_WAIT,
     APP_HOST,
+    APP_LOCK_FILE,
     APP_PORT,
     APP_PORT_TRIES,
     APP_QUIT_WAIT,
@@ -1168,6 +1170,35 @@ def reuse_running(port: int, atlas: str | None, browser: bool) -> str:
     return HANDED
 
 
+def take_app_lock():
+    """Take this program folder's start lock (user_data/app.lock), held while the app runs.
+
+    The look for a running copy and starting one are two steps: two launches at the same moment both found none and
+    both started on the next port, writing the same atlas (CodeRabbit). The lock makes one of them wait. The system
+    lets go of it when the process ends, however it ends.
+
+    Returns:
+        The open lock file (keep it while running), or None when another copy holds it.
+    """
+    path = rc_paths.USER_DATA / APP_LOCK_FILE
+    path.parent.mkdir(parents=True, exist_ok=True)
+    f = open(path, "a+b")  # noqa: SIM115 (held open for the app's life)
+    try:
+        if os.name == "nt":
+            import msvcrt
+
+            f.seek(0)
+            msvcrt.locking(f.fileno(), msvcrt.LK_NBLCK, 1)
+        else:
+            import fcntl
+
+            fcntl.flock(f.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except OSError:
+        f.close()
+        return None
+    return f
+
+
 def _say(text: str) -> None:
     """Print a line when there is a console (pythonw, the Windows launcher, has none).
 
@@ -1226,6 +1257,22 @@ def main(argv: list[str] | None = None) -> int:
         outcome = reuse_running(args.port, args.atlas, not args.no_browser)
         if outcome != START:  # already running: its page, not a second copy writing the same atlas (user)
             return 0 if outcome == HANDED else 1
+    lock = take_app_lock()
+    if lock is None:
+        # another launch holds it: started at the same moment (both found none running) or still closing; it is
+        # handed over to once it answers, or the lock is taken once it is gone (two copies wrote the same atlas,
+        # CodeRabbit)
+        t0 = time.monotonic()
+        while lock is None and time.monotonic() - t0 < APP_QUIT_WAIT:
+            if args.port and running_app(args.port):
+                outcome = reuse_running(args.port, args.atlas, not args.no_browser)
+                if outcome != START:
+                    return 0 if outcome == HANDED else 1
+            time.sleep(0.25)
+            lock = take_app_lock()
+        if lock is None:
+            _say("Another copy of the app is starting or closing and doesn't answer: start it again in a moment.")
+            return 1
     session = AtlasSession()
     try:
         server = AppServer(session, port=args.port)

@@ -63,18 +63,6 @@ export function AtlasMap({ info, meta }: Props) {
 	useEffect(() => {
 		if (failed.length || tileError) setShown(true);
 	}, [failed.length, tileError]);
-	// tile errors from the start: one while the model was still building came before the wait began, and went
-	// unseen (CodeRabbit)
-	useEffect(() => {
-		if (!map) return;
-		const failedTile = (e: { sourceId?: string; error?: { message?: string } }) => {
-			if (e.sourceId === "terrain" || e.sourceId === "atlas") setTileError(e.error?.message ?? "a map tile failed");
-		};
-		map.on("error", failedTile);
-		return () => {
-			map.off("error", failedTile);
-		};
-	}, [map]);
 	useEffect(() => {
 		if (!map || shown || !ready) return;
 		// only what is shown is waited for: a source none of whose layers is ticked loads nothing (MapLibre skips it),
@@ -150,6 +138,11 @@ export function AtlasMap({ info, meta }: Props) {
 		// panning: the mouse's movement in px moves the map at the scale of the view's centre. MapLibre's own drag
 		// keeps the grabbed ground point under the mouse, which near the horizon moved further and further with
 		// every px (user: it sped up endlessly)
+		// tile errors from the map's creation: one before its load event (or while the model was still building)
+		// went unseen, and the failure note never showed (CodeRabbit)
+		m.on("error", (e: { sourceId?: string; error?: { message?: string } }) => {
+			if (e.sourceId === "terrain" || e.sourceId === "atlas") setTileError(e.error?.message ?? "a map tile failed");
+		});
 		m.dragPan.disable();
 		const canvas = m.getCanvasContainer();
 		let last: [number, number] | null = null;
