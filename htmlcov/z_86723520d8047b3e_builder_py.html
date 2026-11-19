@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
     <meta http-equiv="Content-Type" content="text/html; charset=utf-8">
-    <title>Coverage for grand_project/builder.py: 61.7%</title>
+    <title>Coverage for grand_project/builder.py: 62.8%</title>
     <link rel="icon" sizes="32x32" href="favicon_32_cb_c827f16f.png">
     <link rel="stylesheet" href="style_cb_4667309f.css" type="text/css">
     <script src="coverage_html_cb_54cfdca1.js" defer></script>
@@ -12,7 +12,7 @@
     <div class="content">
         <h1>
             <span class="text">Coverage for </span><b>grand_project<span class="sep">/</span>builder.py</b>:
-            <span class="pc_cov">61.7%</span>
+            <span class="pc_cov">62.8%</span>
         </h1>
         <aside id="help_panel_wrapper">
             <input id="help_panel_state" type="checkbox">
@@ -55,8 +55,8 @@
         </aside>
         <h2>
             <span class="text">269 statements &nbsp;</span>
-            <button type="button" class="run button_toggle_run" value="run" data-shortcut="r" title="Toggle lines run">166<span class="text"> run</span></button>
-            <button type="button" class="mis show_mis button_toggle_mis" value="mis" data-shortcut="m" title="Toggle lines missing">103<span class="text"> missing</span></button>
+            <button type="button" class="run button_toggle_run" value="run" data-shortcut="r" title="Toggle lines run">169<span class="text"> run</span></button>
+            <button type="button" class="mis show_mis button_toggle_mis" value="mis" data-shortcut="m" title="Toggle lines missing">100<span class="text"> missing</span></button>
             <button type="button" class="exc show_exc button_toggle_exc" value="exc" data-shortcut="x" title="Toggle lines excluded">2<span class="text"> excluded</span></button>
         </h2>
         <p class="text">
@@ -65,7 +65,7 @@
             <a id="nextFileLink" class="nav" href="z_86723520d8047b3e_cities_py.html">&#xbb; next</a>
             &nbsp; &nbsp; &nbsp;
             <a class="nav" href="https://coverage.readthedocs.io/en/7.17.3">coverage.py v7.17.3</a>,
-            created at 2026-11-19 02:33 +0000
+            created at 2026-11-19 18:27 +0000
         </p>
         <aside class="hidden">
             <button type="button" class="button_next_chunk" data-shortcut="j"></button>
@@ -428,9 +428,9 @@
     <p class="run"><span class="n"><a id="t346" href="#t346">346</a></span><span class="t">            <span class="nam">tried</span><span class="op">.</span><span class="nam">add</span><span class="op">(</span><span class="op">(</span><span class="str">&quot;maps&quot;</span><span class="op">,</span> <span class="nam">j</span><span class="op">,</span> <span class="nam">len</span><span class="op">(</span><span class="nam">placed</span><span class="op">)</span><span class="op">)</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t347" href="#t347">347</a></span><span class="t">            <span class="nam">reg</span> <span class="op">=</span> <span class="nam">atlas</span><span class="op">.</span><span class="nam">add_frame</span><span class="op">(</span><span class="nam">frames</span><span class="op">[</span><span class="nam">j</span><span class="op">]</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t348" href="#t348">348</a></span><span class="t">            <span class="key">if</span> <span class="nam">reg</span><span class="op">.</span><span class="nam">ok</span><span class="op">:</span>&nbsp;</span><span class="r"></span></p>
-    <p class="mis show_mis"><span class="n"><a id="t349" href="#t349">349</a></span><span class="t">                <span class="nam">report</span><span class="op">(</span><span class="nam">j</span><span class="op">,</span> <span class="nam">reg</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
-    <p class="mis show_mis"><span class="n"><a id="t350" href="#t350">350</a></span><span class="t">                <span class="nam">grew</span> <span class="op">=</span> <span class="key">True</span>&nbsp;</span><span class="r"></span></p>
-    <p class="mis show_mis"><span class="n"><a id="t351" href="#t351">351</a></span><span class="t">                <span class="key">break</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run"><span class="n"><a id="t349" href="#t349">349</a></span><span class="t">                <span class="nam">report</span><span class="op">(</span><span class="nam">j</span><span class="op">,</span> <span class="nam">reg</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run"><span class="n"><a id="t350" href="#t350">350</a></span><span class="t">                <span class="nam">grew</span> <span class="op">=</span> <span class="key">True</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run"><span class="n"><a id="t351" href="#t351">351</a></span><span class="t">                <span class="key">break</span>&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t352" href="#t352">352</a></span><span class="t">        <span class="key">if</span> <span class="key">not</span> <span class="nam">grew</span><span class="op">:</span>&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t353" href="#t353">353</a></span><span class="t">            <span class="key">break</span>&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t354" href="#t354">354</a></span><span class="t">    <span class="nam">refused</span> <span class="op">=</span> <span class="op">[</span><span class="nam">Path</span><span class="op">(</span><span class="nam">frames</span><span class="op">[</span><span class="nam">j</span><span class="op">]</span><span class="op">.</span><span class="nam">path</span><span class="op">)</span><span class="op">.</span><span class="nam">name</span> <span class="key">for</span> <span class="nam">j</span> <span class="key">in</span> <span class="nam">range</span><span class="op">(</span><span class="nam">n</span><span class="op">)</span> <span class="key">if</span> <span class="nam">j</span> <span class="key">not</span> <span class="key">in</span> <span class="nam">placed</span><span class="op">]</span>&nbsp;</span><span class="r"></span></p>
@@ -698,7 +698,7 @@
             <a class="nav" href="z_86723520d8047b3e_cities_py.html">&#xbb; next</a>
             &nbsp; &nbsp; &nbsp;
             <a class="nav" href="https://coverage.readthedocs.io/en/7.17.3">coverage.py v7.17.3</a>,
-            created at 2026-11-19 02:33 +0000
+            created at 2026-11-19 18:27 +0000
         </p>
     </div>
 </footer>
