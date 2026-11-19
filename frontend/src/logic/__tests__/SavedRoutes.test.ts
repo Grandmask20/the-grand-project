@@ -131,6 +131,30 @@ describe("saved routes", () => {
 		).toEqual([[1, 2]]);
 	});
 
+	it("the maps cut off join the route again round the map taken off (user: they went though a path led to them)", () => {
+		// 1 - 2 - 3 - 4 - 5 - 6 run in a line, and a path from 1 straight to 5 (your picture: from the top-left map)
+		const g = new RouteGraph({
+			nodes: [1, 2, 3, 4, 5, 6, 7, 8, 9].map((id) => ({ id, x: id * 100, y: 0, icons: [], status: "confirmed" })),
+			edges: [
+				{ a: 1, b: 2 },
+				{ a: 2, b: 3 },
+				{ a: 3, b: 4 },
+				{ a: 4, b: 5 },
+				{ a: 5, b: 6 },
+				{ a: 1, b: 5 },
+				{ a: 6, b: 7 },
+				{ a: 7, b: 8 },
+				{ a: 8, b: 9 },
+			],
+		});
+		expect(removeMap([[1, 2, 3, 4, 5, 6]], 4, g)).toEqual([
+			[1, 2, 3],
+			[1, 5, 6],
+		]);
+		// a way round longer than what it would keep: that piece goes (one stray map, no long detour)
+		expect(removeMap([[9, 8, 7, 6, 5, 4, 3]], 4, g)).toEqual([[9, 8, 7, 6, 5]]);
+	});
+
 	it("keeps at least two maps", () => {
 		expect(removeMap([[1, 2]], 1)).toBe("A route needs two maps: delete it instead.");
 		expect(removeMap([[1, 2, 3]], 2)).toBe("A route needs two maps: delete it instead.");

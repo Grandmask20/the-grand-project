@@ -8,7 +8,8 @@ the route). Routes saved before branches held one "line" and no maps. A route ha
 its spot. A bookmark's id is its uid,
 which stays when others are deleted (it was its place in the list: a page still holding an old number deleted or
 edited the bookmark that moved into that place, CodeRabbit); atlases from before get uids when first read.
-Groups hidden on the map are kept per atlas in the settings (settings["hidden_groups"][atlas path]). Empty groups
+Groups hidden on the map, and groups folded shut in the Bookmarks tab, are kept per atlas in the settings
+(settings["hidden_groups" / "folded_groups"][atlas path]; renamed and deleted with their group). Empty groups
 made with New group last until the app closes, unless a bookmark is put in them.
 """
 
@@ -19,7 +20,7 @@ import time
 
 from grand_project import logs as atlas_log
 
-from .constants import CATEGORIES, ROUTE_LEGS_MAX, ROUTE_POINTS_MAX, SAME_SPOT
+from .constants import BOOKMARK_GROUP_SETS, CATEGORIES, ROUTE_LEGS_MAX, ROUTE_POINTS_MAX, SAME_SPOT
 from .events import StaleAtlas
 from .icons import icon_label, icon_name
 
@@ -119,14 +120,32 @@ class BookmarksMixin:
         g = {bm_group(b) for b in (self.atlas.bookmarks if self.atlas else [])} | self._extra_groups
         return sorted(g, key=str.lower)
 
+    def _group_set(self, kind: str) -> set[str]:
+        """A set of groups kept per atlas in the settings, for the open atlas.
+
+        Args:
+            kind: One of BOOKMARK_GROUP_SETS: "hidden_groups" (hidden on the map) or "folded_groups" (folded
+                in the Bookmarks tab).
+
+        Returns:
+            The group names.
+        """
+        key = str(self.path) if self.path else ""
+        return set(self.settings.get(kind, {}).get(key, []))
+
+    def _put_group_set(self, kind: str, names: set[str]) -> None:
+        """Keep a set of groups for the open atlas (see _group_set), saved at once."""
+        key = str(self.path) if self.path else ""
+        self.settings.setdefault(kind, {})[key] = sorted(names)
+        self.save_settings()
+
     def hidden_groups(self) -> set[str]:
         """Return the groups hidden on the map for the open atlas.
 
         Returns:
             The group names.
         """
-        key = str(self.path) if self.path else ""
-        return set(self.settings.get("hidden_groups", {}).get(key, []))
+        return self._group_set("hidden_groups")
 
     def bookmark_shown(self, b: dict) -> bool:
         """Tell whether a bookmark is drawn on the map (neither its group nor itself hidden).
@@ -143,9 +162,11 @@ class BookmarksMixin:
         """Return the bookmarks and groups for the Bookmarks tab.
 
         Returns:
-            {"groups": [{"name", "hidden", "items": [{"id", "name", "note", "x", "y", "created", "hidden", "shown"}]}]}.
+            {"groups": [{"name", "hidden", "folded", "items": [{"id", "name", "note", "x", "y", "created", "hidden",
+            "shown", "route"?}]}]}.
         """
         hidden = self.hidden_groups()
+        folded = self._group_set("folded_groups")
         by_group: dict[str, list] = {g: [] for g in self.groups()}
         for i, b in self.bookmarks_by_id():
             by_group.setdefault(bm_group(b), []).append(
@@ -163,7 +184,12 @@ class BookmarksMixin:
             )
         return {
             "groups": [
-                {"name": g, "hidden": g in hidden, "items": sorted(items, key=lambda t: t["name"].lower())}
+                {
+                    "name": g,
+                    "hidden": g in hidden,
+                    "folded": g in folded,
+                    "items": sorted(items, key=lambda t: t["name"].lower()),
+                }
                 for g, items in sorted(by_group.items(), key=lambda t: t[0].lower())
             ]
         }
@@ -392,12 +418,11 @@ class BookmarksMixin:
         if old in self._extra_groups:
             self._extra_groups.discard(old)
             self._extra_groups.add(new)
-        # a hidden group stays hidden under its new name (user: renaming showed it again)
-        key = str(self.path) if self.path else ""
-        hg = self.settings.setdefault("hidden_groups", {})
-        if old in hg.get(key, []):
-            hg[key] = sorted((set(hg[key]) - {old}) | {new})
-            self.save_settings()
+        # a hidden group stays hidden under its new name (user: renaming showed it again), a folded one folded
+        for kind in BOOKMARK_GROUP_SETS:
+            names = self._group_set(kind)
+            if old in names:
+                self._put_group_set(kind, (names - {old}) | {new})
         self.events.log(f"bookmark group {old!r} renamed to {new!r}")
         self._bookmarks_changed()
 
@@ -417,14 +442,28 @@ class BookmarksMixin:
         for n in gone:
             self._extra_groups.discard(n)
         if gone:
-            key = str(self.path) if self.path else ""
-            hg = self.settings.setdefault("hidden_groups", {})
-            if set(gone) & set(hg.get(key, [])):
-                hg[key] = sorted(set(hg[key]) - set(gone))
-                self.save_settings()
+            for kind in BOOKMARK_GROUP_SETS:
+                names = self._group_set(kind)
+                if names & set(gone):
+                    self._put_group_set(kind, names - set(gone))
             self.events.log(f"deleted empty bookmark group(s): {', '.join(gone)}")
             self.events.publish("bookmarks", None)
         return len(gone)
+
+    def fold_groups(self, names: list[str], folded: bool) -> None:
+        """Fold groups shut in the Bookmarks tab, or open them (kept per atlas: user: Fold all was forgotten).
+
+        Args:
+            names: The group names.
+            folded: Fold (True) or open.
+        """
+        cur = self._group_set("folded_groups")
+        new = cur | set(names) if folded else cur - set(names)
+        if new == cur:
+            return
+        self._put_group_set("folded_groups", new)
+        self.events.log(f"{'Folded' if folded else 'Opened'} bookmark group(s): {', '.join(sorted(set(names)))}")
+        self.events.publish("bookmarks", None)
 
     def toggle_group(self, g: str) -> None:
         """Hide a group on the map, or show it again (kept per atlas in the settings).

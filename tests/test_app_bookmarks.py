@@ -199,3 +199,18 @@ def test_a_saved_routes_maps_change_with_a_branch(opened):
 
 
 LOGGED = "Route route1 changed: map #1 to map #2, 2 maps, 1 branch"
+
+
+def test_folded_groups_are_kept_per_atlas_and_follow_a_rename(opened):
+    # (user: Fold all was forgotten after a reload)
+    s, path, pts = opened
+    s.add_bookmark(pts[1][0], pts[1][1], "a", "G")
+    s.add_bookmark(pts[2][0], pts[2][1], "b", "H")
+    s.fold_groups(["G", "H"], True)
+    s.fold_groups(["H"], False)
+    assert {g["name"]: g["folded"] for g in s.bookmarks_payload()["groups"]}["G"] is True
+    assert s.settings["folded_groups"][str(path)] == ["G"]  # kept in the settings, saved
+    s.rename_group("G", "G2")
+    folded = {g["name"]: g["folded"] for g in s.bookmarks_payload()["groups"]}
+    assert folded["G2"] is True and folded["H"] is False and "G" not in folded
+    assert any(line.endswith("Folded bookmark group(s): G, H") for line in s.events.log_lines)

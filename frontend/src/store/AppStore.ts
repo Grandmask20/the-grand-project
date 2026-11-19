@@ -165,9 +165,6 @@ export interface AppStoreState {
 	showError: (e: unknown, brief?: boolean) => void;
 	frameLog: boolean;
 	setFrameLog: (on: boolean) => void;
-	/** Bookmark groups folded shut in the Bookmarks tab (user: as in the old window). */
-	foldedGroups: string[];
-	foldGroup: (name: string, folded: boolean) => void;
 	/** Forget what belonged to the atlas open before (another atlas was opened, made or closed). */
 	resetAtlas: () => void;
 }
@@ -243,9 +240,14 @@ export const useAppStore = create<AppStoreState>()((set) => ({
 			...(st.routeLit !== null && !ids.has(st.routeLit) ? { routeLit: null } : {}),
 			...(st.mode.kind === "route-edit" && !ids.has(st.mode.id) ? { mode: { kind: "normal" } as MapMode } : {}),
 		})),
+	// another route lit up while one is adjusted: the adjusting ends (it stayed on the first: review)
 	lightRoute: (routeLit) => {
 		selectSeq++;
-		set({ routeLit, ...(routeLit !== null ? { selected: null } : {}) });
+		set((st) => ({
+			routeLit,
+			...(routeLit !== null ? { selected: null } : {}),
+			...(st.mode.kind === "route-edit" && st.mode.id !== routeLit ? { mode: { kind: "normal" } as MapMode } : {}),
+		}));
 	},
 	results: [],
 	resultsTitle: "",
@@ -310,17 +312,13 @@ export const useAppStore = create<AppStoreState>()((set) => ({
 	},
 	frameLog: false,
 	setFrameLog: (frameLog) => set({ frameLog }),
-	foldedGroups: [],
-	foldGroup: (name, folded) =>
-		set((s) => ({
-			foldedGroups: folded ? [...new Set([...s.foldedGroups, name])] : s.foldedGroups.filter((g) => g !== name),
-		})),
 	// the selection, search, highlight, route, replay, a placement or lasso waiting for a click, dialogs about one of
 	// its items and the camera all belonged to the atlas open before (user: they showed or acted on the new one; the
 	// new map opened at the old atlas's spot). Kept: the tab, the file picker and the atlas dialogs (not one atlas's).
 	resetAtlas: () => {
 		selectSeq++; // a click's selection still loading belongs to the atlas before (CodeRabbit)
 		set({
+			...letGoAll(), // (View settings held belonged to the map before: review)
 			camera: null,
 			selected: null,
 			routeLit: null,

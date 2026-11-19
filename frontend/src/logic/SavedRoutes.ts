@@ -93,11 +93,13 @@ export function addMap(legs: Legs, node: number, graph: RouteGraph): Legs | stri
 	return [...legs, way];
 }
 
-/** A route with a map taken off: the route's biggest piece left stays, the rest goes with it (at an end, the map
- * alone; nearer one end, that side; a branch, toward its tip; maps added off the side of a map taken off stay when
- * they're the bigger piece, and are the route then: user: the route's first maps couldn't be taken off). A tie keeps
- * the piece with the route's start, then its end. A message when it can't be. */
-export function removeMap(legs: Legs, node: number): Legs | string {
+/** A route with a map taken off. The route's biggest piece left stays (a tie: the piece with the route's start, then
+ * its end): at an end the map goes alone, and maps added off the side of a map taken off stay when they're the bigger
+ * piece, and are the route then (user: the route's first maps couldn't be taken off). The other pieces join the route
+ * again by the shortest way round the map taken off (user: taking a map off cut off the maps after it, though a path
+ * led to them from the route), when that way adds no more maps than the piece keeps (else, a stray map would bring a
+ * long detour); a piece no way joins goes. Without `graph`, no piece joins again. A message when it can't be. */
+export function removeMap(legs: Legs, node: number, graph?: RouteGraph): Legs | string {
 	if (!legs.some((l) => l.includes(node))) return `Map #${node} isn't on the route.`;
 	// the route as maps joined to the maps before and after them on its legs
 	const near = new Map<number, number[]>();
@@ -130,8 +132,52 @@ export function removeMap(legs: Legs, node: number): Legs | string {
 	// each leg's maps in that piece (a run of it: a leg passing the map has a side in another piece); the main leg's
 	// first, else the first left; a branch left on its first map alone goes
 	const kept = legs.map((l) => l.filter((m) => best.has(m))).filter((l) => l.length);
-	const out = tidy([kept[0], ...kept.slice(1).filter((l) => l.length >= 2)]);
-	return out[0].length >= 2 ? out : "A route needs two maps: delete it instead.";
+	const out = [kept[0], ...kept.slice(1).filter((l) => l.length >= 2)];
+	if (graph) {
+		const on = new Set(best);
+		const waiting = pieces.filter((p) => p !== best); // (biggest first)
+		for (const piece of waiting) {
+			const from = (near.get(node) ?? []).find((n) => piece.has(n)) as number;
+			// round the map taken off, and not through the pieces still waiting (or this one's own maps)
+			const avoid = new Set([node, ...waiting.flatMap((p) => [...p])]);
+			avoid.delete(from);
+			const way = graph.shortest(from, (u) => on.has(u), avoid);
+			if (!way || way.length - 2 > piece.size) continue;
+			const own = treeLegs(from, near, piece);
+			out.push([...way.reverse(), ...own[0].slice(1)], ...own.slice(1));
+			for (const m of [...way, ...piece]) on.add(m);
+		}
+	}
+	const done = tidy(out);
+	return done[0].length >= 2 ? done : "A route needs two maps: delete it instead.";
+}
+
+/** A piece of a route as legs from one of its maps: each leg goes on to the bigger part, the others branch off. */
+function treeLegs(root: number, near: Map<number, number[]>, within: Set<number>): Legs {
+	const seen = new Set([root]);
+	const sizeOf = (u: number, from: number): number => {
+		let n = 1;
+		for (const v of near.get(u) ?? []) if (v !== from && within.has(v)) n += sizeOf(v, u);
+		return n;
+	};
+	const out: Legs = [];
+	const walk = (leg: number[]) => {
+		out.push(leg);
+		const branches: number[][] = [];
+		for (let u = leg[leg.length - 1]; ; ) {
+			const next = (near.get(u) ?? []).filter((v) => within.has(v) && !seen.has(v));
+			if (!next.length) break;
+			for (const v of next) seen.add(v);
+			const at = u;
+			next.sort((a, b) => sizeOf(b, at) - sizeOf(a, at));
+			for (const v of next.slice(1)) branches.push([at, v]);
+			leg.push(next[0]);
+			u = next[0];
+		}
+		for (const b of branches) walk(b);
+	};
+	walk([root]);
+	return out;
 }
 
 /** A leg that now ends where a branch starts goes on along that branch (no going there and back for nothing). */

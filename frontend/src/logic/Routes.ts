@@ -62,8 +62,9 @@ export class RouteGraph {
 		return best;
 	}
 
-	/** The route from `from` to the first map `done` accepts (fewest maps), or null. */
-	shortest(from: number, done: (id: number) => boolean): number[] | null {
+	/** The route from `from` to the first map `done` accepts (fewest maps), or null; never through the maps in
+	 * `avoid`. */
+	shortest(from: number, done: (id: number) => boolean, avoid?: Set<number>): number[] | null {
 		if (!this.adj.has(from)) return null;
 		const cost = new Map<number, number>([[from, 0]]);
 		const prev = new Map<number, number>();
@@ -78,6 +79,7 @@ export class RouteGraph {
 				return path.reverse();
 			}
 			for (const v of this.adj.get(u) ?? []) {
+				if (avoid?.has(v)) continue;
 				// a map run outweighs any distance (1e-6 x distance could pass a whole map on a big atlas: CodeRabbit)
 				const nc = c + ROUTE_HOP + this.dist(u, v);
 				if (nc < (cost.get(v) ?? Number.POSITIVE_INFINITY)) {

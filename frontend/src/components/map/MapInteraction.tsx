@@ -9,10 +9,10 @@ import { useAppClient } from "@/hooks/app/UseAppClient";
 import { useAppState } from "@/hooks/app/UseAppState";
 import { usePlayer, useSettings, useUpdateSettings } from "@/hooks/app/UseSettings";
 import { useBookmarks } from "@/hooks/bookmarks/UseBookmarks";
-import { useRouteGraph } from "@/hooks/map/UseGraph";
+import { useLoadRouteGraph, useRouteGraph } from "@/hooks/map/UseGraph";
 import { useMapLibre } from "@/hooks/map/UseMapLibre";
 import { useMapView } from "@/hooks/map/UseMapView";
-import { savedRoute, useRoutes } from "@/hooks/map/UseRoutes";
+import { savedRoute, tracking, useRoutes } from "@/hooks/map/UseRoutes";
 import { bookmarkOf, newBookmark } from "@/logic/BookmarkOf";
 import type { Point } from "@/logic/Geo";
 import type { IconLayer3D } from "@/logic/IconLayer3D";
@@ -21,7 +21,7 @@ import type { ModelLayer3D } from "@/logic/ModelLayer3D";
 import { wasDrag } from "@/logic/map/PanGuard";
 import type { PathLayer3D } from "@/logic/PathLayer3D";
 import { pickItem } from "@/logic/Pick";
-import { addMap, legsOf, nearestOn, removeMap, savedRouteOf } from "@/logic/SavedRoutes";
+import { addMap, legsOf, nearestOn, removeMap, savedRouteOf, visitOrder } from "@/logic/SavedRoutes";
 import { type MapMode, useAppStore } from "@/store/AppStore";
 import { BiomeMenu } from "./BiomeMenu";
 import { LassoDraw } from "./draw/LassoDraw";
@@ -49,7 +49,12 @@ export function MapInteraction() {
 	const update = useUpdateSettings();
 	const atlasFile = usePlayer().atlas; // your position is kept with the atlas it was set in
 	const debug = !!useAppState().data?.debug;
-	const graph = useRouteGraph(mode.kind === "player" || mode.kind === "route" || mode.kind === "route-edit");
+	// (loaded as these modes start; a click that comes first waits for it)
+	useRouteGraph(mode.kind === "player" || mode.kind === "route" || mode.kind === "route-edit");
+	const loadGraph = useLoadRouteGraph();
+	// Adjust route's saves, one after another in the order of the clicks (sent side by side, an older route could
+	// be saved last)
+	const saving = useRef<Promise<unknown>>(Promise.resolve());
 	// a saved route being changed (Add / Remove maps): as it is after the last click, so a click before the list
 	// came back builds on it
 	const editedRoute = useRef<{ id: number; route: SavedRoute } | null>(null);
@@ -95,8 +100,8 @@ export function MapInteraction() {
 	// branch off its side), a map right-clicked comes off it (removeMap) (user)
 	const adjustRoute = useCallback(
 		async (at: Point, add: boolean, started: MapMode) => {
-			if (started.kind !== "route-edit" || !graph) return;
-			const hit = await pick(at);
+			if (started.kind !== "route-edit") return;
+			const [hit, graph] = await Promise.all([pick(at), loadGraph()]);
 			if (useAppStore.getState().mode !== started) return; // (left meanwhile)
 			const picked = hit?.kind === "node" ? hit.id : (hit?.node ?? graph.nearest(at[0], at[1]));
 			const listed = queryClient
@@ -118,21 +123,30 @@ export function MapInteraction() {
 			const reach = ROUTE_EDIT_REACH_PX / geo.pxPerUnit(map.getZoom());
 			const node = add ? picked : (nearestOn(legs, graph, at, reach) ?? picked);
 			if (node === null) return;
-			const next = add ? addMap(legs, node, graph) : removeMap(legs, node);
+			const next = add ? addMap(legs, node, graph) : removeMap(legs, node, graph);
 			if (typeof next === "string") {
 				showError(next, true);
 				return;
 			}
 			const route = savedRouteOf(next, graph);
 			editedRoute.current = { id: started.id, route };
+			// the route tracked is this one: it follows, on the map you are on (it stayed the route before)
+			const tracked = useAppStore.getState().route;
+			if (tracked?.saved === started.id && tracked.at !== undefined) {
+				const path = visitOrder(next);
+				const at = Math.max(0, path.indexOf(tracked.path[tracked.at]));
+				useAppStore.getState().setRoute({ path, at, saved: started.id, message: tracking(path, at) });
+			}
+			const save = saving.current.then(() => app.setBookmarkRoute(started.id, route));
+			saving.current = save.catch(() => {});
 			try {
-				await app.setBookmarkRoute(started.id, route);
+				await save;
 			} catch (err) {
 				editedRoute.current = null; // (the list holds what was saved)
 				throw err;
 			}
 		},
-		[graph, pick, queryClient, setMode, showError, geo, map, app],
+		[loadGraph, pick, queryClient, setMode, showError, geo, map, app],
 	);
 
 	// --- clicks
@@ -164,19 +178,19 @@ export function MapInteraction() {
 						break;
 					}
 					case "player": {
-						const still = await pickHere();
+						const [still, graph] = await Promise.all([pickHere(), loadGraph()]);
 						if (!still) break;
 						const { hit } = still;
-						const node = hit?.kind === "node" ? hit.id : (hit?.node ?? graph?.nearest(at[0], at[1]) ?? null);
-						const p = node !== null ? graph?.at(node) : undefined;
+						const node = hit?.kind === "node" ? hit.id : (hit?.node ?? graph.nearest(at[0], at[1]));
+						const p = node !== null ? graph.at(node) : undefined;
 						if (node !== null && p) update.mutate({ ui: { player: { x: p[0], y: p[1], node, atlas: atlasFile } } });
 						setMode({ kind: "normal" });
 						break;
 					}
 					case "route": {
 						// the first map, then the last: the route between them, fewest maps (user)
-						const still = await pickHere();
-						if (!still || !graph) break;
+						const [still, graph] = await Promise.all([pickHere(), loadGraph()]);
+						if (!still) break;
 						const { hit } = still;
 						const node = hit?.kind === "node" ? hit.id : (hit?.node ?? graph.nearest(at[0], at[1]));
 						if (node === null) break;
@@ -237,7 +251,7 @@ export function MapInteraction() {
 		editBookmark,
 		setRouteDraft,
 		setMode,
-		graph,
+		loadGraph,
 		update,
 		app,
 		showError,
@@ -439,13 +453,14 @@ export function MapInteraction() {
 		};
 	}, [map]);
 
-	const chooseRoute = (what: "track" | "save" | null) => {
+	const chooseRoute = async (what: "track" | "save" | null) => {
 		const r = routeMenu;
 		setRouteMenu(null);
 		setRouteDraft(null); // tracked, saved or cancelled: the route tracked before stays unless it's Track now
 		if (!r) return;
 		if (what === "track") routes.trackRoute(r.path);
-		else if (what === "save" && graph) {
+		else if (what === "save") {
+			const graph = await loadGraph();
 			const start = graph.at(r.path[0]) ?? [0, 0];
 			// numbered after the routes saved so far: route1, route2, ...
 			const saved = (bookmarks.data?.groups ?? []).flatMap((g) => g.items).filter((b) => b.route).length;

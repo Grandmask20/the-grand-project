@@ -39,6 +39,18 @@ describe("useAppStore", () => {
 		expect(useAppStore.getState().route).not.toBeNull();
 	});
 
+	it("lighting another route ends adjusting the first; another atlas lets go of held settings (review)", () => {
+		const s = useAppStore.getState();
+		s.setMode({ kind: "route-edit", id: 5 });
+		s.lightRoute(5);
+		expect(useAppStore.getState().mode).toEqual({ kind: "route-edit", id: 5 });
+		s.lightRoute(6);
+		expect(useAppStore.getState().mode).toEqual({ kind: "normal" });
+		s.hold("Paths");
+		s.resetAtlas();
+		expect(useAppStore.getState().editing).toEqual([]);
+	});
+
 	it("patches the replay only while one is open", () => {
 		const s = useAppStore.getState();
 		s.patchReplay({ pos: 3 });

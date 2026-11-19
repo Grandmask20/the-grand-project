@@ -96,6 +96,19 @@ describe("BookmarksTab", () => {
 		expect(screen.getByRole("button", { name: "Select none" })).toBeInTheDocument();
 	});
 
+	it("Fold all folds every group at once and the app keeps it (user: it was forgotten after a reload)", async () => {
+		const { user, calls } = renderWithApp(<BookmarksTab />, {
+			"GET /api/bookmarks": bookmarks,
+			"POST /api/groups/fold": { ok: true },
+		});
+		await user.click(await screen.findByRole("button", { name: "Fold all" }));
+		const names = bookmarks.groups.map((g) => g.name);
+		for (const n of names) expect(screen.getByRole("button", { name: `Open ${n}` })).toBeInTheDocument();
+		await waitFor(() =>
+			expect(calls.find((c) => c.path === "/api/groups/fold")?.body).toEqual({ names, folded: true }),
+		);
+	});
+
 	it("a saved route: a path symbol, its ends in the name, and a click lights it up and fits it in view", async () => {
 		const { user } = renderWithApp(<BookmarksTab />, { "GET /api/bookmarks": withRoute });
 		await user.click(await screen.findByRole("button", { name: "route1 (map #252 -> map #262)" }));

@@ -837,6 +837,16 @@ class Handler(BaseHTTPRequestHandler):
             raise ValueError("names must be a list")
         self._json({"deleted": self.S.delete_groups([n for n in names if isinstance(n, str)])})
 
+    @route("POST", "/api/groups/fold")
+    def post_fold_groups(self, q) -> None:
+        """Fold groups shut, or open them."""
+        b = self._body()
+        names = b.get("names")
+        if not isinstance(names, list) or not all(isinstance(n, str) for n in names):
+            raise ApiError("names: a list of group names", 400)
+        self.S.fold_groups(names, bool(b.get("folded")))
+        self._json({"ok": True})
+
     @route("POST", "/api/groups/toggle")
     def post_toggle_group(self, q) -> None:
         """Hide / show a group."""

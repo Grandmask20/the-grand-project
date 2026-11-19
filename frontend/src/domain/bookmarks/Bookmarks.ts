@@ -6,6 +6,8 @@ export interface Bookmarks {
 export interface BookmarkGroup {
 	name: string;
 	hidden: boolean;
+	/** Folded shut in the Bookmarks tab (kept per atlas). */
+	folded?: boolean;
 	items: Bookmark[];
 }
 

@@ -1,3 +1,4 @@
+import { useQueryClient } from "@tanstack/react-query";
 import {
 	ChevronDownIcon,
 	ChevronRightIcon,
@@ -8,9 +9,10 @@ import {
 	Trash2Icon,
 } from "lucide-react";
 import { useState } from "react";
+import { AppQueryKeys } from "@/api/AppQueryKeys";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
-import type { Bookmark, SavedRoute } from "@/domain/bookmarks/Bookmarks";
+import type { Bookmark, Bookmarks, SavedRoute } from "@/domain/bookmarks/Bookmarks";
 import { useAppClient } from "@/hooks/app/UseAppClient";
 import { useBookmarks } from "@/hooks/bookmarks/UseBookmarks";
 import { routeBox, routeTitle } from "@/hooks/map/UseRoutes";
@@ -67,6 +69,16 @@ export function BookmarksTab() {
 		allIds.every((id) => picked.has(id)) &&
 		groups.every((g) => g.items.length || pickedGroups.has(g.name));
 	const emptyPicked = groups.filter((g) => !g.items.length && pickedGroups.has(g.name)).map((g) => g.name);
+
+	// folding: kept per atlas by the app (user: Fold all was forgotten after a reload), shown at once
+	const queryClient = useQueryClient();
+	const fold = (names: string[], folded: boolean) => {
+		queryClient.setQueryData<Bookmarks>(
+			AppQueryKeys.bookmarks,
+			(d) => d && { groups: d.groups.map((g) => (names.includes(g.name) ? { ...g, folded } : g)) },
+		);
+		void app.foldGroups(names, folded).catch(fail);
+	};
 
 	const adding = s.mode.kind === "bookmark";
 	const remove = (ids: number[], name?: string, emptyGroups: string[] = []) =>
@@ -175,25 +187,31 @@ export function BookmarksTab() {
 					<Button
 						size="xs"
 						variant="ghost"
-						onClick={() => {
-							for (const g of groups) s.foldGroup(g.name, false);
-						}}
+						onClick={() =>
+							fold(
+								groups.map((g) => g.name),
+								false,
+							)
+						}
 					>
 						Open all
 					</Button>
 					<Button
 						size="xs"
 						variant="ghost"
-						onClick={() => {
-							for (const g of groups) s.foldGroup(g.name, true);
-						}}
+						onClick={() =>
+							fold(
+								groups.map((g) => g.name),
+								true,
+							)
+						}
 					>
 						Fold all
 					</Button>
 				</div>
 			)}
 			{groups.map((g) => {
-				const folded = s.foldedGroups.includes(g.name);
+				const folded = !!g.folded;
 				return (
 					<div key={g.name} className="flex flex-col">
 						<div className="flex items-center gap-1.5 border-b py-1">
@@ -206,7 +224,7 @@ export function BookmarksTab() {
 								type="button"
 								aria-label={folded ? `Open ${g.name}` : `Fold ${g.name}`}
 								aria-expanded={!folded}
-								onClick={() => s.foldGroup(g.name, !folded)}
+								onClick={() => fold([g.name], !folded)}
 							>
 								{folded ? <ChevronRightIcon className="size-4" /> : <ChevronDownIcon className="size-4" />}
 							</button>
@@ -228,7 +246,7 @@ export function BookmarksTab() {
 								className={
 									g.hidden ? "flex-1 text-left font-semibold text-muted-foreground" : "flex-1 text-left font-semibold"
 								}
-								onClick={() => s.foldGroup(g.name, !folded)}
+								onClick={() => fold([g.name], !folded)}
 							>
 								{g.name} <span className="font-normal text-muted-foreground">({g.items.length})</span>
 							</button>
