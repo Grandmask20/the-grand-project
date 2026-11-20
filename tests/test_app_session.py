@@ -337,6 +337,18 @@ def test_undo_puts_back_all_but_your_hand_edits(session, tmp_path):
     assert any(x["uid"] == b for x in session.atlas.bookmarks)  # (yours: kept)
 
 
+def test_a_map_with_a_landmark_on_it_can_make_it_a_normal_map(session, tmp_path):
+    # (user: a click on a City selects its map, whose menu could only make it a landmark, never back)
+    path, _at = biome_atlas(tmp_path)
+    session.open_atlas(path)
+    k, v = next(iter(session.D["landmark_node"].items()))
+    lm = session.info("node", v)["on_landmark"]
+    assert lm["id"] == k and lm["landmark_kind"] == session.V["landmarks"][k]["kind"]
+    session.set_landmark(lm["x"], lm["y"], "")  # (what its Normal map does)
+    assert session.info("landmark", k)["removed"]
+    assert "on_landmark" not in session.info("node", v)
+
+
 def test_closing_answers_open_questions_no_and_asks_none(session):
     import threading
 

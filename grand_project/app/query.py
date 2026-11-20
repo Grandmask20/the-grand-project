@@ -169,6 +169,17 @@ class QueryMixin:
                 lines.append(f"{self.landmark_name(k)} here")
             if marks:
                 out["landmark"] = marks[0]
+                # what's needed to change that landmark from its map: a click on a landmark selects its map, whose
+                # menu only made it into a landmark, so a City found there could not be made a normal map (user)
+                lm, ct = V["landmarks"][marks[0]], D.get("city_type", {}).get(marks[0])
+                out["on_landmark"] = {
+                    "id": marks[0],
+                    "title": self.landmark_name(marks[0]),
+                    "x": lm["x"],
+                    "y": lm["y"],
+                    "landmark_kind": lm["kind"],
+                    "city_type": ct[0] if ct and ct[1] == "set" else None,
+                }
             out["node"] = i
         elif kind == "path":
             p = V["paths"][i]
