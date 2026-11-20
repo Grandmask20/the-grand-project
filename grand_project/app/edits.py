@@ -119,7 +119,8 @@ class EditsMixin:
         """Make the maps inside a lasso this biome (or none); kept in the atlas by map position.
 
         A newer lasso wins for maps it covers. For a city, a Hall / deadly boss map inside the lasso is that city:
-        it becomes a City of that type.
+        it becomes a City of that type, marked as the biome's doing; painting no biome (or a stronghold) there takes
+        those back, leaving what you set by hand (clearing it left the Cities: GPT audit).
 
         Args:
             polygon: The lasso, [[x, y], ...] in atlas units.
@@ -147,13 +148,16 @@ class EditsMixin:
                     keep.append(dict(e, maps=rest))
             keep.append({"biome": biome, "maps": pts})
             self.atlas.biome_edits = keep
+            P = np.array(polygon, np.float32).reshape(-1, 1, 2)
+            inside = [
+                lm
+                for lm in self.V["landmarks"]
+                if cv2.pointPolygonTest(P, (float(lm["x"]), float(lm["y"])), False) >= 0
+            ]
             if biome.endswith(" city"):
-                P = np.array(polygon, np.float32).reshape(-1, 1, 2)
                 typ = biome.replace(" city", "")
-                for lm in self.V["landmarks"]:
+                for lm in inside:
                     if lm["status"].startswith("removed") or lm["kind"] not in ("Hall", "Deadly boss map", "City"):
-                        continue
-                    if cv2.pointPolygonTest(P, (float(lm["x"]), float(lm["y"])), False) < 0:
                         continue
                     if lm["kind"] != "City":
                         self.atlas.landmark_edits = [
@@ -162,16 +166,35 @@ class EditsMixin:
                             if math.hypot(e["x"] - lm["x"], e["y"] - lm["y"]) >= EDIT_SPOT
                         ]
                         self.atlas.landmark_edits.append(
-                            {"x": round(lm["x"], 1), "y": round(lm["y"], 1), "kind": "City", "on": "landmark"}
-                        )
+                            {"x": round(lm["x"], 1), "y": round(lm["y"], 1), "kind": "City", "on": "landmark",
+                             "by": "biome"}
+                        )  # fmt: skip
                         self.events.log(f"{lm['kind']} at ({lm['x']:.0f}, {lm['y']:.0f}) is now a {typ} city")
-                    atlas_cities.set_type(self.atlas, lm["x"], lm["y"], typ)
+                    hand = any(
+                        math.hypot(c["x"] - lm["x"], c["y"] - lm["y"]) < atlas_cities.SAME_CITY and not c.get("by")
+                        for c in self.atlas.city_types
+                    )
+                    if not hand:  # (a type you set yourself stays)
+                        atlas_cities.set_type(self.atlas, lm["x"], lm["y"], typ, by="biome")
+            else:
+                self._take_back_biome_cities(inside)
         n = f"{len(ids)} map" if len(ids) == 1 else f"{len(ids)} maps"
         verb = "is" if len(ids) == 1 else "are"
         self._edited(
             f"Biome select: {n} {verb} now {biome}" if biome else f"Biome select: {n} {verb} no longer in a biome"
         )
         return len(ids)
+
+    def _take_back_biome_cities(self, landmarks: list[dict]) -> None:
+        """Undo what a city biome did to these landmarks (Cities it made, types it set), not your own edits."""
+        near = lambda e, r: any(math.hypot(e["x"] - lm["x"], e["y"] - lm["y"]) < r for lm in landmarks)  # noqa: E731
+        gone = [e for e in self.atlas.landmark_edits if e.get("by") == "biome" and near(e, EDIT_SPOT)]
+        self.atlas.landmark_edits = [e for e in self.atlas.landmark_edits if e not in gone]
+        self.atlas.city_types = [
+            c for c in self.atlas.city_types if not (c.get("by") == "biome" and near(c, atlas_cities.SAME_CITY))
+        ]
+        for e in gone:
+            self.events.log(f"the City at ({e['x']:.0f}, {e['y']:.0f}) is back to what was found there (biome cleared)")
 
     def scan_locks(self) -> None:
         """Search the screenshots not searched yet for the hand badge (locked strongholds), in the background."""

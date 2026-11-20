@@ -744,6 +744,27 @@ class Atlas:
             h.update(np.round(np.array(f["M"], float), 2).tobytes())
         return h.hexdigest()
 
+    # what an atlas file holds (to_json's fields, besides its version), and which of it is set by hand: Undo puts
+    # everything else back as it was before the add (it restored a picked few, and the locked strongholds found in
+    # the screenshots it took away stayed: GPT audit)
+    SAVED = (
+        "frames",
+        "nodes",
+        "edges",
+        "landmarks",
+        "bookmarks",
+        "bookmark_next_uid",
+        "icons",
+        "city_types",
+        "city_auto",
+        "landmark_edits",
+        "biome_edits",
+        "locks",
+        "lock_scanned",
+        "final",
+    )
+    HAND_EDITS = ("bookmarks", "bookmark_next_uid", "city_types", "landmark_edits", "biome_edits")
+
     def to_json(self) -> dict:
         """Return the atlas as the dict saved in atlas.json.
 

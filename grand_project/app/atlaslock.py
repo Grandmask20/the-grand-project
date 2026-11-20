@@ -57,6 +57,10 @@ class AtlasLock:
         """Let go of one level of the lock."""
         self._lock.release()
 
+    def _is_owned(self) -> bool:
+        """Whether this thread holds it (as RLock's own check: the tests ask it)."""
+        return self._lock._is_owned()  # type: ignore[attr-defined]
+
     def __enter__(self) -> AtlasLock:
         self.acquire()
         return self

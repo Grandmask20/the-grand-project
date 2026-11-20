@@ -302,3 +302,36 @@ def test_a_hidden_map_style_saved_before_becomes_the_maps_switch_off():
         assert ui["style"]["map_style"] == "circles" and ui["layers"]["Nodes"] is False
     finally:
         s.shutdown()
+
+
+def test_clearing_a_city_biome_takes_back_the_cities_it_made_not_your_own_edits(session, tmp_path):
+    # (GPT audit: clearing the biome left the Hall a City)
+    path, _at = biome_atlas(tmp_path)
+    session.open_atlas(path)
+    city = session.V["landmarks"][1]
+    session.set_landmark(city["x"], city["y"], "Hall")  # (a Hall there)
+    poly = [[1400, 1000], [1800, 1000], [1800, 1300], [1400, 1300]]
+    session.set_biome(poly, "Vaal city")
+    made = [e for e in session.atlas.landmark_edits if e.get("by") == "biome"]
+    assert made and made[0]["kind"] == "City"
+    assert any(c.get("by") == "biome" and c["type"] == "Vaal" for c in session.atlas.city_types)
+    session.set_biome(poly, "")
+    assert not [e for e in session.atlas.landmark_edits if e.get("by") == "biome"]
+    assert not [c for c in session.atlas.city_types if c.get("by") == "biome"]
+    assert {"x": 480.0, "y": 360.0, "type": "Vaal"} in session.atlas.city_types  # the type set by hand stays
+
+
+def test_undo_puts_back_all_but_your_hand_edits(session, tmp_path):
+    # (GPT audit: Undo restored six fields; locked strongholds found in the screenshots it took away stayed)
+    path, _at = biome_atlas(tmp_path)
+    session.open_atlas(path)
+    snap = tmp_path / "before.json"
+    session.atlas.save(snap)
+    before_locks = list(session.atlas.locks)
+    session.atlas.locks = [*before_locks, {"x": 1.0, "y": 2.0}]  # (found in the screenshots added)
+    session.atlas.lock_scanned = [*session.atlas.lock_scanned, "added.png"]
+    b = session.add_bookmark(100, 100, "made after the add")
+    session._undo = [{"file": str(snap), "names": ["added.png"]}]
+    session._run_undo()
+    assert session.atlas.locks == before_locks and "added.png" not in session.atlas.lock_scanned
+    assert any(x["uid"] == b for x in session.atlas.bookmarks)  # (yours: kept)

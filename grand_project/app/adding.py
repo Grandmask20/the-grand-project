@@ -761,16 +761,16 @@ class AddingMixin:
         self.recent_pick = None
 
     def _run_undo(self) -> None:
-        """Put the atlas back to its snapshot from before the last add, keeping the bookmarks."""
+        """Put the atlas back to its snapshot from before the last add, all of it but your hand edits (bookmarks,
+        city types, landmark and biome edits: Atlas.HAND_EDITS), which stay as they are now."""
         entry = self._undo[-1]
         self.events.set_progress("undoing the last add")
         with self._lock:
             old = core.Atlas.load(entry["file"])  # (raises: the entry stays, Undo can be tried again: CodeRabbit)
             self._undo.pop()
-            keep_bookmarks = self.atlas.bookmarks
-            for attr in ("nodes", "edges", "landmarks", "frames", "icons", "final"):
-                setattr(self.atlas, attr, getattr(old, attr))
-            self.atlas.bookmarks = keep_bookmarks
+            for attr in core.Atlas.SAVED:
+                if attr not in core.Atlas.HAND_EDITS:
+                    setattr(self.atlas, attr, getattr(old, attr))
             self.atlas.save(self.path)
         with contextlib.suppress(OSError):
             Path(entry["file"]).unlink()
