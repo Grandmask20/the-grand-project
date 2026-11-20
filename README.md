@@ -96,7 +96,7 @@ A screenshot that might be placed wrong is shown on the map, see-through and out
 
 ## 3. View the atlas
 
-- **Mouse:** wheel to zoom at the cursor, drag to pan, right-drag (or Ctrl-drag) to tilt and turn, click a map or a path to select it (its details show in the **Selected** panel at the map's side; ✕ closes it). Zoomed in, the ground is built sharp from your screenshots themselves.
+- **Mouse:** wheel to zoom at the cursor, drag to pan, right-drag (or Ctrl-drag) to tilt and turn, click a map or a path to select it (its details show in a window over the map, where you clicked; ✕ closes it). Zoomed in, the ground is built sharp from your screenshots themselves.
 - **Keys:** `+` / `-` zoom, `0` fit, arrows pan, Esc cancels what you were doing.
 - **Map tools** (top bar): *Select*, *Route*, *Bookmark*, *I am here*, *Biome* and *Place* (a screenshot by hand). The tool on is lit; click it again, or *Select*, to end it. What a click does now shows in the line above the map, with *End*.
 - **Status line** (bottom): the atlas's numbers and where the mouse is, then the map buttons (zoom, fit the whole atlas, face north, **3D**: tilted view with models of maps, towers, citadels, halls and strongholds; full screen), **Layers** (what the map shows) and **Log**.
@@ -113,7 +113,7 @@ A screenshot that might be placed wrong is shown on the map, see-through and out
   - Search by icon name, City / Hall / Tower, bookmark, `#map`, or `x, y` to go to a spot.
   - Tick types to show them; click a type's name to list (and ring) every one of them.
   - *Only what 2+ screenshots show*, *only maps with a ticked icon* and *only potential city maps* narrow the view.
-- **Screenshots** (Selected panel), or right-click → *Screenshots of this spot*, lists the source screenshots for a spot.
+- **Screenshots** (the selection's window), or right-click → *Screenshots of this spot*, lists the source screenshots for a spot.
 - **Route** (Saved tab → Route): set where you are (or right-click a map → *I'm here*; *I'm not here* / *Forget my position* takes it back), then right-click a map → *Route here*, or route to the nearest map with an icon. Routes take the fewest maps. A tracked route lists its maps as steps: run, where you are, next.
 - **Route** (map tool): click the map it starts from, then the one it goes to; then *Track now* (the Route page counts the maps left, *Next map* moves you on) or *Save route…* (a bookmark: a click lights it up and fits it in view). Right-click a saved route: *Start tracking now*, or *Adjust route*: click a map to add it (past an end the route goes on; off its side it gets a branch, run where it splits off), right-click one to take it off (the bigger piece of the route stays: a map at an end goes alone). Every route (Route here, the nearest map, the Route tool, a saved route) is tracked the same way. *End* on the line above the map, or Esc, ends a map mode. Tracking marks the map you are on; your position stays as it is. The **Routes** layer button goes on → saved only → off.
 - **Replay** (top bar): the atlas being made as a timelapse, by time or swept out from where you started (spiral / distance / scan lines), with a camera that follows. **Record video** saves it as a `.webm` file.
@@ -122,8 +122,8 @@ A screenshot that might be placed wrong is shown on the map, see-through and out
 
 - **Bookmarks:**
   - To add one: the **Bookmark** map tool (or *Add bookmark* in the Saved tab), then click the map. You can also right-click → *Add bookmark here…*, or use *Bookmark all results…* for a search.
-  - The **Saved tab** has groups, notes, edit, move to group and delete. Click a bookmark to go to it; the eye column hides or shows a bookmark or group. Tick a group to pick all of it (an empty group ticked is deleted with *Delete*), or *Select all*.
-  - On a bookmarked map, right-click or the Selected panel has *Edit bookmark* and *Remove bookmark*.
+  - The **Saved tab** has groups, notes, edit, move to group and delete. Click a bookmark to go to it; pointing at a row shows its eye (hide / show), edit and delete. *Select* shows tick boxes to pick several (*Move to…*, *Delete*; a group ticked picks all of it, an empty one is deleted). A saved route shows its ends, its length and, while tracked, the maps left; its ⋯ (or a right-click) tracks or adjusts it.
+  - On a bookmarked map, right-click or the selection's window has *Edit bookmark* and *Remove bookmark*.
 - **Fix landmarks:** right-click a map → *This map is a…* (City / Hall / Tower / …), or right-click a landmark → *Delete* / *Restore landmark*. Edits are kept when the atlas is rebuilt.
 - **City type:** right-click a City → *City type* (Vaal / Faridun / Ezomyte / … or Automatic).
 - **Biomes:** click the **Biome** map tool, circle the maps with the mouse, and pick a city type, a Breach stronghold, or *Not a biome*. Halls, Deadly maps and Cities inside the circle become that city.
@@ -134,7 +134,7 @@ A screenshot that might be placed wrong is shown on the map, see-through and out
   - remove an atlas from the list
   - add new screenshots from an atlas's folder
 
-  The **Atlases tab** (its *Saved atlases* page) shows every atlas as a card with a thumbnail of its map and its numbers of maps, icons and screenshots. Click a card to open it; the pencil renames it; right-click it to *Open atlas folder*. The bin asks whether to *stop tracking* the atlas (its files stay) or *delete the whole atlas and its data* (its `atlas.json`, `atlas_frames/` and `atlas_files/`; your screenshots are never deleted).
+  The **Atlases tab** (its *Saved atlases* page) shows every atlas as a row with a thumbnail of its map and its numbers of maps, icons and screenshots. Click a row to open it; its ⋯ (or a right-click) has *Open atlas folder*, *Rename…* and *Delete…*. Delete asks whether to *stop tracking* the atlas (its files stay) or *delete the whole atlas and its data* (its `atlas.json`, `atlas_frames/` and `atlas_files/`; your screenshots are never deleted).
 
   Each atlas lives in its own folder: `atlas.json`, plus `atlas_frames/` (detections) and `atlas_files/` (map image, exports, undo). The screenshots can sit in that same folder; the atlas never takes its own files for screenshots. Keep new ones in `atlases/`.
 - **File menu:**

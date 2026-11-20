@@ -1,35 +1,43 @@
 import { useQueryClient } from "@tanstack/react-query";
-import { useState } from "react";
+import { CheckIcon, ImageIcon, MoveIcon, RotateCwIcon } from "lucide-react";
+import type { ReactNode } from "react";
 import { AppQueryKeys } from "@/api/AppQueryKeys";
-import { Section } from "@/components/common/Section";
-import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
 import { useAppClient } from "@/hooks/app/UseAppClient";
 import { useAppState } from "@/hooks/app/UseAppState";
 import { useAtlasActions } from "@/hooks/atlas/UseAtlasActions";
 import { useAppStoreCalm } from "@/store/AppStore";
-import { plural } from "@/utils/Format";
 
-/** Auto-add (the watched folder), the screenshots added lately and those waiting for a place. */
+const link = "text-xs text-gold hover:underline disabled:text-muted-foreground disabled:no-underline";
+
+/** A heading of the page, with its links on the right. */
+function Heading({ title, children }: { title: string; children?: ReactNode }) {
+	return (
+		<div className="flex items-center justify-between gap-3 border-b pb-1">
+			<h3 className="text-xs font-semibold tracking-wide text-gold uppercase">{title}</h3>
+			<div className="flex gap-3">{children}</div>
+		</div>
+	);
+}
+
+/** Auto-add (PO's canvas): the watched folder, the screenshots waiting for a place (each placed by hand or tried
+ * again on its row), and those added in this session (a click goes there). */
 export function AutoAddTab() {
 	const app = useAppClient();
 	const queryClient = useQueryClient();
 	const state = useAppState().data;
 	const actions = useAtlasActions();
 	const s = useAppStoreCalm();
-	// the picked waiting screenshot by its file: a list position pointed at another one once the list changed
-	const [waitPath, setWaitPath] = useState<string | null>(null);
 	if (!state) return null;
 	const fail = (e: unknown) => s.showError(e);
 	const refresh = () => queryClient.invalidateQueries({ queryKey: AppQueryKeys.state });
 	const w = state.watch;
-	const waitPick = waitPath === null ? -1 : state.waiting.findIndex((x) => x.path === waitPath);
 
 	return (
 		<div className="flex flex-col gap-5">
-			<Section title="Auto-add">
-				<Label className="font-normal">
+			<div className="flex flex-col gap-1.5">
+				<Label className="text-sm font-medium">
 					<Switch
 						checked={w.on}
 						disabled={!state.atlas}
@@ -43,14 +51,10 @@ export function AutoAddTab() {
 						? `${w.picked ? "watching: " : "watching this atlas's folder: "}${w.folder}`
 						: "open an atlas first"}
 				</p>
-				<p className="text-xs text-muted-foreground">
-					Set Steam to save screenshots in this folder while you map: each new one is added. One that might be wrong is
-					shown on the map before it is added.
-				</p>
-				<div className="flex flex-wrap gap-1.5">
-					<Button
-						size="xs"
-						variant="outline"
+				<div className="flex gap-3">
+					<button
+						type="button"
+						className={link}
 						disabled={!state.atlas}
 						onClick={() =>
 							s.pickFiles({
@@ -62,36 +66,91 @@ export function AutoAddTab() {
 						}
 					>
 						Watch another folder…
-					</Button>
+					</button>
 					{w.picked && (
-						<Button size="xs" variant="outline" onClick={() => void app.setWatchFolder(null).then(refresh).catch(fail)}>
+						<button
+							type="button"
+							className={link}
+							onClick={() => void app.setWatchFolder(null).then(refresh).catch(fail)}
+						>
 							Atlas folder
-						</Button>
+						</button>
 					)}
 				</div>
-			</Section>
+				<p className="text-xs text-muted-foreground">
+					Set Steam to save screenshots in this folder while you map: each new one is added. One that might be wrong is
+					shown on the map before it is added.
+				</p>
+			</div>
 
 			{s.mode.kind === "ghost" && (
-				<div className="rounded border border-gold/60 p-2 text-xs text-gold">
+				<p className="text-xs text-gold">
 					{s.mode.ghost.name}: drag it roughly where it belongs, then press Enter or double-click (Esc cancels).
-				</div>
+				</p>
 			)}
 
-			<Section
-				title="Recently added"
-				actions={
-					<Button size="xs" variant="outline" disabled={!state.undo.length || state.busy} onClick={() => askUndo()}>
+			<section className="flex flex-col gap-1">
+				<Heading title={`Waiting for a place · ${state.waiting.length}`}>
+					{state.waiting.length > 0 && (
+						<button type="button" className={link} onClick={() => void app.retryWaiting(null).catch(fail)}>
+							Retry all
+						</button>
+					)}
+				</Heading>
+				{!state.waiting.length && <p className="py-1 text-sm text-muted-foreground">No screenshot is waiting.</p>}
+				<ul className="flex flex-col gap-1">
+					{state.waiting.map((wt, k) => (
+						<li key={wt.path} className="flex items-center gap-2 rounded-md bg-card px-2 py-1.5">
+							<ImageIcon className="size-4 shrink-0 text-muted-foreground" aria-hidden />
+							<span className="flex min-w-0 flex-1 flex-col">
+								<span className="truncate text-sm">{wt.name}</span>
+								<span className="text-xs text-muted-foreground">
+									{wt.tries ? `waiting, tried ${wt.tries}x` : "queued"}
+								</span>
+							</span>
+							<button
+								type="button"
+								aria-label={`Retry ${wt.name}`}
+								title="Try again"
+								className="rounded p-1 text-muted-foreground hover:bg-accent hover:text-foreground"
+								onClick={() => void app.retryWaiting([k]).catch(fail)}
+							>
+								<RotateCwIcon className="size-3.5" />
+							</button>
+							<button
+								type="button"
+								aria-label={`Place ${wt.name} by hand`}
+								className="flex h-7 items-center gap-1.5 rounded border px-2 text-xs whitespace-nowrap hover:bg-accent"
+								onClick={() =>
+									void app
+										.takeWaiting(k)
+										.then(({ path }) => actions.startGhost(path))
+										.catch(fail)
+								}
+							>
+								<MoveIcon className="size-3.5" aria-hidden />
+								Place by hand
+							</button>
+						</li>
+					))}
+				</ul>
+			</section>
+
+			<section className="flex flex-col gap-1">
+				<Heading title="Added this session">
+					<button type="button" className={link} disabled={!state.undo.length || state.busy} onClick={askUndo}>
 						Undo last add
-					</Button>
-				}
-			>
-				{!state.recent.length && <p className="text-muted-foreground">Nothing added in this session yet.</p>}
-				<ul className="max-h-56 overflow-y-auto rounded border font-mono text-xs">
+					</button>
+				</Heading>
+				{!state.recent.length && (
+					<p className="py-1 text-sm text-muted-foreground">Nothing added in this session yet.</p>
+				)}
+				<ul className="flex max-h-72 flex-col overflow-y-auto">
 					{state.recent.map((name, k) => (
 						<li key={name}>
 							<button
 								type="button"
-								className="w-full truncate px-2 py-0.5 text-left hover:bg-accent"
+								className="flex min-h-8 w-full items-center gap-2 rounded px-1 text-left text-sm hover:bg-accent"
 								onClick={() =>
 									void app
 										.gotoRecent(name)
@@ -99,69 +158,14 @@ export function AutoAddTab() {
 										.catch(fail)
 								}
 							>
-								{k === 0 ? "NEWEST  " : `${String(k).padStart(4)}    `}
-								{name}
+								<CheckIcon className="size-3.5 shrink-0 text-green-400" aria-hidden />
+								<span className="flex-1 truncate">{name}</span>
+								{k === 0 && <span className="text-[10px] font-semibold text-gold">NEWEST</span>}
 							</button>
 						</li>
 					))}
 				</ul>
-			</Section>
-
-			<Section title="Waiting for a place">
-				{!state.waiting.length ? (
-					<p className="text-muted-foreground">No screenshot is waiting.</p>
-				) : (
-					<>
-						<ul className="max-h-48 overflow-y-auto rounded border text-xs">
-							{state.waiting.map((wt, k) => (
-								<li key={wt.path}>
-									<button
-										type="button"
-										className={`w-full truncate px-2 py-0.5 text-left hover:bg-accent ${waitPick === k ? "bg-accent" : ""}`}
-										onClick={() => setWaitPath(wt.path)}
-									>
-										{wt.name}{" "}
-										<span className="text-muted-foreground">
-											- {wt.tries ? `waiting, tried ${wt.tries}x` : "queued"}
-										</span>
-									</button>
-								</li>
-							))}
-						</ul>
-						<div className="flex flex-wrap gap-1.5">
-							<Button
-								size="xs"
-								variant="outline"
-								disabled={waitPick < 0}
-								onClick={() => void app.retryWaiting([waitPick]).catch(fail)}
-							>
-								Retry
-							</Button>
-							<Button size="xs" variant="outline" onClick={() => void app.retryWaiting(null).catch(fail)}>
-								Retry all
-							</Button>
-							<Button
-								size="xs"
-								variant="outline"
-								disabled={waitPick < 0}
-								onClick={() =>
-									waitPick >= 0 &&
-									void app
-										.takeWaiting(waitPick)
-										.then(({ path }) => {
-											setWaitPath(null);
-											return actions.startGhost(path);
-										})
-										.catch(fail)
-								}
-							>
-								Place by hand
-							</Button>
-						</div>
-						<p className="text-xs text-muted-foreground">{plural(state.waiting.length, "screenshot")} waiting.</p>
-					</>
-				)}
-			</Section>
+			</section>
 		</div>
 	);
 

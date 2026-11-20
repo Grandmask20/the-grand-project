@@ -7,7 +7,7 @@ import { bookmarkOf, newBookmark } from "@/logic/BookmarkOf";
 import { useAppStore } from "@/store/AppStore";
 
 /** The selected map, path, landmark, icon or bookmark: its details and what can be done with it (in the panel at the
- * map's side, InspectorPanel). */
+ * map, where it was clicked: SelectedPopup). */
 export function SelectedBox() {
 	const app = useAppClient();
 	const selected = useAppStore((s) => s.selected);
@@ -37,25 +37,25 @@ export function SelectedBox() {
 	return (
 		<div className="flex flex-col gap-3">
 			<div>
-				<div className="text-base font-semibold">{info.title}</div>
+				<div className="pr-6 font-semibold">{info.title}</div>
 				{info.lines.map((l) => (
 					<div key={l} className="text-xs leading-5 text-muted-foreground">
 						{l}
 					</div>
 				))}
 			</div>
-			<div className="flex flex-col gap-1.5 [&>button]:justify-start">
-				<Button size="sm" variant="outline" onClick={() => flyTo(info.x, info.y, 1)}>
+			<div className="flex flex-wrap gap-1.5">
+				<Button size="xs" variant="outline" onClick={() => flyTo(info.x, info.y, 1)}>
 					Go to
 				</Button>
 				{info.kind !== "path" && (
-					<Button size="sm" variant="outline" onClick={() => editBookmark(mark ?? newBookmark(info, [info.x, info.y]))}>
+					<Button size="xs" variant="outline" onClick={() => editBookmark(mark ?? newBookmark(info, [info.x, info.y]))}>
 						{mark ? "★ Edit bookmark" : "Bookmark"}
 					</Button>
 				)}
 				{mark && (
 					<Button
-						size="sm"
+						size="xs"
 						variant="destructive"
 						onClick={() =>
 							askConfirm({
@@ -77,27 +77,27 @@ export function SelectedBox() {
 				)}
 				{node !== null && (
 					<>
-						<Button size="sm" variant="outline" onClick={() => routes.routeTo(node)}>
+						<Button size="xs" variant="outline" onClick={() => routes.routeTo(node)}>
 							Route here
 						</Button>
 						{/* on your own position it takes it back (an "I'm here" by mistake stayed: user) */}
 						{routes.player?.node === node ? (
-							<Button size="sm" variant="outline" onClick={routes.clearPlayer}>
+							<Button size="xs" variant="outline" onClick={routes.clearPlayer}>
 								I'm not here
 							</Button>
 						) : (
-							<Button size="sm" variant="outline" onClick={() => routes.setPlayer(node)}>
+							<Button size="xs" variant="outline" onClick={() => routes.setPlayer(node)}>
 								I'm here
 							</Button>
 						)}
 					</>
 				)}
-				<Button size="sm" variant="outline" onClick={() => showSources([info.x, info.y])}>
+				<Button size="xs" variant="outline" onClick={() => showSources([info.x, info.y])}>
 					Screenshots
 				</Button>
 				{info.kind === "landmark" && !info.removed && (
 					<Button
-						size="sm"
+						size="xs"
 						variant="destructive"
 						onClick={() =>
 							askConfirm({

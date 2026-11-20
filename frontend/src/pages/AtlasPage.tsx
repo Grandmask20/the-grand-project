@@ -7,7 +7,6 @@ import { FileBrowserDialog } from "@/components/dialogs/FileBrowserDialog";
 import { PromptDialog } from "@/components/dialogs/PromptDialog";
 import { QuestionDialog } from "@/components/dialogs/QuestionDialog";
 import { SourcesDialog } from "@/components/dialogs/SourcesDialog";
-import { InspectorPanel } from "@/components/layout/InspectorPanel";
 import { MapImageWait } from "@/components/layout/MapImageWait";
 import { SidePanel } from "@/components/layout/SidePanel";
 import { StatusBar } from "@/components/layout/StatusBar";
@@ -24,7 +23,7 @@ import { usePageLog } from "@/hooks/app/UsePageLog";
 import { useAtlasActions } from "@/hooks/atlas/UseAtlasActions";
 
 /** The app's one page: top bar, side panel, the map (the mode's line above it, the replay and the log under it), the
- * selection at its side, the status line, and the dialogs. */
+ * selection over it where it was clicked, the status line, and the dialogs. */
 export function AtlasPage() {
 	const connected = useEventStream();
 	usePageLog();
@@ -58,7 +57,7 @@ export function AtlasPage() {
 	return (
 		<div className="flex h-full flex-col">
 			<TopBar />
-			{/* the side panel on its side, the selection across the map from it */}
+			{/* the side panel on its side */}
 			<div className={`flex min-h-0 flex-1 ${s.settings.ui.side === "right" ? "flex-row-reverse" : ""}`}>
 				<SidePanel />
 				<main
@@ -111,7 +110,6 @@ export function AtlasPage() {
 					<ReplayPanel meta={meta.data} />
 					<LogDrawer />
 				</main>
-				<InspectorPanel />
 			</div>
 			<StatusBar connected={connected} />
 			<QuestionDialog />

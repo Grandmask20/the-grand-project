@@ -54,7 +54,7 @@ test("Find: searches, goes to a result and selects it", async ({ page }) => {
 	await find.fill("#3");
 	await expect(page.getByText('1 match(es) for "#3"')).toBeVisible();
 	await page.getByRole("button", { name: "Map #3", exact: true }).click();
-	await expect(page.getByText("Selected", { exact: true })).toBeVisible();
+	await expect(page.getByRole("region", { name: "Selected" })).toBeVisible(); // (the window over the map)
 	await expect(page.getByText(/^Map #3/).last()).toBeVisible();
 	await find.fill("120, -45");
 	await expect(page.getByText("centred on 120, -45 (marked)")).toBeVisible();

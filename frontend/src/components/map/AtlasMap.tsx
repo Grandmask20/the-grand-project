@@ -26,6 +26,7 @@ import { MapLabels } from "./MapLabels";
 import { MapPan } from "./MapPan";
 import { MapSprites } from "./MapSprites";
 import { PlayerMarker } from "./PlayerMarker";
+import { SelectedPopup } from "./SelectedPopup";
 import { TileSources } from "./sources/TileSources";
 import { Scene3D } from "./three/Scene3D";
 
@@ -128,6 +129,8 @@ export function AtlasMap({ info, meta }: Props) {
 					</MapViewContext.Provider>
 				)}
 			</MapGL>
+			{/* next to the map, not in it: its clicks are the page's (PO: the selection over the map) */}
+			{map && <SelectedPopup map={map} geo={geo} />}
 			{!shown && (
 				<div className="absolute inset-0 z-10 flex flex-col items-center justify-center gap-2 bg-background text-sm text-muted-foreground">
 					<p className="text-foreground">Loading atlas…</p>

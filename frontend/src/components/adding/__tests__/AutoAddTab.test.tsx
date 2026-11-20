@@ -8,7 +8,7 @@ describe("AutoAddTab", () => {
 	it("shows the watched folder, the recent additions and what is waiting", () => {
 		renderWithApp(<AutoAddTab />);
 		expect(screen.getByText("watching this atlas's folder: /atlases/default")).toBeInTheDocument();
-		expect(screen.getByText(/NEWEST/)).toHaveTextContent("shot_3.png");
+		expect(screen.getByText("NEWEST").closest("button")).toHaveTextContent("shot_3.png");
 		expect(screen.getByText(/waiting, tried 2x/)).toBeInTheDocument();
 	});
 
@@ -26,6 +26,14 @@ describe("AutoAddTab", () => {
 		expect(useAppStore.getState().confirm?.text).toContain("shot_3.png");
 	});
 
+	it("tries a waiting screenshot again from its row, or all of them", async () => {
+		const { user, calls } = renderWithApp(<AutoAddTab />, { "POST /api/waiting/retry": { ok: true } });
+		await user.click(screen.getByRole("button", { name: "Retry lost.png" }));
+		await waitFor(() => expect(calls.find((c) => c.path === "/api/waiting/retry")?.body).toEqual({ indices: [0] }));
+		await user.click(screen.getByRole("button", { name: "Retry all" }));
+		await waitFor(() => expect(calls.filter((c) => c.path === "/api/waiting/retry")).toHaveLength(2));
+	});
+
 	it("takes a waiting screenshot out to place it by hand", async () => {
 		const { user, calls } = renderWithApp(<AutoAddTab />, {
 			"POST /api/waiting/take": { path: "/atlases/default/lost.png" },
@@ -36,8 +44,7 @@ describe("AutoAddTab", () => {
 				path: "/atlases/default/lost.png",
 			},
 		});
-		await user.click(screen.getByRole("button", { name: /lost.png/ }));
-		await user.click(screen.getByRole("button", { name: "Place by hand" }));
+		await user.click(screen.getByRole("button", { name: "Place lost.png by hand" }));
 		await waitFor(() => expect(useAppStore.getState().mode.kind).toBe("ghost"));
 		expect(calls.find((c) => c.path === "/api/waiting/take")?.body).toEqual({ index: 0 });
 	});

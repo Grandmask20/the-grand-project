@@ -26,8 +26,16 @@ describe("AtlasesTab", () => {
 
 	it("asks what to do before deleting", async () => {
 		const { user } = renderWithApp(<AtlasesTab />, { "GET /api/atlases": atlases });
-		await user.click(await screen.findByRole("button", { name: "Delete second" }));
+		await user.click(await screen.findByRole("button", { name: "More for second" }));
+		await user.click(await screen.findByRole("menuitem", { name: "Delete…" }));
 		expect(useAppStore.getState().deleteAtlas).toBe("/atlases/two/atlas.json");
+	});
+
+	it("its ⋯ renames it", async () => {
+		const { user } = renderWithApp(<AtlasesTab />, { "GET /api/atlases": atlases });
+		await user.click(await screen.findByRole("button", { name: "More for second" }));
+		await user.click(await screen.findByRole("menuitem", { name: "Rename…" }));
+		expect(useAppStore.getState().prompt).toMatchObject({ title: "Rename atlas", value: "second" });
 	});
 
 	it("right-click a card: open its folder (user: right click to open the atlas folder)", async () => {

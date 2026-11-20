@@ -24,8 +24,20 @@ describe("BookmarksTab", () => {
 		await waitFor(() => expect(calls.find((c) => c.path === "/api/bookmarks/toggle")?.body).toEqual({ id: 0 }));
 	});
 
+	it("picking is Select's: the tick boxes show only then, and Done puts them away", async () => {
+		const { user } = renderWithApp(<BookmarksTab />, { "GET /api/bookmarks": bookmarks });
+		await screen.findByText("big boss");
+		expect(screen.queryByRole("checkbox")).toBeNull();
+		await user.click(screen.getByRole("button", { name: "Select" }));
+		await user.click(screen.getByRole("checkbox", { name: "Pick big boss" }));
+		expect(screen.getByText("1 picked")).toBeInTheDocument();
+		await user.click(screen.getByRole("button", { name: "Done" }));
+		expect(screen.queryByRole("checkbox")).toBeNull();
+	});
+
 	it("deletes the picked bookmarks after asking", async () => {
 		const { user } = renderWithApp(<BookmarksTab />, { "GET /api/bookmarks": bookmarks });
+		await user.click(await screen.findByRole("button", { name: "Select" }));
 		expect(screen.getByRole("button", { name: "Delete" })).toBeDisabled();
 		await user.click(await screen.findByRole("checkbox", { name: "Pick big boss" }));
 		await user.click(screen.getByRole("button", { name: "Delete" }));
@@ -35,8 +47,7 @@ describe("BookmarksTab", () => {
 	it("Add bookmark waits for a click on the map", async () => {
 		const { user } = renderWithApp(<BookmarksTab />, { "GET /api/bookmarks": bookmarks });
 		await user.click(screen.getByRole("button", { name: "Add bookmark" }));
-		expect(useAppStore.getState().mode).toEqual({ kind: "bookmark" });
-		expect(screen.getByText(/Click a map, or a spot, for the new bookmark/)).toBeInTheDocument();
+		expect(useAppStore.getState().mode).toEqual({ kind: "bookmark" }); // (the line above the map says what to do)
 		// pressed again, it cancels
 		await user.click(screen.getByRole("button", { name: "Cancel adding" }));
 		expect(useAppStore.getState().mode).toEqual({ kind: "normal" });
@@ -61,6 +72,7 @@ describe("BookmarksTab", () => {
 
 	it("moves the picked bookmarks with a dropdown of the groups", async () => {
 		const { user } = renderWithApp(<BookmarksTab />, { "GET /api/bookmarks": bookmarks });
+		await user.click(await screen.findByRole("button", { name: "Select" }));
 		await user.click(await screen.findByRole("checkbox", { name: "Pick big boss" }));
 		await user.click(screen.getByRole("button", { name: "Move to…" }));
 		expect(useAppStore.getState().prompt?.choices).toEqual(bookmarks.groups.map((g) => g.name));
@@ -72,6 +84,7 @@ describe("BookmarksTab", () => {
 			"POST /api/bookmarks/delete": { deleted: ["big boss"] },
 			"POST /api/groups/delete": { deleted: 1 },
 		});
+		await user.click(await screen.findByRole("button", { name: "Select" }));
 		await user.click(await screen.findByRole("checkbox", { name: "Pick group Boss" }));
 		expect(screen.getByRole("checkbox", { name: "Pick big boss" })).toBeChecked();
 		await user.click(screen.getByRole("checkbox", { name: "Pick group Farm" })); // empty
@@ -84,6 +97,7 @@ describe("BookmarksTab", () => {
 
 	it("Select all picks every bookmark, and then picks none", async () => {
 		const { user } = renderWithApp(<BookmarksTab />, { "GET /api/bookmarks": bookmarks });
+		await user.click(await screen.findByRole("button", { name: "Select" }));
 		await user.click(await screen.findByRole("button", { name: "Select all" }));
 		expect(screen.getByRole("checkbox", { name: "Pick big boss" })).toBeChecked();
 		await user.click(screen.getByRole("button", { name: "Select none" }));
@@ -95,6 +109,7 @@ describe("BookmarksTab", () => {
 		const { user } = renderWithApp(<BookmarksTab />, {
 			"GET /api/bookmarks": { groups: [{ name: "Later", hidden: false, items: [] }] },
 		});
+		await user.click(await screen.findByRole("button", { name: "Select" }));
 		await user.click(await screen.findByRole("button", { name: "Select all" }));
 		expect(screen.getByRole("checkbox", { name: "Pick group Later" })).toBeChecked();
 		expect(screen.getByRole("button", { name: "Select none" })).toBeInTheDocument();
@@ -134,6 +149,22 @@ describe("BookmarksTab", () => {
 		expect(box[3]).toBeGreaterThan(300);
 		// lit up as a selected bookmark is (user)
 		expect(useAppStore.getState().routeLit).toBe(5);
+	});
+
+	it("a saved route shows its ends and length, and its ⋯ opens its menu", async () => {
+		const { user } = renderWithApp(<BookmarksTab />, {
+			"GET /api/bookmarks": withRoute,
+			"GET /api/graph": routeGraph,
+		});
+		expect(await screen.findByText(/map #252 → map #262/)).toBeInTheDocument();
+		await user.click(screen.getByRole("button", { name: "Route menu: route1" }));
+		expect(await screen.findByRole("menuitem", { name: "Adjust route" })).toBeInTheDocument();
+	});
+
+	it("a tracked saved route shows the maps left", async () => {
+		useAppStore.getState().setRoute({ path: [252, 253, 262], message: "", at: 1, saved: 5 });
+		renderWithApp(<BookmarksTab />, { "GET /api/bookmarks": withRoute });
+		expect(await screen.findByText(/· 1 left/)).toBeInTheDocument();
 	});
 
 	it("a saved route's right-click menu: track it now, adjust it", async () => {

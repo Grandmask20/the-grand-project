@@ -1,14 +1,17 @@
 import { useQueryClient } from "@tanstack/react-query";
 import {
+	BookmarkIcon,
 	ChevronDownIcon,
 	ChevronRightIcon,
+	EllipsisIcon,
 	EyeIcon,
 	EyeOffIcon,
 	PencilIcon,
+	PlusIcon,
 	RouteIcon,
 	Trash2Icon,
 } from "lucide-react";
-import { useState } from "react";
+import { type MouseEvent, type ReactNode, useState } from "react";
 import { AppQueryKeys } from "@/api/AppQueryKeys";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
@@ -21,10 +24,45 @@ import { cn } from "@/utils/Cn";
 import { plural } from "@/utils/Format";
 import { SavedRouteMenu } from "./SavedRouteMenu";
 
-/** Bookmarks by group: show / hide on the map, go to, edit, move, delete; groups made, renamed, hidden. */
+/** A small action of a row: shown when the row is pointed at or in focus (`always`: kept in sight, a hidden eye). */
+function RowAction({
+	label,
+	onClick,
+	always = false,
+	children,
+}: {
+	label: string;
+	onClick: (e: MouseEvent<HTMLButtonElement>) => void;
+	always?: boolean;
+	children: ReactNode;
+}) {
+	return (
+		<button
+			type="button"
+			aria-label={label}
+			title={label}
+			onClick={onClick}
+			className={cn(
+				"rounded p-1 text-muted-foreground hover:bg-background hover:text-foreground focus-visible:opacity-100",
+				!always && "opacity-0 group-hover/row:opacity-100 group-focus-within/row:opacity-100",
+			)}
+		>
+			{children}
+		</button>
+	);
+}
+
+const link = "flex items-center gap-1 text-gold hover:underline disabled:text-muted-foreground disabled:no-underline";
+
+/**
+ * Saved: bookmarks by group, and the saved routes in them (PO's canvas): a click goes there, its row's actions show
+ * on it (hide, edit, delete; a route's menu); groups fold, hide, rename. Picking several (to move or delete them) is
+ * Select's: the tick boxes show only then.
+ */
 export function BookmarksTab() {
 	const app = useAppClient();
 	const bookmarks = useBookmarks();
+	const [selecting, setSelecting] = useState(false);
 	const [picked, setPicked] = useState<Set<number>>(new Set());
 	// groups ticked: all their bookmarks are picked, and an empty one is deleted with Delete (user: no way to delete
 	// an empty group)
@@ -69,6 +107,11 @@ export function BookmarksTab() {
 		allIds.every((id) => picked.has(id)) &&
 		groups.every((g) => g.items.length || pickedGroups.has(g.name));
 	const emptyPicked = groups.filter((g) => !g.items.length && pickedGroups.has(g.name)).map((g) => g.name);
+	const endSelecting = () => {
+		setSelecting(false);
+		setPicked(new Set());
+		setPickedGroups(new Set());
+	};
 
 	// folding: kept per atlas by the app (user: Fold all was forgotten after a reload), shown at once
 	const queryClient = useQueryClient();
@@ -83,6 +126,7 @@ export function BookmarksTab() {
 			void queryClient.invalidateQueries({ queryKey: AppQueryKeys.bookmarks });
 		});
 	};
+	const anyOpen = groups.some((g) => !g.folded);
 
 	const adding = s.mode.kind === "bookmark";
 	const remove = (ids: number[], name?: string, emptyGroups: string[] = []) =>
@@ -109,6 +153,21 @@ export function BookmarksTab() {
 					})
 					.catch(fail),
 		});
+	const open = async (b: Bookmark) => {
+		// a route: lit up as a selected bookmark is, the whole of it in view with room round it (user)
+		if (b.route) {
+			s.lightRoute(b.id);
+			return s.fitArea(routeBox(b.route));
+		}
+		s.flyTo(b.x, b.y, 1);
+		try {
+			await s.selectLoaded(app.getInfo("bookmark", b.id));
+		} catch (e) {
+			fail(e);
+		}
+	};
+	const edit = (b: Bookmark, group: string) =>
+		s.editBookmark({ id: b.id, x: b.x, y: b.y, name: b.name, group, note: b.note });
 
 	return (
 		// anything else done here ends "Add bookmark" (user: it stayed on after editing and deleting bookmarks, and the
@@ -119,18 +178,19 @@ export function BookmarksTab() {
 				if (adding && !(e.target as HTMLElement).closest("[data-add-bookmark]")) s.setMode({ kind: "normal" });
 			}}
 		>
-			<div className="flex flex-wrap gap-1.5">
-				<Button
-					size="xs"
+			<div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-xs">
+				<button
+					type="button"
 					data-add-bookmark
-					variant={adding ? "outline" : "default"}
+					className={link}
 					onClick={() => s.setMode(adding ? { kind: "normal" } : { kind: "bookmark" })}
 				>
+					{!adding && <PlusIcon className="size-3.5" aria-hidden />}
 					{adding ? "Cancel adding" : "Add bookmark"}
-				</Button>
-				<Button
-					size="xs"
-					variant="outline"
+				</button>
+				<button
+					type="button"
+					className={link}
 					onClick={() =>
 						s.ask({
 							title: "New group",
@@ -141,43 +201,37 @@ export function BookmarksTab() {
 					}
 				>
 					New group
-				</Button>
-				<Button
-					size="xs"
-					variant="outline"
-					disabled={!ids.length}
-					onClick={() =>
-						s.ask({
-							title: "Move bookmarks",
-							label: `Move ${plural(ids.length, "bookmark")} to group:`,
-							value: "",
-							// a dropdown of the groups (user: "moveto needs a dropdown"); New group makes another
-							choices: groups.map((g) => g.name),
-							onOk: (g) =>
-								void app
-									.moveBookmarks(ids, g)
-									.then(() => setPicked(new Set()))
-									.catch(fail),
-						})
-					}
-				>
-					Move to…
-				</Button>
-				<Button
-					size="xs"
-					variant="destructive"
-					disabled={!ids.length && !emptyPicked.length}
-					onClick={() => remove(ids, undefined, emptyPicked)}
-				>
-					Delete
-				</Button>
+				</button>
+				<span className="flex-1" />
+				{groups.length > 0 && (
+					<>
+						<button
+							type="button"
+							className={link}
+							onClick={() =>
+								fold(
+									groups.map((g) => g.name),
+									anyOpen,
+								)
+							}
+						>
+							{anyOpen ? "Fold all" : "Open all"}
+						</button>
+						<button
+							type="button"
+							className={link}
+							aria-pressed={selecting}
+							onClick={() => (selecting ? endSelecting() : setSelecting(true))}
+						>
+							{selecting ? "Done" : "Select"}
+						</button>
+					</>
+				)}
 			</div>
-			{adding && <p className="text-xs text-gold">Click a map, or a spot, for the new bookmark (Esc cancels).</p>}
-			{!groups.length && (
-				<p className="text-muted-foreground">No bookmarks yet. Right-click the map, or Add bookmark.</p>
-			)}
-			{groups.length > 0 && (
-				<div className="flex gap-1.5">
+
+			{selecting && (
+				<div className="flex flex-wrap items-center gap-1.5 rounded-md border bg-card px-2 py-1.5 text-xs">
+					<span className="flex-1 text-muted-foreground">{ids.length + emptyPicked.length} picked</span>
 					<Button
 						size="xs"
 						variant="ghost"
@@ -190,73 +244,83 @@ export function BookmarksTab() {
 					</Button>
 					<Button
 						size="xs"
-						variant="ghost"
+						variant="outline"
+						disabled={!ids.length}
 						onClick={() =>
-							fold(
-								groups.map((g) => g.name),
-								false,
-							)
+							s.ask({
+								title: "Move bookmarks",
+								label: `Move ${plural(ids.length, "bookmark")} to group:`,
+								value: "",
+								// a dropdown of the groups (user: "moveto needs a dropdown"); New group makes another
+								choices: groups.map((g) => g.name),
+								onOk: (g) =>
+									void app
+										.moveBookmarks(ids, g)
+										.then(() => setPicked(new Set()))
+										.catch(fail),
+							})
 						}
 					>
-						Open all
+						Move to…
 					</Button>
 					<Button
 						size="xs"
-						variant="ghost"
-						onClick={() =>
-							fold(
-								groups.map((g) => g.name),
-								true,
-							)
-						}
+						variant="destructive"
+						disabled={!ids.length && !emptyPicked.length}
+						onClick={() => remove(ids, undefined, emptyPicked)}
 					>
-						Fold all
+						Delete
 					</Button>
 				</div>
 			)}
+
+			{!groups.length && (
+				<p className="text-sm text-muted-foreground">
+					No bookmarks yet: the Bookmark map tool, Add bookmark, or right-click the map.
+				</p>
+			)}
+
 			{groups.map((g) => {
 				const folded = !!g.folded;
+				const routes = g.items.some((b) => b.route);
 				return (
-					<div key={g.name} className="flex flex-col">
-						<div className="flex items-center gap-1.5 border-b py-1">
-							<Checkbox
-								checked={g.items.length ? g.items.every((b) => picked.has(b.id)) : pickedGroups.has(g.name)}
-								onCheckedChange={(v) => toggleGroupPick(g.name, v === true)}
-								aria-label={`Pick group ${g.name}`}
-							/>
+					<section key={g.name} className="flex flex-col">
+						<div className="group/row flex h-9 items-center gap-2 border-b">
+							{selecting && (
+								<Checkbox
+									checked={g.items.length ? g.items.every((b) => picked.has(b.id)) : pickedGroups.has(g.name)}
+									onCheckedChange={(v) => toggleGroupPick(g.name, v === true)}
+									aria-label={`Pick group ${g.name}`}
+								/>
+							)}
 							<button
 								type="button"
 								aria-label={folded ? `Open ${g.name}` : `Fold ${g.name}`}
 								aria-expanded={!folded}
 								onClick={() => fold([g.name], !folded)}
+								className="flex min-w-0 flex-1 items-center gap-2 text-left"
 							>
-								{folded ? <ChevronRightIcon className="size-4" /> : <ChevronDownIcon className="size-4" />}
+								{folded ? (
+									<ChevronRightIcon className="size-4 shrink-0 text-muted-foreground" />
+								) : (
+									<ChevronDownIcon className="size-4 shrink-0 text-muted-foreground" />
+								)}
+								{/* a group holding routes: the path symbol (user) */}
+								{routes && <RouteIcon className="size-4 shrink-0 text-gold" aria-label="Routes" />}
+								<span className={cn("truncate text-sm font-semibold", g.hidden && "text-muted-foreground")}>
+									{g.name}
+								</span>
+								<span className="text-xs text-muted-foreground">{g.items.length}</span>
 							</button>
-							{/* a group holding routes: the path symbol before its eye too (user); the others keep the room */}
-							{g.items.some((b) => b.route) ? (
-								<RouteIcon className="size-4 shrink-0 text-gold" aria-label="Routes" />
-							) : (
-								<span className="size-4 shrink-0" />
-							)}
-							<button
-								type="button"
-								aria-label={g.hidden ? `Show ${g.name}` : `Hide ${g.name}`}
+							<RowAction
+								label={g.hidden ? `Show ${g.name}` : `Hide ${g.name}`}
+								always={g.hidden}
 								onClick={() => void app.toggleGroup(g.name).catch(fail)}
 							>
-								{g.hidden ? <EyeOffIcon className="size-4 text-muted-foreground" /> : <EyeIcon className="size-4" />}
-							</button>
-							<button
-								type="button"
-								className={
-									g.hidden ? "flex-1 text-left font-semibold text-muted-foreground" : "flex-1 text-left font-semibold"
-								}
-								onClick={() => fold([g.name], !folded)}
-							>
-								{g.name} <span className="font-normal text-muted-foreground">({g.items.length})</span>
-							</button>
-							<button
-								type="button"
-								aria-label={`Rename ${g.name}`}
+								{g.hidden ? <EyeOffIcon className="size-4" /> : <EyeIcon className="size-4" />}
+							</RowAction>
+							<RowAction
+								label={`Rename ${g.name}`}
 								onClick={() =>
 									s.ask({
 										title: "Rename group",
@@ -275,81 +339,106 @@ export function BookmarksTab() {
 									})
 								}
 							>
-								<PencilIcon className="size-3.5 text-muted-foreground" />
-							</button>
+								<PencilIcon className="size-3.5" />
+							</RowAction>
 						</div>
 						{!folded &&
-							g.items.map((b) => (
-								<div key={b.id} className="flex items-center gap-1.5 py-0.5 pl-1">
-									<Checkbox
-										checked={picked.has(b.id)}
-										onCheckedChange={(v) => toggle(b.id, v === true)}
-										aria-label={`Pick ${b.name}`}
-									/>
-									{/* a saved route: a path symbol before its eye, to tell it from a map's bookmark (user); the
-									    others keep the room, so the eyes line up */}
-									{b.route ? (
-										<RouteIcon className="size-3.5 shrink-0 text-gold" aria-label="Route" />
-									) : (
-										<span className="size-3.5 shrink-0" />
-									)}
-									<button
-										type="button"
-										aria-label={b.hidden ? `Show ${b.name}` : `Hide ${b.name}`}
-										onClick={() => void app.toggleBookmark(b.id).catch(fail)}
-									>
-										{b.shown ? (
-											<EyeIcon className="size-3.5" />
-										) : (
-											<EyeOffIcon className="size-3.5 text-muted-foreground" />
-										)}
-									</button>
-									<button
-										type="button"
+							g.items.map((b) => {
+								const route = b.route;
+								const tracking = !!route && s.route?.saved === b.id && s.route.at !== undefined;
+								const left = tracking && s.route ? s.route.path.length - 1 - (s.route.at ?? 0) : 0;
+								const lit = !!route && s.routeLit === b.id;
+								return (
+									<div
+										key={b.id}
 										className={cn(
-											"flex-1 truncate text-left hover:text-gold",
-											b.route && s.routeLit === b.id && "text-gold",
+											"group/row flex items-center gap-2 rounded px-1 hover:bg-accent",
+											route ? "py-1.5" : "min-h-9",
+											(lit || tracking) && "bg-accent",
 										)}
-										title={b.note || (b.route ? routeTitle(b.name, b.route) : b.name)}
-										onContextMenu={(e) => {
-											// a route's menu: track it, add maps, remove maps (user)
-											const route = b.route;
-											if (!route) return;
-											e.preventDefault();
-											setRouteMenu({ x: e.clientX, y: e.clientY, bookmark: { ...b, route } });
-										}}
-										onClick={async () => {
-											// a route: lit up as a selected bookmark is, the whole of it in view with room round it (user)
-											if (b.route) {
-												s.lightRoute(b.id);
-												return s.fitArea(routeBox(b.route));
-											}
-											s.flyTo(b.x, b.y, 1);
-											try {
-												await s.selectLoaded(app.getInfo("bookmark", b.id));
-											} catch (e) {
-												fail(e);
-											}
-										}}
 									>
-										{b.route ? routeTitle(b.name, b.route) : b.name}
-									</button>
-									<button
-										type="button"
-										aria-label={`Edit ${b.name}`}
-										onClick={() =>
-											s.editBookmark({ id: b.id, x: b.x, y: b.y, name: b.name, group: g.name, note: b.note })
-										}
-									>
-										<PencilIcon className="size-3.5 text-muted-foreground" />
-									</button>
-									{/* one at a time, without ticking it first (user: deleting needed the box or the pin) */}
-									<button type="button" aria-label={`Delete ${b.name}`} onClick={() => remove([b.id], b.name)}>
-										<Trash2Icon className="size-3.5 text-muted-foreground hover:text-destructive" />
-									</button>
-								</div>
-							))}
-					</div>
+										{selecting && (
+											<Checkbox
+												checked={picked.has(b.id)}
+												onCheckedChange={(v) => toggle(b.id, v === true)}
+												aria-label={`Pick ${b.name}`}
+											/>
+										)}
+										{/* a saved route: the path symbol, to tell it from a map's bookmark (user) */}
+										{route ? (
+											<RouteIcon
+												className={cn("size-4 shrink-0", tracking ? "text-green-400" : "text-gold")}
+												aria-label="Route"
+											/>
+										) : (
+											<BookmarkIcon
+												className={cn("size-4 shrink-0", b.shown ? "text-gold" : "text-muted-foreground")}
+												aria-hidden
+											/>
+										)}
+										<button
+											type="button"
+											aria-label={route ? routeTitle(b.name, route) : b.name}
+											className={cn(
+												"flex min-w-0 flex-1 flex-col text-left text-sm",
+												!b.shown && "text-muted-foreground",
+												lit && "text-gold",
+											)}
+											title={b.note || (route ? routeTitle(b.name, route) : b.name)}
+											onContextMenu={(e) => {
+												// a route's menu: track it, add maps, remove maps (user)
+												if (!route) return;
+												e.preventDefault();
+												setRouteMenu({ x: e.clientX, y: e.clientY, bookmark: { ...b, route } });
+											}}
+											onClick={() => void open(b)}
+										>
+											<span className="truncate">{b.name}</span>
+											{route && (
+												<span className="text-xs text-muted-foreground">
+													map #{route.from} → map #{route.to} · {plural(route.maps, "map")}
+													{tracking && ` · ${left} left`}
+												</span>
+											)}
+											{tracking && s.route && (
+												<span className="mt-1 block h-1 rounded bg-border">
+													<span
+														className="block h-1 rounded bg-green-400"
+														style={{ width: `${(100 * (s.route.at ?? 0)) / Math.max(1, s.route.path.length - 1)}%` }}
+													/>
+												</span>
+											)}
+										</button>
+										<RowAction
+											label={b.hidden ? `Show ${b.name}` : `Hide ${b.name}`}
+											always={!b.shown}
+											onClick={() => void app.toggleBookmark(b.id).catch(fail)}
+										>
+											{b.shown ? <EyeIcon className="size-3.5" /> : <EyeOffIcon className="size-3.5" />}
+										</RowAction>
+										<RowAction label={`Edit ${b.name}`} onClick={() => edit(b, g.name)}>
+											<PencilIcon className="size-3.5" />
+										</RowAction>
+										{/* one at a time, without ticking it first (user: deleting needed the box or the pin) */}
+										<RowAction label={`Delete ${b.name}`} onClick={() => remove([b.id], b.name)}>
+											<Trash2Icon className="size-3.5" />
+										</RowAction>
+										{route && (
+											<RowAction
+												label={`Route menu: ${b.name}`}
+												always
+												onClick={(e) => {
+													const r = e.currentTarget.getBoundingClientRect();
+													setRouteMenu({ x: r.left, y: r.bottom, bookmark: { ...b, route } });
+												}}
+											>
+												<EllipsisIcon className="size-4" />
+											</RowAction>
+										)}
+									</div>
+								);
+							})}
+					</section>
 				);
 			})}
 			{routeMenu && (
