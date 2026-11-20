@@ -10,6 +10,7 @@ Windows allows.
 from __future__ import annotations
 
 import ctypes
+import ntpath
 import os
 import subprocess
 import time
@@ -99,8 +100,9 @@ def explorer_paths() -> dict[int, str]:
 
 
 def same_folder(a: str | Path, b: str | Path) -> bool:
-    """Whether two paths are the same folder (Windows: case and slashes don't matter)."""
-    return os.path.normcase(os.path.normpath(str(a))) == os.path.normcase(os.path.normpath(str(b)))
+    """Whether two paths are the same folder, by Windows' rules (case and slashes don't matter) on every system: the
+    paths are Explorer's (and the tests run everywhere: CodeRabbit)."""
+    return ntpath.normcase(ntpath.normpath(str(a))) == ntpath.normcase(ntpath.normpath(str(b)))
 
 
 def onto_monitor_of(h: int, other: int) -> bool:

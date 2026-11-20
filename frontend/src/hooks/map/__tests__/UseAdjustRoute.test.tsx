@@ -1,5 +1,6 @@
 import { act, waitFor } from "@testing-library/react";
 import { afterEach, describe, expect, it } from "vitest";
+import { ApiError } from "@/api/Http";
 import type { ItemInfo } from "@/domain/map/ItemInfo";
 import { useAdjustRoute } from "@/hooks/map/UseAdjustRoute";
 import type { Point } from "@/logic/Geo";
@@ -57,11 +58,14 @@ describe("useAdjustRoute", () => {
 					})
 				: Promise.resolve({ kind: "node", id: 3 } as ItemInfo);
 		const sent: unknown[] = [];
+		// the app holds what was saved last: each edit starts from it
+		let held = structuredClone(saved);
 		renderWithApp(<Probe pick={pick} />, {
-			"GET /api/bookmarks": saved,
+			"GET /api/bookmarks": () => held,
 			"GET /api/graph": graph,
-			"POST /api/bookmarks/route": (b: { route: unknown }) => {
+			"POST /api/bookmarks/route": (b: { route: (typeof saved.groups)[0]["items"][0]["route"] }) => {
 				sent.push(b.route);
+				held = { groups: [{ ...saved.groups[0], items: [{ ...saved.groups[0].items[0], route: b.route }] }] };
 				return { ok: true };
 			},
 		});
@@ -98,5 +102,33 @@ describe("useAdjustRoute", () => {
 			await job;
 		});
 		expect(sent).toEqual([]);
+	});
+
+	it("each edit starts from the route the app holds: a failed one loses nothing before it, and another tab's change stays (CodeRabbit)", async () => {
+		const sent: unknown[] = [];
+		let held = structuredClone(saved);
+		let fail = false;
+		const at4 = (at: Point) => Promise.resolve({ kind: "node", id: at[0] / 100 } as ItemInfo);
+		renderWithApp(<Probe pick={at4} />, {
+			"GET /api/bookmarks": () => held,
+			"GET /api/graph": graph,
+			"POST /api/bookmarks/route": (b: { route: (typeof saved.groups)[0]["items"][0]["route"] }) => {
+				if (fail) return new ApiError("couldn't save", 500);
+				sent.push(b.route);
+				held = { groups: [{ ...saved.groups[0], items: [{ ...saved.groups[0].items[0], route: b.route }] }] };
+				return { ok: true };
+			},
+		});
+		const mode: MapMode = { kind: "route-edit", id: 5 };
+		act(() => useAppStore.getState().setMode(mode));
+		await act(async () => {
+			await adjust([400, 0], true, mode, 1); // [1,2,3,4]
+			fail = true;
+			await adjust([300, 0], false, mode, 1).catch(() => {}); // refused by the app
+			fail = false;
+			await adjust([100, 0], false, mode, 1); // from [1,2,3,4]: [2,3,4]
+		});
+		const last = sent[sent.length - 1] as { legs: { maps: [number, number][] }[] };
+		expect(last.legs[0].maps).toEqual(spots([2, 3, 4]));
 	});
 });
