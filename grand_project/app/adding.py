@@ -26,6 +26,7 @@ from grand_project.core import islands
 from grand_project.core.geometry import apply as apply_affine
 from grand_project.core.register import mutual_pairs
 
+from .atlaslock import atlas_edit
 from .constants import (
     DETECT_LOG_EVERY,
     PICTURE_SIDE,
@@ -228,6 +229,7 @@ class AddingMixin:
             raise ValueError("no screenshots to re-check")
         self._queue_job([], "recheck_all")
 
+    @atlas_edit
     def undo_last(self) -> list[str]:
         """Remove the screenshots added last (an "undo" job).
 
@@ -245,6 +247,7 @@ class AddingMixin:
         self._queue_job([], "undo")
         return names
 
+    @atlas_edit
     def retry_waiting(self, indices: list[int] | None = None) -> int:
         """Search again for waiting screenshots (all, or those at these places in the waiting list).
 

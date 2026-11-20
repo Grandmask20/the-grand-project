@@ -14,7 +14,6 @@ spot), debug (debug marks), replay (timelapse plan, colour by).
 from __future__ import annotations
 
 import math
-import threading
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -26,6 +25,7 @@ from grand_project import finalize as atlas_finalize
 from grand_project import logs as atlas_log
 
 from .adding import AddingMixin
+from .atlaslock import AtlasLock
 from .bookmarks import BookmarksMixin
 from .constants import (
     LANDMARK_NODE_REACH,
@@ -103,7 +103,8 @@ class AtlasSession(
         """
         self.settings = load_settings() if settings is None else settings
         self.events = events or Events()
-        self._lock = threading.RLock()
+        # refuses a page change meant for an atlas no longer open (app/atlaslock.py)
+        self._lock = AtlasLock(lambda: self.opened.gen)
         self.opened = Opened(None, None, 0, "")  # the open atlas (atlas, path, generation, log): one record
         self.V: dict = {"nodes": [], "paths": [], "icons": [], "landmarks": [], "final": None}
         self.D: dict = {}  # derived from V: biomes, icon rows, type counts, footprints (rebuild_model)

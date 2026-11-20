@@ -57,6 +57,7 @@ LOG = atlas_log.get("app")
 
 DIST = rc_paths.ROOT / "frontend" / "dist"
 SSE_PING_S = 15.0
+STATE_TRIES = 3  # the state is put together again at most this often when another atlas opens meanwhile
 HEADER = "X-Grand"
 GEN_HEADER = "X-Atlas-Gen"  # the open atlas's generation: on every answer, and on the page's changes
 # changes that don't belong to one atlas (switching atlas itself, settings, the atlas list, answers, quitting)
@@ -180,7 +181,9 @@ class Handler(BaseHTTPRequestHandler):
         self.send_response(status)
         self.send_header("Content-Type", ctype)
         self.send_header("Content-Length", str(len(body)))
-        self.send_header(GEN_HEADER, str(self.S.generation))
+        # the atlas the answer was made from when the handler knows it, else the open one (read again here, it could
+        # stamp one atlas's state with the next one's generation: GPT audit)
+        self.send_header(GEN_HEADER, str(self._resp_gen if self._resp_gen is not None else self.S.generation))
         if self.close_connection:
             self.send_header("Connection", "close")
         for k, v in (extra or {}).items():
@@ -258,6 +261,7 @@ class Handler(BaseHTTPRequestHandler):
             method: The HTTP method.
         """
         self._read_body = False  # per request (the handler lives as long as its keep-alive connection)
+        self._resp_gen = None  # the atlas an answer was made from (_send's header), when the handler knows it
         if not self._host_ok():
             self._json({"error": "wrong host"}, 403)
             return
@@ -287,13 +291,17 @@ class Handler(BaseHTTPRequestHandler):
         # handled refuses its change: CodeRabbit)
         self._req_gen = int(stale) if stale is not None and stale.isdigit() else self.S.generation
         q = parse_qs(url.query)
+        # a change is for its atlas: every edit it makes checks that atlas under the session lock, in the same step
+        # (AtlasLock; checked only here before, a switch in between got the edit: GPT audit)
+        changes = method not in ("GET", "HEAD") and not path.startswith(GEN_FREE)
         for m, rx, name in ROUTES:
             if m != ("GET" if method == "HEAD" else method):
                 continue
             hit = rx.match(path)
             if hit:
                 try:
-                    getattr(self, name)(q, **hit.groupdict())
+                    with self.S._lock.expect(self._req_gen) if changes else contextlib.nullcontext():
+                        getattr(self, name)(q, **hit.groupdict())
                 except ApiError as e:
                     self._json({"error": str(e)}, e.status)
                 except StaleAtlas:
@@ -356,10 +364,17 @@ class Handler(BaseHTTPRequestHandler):
     @route("GET", "/api/state")
     def get_state(self, q) -> None:
         """The app's state (atlas, versions, work, lists, questions, log)."""
-        st = self.S.state()
-        st["debug"] = bool(rc_paths.DEBUG)
-        st["settings"] = self.S.ui_settings()
-        st["map"] = self.S.map_info()
+        # all of it from one atlas: made again when another was opened while it was put together (the lock isn't
+        # taken: a job placing screenshots holds it for long), and stamped with that atlas (GPT audit)
+        for _ in range(STATE_TRIES):
+            gen = self.S.generation
+            st = self.S.state()
+            st["debug"] = bool(rc_paths.DEBUG)
+            st["settings"] = self.S.ui_settings()
+            st["map"] = self.S.map_info()
+            if self.S.generation == gen:
+                break
+        self._resp_gen = gen
         self._json(st)
 
     @route("GET", "/api/events")

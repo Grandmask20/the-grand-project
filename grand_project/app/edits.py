@@ -15,6 +15,7 @@ import numpy as np
 from grand_project import cities as atlas_cities
 from grand_project import logs as atlas_log
 
+from .atlaslock import atlas_edit
 from .constants import EDIT_SPOT, LANDMARK_KINDS
 
 LOG = atlas_log.get("app")
@@ -46,6 +47,7 @@ class EditsMixin:
                 self.atlas.save(self.path)
         self.rebuild_model()
 
+    @atlas_edit
     def set_landmark(self, x: float, y: float, kind: str, on: str = "landmark") -> None:
         """Change / add (kind) or delete (kind "") the landmark at x, y; an older edit within EDIT_SPOT is replaced.
 
@@ -70,6 +72,7 @@ class EditsMixin:
                 atlas_cities.set_type(self.atlas, x, y, None)
         self._edited(f"landmark at ({x:.0f}, {y:.0f}) " + (f"is now a {kind}" if kind else "deleted"))
 
+    @atlas_edit
     def set_city_type(self, i: int, typ: str | None) -> None:
         """Set a city's type by hand (None: automatic again).
 
@@ -111,6 +114,7 @@ class EditsMixin:
             if n["status"] != "removed" and cv2.pointPolygonTest(P, (float(n["x"]), float(n["y"])), False) >= 0
         ]
 
+    @atlas_edit
     def set_biome(self, polygon: list, biome: str) -> int:
         """Make the maps inside a lasso this biome (or none); kept in the atlas by map position.
 

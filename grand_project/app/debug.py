@@ -15,6 +15,7 @@ import numpy as np
 from grand_project import core
 from grand_project import logs as atlas_log
 
+from .atlaslock import atlas_edit
 from .constants import VERSION
 
 LOG = atlas_log.get("app")
@@ -96,6 +97,7 @@ class DebugMixin:
             fp.write_text(json.dumps(self.debug_marks(), indent=1), encoding="utf-8")
         self.events.publish("debug", None)
 
+    @atlas_edit
     def add_debug_mark(
         self,
         kind: str,
@@ -178,6 +180,7 @@ class DebugMixin:
         self.events.set_status(f"debug mark saved: {kind} ({reason})")
         return mk
 
+    @atlas_edit
     def delete_debug_mark(self, mid: int) -> None:
         """Delete a debug mark.
 
@@ -188,6 +191,7 @@ class DebugMixin:
         marks[:] = [m for m in marks if m.get("id") != mid]
         self._dbg_save()
 
+    @atlas_edit
     def clear_debug_marks(self) -> str:
         """Delete every debug mark, keeping a copy next to the file.
 
