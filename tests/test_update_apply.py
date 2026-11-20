@@ -225,3 +225,23 @@ def test_a_folder_install_whose_version_changed_is_put_back_and_the_log_names_it
     logs = list(tmp_path.rglob("pip.log"))
     text = "".join(p.read_text(encoding="utf-8") for p in logs)
     assert "token" not in text and "mylib" in text
+
+
+def test_a_rollback_that_times_out_never_logs_the_command(tmp_path, monkeypatch):
+    # (CodeRabbit: TimeoutExpired's text names the command, and a package's line in it can hold a Git token)
+    root, plan = program(tmp_path)
+    plan["pip"] = True
+    secret = "-e git+https://user:token@host/repo.git#egg=private_tool"
+    frozen = iter([{"private-tool": secret}, {"private-tool": "private-tool==9"}])
+    monkeypatch.setattr(ua, "freeze", lambda python: next(frozen))
+    monkeypatch.setattr(ua, "installed_versions", lambda python: {})
+
+    def fake_run(args, **kw):
+        if "-r" in args:
+            return subprocess.CompletedProcess(args, 1, "", "")
+        raise subprocess.TimeoutExpired(args, 5)
+
+    monkeypatch.setattr(ua.subprocess, "run", fake_run)
+    assert not ua.apply(plan)["ok"]
+    text = "".join(p.read_text(encoding="utf-8") for p in tmp_path.rglob("pip.log"))
+    assert "token" not in text and "pip took too long" in text

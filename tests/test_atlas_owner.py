@@ -814,3 +814,34 @@ def test_the_worker_goes_on_when_the_queued_fix_seams_cannot_start(two, monkeypa
         assert wait_until(lambda: len(ran) == 2)
     finally:
         s.shutdown()
+
+
+def test_the_queued_start_waits_while_a_box_is_open_or_failures_wait(session, two, fake_seams):
+    # (CodeRabbit: the claim started it past an open "adding didn't finish" box, or without asking about a failure)
+    a, _b = two
+    session.open_atlas(a)
+    session._jobs.put(([], "recheck_all", session.generation))
+    session.fix_seams(after_adding=True)
+    token = session._seams_waiting["token"]
+    session._jobs.get()
+    session._jobs.task_done()
+    session._seams_asking = True  # (a box is open)
+    assert session.fix_seams(after_adding=True, claim=token) == "queued" and not session.seams_running()
+    session._seams_asking = False
+    session._note_seams_trouble("x.png could not be read")  # (a failure waits to be asked about)
+    assert session.fix_seams(after_adding=True, claim=token) == "queued" and not session.seams_running()
+    session._seams_trouble = []
+    assert session.fix_seams(after_adding=True, claim=token) == "started"
+    fake_seams.release.set()
+    assert wait_until(lambda: session._seams_proc is None)
+
+
+def test_the_cached_map_image_carries_its_build(session, two, monkeypatch):
+    # (CodeRabbit: the cached image had no build number, so a clean map put in meanwhile could be replaced)
+    a, _b = two
+    session.open_atlas(a)
+    got = []
+    real = session.set_terrain
+    monkeypatch.setattr(session, "set_terrain", lambda *args, **kw: (got.append(kw.get("job")), real(*args, **kw))[1])
+    session.load_terrain(background=False)
+    assert got and got[0] == session._terrain_job

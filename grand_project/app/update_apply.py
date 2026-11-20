@@ -215,7 +215,10 @@ def put_back_packages(python: str, before: dict[str, str], log: Path, versions: 
             note += f"\n--- packages {what} ({', '.join(names)}): {'done' if r.returncode == 0 else 'failed'}\n"
             note += r.stdout + r.stderr
         except (OSError, subprocess.SubprocessError) as e:
-            note += f"\n--- packages couldn't be {what} ({', '.join(names)}): {e}\n"
+            # the error's kind only: its text can hold the command, and a package's line in it a Git token
+            # (TimeoutExpired names the command: CodeRabbit)
+            why = "pip took too long" if isinstance(e, subprocess.TimeoutExpired) else type(e).__name__
+            note += f"\n--- packages couldn't be {what} ({', '.join(names)}): {why}\n"
     if note:
         with log.open("a", encoding="utf-8", errors="replace") as f:
             f.write(note)

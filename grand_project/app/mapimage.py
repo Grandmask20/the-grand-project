@@ -189,7 +189,10 @@ class MapImageMixin:
                     origin = tuple(float(v) for v in meta["origin"])
                     labels = (meta["labels"], [str(n) for n in meta["names"]]) if "labels" in meta.files else None
                     if canvas is not None and canvas.shape[:2] == weight.shape:
-                        self.set_terrain(canvas, weight, origin, save=False, labels=labels, cities=cities, gen=gen)
+                        # (its build number too: a clean map put in since drops it, as for a built one: CodeRabbit)
+                        self.set_terrain(
+                            canvas, weight, origin, save=False, labels=labels, cities=cities, gen=gen, job=job
+                        )
                         return
         except Exception:
             LOG.debug("map image cache not usable, rebuilding", exc_info=True)
@@ -511,6 +514,10 @@ class MapImageMixin:
                 w is None or w["token"] != claim or not self.owns(w["gen"]) or getattr(self, "_closing", False)
             ):
                 return "dropped"
+            if claim is not None and (self._seams_asking or self._seams_trouble):
+                # a box is open, or failures wait to be asked about: it stays queued, in the same step as the claim
+                # (claimed anyway, it started without asking, or past a box whose Cancel then did nothing: CodeRabbit)
+                return "queued"
             if self.seams_running():
                 raise ValueError("Fix seams is already running")
             if self.working():
