@@ -67,7 +67,8 @@ def resolve_input_paths(values: Iterable[str], root: Path = paths.ROOT) -> list[
 def discover_images(roots: Iterable[Path]) -> list[Path]:
     """Recursively find supported image files below each input root, without duplicate paths.
 
-    Folders named in ``ANNOTATOR_SKIP_DIRS`` (an atlas's own map pictures) are not entered.
+    Folders named in ``ANNOTATOR_SKIP_DIRS`` (an atlas's own map pictures) are not entered. A file whose path UTF-8
+    cannot hold is left out (see ``_utf8``).
     """
     found: dict[str, Path] = {}
     for root in roots:
@@ -84,22 +85,25 @@ def discover_images(roots: Iterable[Path]) -> list[Path]:
         for path in candidates:
             if path.suffix.lower() in K.ANNOTATOR_IMAGE_EXTENSIONS and path.is_file():
                 resolved = path.resolve()
-                found[os.path.normcase(str(resolved))] = resolved
+                if _utf8(str(resolved)):
+                    found[os.path.normcase(str(resolved))] = resolved
     return sorted(found.values(), key=lambda path: str(path).casefold())
 
 
-def image_key(path: Path) -> str:
-    """A stable, filesystem-safe identifier for a screenshot.
-
-    A file name with bytes that are not UTF-8 (POSIX keeps them as surrogate escapes) is hashed in its filesystem
-    encoding instead, so discovery does not stop at it; every other path keeps its UTF-8 key.
-    """
-    resolved = str(path.resolve())
+def _utf8(text: str) -> bool:
+    """Whether UTF-8 can hold the text. A file name with bytes that are not UTF-8 (only Linux file systems allow
+    one; Python keeps the bytes as surrogate escapes) cannot: the screenshot's key and the store's SQLite text need
+    UTF-8, so such a file is left out rather than stopping discovery. Steam's screenshot names are plain ASCII."""
     try:
-        encoded = resolved.encode("utf-8")
+        text.encode("utf-8")
     except UnicodeEncodeError:
-        encoded = os.fsencode(resolved)
-    return hashlib.sha256(encoded).hexdigest()[:24]
+        return False
+    return True
+
+
+def image_key(path: Path) -> str:
+    """A stable, filesystem-safe identifier for a screenshot."""
+    return hashlib.sha256(str(path.resolve()).encode("utf-8")).hexdigest()[:24]
 
 
 def relative_source(path: Path, root: Path = paths.ROOT) -> str:

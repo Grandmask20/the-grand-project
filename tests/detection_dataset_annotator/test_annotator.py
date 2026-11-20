@@ -6,7 +6,6 @@ import hashlib
 import io
 import json
 import os
-import sys
 from pathlib import Path
 
 import cv2
@@ -341,15 +340,6 @@ def test_editor_never_changes_the_screenshot(tmp_path: Path, review_store: Revie
     assert [a["label"] for a in exported["images"][0]["annotations"]][1] == "icon"
 
 
-@pytest.mark.skipif(sys.platform == "win32", reason="POSIX file names can hold bytes that are not UTF-8")
-def test_image_key_takes_file_names_that_are_not_utf8(tmp_path: Path) -> None:
-    """A file name with non-UTF-8 bytes gets a key instead of stopping discovery; other keys stay as they were."""
-    odd = tmp_path / os.fsdecode(b"shot\xff.png")
-    assert len(image_key(odd)) == 24
-    plain = tmp_path / "shot.png"
-    assert image_key(plain) == hashlib.sha256(str(plain.resolve()).encode("utf-8")).hexdigest()[:24]
-
-
 def test_unreadable_images_decode_to_none(tmp_path: Path) -> None:
     empty, junk = tmp_path / "empty.png", tmp_path / "junk.png"
     empty.write_bytes(b"")
@@ -440,6 +430,14 @@ def test_discovery_skips_atlas_map_pictures_and_missing_roots(tmp_path: Path) ->
     (tmp_path / "atlas" / "atlas_files" / "atlas_terrain.png").write_bytes(b"x")
     found = discover_images([tmp_path / "atlas", tmp_path / "missing"])
     assert [path.name for path in found] == ["shot.png"]
+
+
+def test_discovery_leaves_out_paths_utf8_cannot_hold(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """A file name with bytes that are not UTF-8 (Python keeps them as surrogate escapes) is left out instead of
+    stopping discovery. No file is made, as macOS and Windows refuse such a name: every path counts as a file here."""
+    monkeypatch.setattr(Path, "is_file", lambda self: True)
+    plain = tmp_path / "shot.png"
+    assert discover_images([tmp_path / "shot\udcff.png", plain]) == [plain.resolve()]
 
 
 def test_detection_refuses_what_is_not_a_screenshot(tmp_path: Path) -> None:

@@ -3,9 +3,6 @@ one screenshot at a time and safe between sessions."""
 
 from __future__ import annotations
 
-import errno
-import os
-import sys
 from pathlib import Path
 from typing import Any
 
@@ -183,27 +180,6 @@ def test_a_late_result_of_another_run_changes_nothing(tmp_path: Path, review_sto
     assert review_store.record_detection(key, _result(_box("icon", 70)), force=True) is True
     rerun = review_store.item(key)
     assert [box["label"] for box in rerun["annotations"]] == ["icon"] and rerun["reviewed"] is False
-
-
-@pytest.mark.skipif(sys.platform == "win32", reason="POSIX file names can hold bytes that are not UTF-8")
-def test_a_file_name_that_is_not_utf8_is_kept_as_it_is(tmp_path: Path, review_store: ReviewStore) -> None:
-    """SQLite text cannot hold such a name: the path is stored as its bytes and comes back unchanged (the detector
-    opens it); the name shown has the odd byte as an escape."""
-    odd = tmp_path / os.fsdecode(b"shot\xff.png")
-    try:
-        odd.write_bytes(b"x")
-    except OSError as error:
-        if error.errno != errno.EILSEQ:
-            raise
-        # macOS (APFS, HFS+) refuses a file name that is not UTF-8, so no screenshot there has one (CI)
-        pytest.skip("this file system takes only UTF-8 file names")
-    assert review_store.add_images([odd]) == (1, 0)
-    key = image_key(odd)
-    item = review_store.item(key)
-    assert item["path"] == str(odd) and Path(item["path"]).is_file()
-    assert review_store.detection_jobs() == [(key, str(odd))]
-    assert review_store.queue()[0].source.endswith("shot\\udcff.png")
-    assert dict(review_store.items())[key]["path"] == str(odd)
 
 
 def test_detection_jobs_follow_selection_and_force(tmp_path: Path, review_store: ReviewStore) -> None:

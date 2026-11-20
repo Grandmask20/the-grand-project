@@ -19,9 +19,7 @@ callback (about a millisecond each).
 Items come back in the shape the rest of the annotator uses: ``path``, ``source``, ``reviewed``, ``detected``,
 ``edit_version``, ``next_annotation_id``, ``split``, ``guesses``, the detector's fields, and
 ``annotations`` (``id``, ``label``, ``bbox``, ``area``, ``iscrowd``, ``source``, ``score``). The database is plain
-SQLite and can be read without this program. A screenshot path that is not valid UTF-8 (a POSIX file name with other
-bytes, which Python keeps as surrogate escapes and SQLite text cannot hold) is stored as its file-system bytes, a
-BLOB, and read back unchanged; its ``source`` is a display name, with such characters written as escapes.
+SQLite and can be read without this program.
 """
 
 from __future__ import annotations
@@ -30,7 +28,6 @@ import contextlib
 import itertools
 import json
 import operator
-import os
 import sqlite3
 from collections.abc import Iterable, Iterator, Mapping
 from dataclasses import dataclass
@@ -140,31 +137,12 @@ class QueueEntry:
     """How many of its boxes are guesses (``ANNOTATOR_GUESS_SOURCES``)."""
 
 
-def _stored_path(path: str) -> str | bytes:
-    """A screenshot path as the store keeps it: its text, or its file-system bytes when UTF-8 cannot hold it."""
-    try:
-        path.encode("utf-8")
-    except UnicodeEncodeError:
-        return os.fsencode(path)
-    return path
-
-
-def _read_path(value: str | bytes) -> str:
-    """A stored screenshot path (``_stored_path``) as the original path text."""
-    return os.fsdecode(value) if isinstance(value, bytes) else value
-
-
-def _display_name(text: str) -> str:
-    """A name to show and store as text: characters UTF-8 cannot hold written as escapes."""
-    return text.encode("utf-8", "backslashreplace").decode("utf-8")
-
-
 def _item(row: tuple[Any, ...]) -> dict[str, Any]:
     """An item without its boxes from an ``_SELECT_IMAGE`` row (the key, its first value, is left out)."""
     values = dict(zip(_IMAGE_COLUMNS, row, strict=True))
     item: dict[str, Any] = json.loads(values["extra"])
     item.update(
-        path=_read_path(values["path"]),
+        path=values["path"],
         source=values["source"],
         reviewed=bool(values["reviewed"]),
         detected=bool(values["detected"]),
@@ -346,7 +324,7 @@ class ReviewStore:
             (added, existing) screenshot counts.
         """
         # Keys and names first: resolving paths reads the disk, which should not happen while holding the lock.
-        rows = [(image_key(path), _stored_path(str(path)), _display_name(relative_source(path))) for path in paths]
+        rows = [(image_key(path), str(path), relative_source(path)) for path in paths]
         added = 0
         with self._write():
             position = self._db.execute("SELECT COALESCE(MAX(position) + 1, 0) FROM images").fetchone()[0]
@@ -464,7 +442,7 @@ class ReviewStore:
         selected = set(keys) if keys is not None else None
         rows = self._db.execute("SELECT key, path, detected FROM images ORDER BY position")
         return [
-            (key, _read_path(path))
+            (key, path)
             for key, path, detected in rows
             if (selected is None or key in selected) and (force or not detected)
         ]
