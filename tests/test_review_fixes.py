@@ -471,6 +471,10 @@ def test_a_model_failing_after_a_new_map_image_is_the_models_failure(session, mo
 
 
 def test_the_timelapse_replans_in_the_models_locked_step(session, monkeypatch):
+    # the locked-stronghold search the open started rebuilds the model when done: waited for, or its rebuild
+    # replanned too when it ended after the patching below (CI on macOS: [True, True])
+    if t := getattr(session, "_lock_thread", None):
+        t.join(timeout=30)
     held = []
     monkeypatch.setattr(session, "_replay_on", True)
     monkeypatch.setattr(session, "_replan", lambda: held.append(session._lock._is_owned()))
