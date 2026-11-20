@@ -27,6 +27,14 @@ describe("ResultList", () => {
 		expect(screen.getAllByRole("listitem").map((li) => li.textContent)).toEqual(rows.map((r) => r.label));
 	});
 
+	it("shows only the kinds Find's pills leave on, and says how many more there are", () => {
+		useAppStore.getState().setResults(rows, "3 found");
+		useAppStore.getState().toggleFindKind("landmark");
+		renderWithApp(<ResultList />);
+		expect(screen.queryByRole("button", { name: "Tower (seen 2x)" })).toBeNull();
+		expect(screen.getByText("1 more of the kinds switched off above")).toBeInTheDocument();
+	});
+
 	it("goes to a result and selects it", async () => {
 		useAppStore.getState().setResults(rows, "found");
 		const { user, calls } = renderWithApp(<ResultList />, { "GET /api/info": nodeInfo });

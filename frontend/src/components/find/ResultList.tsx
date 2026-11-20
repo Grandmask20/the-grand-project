@@ -16,7 +16,10 @@ export function ResultList() {
 	const ask = useAppStore((s) => s.ask);
 	const showError = useAppStore((s) => s.showError);
 	const selectLoaded = useAppStore((s) => s.selectLoaded);
-	const items = results.filter((r) => r.kind !== "bookmark");
+	const kinds = useAppStore((s) => s.findKinds);
+	// the kinds Find's pills show (a path, which has no pill, always)
+	const rows = results.filter((r) => r.kind === "path" || kinds.includes(r.kind));
+	const items = rows.filter((r) => r.kind !== "bookmark");
 
 	// a new list (a type clicked, a search): the panel scrolls down to show it (user)
 	const box = useRef<HTMLDivElement>(null);
@@ -57,7 +60,7 @@ export function ResultList() {
 			>
 				<p className="text-xs text-muted-foreground">{title}</p>
 				<ul className="max-h-80 overflow-y-auto">
-					{results.slice(0, 500).map((r) => (
+					{rows.slice(0, 500).map((r) => (
 						<li key={`${r.kind}-${r.id}`}>
 							<button
 								type="button"
@@ -75,8 +78,13 @@ export function ResultList() {
 							</button>
 						</li>
 					))}
-					{results.length > 500 && (
-						<li className="px-2 py-1 text-muted-foreground">{results.length - 500} more: narrow the search</li>
+					{rows.length > 500 && (
+						<li className="px-2 py-1 text-muted-foreground">{rows.length - 500} more: narrow the search</li>
+					)}
+					{rows.length < results.length && (
+						<li className="px-2 py-1 text-xs text-muted-foreground">
+							{results.length - rows.length} more of the kinds switched off above
+						</li>
 					)}
 				</ul>
 			</Section>

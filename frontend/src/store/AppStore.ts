@@ -128,6 +128,9 @@ export interface AppStoreState {
 	query: string;
 	/** Search: a new search takes the rings of the one before off the map (user: different finds piled up). */
 	setQuery: (q: string) => void;
+	/** Find's kinds of results shown (its pills: maps, icons, places, bookmarks; paths always). */
+	findKinds: string[];
+	toggleFindKind: (kind: string) => void;
 	listed: { label: string; icon: string | null } | null;
 	/** List a type's items (its icon lit up on the map), in place of a search. */
 	listType: (label: string, icon: string | null) => void;
@@ -288,6 +291,11 @@ export const useAppStore = create<AppStoreState>()((set) => ({
 	setFindText: (findText) => set({ findText }),
 	query: "",
 	setQuery: (query) => set(query.trim() ? { query, highlight: null, goto: null } : { query }),
+	findKinds: ["node", "icon", "landmark", "bookmark"],
+	toggleFindKind: (kind) =>
+		set((st) => ({
+			findKinds: st.findKinds.includes(kind) ? st.findKinds.filter((k) => k !== kind) : [...st.findKinds, kind],
+		})),
 	listed: null,
 	listType: (label, icon) => set({ findText: "", query: "", listed: { label, icon }, highlight: icon, goto: null }),
 	clearFind: () =>

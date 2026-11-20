@@ -39,6 +39,15 @@ describe("FindTab", () => {
 		expect(box).toHaveValue("");
 	});
 
+	it("the kinds' pills switch the results' kinds on and off", async () => {
+		const { user } = renderWithApp(<FindTab />, { "GET /api/types": types });
+		const places = screen.getByRole("button", { name: "Places" });
+		expect(places).toHaveAttribute("aria-pressed", "true");
+		await user.click(places);
+		expect(useAppStore.getState().findKinds).not.toContain("landmark");
+		expect(places).toHaveAttribute("aria-pressed", "false");
+	});
+
 	it("the filters are switches in a row, named in full, and change the settings", async () => {
 		const { user, calls } = renderWithApp(<FindTab />, {
 			"GET /api/types": types,

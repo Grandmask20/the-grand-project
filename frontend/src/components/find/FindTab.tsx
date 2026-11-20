@@ -1,12 +1,12 @@
 import { SearchIcon, XIcon } from "lucide-react";
 import { useEffect } from "react";
+import { Pill } from "@/components/common/Pill";
 import { Section } from "@/components/common/Section";
 import { Input } from "@/components/ui/input";
 import { useSettings, useUpdateSettings } from "@/hooks/app/UseSettings";
 import { useListType } from "@/hooks/find/UseListType";
 import { useSearch } from "@/hooks/find/UseSearch";
 import { useAppStore } from "@/store/AppStore";
-import { cn } from "@/utils/Cn";
 import { ResultList } from "./ResultList";
 import { TypeList } from "./TypeList";
 
@@ -56,25 +56,15 @@ export function FindTab() {
 		if (listed && !query.trim() && list.data) setResults(list.data, `${list.data.length} ${listed.label}`);
 	}, [listed, list.data, query, setResults]);
 
-	// the filters as switches in a row (PO's canvas: chips under the search), their whole sentence as their name
-	const filter = (key: "multi_only" | "only_icon_maps" | "near_only", short: string, label: string) => {
-		const on = !!settings?.[key];
-		return (
-			<button
-				type="button"
-				aria-pressed={on}
-				aria-label={label}
-				title={label}
-				onClick={() => update.mutate({ [key]: !on })}
-				className={cn(
-					"h-7 rounded-full border px-3 text-xs whitespace-nowrap",
-					on ? "border-gold/70 bg-accent text-foreground" : "text-muted-foreground hover:bg-accent/50",
-				)}
-			>
-				{short}
-			</button>
-		);
-	};
+	const kinds = useAppStore((s) => s.findKinds);
+	const toggleKind = useAppStore((s) => s.toggleFindKind);
+	// the filters as pills under the search (PO's canvas): the kinds of results, then what the map shows; a setting's
+	// pill has its whole sentence as its name
+	const filter = (key: "multi_only" | "only_icon_maps" | "near_only", short: string, label: string) => (
+		<Pill on={!!settings?.[key]} label={label} onClick={() => update.mutate({ [key]: !settings?.[key] })}>
+			{short}
+		</Pill>
+	);
 
 	return (
 		<div className="flex flex-col gap-4">
@@ -99,6 +89,21 @@ export function FindTab() {
 				</button>
 			</div>
 			<div className="flex flex-wrap gap-1.5">
+				{(
+					[
+						["node", "Maps"],
+						["icon", "Icons"],
+						["landmark", "Places"],
+						["bookmark", "Bookmarks"],
+					] as const
+				).map(([kind, name]) => (
+					<Pill key={kind} on={kinds.includes(kind)} title={`${name} in the results`} onClick={() => toggleKind(kind)}>
+						{name}
+					</Pill>
+				))}
+			</div>
+			<div className="flex flex-wrap items-center gap-1.5">
+				<span className="mr-1 text-xs text-muted-foreground">Only</span>
 				{filter("multi_only", "2+ screenshots", "only what 2+ screenshots show")}
 				{filter("only_icon_maps", "ticked icons only", "only maps with a ticked icon")}
 				{filter("near_only", "potential cities", "only potential city maps")}

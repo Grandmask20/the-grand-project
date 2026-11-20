@@ -46,17 +46,20 @@ export function SelectedPopup({ map, geo }: { map: MapLibreMap; geo: Geo }) {
 		>
 			<section
 				aria-label="Selected"
-				className="pointer-events-auto relative w-80 rounded-md border bg-card p-3 text-sm shadow-xl"
+				className="pointer-events-auto relative w-[26rem] rounded-md border bg-card p-4 text-sm shadow-xl"
 			>
-				<button
-					type="button"
-					aria-label="Close"
-					title="Close"
-					onClick={() => select(null)}
-					className="absolute top-2 right-2 rounded p-1 text-muted-foreground hover:bg-accent hover:text-foreground"
-				>
-					<XIcon className="size-4" />
-				</button>
+				<div className="mb-3 flex items-center justify-between">
+					<h2 className="text-base font-semibold">Selected</h2>
+					<button
+						type="button"
+						aria-label="Close"
+						title="Close"
+						onClick={() => select(null)}
+						className="rounded p-1 text-muted-foreground hover:bg-accent hover:text-foreground"
+					>
+						<XIcon className="size-4" />
+					</button>
+				</div>
 				<SelectedBox />
 				{/* the window's point, on the spot */}
 				<span

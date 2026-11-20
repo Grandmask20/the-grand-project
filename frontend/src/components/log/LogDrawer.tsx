@@ -28,8 +28,15 @@ export function LogDrawer() {
 	const ids = pageIds(idBase, page);
 	return (
 		<section aria-label="Log" className="flex h-60 shrink-0 flex-col border-t bg-background">
-			<div className="flex items-center gap-2 border-b px-3 py-1.5">
-				<PagePicker label="Log pages" pages={pages} value={page} onChange={setPage} idBase={idBase} />
+			<div className="flex items-center gap-2 border-b px-3 pt-2">
+				<PagePicker
+					label="Log pages"
+					pages={pages}
+					value={page}
+					onChange={setPage}
+					idBase={idBase}
+					className="border-b-0"
+				/>
 				<span className="flex-1" />
 				<button
 					type="button"
