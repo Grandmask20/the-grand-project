@@ -14,7 +14,6 @@ spot), debug (debug marks), replay (timelapse plan, colour by).
 from __future__ import annotations
 
 import math
-import threading
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -26,11 +25,13 @@ from grand_project import finalize as atlas_finalize
 from grand_project import logs as atlas_log
 
 from .adding import AddingMixin
+from .atlaslock import AtlasLock, atlas_switch
 from .bookmarks import BookmarksMixin
 from .constants import (
     LANDMARK_NODE_REACH,
     LANDMARK_NODE_REACH_STRONGHOLD,
     POTENTIAL_TYPES,
+    SHUTDOWN_WAIT,
     STYLE_DEFAULT,
     VERSION,
 )
@@ -39,7 +40,7 @@ from .edits import EditsMixin
 from .events import Events
 from .icons import icon_label, icon_rows
 from .library import LibraryMixin
-from .mapimage import MapImageMixin
+from .mapimage import MapImageMixin, files_key
 from .model import view_model
 from .parts import Parts
 from .query import QueryMixin
@@ -101,9 +102,10 @@ class AtlasSession(
             events: Where to publish what happens (default: a new Events).
             worker: Start the background worker thread (tests run jobs on their own thread instead).
         """
-        self.settings = load_settings() if settings is None else settings
+        self.settings = migrate_settings(load_settings() if settings is None else settings)
         self.events = events or Events()
-        self._lock = threading.RLock()
+        # refuses a page change meant for an atlas no longer open (app/atlaslock.py)
+        self._lock = AtlasLock(lambda: self.opened.gen)
         self.opened = Opened(None, None, 0, "")  # the open atlas (atlas, path, generation, log): one record
         self.V: dict = {"nodes": [], "paths": [], "icons": [], "landmarks": [], "final": None}
         self.D: dict = {}  # derived from V: biomes, icon rows, type counts, footprints (rebuild_model)
@@ -131,15 +133,7 @@ class AtlasSession(
         Returns:
             {"layers", "multi_only", "only_icon_maps", "near_only", "hidden_types", "style", "replay", "ui"}.
         """
-        s = self.settings
-        if s.get("style", {}).get("map_style") == "hidden":
-            # the "hidden" map style left the View tab (user: the same as unticking Maps): saved that way, it becomes
-            # the Maps switch off, kept from the next save on
-            s["style"]["map_style"] = "circles"
-            s.setdefault("layers", {})["Nodes"] = False
-        if s.get("layers", {}).get("Doubtful"):
-            # Doubtful left the layer buttons (user: room for Routes): saved on, it would stay on with no way off
-            s["layers"]["Doubtful"] = False
+        s = self.settings  # (read only: older settings are brought up to date once, as they load: migrate_settings)
         return {
             "layers": {**LAYER_DEFAULTS, **s.get("layers", {})},
             "multi_only": bool(s.get("multi_only", False)),
@@ -174,6 +168,7 @@ class AtlasSession(
             s["icon_hidden"] = sorted(set(changes["hidden_types"]))
         if "style" in changes and changes["style"].get("reset"):
             s["style"] = {}
+        migrate_settings(s)  # (a tab still on an older page can send a retired setting: self review)
         self.save_settings()
         # every change you make, in one line of the Log tab (user: "every user made change should be listed")
         self.events.log(f"Changed: {settings_change_text(changes, hidden_before)}")
@@ -182,6 +177,7 @@ class AtlasSession(
         return self.ui_settings()
 
     # ------------------------------------------------------------------ open / new / save / close
+    @atlas_switch
     def open_atlas(self, p, expect_gen: int | None = None) -> None:
         """Open an atlas file and show it.
 
@@ -216,9 +212,11 @@ class AtlasSession(
             if self.seams_running():
                 self.stop_seams()
                 self.events.log("Fix seams stopped: another atlas was opened")
+            elif self.seams_waiting():  # (only queued: nothing ran, its own line says it was taken off)
+                self.stop_seams()
             self.save()
         name = p.stem if p.stem != "atlas" else p.parent.name
-        with self._lock:
+        with self._lock, self._admit:  # (no job admitted between the check below and the switch: _init_adding)
             if expect_gen is not None and not self.owns(expect_gen):  # another atlas opened while this one loaded
                 return
             if self.working():  # a job slipped in meanwhile
@@ -253,6 +251,7 @@ class AtlasSession(
         if self.settings.get("watch_on"):
             self.start_watch()  # auto-add follows the atlas: its own folder, or the one picked for it
 
+    @atlas_switch
     def new_atlas(self, p) -> None:
         """Create an empty atlas at a path and open it.
 
@@ -273,7 +272,7 @@ class AtlasSession(
         self.stop_seams()
         self.save()
         p.parent.mkdir(parents=True, exist_ok=True)
-        with self._lock:
+        with self._lock, self._admit:  # (no job admitted between the check and the switch: _init_adding)
             if self.working():
                 self._resume_watch()  # (stopped above for a switch that doesn't happen: CodeRabbit)
                 raise ValueError("wait until the screenshots being added are done")
@@ -303,11 +302,18 @@ class AtlasSession(
             The new record.
         """
         scope = str(p.resolve()) if p is not None else ""
-        self.opened = Opened(atlas, p, self.opened.gen + 1, scope)
-        self.parts.reset(self.opened.gen)
+        # a queued Fix seams was for the atlas before: retired with it, here where every switch passes (one left
+        # behind made a new request for the next atlas report "queued" without being recorded: CodeRabbit)
+        self._seams_waiting, self._seams_trouble = None, []
+        if p is not None:  # (an atlas opened at a path deleted before writes its files again: retire_files)
+            self._retired.discard(files_key(p))
+        # what was the atlas before's goes first, then the new record: a state read without the lock that sees the
+        # new generation never counts the old atlas's maps (the record first, it could: CodeRabbit)
         self.V = {"nodes": [], "paths": [], "icons": [], "landmarks": [], "final": None}
         self.D = {}
         self.model_version += 1
+        self.opened = Opened(atlas, p, self.opened.gen + 1, scope)
+        self.parts.reset(self.opened.gen)
         self.events.set_scope(scope)
         return self.opened
 
@@ -361,28 +367,49 @@ class AtlasSession(
         """
         if self.working():
             raise ValueError("wait until the screenshots being added are done")
-        self.stop_watch()
-        self.stop_seams()
-        self.save()
-        with self._lock:
-            self._forget_session()
-            before = self.opened
-            self._switch(None, None)
-            self._reset_mapimage()
-            if before.scope:
-                self.events.log("closed the atlas", before.scope)
+        # a close made for another atlas never stops or closes the one open now: checked, and closed, with no
+        # switch possible in between (checked alone first, a switch after it got its auto-add stopped: CodeRabbit)
+        with self._lock.steady():
+            self.stop_watch()
+            self.stop_seams()
+            self.save()
+            with self._lock, self._admit:  # (no job admitted between the check and the close: _init_adding)
+                if self.working():  # a job slipped in meanwhile: not closed (CodeRabbit)
+                    self._resume_watch()
+                    raise ValueError("wait until the screenshots being added are done")
+                self._forget_session()
+                before = self.opened
+                self._switch(None, None)
+                self._reset_mapimage()
+                if before.scope:
+                    self.events.log("closed the atlas", before.scope)
         self.events.publish("atlas", self.atlas_summary())
         self.events.publish("model", self.model_version)
 
-    def shutdown(self) -> None:
-        """Stop everything before the app exits: auto-add, Fix seams, queued jobs; save the atlas and settings."""
+    def shutdown(self) -> bool:
+        """Stop everything before the app exits: auto-add, Fix seams, queued jobs, open questions (answered No, so
+        a job waiting on one ends); then save the atlas and settings.
+
+        Returns:
+            True when the work running ended in time; False when it was cut off, which the log says (the wait's
+            outcome was ignored, as if all work had finished: GPT audit).
+        """
         self._closing = True
         self.stop_watch()
         self.stop_seams()
         self._drop_queued_jobs()
-        self.wait_idle(timeout=30)
+        if n := self.events.end_questions():
+            self.events.log(f"closing: {n} open question(s) answered No")
+        done = self.wait_idle(timeout=SHUTDOWN_WAIT)
+        if not done:
+            LOG.warning("closing while a job still runs: cut off")
+            self.events.log(
+                f"closing: the work still running after {SHUTDOWN_WAIT:.0f} s was cut off; what it had not saved yet "
+                "is lost (the atlas is saved as it is now)"
+            )
         self.save()
         self.save_settings()
+        return done
 
     def _after_load(self) -> None:
         """Refresh everything after an atlas was opened or created: map image, model, locked strongholds."""
@@ -515,7 +542,7 @@ class AtlasSession(
             "undo": [e["names"] for e in self._undo],
             "recent": list(reversed(self.recent)),
             "waiting": self.waiting_list(),
-            "seams": self.seams_running(),
+            "seams": self.seams_running() or self.seams_waiting(),  # (queued counts: Stop takes it off)
             "questions": self.events.open_questions(),
             "log": list(self.events.log_lines)[-300:],
             "log_scope": opened.scope,
@@ -648,6 +675,27 @@ def dist(a, b) -> float:
 
 
 __all__ = ["AtlasSession", "Opened", "potential_kind", "dist"]
+
+
+def migrate_settings(s: dict) -> dict:
+    """Bring settings saved by an older version up to date, once as they load (it was done on every read of the
+    page's settings, a read that changed them: GPT audit).
+
+    Args:
+        s: The settings (changed in place).
+
+    Returns:
+        The same settings.
+    """
+    if s.get("style", {}).get("map_style") == "hidden":
+        # the "hidden" map style left the View tab (user: the same as unticking Maps): saved that way, it becomes
+        # the Maps switch off, kept from the next save on
+        s["style"]["map_style"] = "circles"
+        s.setdefault("layers", {})["Nodes"] = False
+    if s.get("layers", {}).get("Doubtful"):
+        # Doubtful left the layer buttons (user: room for Routes): saved on, it would stay on with no way off
+        s["layers"]["Doubtful"] = False
+    return s
 
 
 def landmark_nodes(nodes: list[dict], landmarks: list[dict], locked=()) -> dict[int, int]:

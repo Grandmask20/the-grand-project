@@ -26,6 +26,7 @@ from grand_project.core import islands
 from grand_project.core.geometry import apply as apply_affine
 from grand_project.core.register import mutual_pairs
 
+from .atlaslock import atlas_edit
 from .constants import (
     DETECT_LOG_EVERY,
     PICTURE_SIDE,
@@ -93,6 +94,10 @@ class AddingMixin:
             start: Start the worker (tests run jobs with run_job on their own thread).
         """
         self._jobs: queue.Queue = queue.Queue()
+        # held while a job is queued, and while an atlas switch checks that none is (taken inside the session lock,
+        # never around it): a job admitted between that check and the switch ran on no atlas / the next one, the
+        # worker then dropped it (CodeRabbit). Apart from the session lock, which a running job holds for long.
+        self._admit = threading.RLock()
         self._busy = False
         self._pictures: dict[int, bytes] = {}
         self._picture_ids = itertools.count(1)
@@ -142,11 +147,21 @@ class AddingMixin:
             mode: "manual", "watch", "recheck_all", "undo", ("drop", x, y) or ("retry", indices or None).
             gen: The atlas generation it is for (None: the open one); the worker skips it once another is open.
         """
+        with self._admit:
+            queued = self._admit_job(paths, mode, gen)
+        if queued:
+            self.events.publish("busy", True)
+
+    def _admit_job(self, paths, mode, gen: int | None) -> bool:
+        """Put a job in the queue (with _admit held: see _init_adding); False when closing."""
         if self._closing:
             self.events.log(f"closing: {len(paths) or 'a'} job(s) not started")
-            return
+            return False
+        if gen is None:  # the page request's atlas when it is one, else the open one: a request made just before a
+            # switch is skipped by the worker, never run on the atlas opened after it (CodeRabbit)
+            gen = self._lock.expected()
         self._jobs.put((list(paths), mode, self.generation if gen is None else gen))
-        self.events.publish("busy", True)
+        return True
 
     def _drop_queued_jobs(self) -> None:
         """Forget jobs that have not started."""
@@ -193,6 +208,7 @@ class AddingMixin:
         Raises:
             ValueError: With no atlas open, or the detector database missing.
         """
+        self._lock.refuse_stale()  # (made for another atlas: refused at once, see _queue_job)
         if not self.atlas or not self.path:
             raise ValueError("open or create an atlas first")
         self.detector_ready()
@@ -213,6 +229,7 @@ class AddingMixin:
         Raises:
             ValueError: With no atlas open, or the detector database missing.
         """
+        self._lock.refuse_stale()  # (made for another atlas: refused at once, see _queue_job)
         if not self.atlas or not self.path:
             raise ValueError("open or create an atlas first")
         self.detector_ready()
@@ -224,10 +241,12 @@ class AddingMixin:
         Raises:
             ValueError: With no screenshots.
         """
+        self._lock.refuse_stale()  # (made for another atlas: refused at once, see _queue_job)
         if not self.atlas or not self.atlas.frames:
             raise ValueError("no screenshots to re-check")
         self._queue_job([], "recheck_all")
 
+    @atlas_edit
     def undo_last(self) -> list[str]:
         """Remove the screenshots added last (an "undo" job).
 
@@ -245,6 +264,7 @@ class AddingMixin:
         self._queue_job([], "undo")
         return names
 
+    @atlas_edit
     def retry_waiting(self, indices: list[int] | None = None) -> int:
         """Search again for waiting screenshots (all, or those at these places in the waiting list).
 
@@ -442,14 +462,9 @@ class AddingMixin:
         # the session lock is let go while the question is open (the job holds it): the page's requests that need it
         # (new tiles, the ground just pasted) waited until the answer, minutes maybe. The job's atlas stays this
         # atlas: another can't be opened while it runs (working()).
-        try:
-            self._lock.release()
-        except RuntimeError:  # not held (a job run outside the lock)
+        # (all of its levels: AtlasLock.let_go; nothing to let go when it isn't held)
+        with self._lock.let_go():
             return self.events.ask(question, preview=preview)
-        try:
-            return self.events.ask(question, preview=preview)
-        finally:
-            self._lock.acquire()
 
     # ------------------------------------------------------------------ the worker
     def _tally(self) -> dict[str, int]:
@@ -515,6 +530,7 @@ class AddingMixin:
             except Exception as e:
                 LOG.exception(f"adding failed ({mode}): {paths}")
                 self.events.log(f"adding failed: {e}")
+                self._note_seams_trouble(f"adding failed: {e}")  # (a queued Fix seams asks first)
                 if mode == "watch" and self.owns(gen):
                     self._watch_failed([str(p) for p in paths])
             finally:
@@ -525,6 +541,12 @@ class AddingMixin:
                 if not self._busy:
                     self.scan_locks()
                     self.events.publish("busy", False)
+                    try:  # (one queued while this ran: fix_seams). Never the worker's end: a failure here
+                        # left the queued screenshots with no one to add them (CodeRabbit)
+                        self._start_waiting_seams()
+                    except Exception as e:
+                        LOG.exception("starting the queued Fix seams failed")
+                        self.events.log(f"Fix seams could not start: {e}")
 
     def _cache_dir(self) -> Path:
         """Return the detection cache folder of the open atlas (<stem>_frames next to it).
@@ -578,6 +600,7 @@ class AddingMixin:
             except Exception as e:
                 LOG.exception(f"{p.name}: detection failed")
                 self.events.log(f"{p.name}: detection failed: {e}")
+                self._note_seams_trouble(f"{p.name} could not be read: {e}")
                 failed.append(str(p))
         return frames, failed
 
@@ -758,16 +781,17 @@ class AddingMixin:
         self.recent_pick = None
 
     def _run_undo(self) -> None:
-        """Put the atlas back to its snapshot from before the last add, keeping the bookmarks."""
+        """Put the atlas back to its snapshot from before the last add, all of it but your hand edits (bookmarks,
+        city types, landmark and biome edits: Atlas.HAND_EDITS), which stay as they are now."""
         entry = self._undo[-1]
         self.events.set_progress("undoing the last add")
         with self._lock:
             old = core.Atlas.load(entry["file"])  # (raises: the entry stays, Undo can be tried again: CodeRabbit)
             self._undo.pop()
-            keep_bookmarks = self.atlas.bookmarks
-            for attr in ("nodes", "edges", "landmarks", "frames", "icons", "final"):
-                setattr(self.atlas, attr, getattr(old, attr))
-            self.atlas.bookmarks = keep_bookmarks
+            self._lock_rev = getattr(self, "_lock_rev", 0) + 1  # (a stronghold search running now is out of date)
+            for attr in core.Atlas.SAVED:
+                if attr not in core.Atlas.HAND_EDITS:
+                    setattr(self.atlas, attr, getattr(old, attr))
             self.atlas.save(self.path)
         with contextlib.suppress(OSError):
             Path(entry["file"]).unlink()

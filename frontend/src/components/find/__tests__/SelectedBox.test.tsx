@@ -52,6 +52,23 @@ describe("SelectedBox", () => {
 		expect(useAppStore.getState().fly).toMatchObject({ x: 440, y: 200 });
 	});
 
+	it("a map that is a City: Not a City makes it a normal map, after asking", async () => {
+		const city = {
+			...nodeInfo,
+			on_landmark: { id: 4, title: "Vaal city", x: 7, y: 8, landmark_kind: "City", city_type: "Vaal" },
+		};
+		const { user, calls } = renderWithApp(<SelectedBox />, {
+			"GET /api/info": city,
+			"POST /api/landmark": { ok: true },
+		});
+		act(() => useAppStore.getState().select(city));
+		await user.click(await screen.findByRole("button", { name: "Not a City" }));
+		act(() => useAppStore.getState().confirm?.onYes());
+		await waitFor(() =>
+			expect(calls.find((c) => c.path === "/api/landmark")?.body).toEqual({ x: 7, y: 8, kind: "", on: "landmark" }),
+		);
+	});
+
 	it("a bookmarked map edits its bookmark and can remove it (no second bookmark)", async () => {
 		const marked = { ...nodeInfo, bookmark: 0, bookmark_of: { id: 0, name: "big boss", group: "Boss", note: "daily" } };
 		const { user, calls } = renderWithApp(<SelectedBox />, {

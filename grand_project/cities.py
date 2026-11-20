@@ -305,8 +305,8 @@ def city_types(atlas, cities: list[dict], compute_missing=True) -> list[tuple[st
     return [o if o else ("", "") for o in out]
 
 
-def set_type(atlas, x: float, y: float, typ: str | None) -> None:
-    """Store (or with typ None / "" forget) a hand-set type for the city at x, y.
+def set_type(atlas, x: float, y: float, typ: str | None, by: str | None = None) -> None:
+    """Store (or with typ None / "" forget) a set type for the city at x, y.
 
     Any stored type within SAME_CITY of (x, y) is replaced.
 
@@ -315,10 +315,11 @@ def set_type(atlas, x: float, y: float, typ: str | None) -> None:
         x: x of the city in atlas units.
         y: y of the city in atlas units.
         typ: "Ezomyte", "Vaal" or "Faridun"; None or "" to forget.
+        by: What set it, when not your hand ("biome": a city biome painted over it, taken back when it goes).
     """
     atlas.city_types = [c for c in atlas.city_types if np.hypot(c["x"] - x, c["y"] - y) >= SAME_CITY]
     if typ:
-        atlas.city_types.append({"x": round(x, 1), "y": round(y, 1), "type": typ})
+        atlas.city_types.append({"x": round(x, 1), "y": round(y, 1), "type": typ, **({"by": by} if by else {})})
 
 
 def ground_sampler(canvas: np.ndarray, weight: np.ndarray, origin, radius: float = 70.0):

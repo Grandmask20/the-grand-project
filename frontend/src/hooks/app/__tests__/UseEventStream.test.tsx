@@ -10,6 +10,7 @@ class FakeSource {
 	static last: FakeSource | null = null;
 	url: string;
 	onopen: (() => void) | null = null;
+	onerror: (() => void) | null = null;
 	closed = false;
 	private listeners: Record<string, ((ev: MessageEvent<string>) => void)[]> = {};
 	constructor(url: string) {
@@ -46,6 +47,17 @@ describe("useEventStream", () => {
 		expect(queryClient.getQueryData<AppState>(AppQueryKeys.state)?.log.at(-1)).toBe("12:05:00  added 2");
 		unmount();
 		expect(src.closed).toBe(true);
+	});
+
+	it("a dropped stream shows as not connected until it is back", () => {
+		// (GPT audit: it said connected all the while)
+		renderWithApp(<Probe />);
+		const src = FakeSource.last as FakeSource;
+		act(() => src.onopen?.());
+		act(() => src.onerror?.());
+		expect(screen.getByText("waiting")).toBeInTheDocument();
+		act(() => src.onopen?.());
+		expect(screen.getByText("connected")).toBeInTheDocument();
 	});
 
 	it("after a reconnect, everything is fetched again", () => {

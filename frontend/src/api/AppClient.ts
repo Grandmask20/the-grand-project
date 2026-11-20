@@ -59,7 +59,9 @@ export function createAppClient(http: Http) {
 		closeAtlas: () => http.send<Ok>("POST", "/api/atlas/close"),
 		exportPngs: () => http.send<{ files: string[] }>("POST", "/api/atlas/export"),
 		recheck: () => http.send<Ok>("POST", "/api/atlas/recheck"),
-		fixSeams: () => http.send<Ok>("POST", "/api/seams"),
+		/** Fix seams; while adding runs it isn't started ({adding}), or is queued after it (afterAdding). */
+		fixSeams: (afterAdding = false) =>
+			http.send<Ok & { adding: boolean; queued: boolean }>("POST", "/api/seams", { after_adding: afterAdding }),
 		stopSeams: () => http.send<Ok>("DELETE", "/api/seams"),
 		listDir: (path: string, files = true) => http.get<FsListing>("/api/fs", { path, files: files ? 1 : 0 }),
 		upload: (file: File) => http.upload<{ path: string }>("/api/upload", file, file.name),

@@ -197,9 +197,11 @@ def test_a_landmark_model_selects_the_map_node_it_marks(session):
     assert session.D["landmark_node"][k] == 4
     picks = {m["pick"] for m in json.loads(session.scene_3d())["models"]}
     assert "node:4" in picks and f"landmark:{k}" not in picks  # (it selected the landmark, its map not lit up)
-    assert session.info("landmark", k)["node"] == 4
+    # a landmark on a map is that map: one item, shown as the landmark (you: two click boxes on top of each other)
+    assert session.info("landmark", k)["kind"] == "node" and session.info("landmark", k)["id"] == 4
     node = session.info("node", 4)
-    assert node["landmark"] == k and any("here" in str(line) for line in node["lines"])
+    assert node["landmark"] == k and node["title"].startswith("Hall (map #4)")
+    assert node["on_landmark"]["id"] == k and any("detected by" in line for line in node["lines"])
     # a hand-added landmark (no counts) still has details
     with session._lock:
         session.atlas.final["landmarks"].append({"kind": "Tower", "x": 9000.0, "y": 9000.0, "status": "kept"})

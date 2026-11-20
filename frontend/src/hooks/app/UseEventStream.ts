@@ -27,6 +27,8 @@ export function useEventStream(): boolean {
 				else void queryClient.invalidateQueries({ queryKey: AppQueryKeys.state });
 				opened = true;
 			},
+			// dropped: "not connected" shows until it is back (it said connected all the while: GPT audit)
+			() => setConnected(false),
 		);
 		return stop;
 	}, [app, queryClient]);

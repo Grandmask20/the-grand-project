@@ -13,7 +13,7 @@ import { useEffect } from "react";
 import { IconPicture } from "@/components/common/IconPicture";
 import { MapMark } from "@/components/common/MapMark";
 import { Button } from "@/components/ui/button";
-import type { ItemInfo } from "@/domain/map/ItemInfo";
+import type { ItemInfo, OnLandmark } from "@/domain/map/ItemInfo";
 import { useAppClient } from "@/hooks/app/UseAppClient";
 import { useInfo } from "@/hooks/find/UseInfo";
 import { useTypes } from "@/hooks/find/UseTypes";
@@ -178,6 +178,27 @@ export function SelectedBox() {
 					>
 						<Trash2Icon />
 						Delete landmark
+					</Button>
+				)}
+				{/* a map's own landmark, made a normal map from the map (only the landmark could: user) */}
+				{info.on_landmark && (
+					<Button
+						size="xs"
+						variant="outline"
+						className="text-destructive"
+						onClick={() => {
+							const lm = info.on_landmark as OnLandmark;
+							askConfirm({
+								title: "Normal map",
+								text: `Make this ${lm.title} a normal map? (Kept in the atlas: Layers > Removed shows it.)`,
+								yes: "Normal map",
+								danger: true,
+								onYes: () => void app.setLandmark(lm.x, lm.y, "").catch(showError),
+							});
+						}}
+					>
+						<CastleIcon />
+						Not a {info.on_landmark.landmark_kind}
 					</Button>
 				)}
 			</div>

@@ -1,5 +1,6 @@
-import { screen, waitFor } from "@testing-library/react";
+import { act, screen, waitFor } from "@testing-library/react";
 import { afterEach, describe, expect, it } from "vitest";
+import { setAtlasGen } from "@/api/Http";
 import { TopBar } from "@/components/layout/TopBar";
 import { useAppStore } from "@/store/AppStore";
 import { atlases, state } from "@/test/Fixtures";
@@ -72,5 +73,31 @@ describe("TopBar", () => {
 		await user.click(screen.getByRole("button", { name: "File" }));
 		await user.click(await screen.findByRole("menuitem", { name: "Quit the app" }));
 		expect(useAppStore.getState().confirm?.title).toBe("Quit");
+	});
+
+	it("Fix seams during adding asks to queue it, only for the atlas it was asked for", async () => {
+		// (CodeRabbit: the box and its Queue acted on an atlas opened meanwhile)
+		setAtlasGen(1);
+		let switchFirst = false;
+		const { user, calls } = renderWithApp(<TopBar />, {
+			"GET /api/atlases": atlases,
+			"POST /api/seams": (b: unknown) => {
+				if (switchFirst) setAtlasGen(2);
+				return (b as { after_adding: boolean }).after_adding
+					? { ok: true, adding: false, queued: true }
+					: { ok: false, adding: true, queued: false };
+			},
+		});
+		await user.click(screen.getByRole("button", { name: "File" }));
+		await user.click(await screen.findByRole("menuitem", { name: "Fix seams (clean map)" }));
+		await waitFor(() => expect(useAppStore.getState().confirm?.yes).toBe("Queue"));
+		useAppStore.getState().confirm?.onYes();
+		await waitFor(() => expect(calls.filter((c) => c.path === "/api/seams")).toHaveLength(2));
+		act(() => useAppStore.getState().askConfirm(null));
+		switchFirst = true; // another atlas opens while it is asked
+		await user.click(screen.getByRole("button", { name: "File" }));
+		await user.click(await screen.findByRole("menuitem", { name: "Fix seams (clean map)" }));
+		await waitFor(() => expect(calls.filter((c) => c.path === "/api/seams")).toHaveLength(3));
+		expect(useAppStore.getState().confirm).toBeNull(); // (no box for the atlas before)
 	});
 });
