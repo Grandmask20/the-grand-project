@@ -212,4 +212,6 @@ Each larger part keeps its tunable numbers in its own `constants.py`.
 
 The code is released under the MIT License (see `LICENSE`).
 
+The in-app update (the version at the top right: check for an update, Update now) is modelled on the update system of [Path of Building Community](https://github.com/PathOfBuildingCommunity/PathOfBuilding) ([PoE 2 version](https://github.com/PathOfBuildingCommunity/PathOfBuilding-PoE2)): a release's list of its files with their hashes, compared with the newest release's; the files that differ checked against it and staged; and put in place when the program restarts, by a step of its own. Thanks to its contributors.
+
 Path of Exile 2 is made by Grinding Gear Games. The badge icons, tower templates and badge crops in `references/` come from the game and remain the property of Grinding Gear Games. This is an unofficial fan tool, not affiliated with or endorsed by them.
