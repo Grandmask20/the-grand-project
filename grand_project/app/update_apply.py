@@ -96,6 +96,8 @@ def apply(plan: dict) -> dict:
                 raise RuntimeError(f"{rel}: {e}") from e  # (which file, in the log)
         if plan.get("pip"):
             before = freeze(plan["python"])
+            if before is None:  # (no way to put the packages back after a failed install: none is tried, CodeRabbit)
+                raise RuntimeError("the installed Python packages couldn't be listed, so none were installed")
             log = backup.parent / "pip.log"
             try:
                 r = subprocess.run(
@@ -128,12 +130,14 @@ def apply(plan: dict) -> dict:
     return out
 
 
-def freeze(python: str) -> dict[str, str]:
-    """The installed packages and their versions ({name: version}; {} when pip can't say)."""
+def freeze(python: str) -> dict[str, str] | None:
+    """The installed packages and their versions ({name: version}), or None when pip can't say."""
     try:
         r = subprocess.run([python, "-m", "pip", "freeze"], capture_output=True, text=True, timeout=PIP_WAIT)
     except (OSError, subprocess.SubprocessError):
-        return {}
+        return None
+    if r.returncode:
+        return None
     out = {}
     for line in r.stdout.splitlines():
         name, sep, ver = line.partition("==")
@@ -144,7 +148,7 @@ def freeze(python: str) -> dict[str, str]:
 
 def put_back_packages(python: str, before: dict[str, str], log: Path) -> None:
     """Install again, at their versions before, the packages a failed install changed (its log gets the outcome)."""
-    after = freeze(python)
+    after = freeze(python) or {}
     changed = [f"{n}=={v}" for n, v in before.items() if after.get(n) != v]
     if not changed:
         return

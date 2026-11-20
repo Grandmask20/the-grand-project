@@ -174,6 +174,9 @@ class UpdatesMixin:
                 "size": 0,
                 "just": None,
                 "seq": 0,
+                # when this run of the app started: the numbers start again with each run, so the page orders
+                # statuses by (run, seq) (a restarted app's were dropped as older than the last run's: CodeRabbit)
+                "run": round(time.time(), 3),
             }
             self._update_lock = threading.Lock()
         return self._update
@@ -183,7 +186,7 @@ class UpdatesMixin:
 
         Returns:
             {"channel", "release", "program", "can", "why", "auto", "checked", "next", "state", "latest",
-            "available", "error", "got", "size", "just", "seq"}; state is idle / checking / downloading /
+            "available", "error", "got", "size", "just", "seq", "run"}; state is idle / checking / downloading /
             restarting /
             error; next: when GitHub may be asked again (s since 1970; 0: now), a time and not a count of seconds,
             so a page that opens the box later counts down to the same moment (user: it started again at 60).
@@ -214,6 +217,7 @@ class UpdatesMixin:
             # goes up with each change: the page keeps the newest it has (a button's answer could land after the
             # event of what followed, and showed "Checking…" for good: CodeRabbit)
             "seq": seq,
+            "run": u["run"],
         }
 
     def _next_check(self) -> float:

@@ -1,7 +1,7 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useRef, useState } from "react";
 import { AppQueryKeys } from "@/api/AppQueryKeys";
-import { keepUpdate } from "@/api/EventStream";
+import { keepUpdate, newerUpdate } from "@/api/EventStream";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Label } from "@/components/ui/label";
@@ -32,7 +32,12 @@ export function UpdateButton() {
 	const app = useAppClient();
 	const queryClient = useQueryClient();
 	const showError = useAppStore((s) => s.showError);
-	const u = useQuery({ queryKey: AppQueryKeys.update, queryFn: () => app.getUpdate() }).data;
+	// a status asked for is kept only when newer than the one the page has (an event may have come meanwhile)
+	const u = useQuery({
+		queryKey: AppQueryKeys.update,
+		queryFn: async () =>
+			newerUpdate(queryClient.getQueryData<UpdateStatus>(AppQueryKeys.update), await app.getUpdate()),
+	}).data;
 	const version = useAppState().data?.version;
 	const [open, setOpen] = useState(false);
 

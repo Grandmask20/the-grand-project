@@ -31,10 +31,17 @@ export type EventKind = (typeof EVENT_KINDS)[number];
 
 const LOG_KEEP = 2000;
 
-/** Keep an update status unless the page has a newer one (its number, "seq", goes up with each change: a button's
- * answer could land after the event of what followed it, CodeRabbit). */
+/** The newer of two update statuses, by (run, seq): the app's run (when it started) first, its number for each
+ * change within the run next (a button's answer could land after the event of what followed it; a restarted app's
+ * numbers start again at 0: CodeRabbit). */
+export function newerUpdate(old: UpdateStatus | undefined, r: UpdateStatus): UpdateStatus {
+	if (!old || r.run > old.run || (r.run === old.run && r.seq >= old.seq)) return r;
+	return old;
+}
+
+/** Keep an update status unless the page has a newer one (newerUpdate). */
 export function keepUpdate(queryClient: QueryClient, r: UpdateStatus): void {
-	queryClient.setQueryData<UpdateStatus>(AppQueryKeys.update, (old) => (old && old.seq > r.seq ? old : r));
+	queryClient.setQueryData<UpdateStatus>(AppQueryKeys.update, (old) => newerUpdate(old, r));
 }
 
 /** Applies one event: small ones patch the cached state, the rest refetch what they change (batched). */
@@ -111,8 +118,8 @@ export function createEventHandler(queryClient: QueryClient) {
 				refresh("atlases");
 				break;
 			case "update":
-				// a status request under way may answer older: dropped (CodeRabbit), and the newest kept
-				void queryClient.cancelQueries({ queryKey: AppQueryKeys.update });
+				// the newest kept; a status request under way isn't cancelled (after a reconnect it is the one with the
+				// restarted app's status): its answer goes through the same comparison (useUpdateStatus)
 				keepUpdate(queryClient, data as UpdateStatus);
 				break;
 			case "lists":

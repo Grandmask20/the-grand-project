@@ -2,7 +2,7 @@
 
 Builds one big map of your Path of Exile 2 atlas from your screenshots. Named after the in-game tablet, *The Grand Project*. It finds maps, paths, icons, towers and cities, and lets you search, bookmark and route through them.
 
-The app runs in your web browser: starting it opens a page served by the program on this computer (`http://127.0.0.1:8765`). Nothing leaves your computer: the only thing it asks the internet is GitHub's latest release, once a day when it starts (to say an update is out; it can be turned off) and when you ask in the update box (click the version, then **Check now**).
+The app runs in your web browser: starting it opens a page served by the program on this computer (`http://127.0.0.1:8765`). Nothing leaves your computer: it reaches the internet only for updates: it asks GitHub for the latest release once a day when it starts (to say an update is out; it can be turned off) and when you ask in the update box (click the version, then **Check now**), and **Update now** downloads that release from GitHub (and, when it needs other Python packages, installs them with pip).
 
 ## Run it
 

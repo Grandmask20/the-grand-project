@@ -1,6 +1,6 @@
 import { screen, waitFor } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { keepUpdate } from "@/api/EventStream";
+import { keepUpdate, newerUpdate } from "@/api/EventStream";
 import { pillOf, UpdateButton } from "@/components/layout/UpdateButton";
 import type { UpdateStatus } from "@/domain/app/Update";
 import { renderWithApp, resetStore } from "@/test/RenderWithApp";
@@ -15,6 +15,7 @@ const base: UpdateStatus = {
 	checked: null,
 	next: 0,
 	seq: 1,
+	run: 100,
 	state: "idle",
 	latest: null,
 	available: false,
@@ -109,5 +110,12 @@ describe("UpdateButton", () => {
 		keepUpdate(queryClient, { ...base, seq: 7, latest: latest("1.3") }); // (the event: done, up to date)
 		keepUpdate(queryClient, { ...base, seq: 6, state: "checking" }); // (the button's answer, older)
 		expect(await screen.findByRole("button", { name: /Up to date/i })).toBeInTheDocument();
+	});
+
+	it("a restarted app's status is newer, whatever its number (it starts again at 0: CodeRabbit)", () => {
+		const old = { ...base, run: 100, seq: 40, state: "restarting" as const };
+		expect(newerUpdate(old, { ...base, run: 200, seq: 1 }).run).toBe(200);
+		expect(newerUpdate(old, { ...base, run: 100, seq: 39 })).toBe(old);
+		expect(newerUpdate(undefined, old)).toBe(old);
 	});
 });

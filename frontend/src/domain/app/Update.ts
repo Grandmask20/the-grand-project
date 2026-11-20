@@ -25,6 +25,8 @@ export interface UpdateStatus {
 	size: number;
 	/** What the last update did, when the app started after one. */
 	just: { ok: boolean; from?: string; to?: string; error?: string } | null;
-	/** Goes up with each change: the newest status wins over one that comes later but is older. */
+	/** Goes up with each change, within one run of the app (`run`: when it started): the newest status, by (run,
+	 * seq), wins over one that comes later but is older. */
 	seq: number;
+	run: number;
 }

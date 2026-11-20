@@ -126,3 +126,15 @@ def test_the_app_starts_again_even_when_the_result_can_t_be_written(tmp_path, mo
     f.write_text(json.dumps(plan), encoding="utf-8")
     ua.main(["update_apply.py", str(f)])
     assert started == [1]
+
+
+def test_no_install_without_a_list_of_the_packages_to_put_back(tmp_path, monkeypatch):
+    # (pip freeze failed: an install that then failed couldn't be undone, CodeRabbit)
+    root, plan = program(tmp_path)
+    plan["pip"] = True
+    monkeypatch.setattr(ua, "freeze", lambda python: None)
+    ran = []
+    monkeypatch.setattr(ua.subprocess, "run", lambda args, **kw: ran.append(args))
+    out = ua.apply(plan)
+    assert not out["ok"] and "couldn't be listed" in out["error"] and ran == []
+    assert (root / "grand_project" / "a.py").read_text(encoding="utf-8") == "old a\n"

@@ -212,7 +212,7 @@ def test_a_status_carries_a_number_that_goes_up_with_each_change(installed):
     s, _, _ = installed
     a = s.update_status()["seq"]
     s.check_update(background=False, fetch=github("1.4"))
-    assert s.update_status()["seq"] > a
+    assert s.update_status()["seq"] > a and s.update_status()["run"] > 0
 
 
 def test_an_answer_cut_off_ends_the_check_as_an_error(installed):
