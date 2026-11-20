@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import os
+
 from grand_project import __version__, core
 
 VERSION = __version__  # one place: grand_project/__init__.py
@@ -128,6 +130,17 @@ FOLDER_PATHS_WAIT = 5.0  # s: at most this long for the Windows shell to say whi
 FOLDER_FRONT_POLL = 0.05  # s: how often it is looked for (it shows where Explorer puts it until found and moved)
 ROUTE_POINTS_MAX = 20_000  # a saved route's lines and maps: at most this many points (across a 14k-map atlas ~2k)
 ROUTE_LEGS_MAX = 200  # a saved route: its main leg and at most this many less one branches
+
+# the in-app update (app/updater.py): GitHub's latest release of the player build
+UPDATE_RELEASES_URL = os.environ.get(  # (another address only for trying an update without GitHub: tests)
+    "GRAND_PROJECT_UPDATE_URL", "https://api.github.com/repos/Grandmask20/the-grand-project/releases/latest"
+)
+UPDATE_AGENT = f"TheGrandProject/{VERSION}"  # the User-Agent GitHub asks for (the app's name only, nothing of yours)
+UPDATE_CHECK_EVERY = 24 * 3600.0  # s: the check at start runs at most once a day (user, as Path of Building)
+UPDATE_HTTP_WAIT = 30.0  # s: GitHub's answer / each part of the download, at most
+UPDATE_CHUNK = 256 * 1024  # bytes read at a time while downloading
+UPDATE_PROGRESS_EVERY = 0.25  # s: the download's progress goes to the page at most this often
+UPDATE_RESULT = "update_result.json"  # in user_data: what the last update did (update_apply.py writes it)
 
 
 RECENT_KEEP = 200  # screenshots listed under Recently added (one line each, newest first)

@@ -69,6 +69,7 @@ GEN_FREE = (
     "/api/quit",
     "/api/questions/",
     "/api/replay/close",
+    "/api/update",
 )
 
 
@@ -428,6 +429,34 @@ class Handler(BaseHTTPRequestHandler):
             # one line each (a line break in a name made two), not too long
             self.S.events.log(" ".join(str(line).split())[:500])  # (the Log tab and the log file: user)
         self._json({"ok": True})
+
+    # ------------------------------------------------------------------ the in-app update (app/updater.py)
+    @route("GET", "/api/update")
+    def get_update(self, q) -> None:
+        """The update's state: this copy's release, the latest one, a download going on."""
+        self._json(self.S.update_status())
+
+    @route("POST", "/api/update/check")
+    def post_update_check(self, q) -> None:
+        """Ask GitHub for the latest release (the answer comes as an "update" event)."""
+        self.S.check_update()
+        self._json(self.S.update_status())
+
+    @route("POST", "/api/update/install")
+    def post_update_install(self, q) -> None:
+        """Download the latest release and hand over to the helper that puts it in place (the app restarts)."""
+        try:
+            port = str(self.server.server_address[1])  # (the restart comes back on it: the page reconnects)
+            self.S.install_update(quit_app=self.server.quit, restart_args=["--port", port])  # type: ignore[attr-defined]
+        except ValueError as e:
+            raise ApiError(str(e), 409) from e
+        self._json(self.S.update_status())
+
+    @route("POST", "/api/update/auto")
+    def post_update_auto(self, q) -> None:
+        """Check at start (once a day), or only when asked."""
+        self.S.set_update_auto(bool(self._body().get("on")))
+        self._json(self.S.update_status())
 
     @route("POST", "/api/quit")
     def post_quit(self, q) -> None:
@@ -1349,6 +1378,7 @@ def main(argv: list[str] | None = None) -> int:
             _say("Another copy of the app is starting or closing and doesn't answer: start it again in a moment.")
             return 1
     session = AtlasSession()
+    session.after_update()  # (an update just put in place: said in the log)
     try:
         server = AppServer(session, port=args.port)
     except OSError as e:
@@ -1377,6 +1407,7 @@ def main(argv: list[str] | None = None) -> int:
             session.events.publish("atlas", session.atlas_summary())
 
     threading.Thread(target=first_atlas, daemon=True).start()
+    session.check_update_at_start()  # (the player release, once a day, on a thread of its own)
     try:
         server.serve_forever(poll_interval=0.25)
     except KeyboardInterrupt:

@@ -23,6 +23,7 @@ export const EVENT_KINDS = [
 	"bookmarks",
 	"debug",
 	"show_tab",
+	"update",
 ] as const;
 
 export type EventKind = (typeof EVENT_KINDS)[number];
@@ -101,6 +102,9 @@ export function createEventHandler(queryClient: QueryClient) {
 				break;
 			case "atlases":
 				refresh("atlases");
+				break;
+			case "update":
+				queryClient.setQueryData(AppQueryKeys.update, data);
 				break;
 			case "lists":
 				refresh("state", "recent");
