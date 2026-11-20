@@ -387,17 +387,19 @@ class Atlas:
         moved = apply(M, frame.pts)
         atlas_pts = self.points()
         mapping: dict[int, int] = {}
-        # greedy one-to-one node merge, closest pairs first
-        if len(atlas_pts):
-            d = np.linalg.norm(moved[:, None, :] - atlas_pts[None, :, :], axis=2)
-            order = np.dstack(np.unravel_index(np.argsort(d, axis=None), d.shape))[0]
+        # greedy one-to-one node merge, closest pairs first; only the pairs within MERGE_TOL are sorted (every pair,
+        # screenshot nodes x atlas nodes, was measured and sorted: slow on a big atlas, GPT audit)
+        if len(atlas_pts) and len(moved):
+            from scipy.spatial import cKDTree
+
+            near = cKDTree(atlas_pts).query_ball_point(moved, MERGE_TOL)
+            pairs = sorted((float(np.hypot(*(moved[i] - atlas_pts[j]))), i, j) for i, js in enumerate(near) for j in js)
             used_a = set()
-            for i, j in order:
-                if d[i, j] > MERGE_TOL:
-                    break
-                if int(i) in mapping or int(j) in used_a:
+            for _d, i, j in pairs:
+                if i in mapping or j in used_a:
                     continue
-                mapping[int(i)], _ = int(j), used_a.add(int(j))
+                mapping[i] = j
+                used_a.add(j)
         new_nodes = 0
         on_hud = getattr(frame, "on_hud", np.zeros(len(moved), bool))
         hud_skipped = 0
