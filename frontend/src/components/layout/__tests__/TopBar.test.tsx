@@ -24,7 +24,7 @@ describe("TopBar", () => {
 	it("shows the atlas's numbers and the version", () => {
 		renderWithApp(<TopBar />, { "GET /api/atlases": atlases });
 		expect(screen.getByText(/80 maps · 9 icons · 4 landmarks · 4\s+screenshots/)).toBeInTheDocument();
-		expect(screen.getByText("v1.17")).toBeInTheDocument();
+		expect(screen.getByRole("button", { name: /Check update.*1\.17/i })).toBeInTheDocument(); // (the update pill)
 		expect(screen.getByRole("button", { name: /Atlas: default/ })).toBeInTheDocument();
 	});
 

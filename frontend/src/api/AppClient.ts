@@ -5,6 +5,7 @@ import type { AppState } from "@/domain/app/AppState";
 import type { Meta, ReplaySettings } from "@/domain/app/Meta";
 import type { Parts } from "@/domain/app/Parts";
 import type { SettingsChange, UiSettings } from "@/domain/app/UiSettings";
+import type { UpdateStatus } from "@/domain/app/Update";
 import type { AtlasCard } from "@/domain/atlas/AtlasCard";
 import type { AtlasSummary } from "@/domain/atlas/AtlasSummary";
 import type { FolderOpened } from "@/domain/atlas/FolderOpened";
@@ -32,6 +33,10 @@ export function createAppClient(http: Http) {
 		getState: () => http.get<AppState>("/api/state"),
 		getParts: () => http.get<Parts>("/api/parts"),
 		getMeta: () => http.get<Meta>("/api/meta"),
+		getUpdate: () => http.get<UpdateStatus>("/api/update"),
+		checkUpdate: () => http.send<UpdateStatus>("POST", "/api/update/check", {}),
+		installUpdate: () => http.send<UpdateStatus>("POST", "/api/update/install", {}),
+		setUpdateAuto: (on: boolean) => http.send<UpdateStatus>("POST", "/api/update/auto", { on }),
 		getSettings: () => http.get<UiSettings>("/api/settings"),
 		updateSettings: (change: SettingsChange) => http.send<UiSettings>("PATCH", "/api/settings", change),
 		answer: (id: number, yes: boolean) => http.send<Ok>("POST", `/api/questions/${id}`, { yes }),

@@ -1,7 +1,10 @@
 """Build the player release (GitHub main) from this working copy (GitHub develop).
 
-    py -m tools.make_release            build into ../1.0 on a new branch release/v<version> from origin/main,
-                                  commit and push it; then open a pull request into main (main is protected)
+    py -m tools.make_release --release 1.3
+                                  build release 1.3 into ../1.0 on a new branch release/v<version> from
+                                  origin/main, commit and push it; then open a pull request into main (main is
+                                  protected). The release number is the GitHub release's (tag v1.3): the app's
+                                  in-app update compares it (manifest.json)
     py -m tools.make_release --check    only list what the release would contain
     py -m tools.make_release --notes    only print the release notes (also written next to ../1.0 on a release)
     py -m tools.make_release --db       first refresh references/atlas_references.sqlite3 from the private database
@@ -9,11 +12,13 @@
 
 The player build has the program, the reference files, the launchers, LICENSE and README, the app's page built
 (frontend/dist: players need no Node.js) and only the model safety test: no dev tests, tools, test data, Makefile,
-page sources or debug tools (channel.txt = "release").
+page sources or debug tools (channel.txt = "release"), and manifest.json: the release number and a hash of each of
+its files, which the in-app update reads (grand_project/release_manifest.py).
 """
 
 from __future__ import annotations
 
+import json
 import re
 import shutil
 import sqlite3
@@ -182,10 +187,34 @@ def build() -> list[str]:
     return sorted(files)
 
 
+def release_number() -> str:
+    """The release number given with --release ("1.3"), checked."""
+    from grand_project import release_manifest as rm
+
+    if "--release" not in sys.argv or sys.argv.index("--release") + 1 >= len(sys.argv):
+        raise SystemExit("give the release number: py -m tools.make_release --release 1.3 (the GitHub tag v1.3)")
+    r = sys.argv[sys.argv.index("--release") + 1].lstrip("vV")
+    if not rm.release_key(r):
+        raise SystemExit(f"not a release number: {r!r} (like 1.3)")
+    return r
+
+
+def write_manifest(release: str, files: list[str]) -> None:
+    """manifest.json in the build: the release, the program version, a hash of each of its files (the in-app
+    update's list: only these are the program's)."""
+    from grand_project import release_manifest as rm
+
+    listed = sorted(set(files) | {"README.md", ".gitignore", ".gitattributes", "channel.txt"})
+    m = rm.make(TARGET, listed, release, version())
+    (TARGET / rm.MANIFEST).write_text(json.dumps(m, indent=1) + "\n", encoding="utf-8")
+
+
 def main() -> int:
     if "--notes" in sys.argv:
         print(release_notes())
         return 0
+    # the release number first: a run without it stops before building anything
+    release = release_number() if "--check" not in sys.argv else ""
     if "--db" in sys.argv:
         refresh_db()
     if "--check" not in sys.argv:
@@ -216,6 +245,7 @@ def main() -> int:
     (TARGET / "channel.txt").write_text("release\n", encoding="utf-8")
     # no atlases/ in the release: the app makes atlases/default on first start. Shipped (for its .gitkeep), copying
     # an update over with macOS Finder's Replace swapped the player's whole atlases folder for it (CodeRabbit)
+    write_manifest(release, files)
     (TARGET / ".github" / "workflows").mkdir(parents=True, exist_ok=True)
     (TARGET / ".github" / "workflows" / "safety.yml").write_text(CI, encoding="utf-8")
     for leftover in (TARGET / "atlas_test_data", TARGET / "tools", TARGET / ".lfsconfig"):

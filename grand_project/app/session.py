@@ -45,6 +45,7 @@ from .parts import Parts
 from .query import QueryMixin
 from .replay_data import ReplayMixin
 from .settings import load_settings, save_settings
+from .updater import UpdatesMixin
 from .watch import WatchMixin
 
 LOG = atlas_log.get("app")
@@ -88,6 +89,7 @@ class AtlasSession(
     QueryMixin,
     DebugMixin,
     ReplayMixin,
+    UpdatesMixin,
 ):
     """The open atlas and its background work (see the module docstring)."""
 

@@ -18,6 +18,7 @@ import { useAppState } from "@/hooks/app/UseAppState";
 import { useAtlasActions } from "@/hooks/atlas/UseAtlasActions";
 import { useAtlases } from "@/hooks/atlas/UseAtlases";
 import { useAppStoreCalm } from "@/store/AppStore";
+import { UpdateButton } from "./UpdateButton";
 
 /** The File and Atlas menus, and the buttons used most (undo, city biome lasso, replay). */
 export function TopBar() {
@@ -206,7 +207,8 @@ export function TopBar() {
 					screenshots
 				</span>
 			)}
-			<span className="text-xs text-muted-foreground">v{state?.version}</span>
+			{/* the version, and whether it is the latest (user's mockup: as Path of Building's update corner) */}
+			<UpdateButton />
 		</header>
 	);
 }

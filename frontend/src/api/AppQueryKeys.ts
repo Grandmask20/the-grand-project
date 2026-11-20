@@ -18,6 +18,7 @@ export const AppQueryKeys = {
 	heat: (upto: number | undefined) => ["heat", upto ?? -1] as const,
 	fog: ["fog"] as const,
 	debug: ["debug"] as const,
+	update: ["update"] as const,
 	/** What changes when the atlas or its model changes. */
 	model: [
 		["types"],

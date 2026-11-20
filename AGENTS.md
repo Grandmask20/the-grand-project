@@ -104,7 +104,10 @@ module gets its own test file (one per module or class under test).
 ## Git workflow
 
 - `develop` is the default branch; `main` is protected and only updated from develop by `tools/make_release.py`
-  (player release, no debug options or test files) through a pull request.
+  (player release, no debug options or test files) through a pull request: `py -m tools.make_release --release 1.x`,
+  the GitHub release's number (tag `v1.x`). It writes `manifest.json` (the release and a hash of each file,
+  `grand_project/release_manifest.py`): the in-app update (`app/updater.py`, `app/update_apply.py`) compares it with
+  the latest GitHub release's, and changes only the files listed in it.
 - **Never push straight to develop.** Work on a branch and open a pull request to `develop`, so changes can be
   reviewed first.
 - Don't commit test outputs, local data (`local_paths.json`, `user_data/`, atlases) or large binaries outside LFS.
