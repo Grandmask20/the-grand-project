@@ -17,7 +17,8 @@ type Tool = { kind: MapMode["kind"]; label: string; title: string; Icon: LucideI
 /**
  * What a click on the map does, in the top bar (PO: the map tools were a big dock over the map): select, a route, a
  * bookmark, your position, the biome of maps, a screenshot placed by hand. The tool on is lit; clicked again, or
- * Select, ends it. None while the timelapse is open (it takes the map).
+ * Select, ends it. None while the timelapse is open (it takes the map). A window under 1280 px wide shows their icons
+ * only (user: the top bar ran off the window, Replay and the update pill out of sight).
  */
 export function MapTools() {
 	const state = useAppState().data;
@@ -82,6 +83,7 @@ export function MapTools() {
 					<button
 						key={t.kind}
 						type="button"
+						aria-label={t.label}
 						title={t.title}
 						aria-pressed={on}
 						disabled={t.kind !== "normal" && (!open || replay)}
@@ -92,7 +94,7 @@ export function MapTools() {
 						)}
 					>
 						<t.Icon className="size-4" aria-hidden />
-						{t.label}
+						<span className="hidden xl:inline">{t.label}</span>
 					</button>
 				);
 			})}

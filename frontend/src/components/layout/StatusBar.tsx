@@ -25,7 +25,8 @@ export function StatusBar({ connected }: { connected: boolean }) {
 			<span className="flex-1" />
 			{state?.busy && <span className="text-gold">working…</span>}
 			{atlas && (
-				<span className="truncate" title={atlas.path}>
+				// (a narrow window: the numbers go first, the buttons stay)
+				<span className="hidden min-w-0 truncate lg:inline" title={atlas.path}>
 					{atlas.maps} maps · {atlas.icons} icons · {atlas.landmarks} landmarks · {atlas.shots} screenshots
 				</span>
 			)}
