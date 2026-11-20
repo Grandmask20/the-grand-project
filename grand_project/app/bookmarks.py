@@ -20,6 +20,7 @@ import time
 
 from grand_project import logs as atlas_log
 
+from .atlaslock import atlas_edit
 from .constants import BOOKMARK_GROUP_SETS, CATEGORIES, ROUTE_LEGS_MAX, ROUTE_POINTS_MAX, SAME_SPOT
 from .events import StaleAtlas
 from .icons import icon_label, icon_name
@@ -292,6 +293,7 @@ class BookmarksMixin:
             self.events.log(f"bookmarked {name}")
         return i
 
+    @atlas_edit
     def bookmark_items(self, items: list[tuple[str, int]], group: str) -> tuple[int, int]:
         """Bookmark many map nodes / icons / landmarks into one group (Find > Bookmark all).
 
@@ -318,6 +320,7 @@ class BookmarksMixin:
         self.events.log(msg)
         return added, skipped
 
+    @atlas_edit
     def edit_bookmark(self, i: int, name: str, group: str, note: str) -> None:
         """Change a bookmark's name, group and note.
 
@@ -337,6 +340,7 @@ class BookmarksMixin:
         b.pop("category", None)
         self._bookmarks_changed()
 
+    @atlas_edit
     def set_bookmark_route(self, i: int, route: dict, gen: int | None = None) -> None:
         """Change a saved route's maps (Adjust route on it in Bookmarks).
 
@@ -365,6 +369,7 @@ class BookmarksMixin:
             + (f", {branches} branch{'es' if branches != 1 else ''}" if branches else "")
         )
 
+    @atlas_edit
     def delete_bookmarks(self, ids: list[int]) -> list[str]:
         """Delete bookmarks.
 
@@ -385,6 +390,7 @@ class BookmarksMixin:
             self._bookmarks_changed()
         return names
 
+    @atlas_edit
     def move_bookmarks(self, ids: list[int], group: str) -> None:
         """Move bookmarks to a group.
 
@@ -396,6 +402,7 @@ class BookmarksMixin:
             self._bookmark(i)["group"] = group.strip() or "Other"
         self._bookmarks_changed()
 
+    @atlas_edit
     def new_group(self, name: str) -> None:
         """Add an empty group (kept until the app closes unless a bookmark is put in it).
 
@@ -407,6 +414,7 @@ class BookmarksMixin:
             self.events.log(f"new bookmark group {name.strip()!r}")
             self.events.publish("bookmarks", None)
 
+    @atlas_edit
     def rename_group(self, old: str, new: str) -> None:
         """Rename a group.
 
@@ -431,6 +439,7 @@ class BookmarksMixin:
         self.events.log(f"bookmark group {old!r} renamed to {new!r}")
         self._bookmarks_changed()
 
+    @atlas_edit
     def delete_groups(self, names: list[str]) -> int:
         """Delete empty groups (a group with bookmarks goes when its last bookmark does).
 
@@ -455,6 +464,7 @@ class BookmarksMixin:
             self.events.publish("bookmarks", None)
         return len(gone)
 
+    @atlas_edit
     def fold_groups(self, names: list[str], folded: bool) -> None:
         """Fold groups shut in the Bookmarks tab, or open them (kept per atlas: user: Fold all was forgotten).
 
@@ -470,6 +480,7 @@ class BookmarksMixin:
         self.events.log(f"{'Folded' if folded else 'Opened'} bookmark group(s): {', '.join(sorted(set(names)))}")
         self.events.publish("bookmarks", None)
 
+    @atlas_edit
     def toggle_group(self, g: str) -> None:
         """Hide a group on the map, or show it again (kept per atlas in the settings).
 
@@ -485,6 +496,7 @@ class BookmarksMixin:
         self.events.log(f"bookmark group {g!r} {'hidden' if g in cur else 'shown'} on the map")
         self.events.publish("bookmarks", None)  # (drawn by the page: no tiles made again, user: it was slow)
 
+    @atlas_edit
     def toggle_bookmark(self, i: int) -> None:
         """Hide one bookmark on the map, or show it again; in a hidden group, the group is shown and only this
         bookmark of it.

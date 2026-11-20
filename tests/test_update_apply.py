@@ -64,7 +64,7 @@ def test_packages_that_fail_to_install_put_the_old_files_back(tmp_path, monkeypa
     monkeypatch.setattr(ua.subprocess, "run", fake_run)
     monkeypatch.setattr(ua, "freeze", lambda python: {})
     out = ua.apply(plan)
-    assert ran and ran[0][1:4] == ["-m", "pip", "install"]
+    assert any(a[1:4] == ["-m", "pip", "install"] and "-r" in a for a in ran)  # (after listing the versions)
     assert not out["ok"] and (root / "grand_project" / "a.py").read_text(encoding="utf-8") == "old a\n"
     assert "no network" in (tmp_path / "pip.log").read_text(encoding="utf-8")
 
@@ -103,7 +103,7 @@ def test_packages_a_failed_install_changed_are_put_back_at_their_versions(tmp_pa
     # (a half-done install left the old files on changed packages: CodeRabbit)
     root, plan = program(tmp_path)
     plan["pip"] = True
-    frozen = iter([{"numpy": "1.0", "scipy": "1.5"}, {"numpy": "2.0", "scipy": "1.5"}])
+    frozen = iter([{"numpy": "numpy==1.0", "scipy": "scipy==1.5"}, {"numpy": "numpy==2.0", "scipy": "scipy==1.5"}])
     monkeypatch.setattr(ua, "freeze", lambda python: next(frozen))
     ran = []
 
@@ -138,3 +138,110 @@ def test_no_install_without_a_list_of_the_packages_to_put_back(tmp_path, monkeyp
     out = ua.apply(plan)
     assert not out["ok"] and "couldn't be listed" in out["error"] and ran == []
     assert (root / "grand_project" / "a.py").read_text(encoding="utf-8") == "old a\n"
+
+
+def test_packages_a_failed_install_added_are_removed(tmp_path, monkeypatch):
+    # (GPT audit: only changed ones were put back, new ones stayed)
+    root, plan = program(tmp_path)
+    plan["pip"] = True
+    frozen = iter([{"numpy": "numpy==1.0"}, {"numpy": "numpy==1.0", "newpkg": "newpkg==0.1"}])
+    monkeypatch.setattr(ua, "freeze", lambda python: next(frozen))
+    ran = []
+
+    def fake_run(args, **kw):
+        ran.append(args)
+        return subprocess.CompletedProcess(args, 1 if "-r" in args else 0, "", "")
+
+    monkeypatch.setattr(ua.subprocess, "run", fake_run)
+    assert not ua.apply(plan)["ok"]
+    assert ran[-1][-3:] == ["uninstall", "-y", "newpkg"]
+    assert not any("install" in a and "numpy==1.0" in a for a in ran)  # (unchanged: not installed again)
+
+
+def test_a_package_from_a_file_or_url_is_known_and_put_back_as_it_was(tmp_path, monkeypatch):
+    # (CodeRabbit: only "==" lines were read, so one installed from a URL looked new and was uninstalled)
+    lines = "".join(
+        f"{line}{chr(10)}"
+        for line in (
+            "numpy==1.0",
+            "mylib @ file:///C:/wheels/mylib-1.0-py3-none-any.whl",
+            "-e git+https://x/y.git#egg=dev_tool",
+        )
+    )
+    monkeypatch.setattr(ua.subprocess, "run", lambda *a, **k: subprocess.CompletedProcess(a, 0, lines, ""))
+    got = ua.freeze("python")
+    assert got == {"numpy": "numpy==1.0", "mylib": "mylib @ file:///C:/wheels/mylib-1.0-py3-none-any.whl",
+                   "dev-tool": "-e git+https://x/y.git#egg=dev_tool"}  # fmt: skip
+    root, plan = program(tmp_path)
+    plan["pip"] = True
+    before = dict(got)
+    after = dict(got, mylib="mylib==2.0")  # (the failed install put an index one in its place)
+    frozen = iter([before, after])
+    monkeypatch.setattr(ua, "freeze", lambda python: next(frozen))
+    ran = []
+
+    def fake_run(args, **kw):
+        ran.append(args)
+        return subprocess.CompletedProcess(args, 1 if "-r" in args else 0, "", "")
+
+    monkeypatch.setattr(ua.subprocess, "run", fake_run)
+    assert not ua.apply(plan)["ok"]
+    put_back = [a for a in ran if "install" in a and "-r" not in a]
+    assert put_back[-1][-1] == "mylib @ file:///C:/wheels/mylib-1.0-py3-none-any.whl"  # (as it was installed)
+    assert not any("uninstall" in a for a in ran)  # (nothing new: nothing taken away)
+
+
+def test_package_names_are_read_whole_and_spelt_one_way(monkeypatch):
+    # (CodeRabbit: "#egg=name&subdirectory=src" went into the name; "demo.pkg" and "demo_pkg" were two packages)
+    lines = "".join(
+        f"{line}{chr(10)}"
+        for line in ("-e git+https://x/y.git#egg=dev_tool&subdirectory=src", "Demo.Pkg==1.0", "other__lib==2.0")
+    )
+    monkeypatch.setattr(ua.subprocess, "run", lambda *a, **k: subprocess.CompletedProcess(a, 0, lines, ""))
+    assert set(ua.freeze("python")) == {"dev-tool", "demo-pkg", "other-lib"}
+
+
+def test_a_folder_install_whose_version_changed_is_put_back_and_the_log_names_it_only(tmp_path, monkeypatch):
+    # (CodeRabbit: "pkg @ file:///src/pkg" reads the same for any version in it; the log got whole freeze lines,
+    # which can hold a Git token)
+    root, plan = program(tmp_path)
+    plan["pip"] = True
+    line = "mylib @ file:///C:/src/mylib"
+    secret = "-e git+https://user:token@host/repo.git#egg=private_tool"
+    frozen = iter([{"mylib": line, "private-tool": secret}, {"mylib": line, "private-tool": "private-tool==9"}])
+    monkeypatch.setattr(ua, "freeze", lambda python: next(frozen))
+    vers = iter([{"mylib": "1.0", "private-tool": "1.0"}, {"mylib": "2.0", "private-tool": "9"}])
+    monkeypatch.setattr(ua, "installed_versions", lambda python: next(vers))
+    ran = []
+
+    def fake_run(args, **kw):
+        ran.append(args)
+        return subprocess.CompletedProcess(args, 1 if "-r" in args else 0, "", "")
+
+    monkeypatch.setattr(ua.subprocess, "run", fake_run)
+    assert not ua.apply(plan)["ok"]
+    put_back = [a for a in ran if "install" in a and "-r" not in a][-1]
+    assert line in put_back  # (its version moved: put back too)
+    logs = list(tmp_path.rglob("pip.log"))
+    text = "".join(p.read_text(encoding="utf-8") for p in logs)
+    assert "token" not in text and "mylib" in text
+
+
+def test_a_rollback_that_times_out_never_logs_the_command(tmp_path, monkeypatch):
+    # (CodeRabbit: TimeoutExpired's text names the command, and a package's line in it can hold a Git token)
+    root, plan = program(tmp_path)
+    plan["pip"] = True
+    secret = "-e git+https://user:token@host/repo.git#egg=private_tool"
+    frozen = iter([{"private-tool": secret}, {"private-tool": "private-tool==9"}])
+    monkeypatch.setattr(ua, "freeze", lambda python: next(frozen))
+    monkeypatch.setattr(ua, "installed_versions", lambda python: {})
+
+    def fake_run(args, **kw):
+        if "-r" in args:
+            return subprocess.CompletedProcess(args, 1, "", "")
+        raise subprocess.TimeoutExpired(args, 5)
+
+    monkeypatch.setattr(ua.subprocess, "run", fake_run)
+    assert not ua.apply(plan)["ok"]
+    text = "".join(p.read_text(encoding="utf-8") for p in tmp_path.rglob("pip.log"))
+    assert "token" not in text and "pip took too long" in text

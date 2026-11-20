@@ -43,6 +43,7 @@ from .constants import (
     APP_STOP_PROBE,
     APP_URL_FILE,
     HELLO_APP,
+    STATE_TRIES,
     UPLOAD_MAX,
     VERSION,
 )
@@ -180,7 +181,9 @@ class Handler(BaseHTTPRequestHandler):
         self.send_response(status)
         self.send_header("Content-Type", ctype)
         self.send_header("Content-Length", str(len(body)))
-        self.send_header(GEN_HEADER, str(self.S.generation))
+        # the atlas the answer was made from when the handler knows it, else the open one (read again here, it could
+        # stamp one atlas's state with the next one's generation: GPT audit)
+        self.send_header(GEN_HEADER, str(self._resp_gen if self._resp_gen is not None else self.S.generation))
         if self.close_connection:
             self.send_header("Connection", "close")
         for k, v in (extra or {}).items():
@@ -258,6 +261,7 @@ class Handler(BaseHTTPRequestHandler):
             method: The HTTP method.
         """
         self._read_body = False  # per request (the handler lives as long as its keep-alive connection)
+        self._resp_gen = None  # the atlas an answer was made from (_send's header), when the handler knows it
         if not self._host_ok():
             self._json({"error": "wrong host"}, 403)
             return
@@ -287,13 +291,17 @@ class Handler(BaseHTTPRequestHandler):
         # handled refuses its change: CodeRabbit)
         self._req_gen = int(stale) if stale is not None and stale.isdigit() else self.S.generation
         q = parse_qs(url.query)
+        # a change is for its atlas: every edit it makes checks that atlas under the session lock, in the same step
+        # (AtlasLock; checked only here before, a switch in between got the edit: GPT audit)
+        changes = method not in ("GET", "HEAD") and not path.startswith(GEN_FREE)
         for m, rx, name in ROUTES:
             if m != ("GET" if method == "HEAD" else method):
                 continue
             hit = rx.match(path)
             if hit:
                 try:
-                    getattr(self, name)(q, **hit.groupdict())
+                    with self.S._lock.expect(self._req_gen) if changes else contextlib.nullcontext():
+                        getattr(self, name)(q, **hit.groupdict())
                 except ApiError as e:
                     self._json({"error": str(e)}, e.status)
                 except StaleAtlas:
@@ -356,10 +364,19 @@ class Handler(BaseHTTPRequestHandler):
     @route("GET", "/api/state")
     def get_state(self, q) -> None:
         """The app's state (atlas, versions, work, lists, questions, log)."""
-        st = self.S.state()
-        st["debug"] = bool(rc_paths.DEBUG)
-        st["settings"] = self.S.ui_settings()
-        st["map"] = self.S.map_info()
+        # all of it from one atlas: made again when another was opened while it was put together (the lock isn't
+        # taken: a job placing screenshots holds it for long), and stamped with that atlas (GPT audit)
+        for _ in range(STATE_TRIES):
+            gen = self.S.generation
+            st = self.S.state()
+            st["debug"] = bool(rc_paths.DEBUG)
+            st["settings"] = self.S.ui_settings()
+            st["map"] = self.S.map_info()
+            if self.S.generation == gen:
+                break
+        else:  # another atlas opened during every try: refused (the page asks again), never a mix (CodeRabbit)
+            raise StaleAtlas()
+        self._resp_gen = gen
         self._json(st)
 
     @route("GET", "/api/events")
@@ -425,9 +442,14 @@ class Handler(BaseHTTPRequestHandler):
         lines = self._body().get("lines", [])
         if not isinstance(lines, list):
             raise ValueError("lines must be a list")
-        for line in lines[:50]:
-            # one line each (a line break in a name made two), not too long
-            self.S.events.log(" ".join(str(line).split())[:500])  # (the Log tab and the log file: user)
+        # into the log of the atlas the request was made for, checked with no switch possible meanwhile (checked
+        # first and written later, a switch while the body was read put the lines in the next atlas's log:
+        # CodeRabbit); a request for another atlas is refused
+        with self.S._lock.steady():
+            scope = self.S.opened.scope
+            for line in lines[:50]:
+                # one line each (a line break in a name made two), not too long
+                self.S.events.log(" ".join(str(line).split())[:500], scope)  # (the Log tab and the log file: user)
         self._json({"ok": True})
 
     # ------------------------------------------------------------------ the in-app update (app/updater.py)
@@ -567,9 +589,10 @@ class Handler(BaseHTTPRequestHandler):
 
     @route("POST", "/api/seams")
     def post_seams(self, q) -> None:
-        """Start Fix seams."""
-        self.S.fix_seams()
-        self._json({"ok": True})
+        """Start Fix seams; while adding runs, {"adding": true} and not started (the page asks), or queued after
+        it with {"after_adding": true}."""
+        how = self.S.fix_seams(after_adding=bool(self._body().get("after_adding")))
+        self._json({"ok": how != "adding", "adding": how == "adding", "queued": how == "queued"})
 
     @route("DELETE", "/api/seams")
     def delete_seams(self, q) -> None:

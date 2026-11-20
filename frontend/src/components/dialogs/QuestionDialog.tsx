@@ -37,7 +37,7 @@ export function QuestionDialog() {
 		<Dialog open={!!q} onOpenChange={(open) => !open && answer(false)}>
 			<DialogContent overlay={false} showCloseButton={false} className="top-4 translate-y-0 sm:max-w-xl">
 				<DialogHeader>
-					<DialogTitle>Check this screenshot</DialogTitle>
+					<DialogTitle>{q?.labels?.title ?? "Check this screenshot"}</DialogTitle>
 					<DialogDescription className="whitespace-pre-wrap text-foreground">
 						{q?.question}
 						{q?.preview &&
@@ -48,10 +48,10 @@ export function QuestionDialog() {
 				</DialogHeader>
 				<DialogFooter>
 					<Button variant="outline" onClick={() => answer(false)}>
-						No
+						{q?.labels?.no ?? "No"}
 					</Button>
 					<Button onClick={() => answer(true)} autoFocus>
-						Yes
+						{q?.labels?.yes ?? "Yes"}
 					</Button>
 				</DialogFooter>
 			</DialogContent>

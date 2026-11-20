@@ -1,6 +1,7 @@
 import { useQueryClient } from "@tanstack/react-query";
 import { ClapperboardIcon, LassoIcon, MenuIcon, RouteIcon, Undo2Icon, XIcon } from "lucide-react";
 import { AppQueryKeys } from "@/api/AppQueryKeys";
+import { sameAtlas } from "@/api/Http";
 import tablet from "@/assets/tablet.png";
 import { Button } from "@/components/ui/button";
 import {
@@ -32,6 +33,28 @@ export function TopBar() {
 	const open = !!state?.atlas;
 	const busy = !!state?.busy;
 	const refresh = () => queryClient.invalidateQueries({ queryKey: AppQueryKeys.state });
+	// while adding runs it doesn't start: cancel, or queue it to start once adding is done (you)
+	// the box and its Queue are for the atlas Fix seams was asked for: another opened meanwhile, nothing is queued
+	// for it (the Queue went out with the new atlas's generation: CodeRabbit)
+	const fixSeams = () => {
+		const same = sameAtlas();
+		return app
+			.fixSeams()
+			.then((r) => {
+				if (!same()) return;
+				if (r.adding)
+					s.askConfirm({
+						title: "Fix seams",
+						text: "Adding is running. Fix seams can start once it is done (Stop fixing seams takes it off the queue).",
+						yes: "Queue",
+						onYes: () => {
+							if (same()) void app.fixSeams(true).then(refresh).catch(fail);
+						},
+					});
+				else void refresh();
+			})
+			.catch(fail);
+	};
 
 	const openReplay = async () => {
 		if (s.replay) {
@@ -96,7 +119,7 @@ export function TopBar() {
 					{state?.seams ? (
 						<DropdownMenuItem onSelect={() => void app.stopSeams().catch(fail)}>Stop fixing seams</DropdownMenuItem>
 					) : (
-						<DropdownMenuItem disabled={!open || !state?.atlas?.shots} onSelect={() => void app.fixSeams().catch(fail)}>
+						<DropdownMenuItem disabled={!open || !state?.atlas?.shots} onSelect={() => void fixSeams()}>
 							Fix seams (clean map)
 						</DropdownMenuItem>
 					)}

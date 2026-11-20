@@ -1,4 +1,4 @@
-# The Grand Project — v1.21
+# The Grand Project — v1.22
 
 Builds one big map of your Path of Exile 2 atlas from your screenshots. Named after the in-game tablet, *The Grand Project*. It finds maps, paths, icons, towers and cities, and lets you search, bookmark and route through them.
 
@@ -100,11 +100,11 @@ A screenshot that might be placed wrong is shown on the map, see-through and out
 - **Keys:** `+` / `-` zoom, `0` fit, arrows pan, Esc cancels what you were doing.
 - **Map buttons** (top right): zoom, compass, **⤢** fit the whole atlas, **3D** (tilted view with models of maps, towers, citadels, halls and strongholds), full screen.
 - **The side panel** has five tabs: Find, View, Bookmarks (with Route), Atlases (with Auto-add) and Log. A narrow panel shows their icons only.
+- **Layers** (at the bottom of the side panel, on every tab; it folds away to one line): Ground, Paths, Maps, Icons, Landmarks, Bookmarks, Names, Biomes, Recent, Removed, Routes (on, saved only, off) and Debug marks, plus 3D models while the map is tilted. Under them, the colour legend.
 - **View tab:**
   - **Background:** *Picture* (the stitched screenshots), *Vector* (flat land with the city / stronghold / ground biomes as areas) or *Off*.
-  - **Show on the map:** Ground, Paths, Maps, Icons, Landmarks, Bookmarks, Names, Biomes, Recent additions, Removed, 3D models, Routes (on, saved only, off) and Debug marks.
   - **Paths:** colour (click the square), width, style (solid / dashed / dotted), and *drawn by at least N%* of the screenshots that show both maps.
-  - **Maps:** colour, size and style (circles / squares / hidden).
+  - **Maps:** colour, size and style (circles / squares / map icons). To hide them, turn off **Maps** in Layers.
   - **City biomes and landmarks:** their colours.
   - **Colour by:** each screenshot's area by session, oldest to newest, or *times seen* (a heatmap), in a colour spread you pick.
   - **Reset styles** puts everything back.
@@ -120,10 +120,10 @@ A screenshot that might be placed wrong is shown on the map, see-through and out
 ## 4. Manage the atlas
 
 - **Bookmarks:**
-  - To add one: **Add bookmark** (top bar), then click the map. You can also right-click → *Add bookmark here…*, or use *Bookmark all results…* for a search.
+  - To add one: **Add bookmark** (Bookmarks tab), then click the map. You can also right-click → *Add bookmark here…*, or use *Bookmark all results…* for a search.
   - The **Bookmarks tab** has groups, notes, edit, move to group and delete. Click a bookmark to go to it; the eye column hides or shows a bookmark or group. Tick a group to pick all of it (an empty group ticked is deleted with *Delete*), or *Select all*.
   - On a bookmarked map, right-click or the Selected box has *Edit bookmark* and *Remove bookmark*.
-- **Fix landmarks:** right-click a map → *This map is a…* (City / Hall / Tower / …), or right-click a landmark → *Delete* / *Restore landmark*. Edits are kept when the atlas is rebuilt.
+- **Fix landmarks:** right-click a map → *This map is a…* (City / Hall / Tower / … or *Normal map*). A landmark standing on a map is that map: clicking either selects it, shown as the landmark (*Vaal city (map #12)*), and its Selected box has *Not a City* (or Hall, …) to make it a normal map again. A deleted landmark shows with **Removed** on in Layers: right-click it → *Restore landmark*. Edits are kept when the atlas is rebuilt.
 - **City type:** right-click a City → *City type* (Vaal / Faridun / Ezomyte / … or Automatic).
 - **Biomes:** click **Biome select** (top bar), circle the maps with the mouse, and pick a city type, a Breach stronghold, or *Not a biome*. Halls, Deadly maps and Cities inside the circle become that city.
 - **Several atlases:** with the **Atlas ▾** button you can:
@@ -139,7 +139,7 @@ A screenshot that might be placed wrong is shown on the map, see-through and out
 - **File menu:**
   - *New atlas*, *Open atlas*, *Open a screenshot folder*, *Save* (adding screenshots also saves).
   - *Re-check the whole atlas* runs the full clean-up pass again (a few minutes on a big atlas).
-  - *Fix seams (clean map)* rebuilds the map image with care: each map node comes whole from one screenshot with its icons, seams stay off paths and away from screenshot edges, and lit copies win over fogged ones. It takes several minutes on a big atlas and runs in the background.
+  - *Fix seams (clean map)* rebuilds the map image with care: each map node comes whole from one screenshot with its icons, seams stay off paths and away from screenshot edges, and lit copies win over fogged ones. It takes several minutes on a big atlas and runs in the background. While screenshots are being added it doesn't start: it asks to *Queue* it or cancel. A queued one starts once adding finishes; if adding failed (a screenshot couldn't be read, ...) it says why and asks: *Cancel* or *Fix seams anyway*. Screenshots added while it runs are added as usual. *Stop fixing seams* stops it, or takes a queued one off.
   - *Export map PNGs*.
   - *Close atlas*, *Quit the app*.
 

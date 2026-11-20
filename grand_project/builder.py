@@ -45,8 +45,8 @@ _STAMP: list[str] = []
 def detector_stamp() -> str:
     """Say which detector a cached detection came from.
 
-    The stamp covers the trained models and icon pictures in the detector database, plus the rim / barrel
-    reference files. A cache with another stamp is detected again (Re-check re-detects with the current
+    The stamp covers the trained models and icon pictures in the detector database (their content), plus the rim /
+    barrel reference files. A cache with another stamp is detected again (Re-check re-detects with the current
     detector: user). Worked out once per process.
 
     Returns:
@@ -60,8 +60,14 @@ def detector_stamp() -> str:
         h = hashlib.sha1()
         try:
             c = sqlite3.connect(f"file:{DB_PATH.as_posix()}?mode=ro", uri=True)
-            h.update(repr(sorted(c.execute("SELECT name, created FROM detector_models"))).encode())
-            h.update(repr(c.execute("SELECT COUNT(*), MAX(id) FROM badge_refs").fetchone()).encode())
+            # what the rows hold, not their names and counts: a model trained again under the same name and time,
+            # or an icon picture replaced in place, kept the stamp, so the old detections stayed (GPT audit)
+            for row in c.execute("SELECT name, info, blob FROM detector_models ORDER BY name"):
+                h.update(repr(row[:2]).encode())
+                h.update(row[2] or b"")
+            for row in c.execute("SELECT id, name, png FROM badge_refs ORDER BY id"):
+                h.update(repr(row[:2]).encode())
+                h.update(row[2] or b"")
             c.close()
         except Exception:  # no database: models load nothing either
             h.update(b"no database")
@@ -69,6 +75,32 @@ def detector_stamp() -> str:
             h.update(f.read_bytes() if f.exists() else b"-")
         _STAMP.append(h.hexdigest()[:12])
     return _STAMP[0]
+
+
+_DIGESTS: dict[tuple, str] = {}
+
+
+def file_digest(path: Path) -> str:
+    """Return a screenshot's sha256, worked out once per file as it is (path, size, time): checking whether one is
+    cached and then detecting it read and hashed every file twice (GPT audit).
+
+    Args:
+        path: The file.
+
+    Returns:
+        Its sha256 in hex.
+    """
+    from grand_project.detect.constants import DETECT_DIGEST_MEMO
+
+    st = path.stat()
+    # the file itself too (device, inode, change time): a replacement keeping the size and time got the old hash
+    # (CodeRabbit)
+    key = (str(path.resolve()), st.st_size, st.st_mtime_ns, st.st_ctime_ns, st.st_dev, st.st_ino)
+    if key not in _DIGESTS:
+        if len(_DIGESTS) > DETECT_DIGEST_MEMO:  # (a long session over many atlases)
+            _DIGESTS.clear()
+        _DIGESTS[key] = hashlib.sha256(path.read_bytes()).hexdigest()
+    return _DIGESTS[key]
 
 
 def _fresh(cache: Path) -> dict | None:
@@ -106,7 +138,7 @@ def extract_frame(image_path: Path, cache_dir: Path) -> core.Frame:
 
     from grand_project import detect as atlas_detect
 
-    digest = hashlib.sha256(image_path.read_bytes()).hexdigest()
+    digest = file_digest(image_path)
     cache = cache_dir / f"{digest[:16]}_{atlas_detect.DETECTOR_ID}.json"
     cached = _fresh(cache)
     if cached is not None:  # a cut-off cache (crash mid-write) or one from an older detector is detected again
@@ -187,7 +219,7 @@ def is_cached(image_path: Path, cache_dir: Path) -> bool:
     """
     from grand_project import detect as atlas_detect
 
-    digest = hashlib.sha256(image_path.read_bytes()).hexdigest()
+    digest = file_digest(image_path)
     return _fresh(cache_dir / f"{digest[:16]}_{atlas_detect.DETECTOR_ID}.json") is not None
 
 

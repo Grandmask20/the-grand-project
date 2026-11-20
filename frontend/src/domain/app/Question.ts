@@ -13,4 +13,6 @@ export interface Question {
 	id: number;
 	question: string;
 	preview: Preview | null;
+	/** Its own title and buttons (default: a screenshot check, Yes / No). */
+	labels?: { title?: string; yes?: string; no?: string } | null;
 }

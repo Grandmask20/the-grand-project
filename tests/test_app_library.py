@@ -204,3 +204,42 @@ def test_on_windows_the_folder_opens_in_front_in_the_background(session, tmp_pat
             break
         time.sleep(0.02)
     assert opened == [path.parent]
+
+
+def test_deleting_an_atlas_waits_for_its_background_writes(session, tmp_path, monkeypatch):
+    # (macOS CI: a background write still filling atlas_files made deleting it fail, "Directory not empty")
+    import threading
+
+    (tmp_path / "one").mkdir()
+    path, _pts, _img = make_atlas(tmp_path / "one")
+    session.open_atlas(path)
+    writing, release, retiring = threading.Event(), threading.Event(), threading.Event()
+    real_thumb, real_retire = session.write_thumb, session.retire_files
+
+    def slow_thumb(p, canvas):
+        writing.set()
+        release.wait(5)
+        real_thumb(p, canvas)
+
+    def retire(p):
+        retiring.set()
+        real_retire(p)
+
+    monkeypatch.setattr(session, "write_thumb", slow_thumb)
+    monkeypatch.setattr(session, "retire_files", retire)
+    canvas = session.terrain[0]
+    writer = threading.Thread(target=session._write_thumb_now, args=(path, canvas))
+    writer.start()
+    assert writing.wait(5)  # (a write is running)
+    result = []
+    deleter = threading.Thread(target=lambda: result.append(session.delete_atlas(str(path))))
+    deleter.start()
+    assert retiring.wait(5)
+    deleter.join(0.3)
+    assert deleter.is_alive()  # (Delete waits while the write is held...)
+    release.set()
+    deleter.join(10)
+    writer.join(5)
+    assert result == [[]]  # (...and then deletes everything)
+    session._write_thumb_now(path, canvas)  # (one still waiting afterwards writes nothing)
+    assert not (path.parent / "atlas_files").exists()

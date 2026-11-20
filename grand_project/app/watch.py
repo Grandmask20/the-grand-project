@@ -74,19 +74,22 @@ class WatchMixin:
         Raises:
             ValueError: With no atlas open, or when the folder does not exist.
         """
-        if not self.path:
-            raise ValueError("open or create an atlas first")
-        folders = self.settings.setdefault("watch_folders", {})
-        if folder:
-            if not Path(folder).is_dir():
-                raise ValueError(f"not a folder: {folder}")
-            folders[self._atlas_key()] = str(folder)
-        else:
-            folders.pop(self._atlas_key(), None)
-        self.save_settings()
-        if self._watch_on:
-            self.start_watch()
-        self.events.publish("watch", self.watch_state())
+        # a request made for another atlas: refused, never applied to the one open now; the check and the change
+        # in one step against a switch, without waiting for a job (AtlasLock.steady)
+        with self._lock.steady():
+            if not self.path:
+                raise ValueError("open or create an atlas first")
+            folders = self.settings.setdefault("watch_folders", {})
+            if folder:
+                if not Path(folder).is_dir():
+                    raise ValueError(f"not a folder: {folder}")
+                folders[self._atlas_key()] = str(folder)
+            else:
+                folders.pop(self._atlas_key(), None)
+            self.save_settings()
+            if self._watch_on:
+                self.start_watch()
+            self.events.publish("watch", self.watch_state())
 
     def set_watch(self, on: bool) -> None:
         """Turn auto-add on or off (and remember it).
@@ -97,15 +100,19 @@ class WatchMixin:
         Raises:
             ValueError: Turning it on with no atlas open.
         """
-        if on:
-            self.start_watch()
-        else:
-            self.stop_watch()
-            self.settings["watch_on"] = False
-            self.events.set_status("auto-add off")
-        self.save_settings()
+        # a request made for another atlas: refused, never applied to the one open now; the check and the change
+        # in one step against a switch, without waiting for a job (AtlasLock.steady)
+        with self._lock.steady():
+            if on:
+                self.start_watch()
+            else:
+                self.stop_watch()
+                self.settings["watch_on"] = False
+                self.events.set_status("auto-add off")
+            self.save_settings()
 
     # ------------------------------------------------------------------ the folder
+
     def _watch_files(self) -> dict[str, int]:
         """List the image files in the watched folder that can be screenshots (the program's own are left out).
 

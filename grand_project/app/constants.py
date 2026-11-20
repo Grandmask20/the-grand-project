@@ -125,6 +125,8 @@ TERRAIN_PIXELS = 40_000_000  # stitched map size limit
 
 SAME_SPOT = 28.0  # atlas units: a bookmark this close to a thing IS that thing's bookmark
 BOOKMARK_GROUP_SETS = ("hidden_groups", "folded_groups")  # per-atlas sets of bookmark groups kept in the settings
+STATE_TRIES = 3  # the page's state is put together again at most this often when another atlas opens meanwhile
+SHUTDOWN_WAIT = 30.0  # s: how long closing waits for the job running (then it is cut off, and the log says so)
 FOLDER_FRONT_WAIT = 3.0  # s: how long an atlas folder's newly opened Explorer window is looked for
 FOLDER_PATHS_WAIT = 5.0  # s: at most this long for the Windows shell to say which folders Explorer shows
 FOLDER_FRONT_POLL = 0.05  # s: how often it is looked for (it shows where Explorer puts it until found and moved)

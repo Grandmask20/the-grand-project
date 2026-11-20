@@ -90,9 +90,29 @@ describe("MapMenu", () => {
 		const { user, calls } = menu(landmark, false, { "POST /api/landmark": { ok: true } });
 		await user.click(screen.getByRole("menuitem", { name: "Delete landmark" }));
 		const ask = useAppStore.getState().confirm;
-		expect(ask?.text).toContain("Delete this City?");
+		expect(ask?.text).toContain("Make this City a normal map?");
 		ask?.onYes();
 		await waitFor(() => expect(calls.find((c) => c.path === "/api/landmark")?.body).toMatchObject({ kind: "" }));
+	});
+
+	it("on a map with a City on it: the City's edits, made a normal map from there", async () => {
+		// (user: a click on a City selects its map, whose menu could only make it a landmark, never back)
+		const onMap: ItemInfo = {
+			...nodeInfo,
+			on_landmark: { id: 4, title: "Vaal city?", x: 441, y: 201, landmark_kind: "City", city_type: null },
+		};
+		const { user, calls } = menu(onMap, false, {
+			"POST /api/landmark": { ok: true },
+			"POST /api/city-type": { ok: true },
+		});
+		expect(screen.getByRole("menuitem", { name: "City type" })).toBeInTheDocument();
+		await sub(user, "This map is a…");
+		expect(await screen.findByRole("menuitem", { name: "● City" })).toBeInTheDocument();
+		await user.click(screen.getByRole("menuitem", { name: "Normal map" }));
+		useAppStore.getState().confirm?.onYes();
+		await waitFor(() =>
+			expect(calls.find((c) => c.path === "/api/landmark")?.body).toMatchObject({ x: 441, y: 201, kind: "" }),
+		);
 	});
 
 	it("on a removed landmark: restore it", async () => {
