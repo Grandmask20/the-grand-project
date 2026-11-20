@@ -39,7 +39,6 @@ export function MapInteraction() {
 	const mode = useAppStore((s) => s.mode);
 	const setMode = useAppStore((s) => s.setMode);
 	const select = useAppStore((s) => s.select);
-	const setTab = useAppStore((s) => s.setTab);
 	const editBookmark = useAppStore((s) => s.editBookmark);
 	const setRouteDraft = useAppStore((s) => s.setRouteDraft);
 	const bookmarks = useBookmarks();
@@ -119,8 +118,7 @@ export function MapInteraction() {
 				switch (mode.kind) {
 					case "normal": {
 						const hit = await pick3d(e);
-						select(hit);
-						if (hit) setTab("find");
+						select(hit); // (shown in the panel at the map's side: no tab to open)
 						break;
 					}
 					case "bookmark": {
@@ -202,7 +200,6 @@ export function MapInteraction() {
 		atlasAt,
 		pick,
 		select,
-		setTab,
 		editBookmark,
 		setRouteDraft,
 		setMode,
@@ -234,7 +231,7 @@ export function MapInteraction() {
 		if (replaying) setRouteMenu(null);
 	}, [replaying]);
 
-	// Biome select's menu up: its note would still say to draw (MapNotes)
+	// Biome select's menu up: its line would still say to draw (ModeBar)
 	useEffect(() => {
 		useAppStore.setState({ lassoAsked: lasso !== null });
 	}, [lasso]);

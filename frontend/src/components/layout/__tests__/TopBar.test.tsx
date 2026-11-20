@@ -1,4 +1,4 @@
-import { act, screen, waitFor } from "@testing-library/react";
+import { screen, waitFor } from "@testing-library/react";
 import { afterEach, describe, expect, it } from "vitest";
 import { TopBar } from "@/components/layout/TopBar";
 import { useAppStore } from "@/store/AppStore";
@@ -21,11 +21,12 @@ const plan = {
 describe("TopBar", () => {
 	afterEach(resetStore);
 
-	it("shows the atlas's numbers and the version", () => {
+	it("shows the atlas menu, the map tools and the version (the atlas's numbers are in the status line)", () => {
 		renderWithApp(<TopBar />, { "GET /api/atlases": atlases });
-		expect(screen.getByText(/80 maps · 9 icons · 4 landmarks · 4\s+screenshots/)).toBeInTheDocument();
 		expect(screen.getByRole("button", { name: /Check update.*1\.17/i })).toBeInTheDocument(); // (the update pill)
 		expect(screen.getByRole("button", { name: /Atlas: default/ })).toBeInTheDocument();
+		expect(screen.getByRole("toolbar", { name: "Map tools" })).toBeInTheDocument();
+		expect(screen.queryByText(/80 maps · 9 icons/)).toBeNull();
 	});
 
 	it("undo asks first, naming the screenshots", async () => {
@@ -43,25 +44,6 @@ describe("TopBar", () => {
 	it("nothing to undo, or busy: no undo", () => {
 		renderWithApp(<TopBar />, { "GET /api/state": { ...state, busy: true }, "GET /api/atlases": atlases });
 		expect(screen.getByRole("button", { name: "Undo" })).toBeDisabled();
-	});
-
-	it("Biome select switches the lasso on, and says End while on (user: only Esc ended it)", async () => {
-		const { user } = renderWithApp(<TopBar />, { "GET /api/atlases": atlases });
-		await user.click(screen.getByRole("button", { name: "Biome select" }));
-		expect(useAppStore.getState().mode).toEqual({ kind: "lasso" });
-		await user.click(screen.getByRole("button", { name: "End biome select" }));
-		expect(useAppStore.getState().mode).toEqual({ kind: "normal" });
-	});
-
-	it("no map mode while the timelapse is open: opening it ends one, and Route can't start in it", async () => {
-		const { user } = renderWithApp(<TopBar />, { "GET /api/atlases": atlases });
-		await user.click(screen.getByRole("button", { name: "Route" }));
-		expect(screen.getByRole("button", { name: "End route" })).toBeInTheDocument();
-		act(() => useAppStore.getState().setReplay({} as never));
-		expect(useAppStore.getState().mode).toEqual({ kind: "normal" });
-		expect(screen.getByRole("button", { name: "Route" })).toBeDisabled();
-		act(() => useAppStore.getState().setMode({ kind: "route", from: null }));
-		expect(useAppStore.getState().mode).toEqual({ kind: "normal" });
 	});
 
 	it("replay opens at its end, and closes again", async () => {

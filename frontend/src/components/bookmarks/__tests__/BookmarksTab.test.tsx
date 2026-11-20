@@ -50,10 +50,13 @@ describe("BookmarksTab", () => {
 		expect(useAppStore.getState().confirm?.text).toBe('Delete "big boss"?');
 	});
 
-	it("leaving the tab ends Add bookmark", () => {
-		useAppStore.getState().setMode({ kind: "bookmark" });
+	it("leaving the tab ends Adjust route; Add bookmark stays on (a map tool of the top bar now)", () => {
+		useAppStore.getState().setMode({ kind: "route-edit", id: 5 });
 		useAppStore.getState().setTab("find");
 		expect(useAppStore.getState().mode).toEqual({ kind: "normal" });
+		useAppStore.getState().setMode({ kind: "bookmark" });
+		useAppStore.getState().setTab("view");
+		expect(useAppStore.getState().mode).toEqual({ kind: "bookmark" });
 	});
 
 	it("moves the picked bookmarks with a dropdown of the groups", async () => {

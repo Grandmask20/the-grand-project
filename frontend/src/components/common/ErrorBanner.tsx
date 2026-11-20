@@ -2,8 +2,8 @@ import { XIcon } from "lucide-react";
 import { useEffect } from "react";
 import { useAppStore } from "@/store/AppStore";
 
-/** The last error, over the map until closed (or 12 s); a brief one also closes on the next click anywhere. It sits in
- * the notes' column (MapNotes), under them. */
+/** The last error, until closed (or 12 s); a brief one also closes on the next click anywhere. It sits in the line
+ * above the map (ModeBar), under the mode's. */
 export function ErrorBanner() {
 	const error = useAppStore((s) => s.error);
 	const brief = useAppStore((s) => s.errorBrief);

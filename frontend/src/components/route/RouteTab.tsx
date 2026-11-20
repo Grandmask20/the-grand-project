@@ -1,9 +1,11 @@
+import { CheckIcon, NavigationIcon } from "lucide-react";
 import { Section } from "@/components/common/Section";
 import { Button } from "@/components/ui/button";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { useTypes } from "@/hooks/find/UseTypes";
 import { nextNew, useRoutes } from "@/hooks/map/UseRoutes";
 import { useAppStore } from "@/store/AppStore";
+import { cn } from "@/utils/Cn";
 
 /** Directions: where you are, the fewest maps to a map or to the nearest map with an icon. */
 export function RouteTab() {
@@ -15,8 +17,6 @@ export function RouteTab() {
 	const mode = useAppStore((s) => s.mode);
 	const setMode = useAppStore((s) => s.setMode);
 	const flyTo = useAppStore((s) => s.flyTo);
-	const highlight = useAppStore((s) => s.highlight);
-	const setHighlight = useAppStore((s) => s.setHighlight);
 	const icons = useTypes().data?.sections.find((s) => s.title === "Map icons")?.rows ?? [];
 	const iconOf = new Map(icons.map((r) => [r.icon, r.label]));
 
@@ -48,22 +48,6 @@ export function RouteTab() {
 					)}
 				</div>
 				{mode.kind === "player" && <p className="text-xs text-gold">Click the map you are on (Esc cancels).</p>}
-			</Section>
-
-			<Section title="Highlight">
-				<Select value={highlight ?? "none"} onValueChange={(v) => setHighlight(v === "none" ? null : v)}>
-					<SelectTrigger size="sm" aria-label="Highlight maps with">
-						<SelectValue placeholder="maps with…" />
-					</SelectTrigger>
-					<SelectContent>
-						<SelectItem value="none">nothing</SelectItem>
-						{icons.map((r) => (
-							<SelectItem key={r.icon} value={r.icon}>
-								{r.label} ({r.count})
-							</SelectItem>
-						))}
-					</SelectContent>
-				</Select>
 			</Section>
 
 			<Section title="Route">
@@ -101,16 +85,47 @@ export function RouteTab() {
 							Stop tracking
 						</Button>
 					</div>
-					<ol className="flex max-h-72 list-decimal flex-col overflow-y-auto pl-6 text-xs">
-						{[...new Set(route.path)].slice(1).map((id) => {
+					{/* the route as steps (PO: the numbered list didn't fit the panel): run, where you are, next, to come */}
+					<ol aria-label="The route's maps" className="relative flex max-h-80 flex-col overflow-y-auto">
+						{[...new Set(route.path)].map((id, k) => {
 							const p = routes.graph?.at(id);
-							const what = (routes.graph?.iconsOf(id) ?? []).map((n) => iconOf.get(n) ?? n).join(", ");
-							const run = runSet.has(id);
+							const icons = routes.graph?.iconsOf(id) ?? [];
+							const what = icons.map((n) => iconOf.get(n) ?? n).join(", ");
+							const here = id === route.path[route.at ?? 0];
+							const run = runSet.has(id) && !here;
+							const isNext = next !== null && id === route.path[next];
 							return (
-								<li key={id} className={run ? "text-muted-foreground line-through" : undefined}>
-									<button type="button" className="hover:text-gold" onClick={() => p && flyTo(p[0], p[1], 0.6)}>
-										map #{id}
-										{what && <span className="text-muted-foreground"> · {what}</span>}
+								<li key={id}>
+									<button
+										type="button"
+										title={what ? `map #${id} · ${what}` : `map #${id}`}
+										onClick={() => p && flyTo(p[0], p[1], 0.6)}
+										className={cn(
+											"flex min-h-8 w-full items-center gap-2.5 rounded px-1.5 text-left text-sm hover:bg-accent",
+											here && "bg-accent",
+											run && "text-muted-foreground",
+										)}
+									>
+										<span
+											className={cn(
+												"flex size-5 shrink-0 items-center justify-center rounded-full text-[10px] font-semibold",
+												here
+													? "bg-gold text-background"
+													: run
+														? "bg-muted text-muted-foreground"
+														: "border border-border text-muted-foreground",
+											)}
+										>
+											{here ? <NavigationIcon className="size-3" /> : run ? <CheckIcon className="size-3" /> : k}
+										</span>
+										<span className={cn("flex-1", run && "line-through")}>
+											map #{id}
+											{k === 0 && <span className="text-muted-foreground"> · start</span>}
+										</span>
+										{isNext && (
+											<span className="rounded bg-accent px-1.5 text-[10px] font-semibold text-gold">next</span>
+										)}
+										{what && <span className="max-w-32 truncate text-xs text-muted-foreground">{what}</span>}
 									</button>
 								</li>
 							);

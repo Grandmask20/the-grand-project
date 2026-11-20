@@ -8,9 +8,9 @@ import { renderWithApp, resetStore } from "@/test/RenderWithApp";
 describe("SelectedBox", () => {
 	afterEach(resetStore);
 
-	it("asks for a click when nothing is selected", () => {
-		renderWithApp(<SelectedBox />);
-		expect(screen.getByText("Click a map, icon, landmark or bookmark.")).toBeInTheDocument();
+	it("nothing selected: nothing shown (the panel it is in isn't there)", () => {
+		const { container } = renderWithApp(<SelectedBox />);
+		expect(container).toBeEmptyDOMElement();
 	});
 
 	it("shows a map's details and bookmarks it with the suggested name", async () => {

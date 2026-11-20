@@ -63,7 +63,7 @@ function routeChanges(r: AppStoreState["route"], was: AppStoreState["route"]): s
 	return [`Tracking ${what}: map #${r.path[0]} to map #${r.path[r.path.length - 1]}, ${r.message}`];
 }
 
-/** Tell the app what you do on the page, for the Log tab and the log file (user: "every user made change should be
+/** Tell the app what you do on the page, for the log (under the map) and the log file (user: "every user made change should be
  * listed"). Sent at once, so the lines keep their order with the app's own (a biome drawn after its selection). */
 export function usePageLog() {
 	const app = useAppClient();

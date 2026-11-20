@@ -7,12 +7,14 @@ import { FileBrowserDialog } from "@/components/dialogs/FileBrowserDialog";
 import { PromptDialog } from "@/components/dialogs/PromptDialog";
 import { QuestionDialog } from "@/components/dialogs/QuestionDialog";
 import { SourcesDialog } from "@/components/dialogs/SourcesDialog";
+import { InspectorPanel } from "@/components/layout/InspectorPanel";
 import { MapImageWait } from "@/components/layout/MapImageWait";
 import { SidePanel } from "@/components/layout/SidePanel";
 import { StatusBar } from "@/components/layout/StatusBar";
 import { TopBar } from "@/components/layout/TopBar";
+import { LogDrawer } from "@/components/log/LogDrawer";
 import { AtlasMap } from "@/components/map/AtlasMap";
-import { MapNotes } from "@/components/map/MapNotes";
+import { ModeBar } from "@/components/map/ModeBar";
 import { ReplayPanel } from "@/components/replay/ReplayPanel";
 import { Button } from "@/components/ui/button";
 import { useAppState } from "@/hooks/app/UseAppState";
@@ -21,7 +23,8 @@ import { useMeta } from "@/hooks/app/UseMeta";
 import { usePageLog } from "@/hooks/app/UsePageLog";
 import { useAtlasActions } from "@/hooks/atlas/UseAtlasActions";
 
-/** The app's one page: top bar, side panel, the map, the status line, and the dialogs. */
+/** The app's one page: top bar, side panel, the map (the mode's line above it, the replay and the log under it), the
+ * selection at its side, the status line, and the dialogs. */
 export function AtlasPage() {
 	const connected = useEventStream();
 	usePageLog();
@@ -55,10 +58,11 @@ export function AtlasPage() {
 	return (
 		<div className="flex h-full flex-col">
 			<TopBar />
-			<div className="flex min-h-0 flex-1">
-				<SidePanel debug={s.debug} />
+			{/* the side panel on its side, the selection across the map from it */}
+			<div className={`flex min-h-0 flex-1 ${s.settings.ui.side === "right" ? "flex-row-reverse" : ""}`}>
+				<SidePanel />
 				<main
-					className={`flex min-w-0 flex-1 flex-col bg-black ${s.settings.ui.side === "right" ? "-order-1" : ""}`}
+					className="flex min-w-0 flex-1 flex-col bg-black"
 					onDragOver={(e) => {
 						e.preventDefault();
 						setDragging(true);
@@ -66,6 +70,7 @@ export function AtlasPage() {
 					onDragLeave={() => setDragging(false)}
 					onDrop={onDrop}
 				>
+					<ModeBar />
 					<div className="relative min-h-0 flex-1">
 						{map ? (
 							<AtlasMap key={mapKey} info={map} meta={meta.data} />
@@ -97,7 +102,6 @@ export function AtlasPage() {
 							</div>
 						)}
 						<ProgressBox text={s.progress} />
-						<MapNotes />
 						{dragging && (
 							<div className="pointer-events-none absolute inset-3 z-30 flex items-center justify-center rounded-lg border-2 border-dashed border-gold bg-black/40 text-gold">
 								Drop screenshots: one is placed by hand, several are added
@@ -105,7 +109,9 @@ export function AtlasPage() {
 						)}
 					</div>
 					<ReplayPanel meta={meta.data} />
+					<LogDrawer />
 				</main>
+				<InspectorPanel />
 			</div>
 			<StatusBar connected={connected} />
 			<QuestionDialog />

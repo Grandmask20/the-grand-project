@@ -27,10 +27,11 @@ describe("AtlasMap", () => {
 	it("draws everything over the map once it has loaded, and hands the map to the page", async () => {
 		const { fm } = render();
 		await waitFor(() => expect(useAppStore.getState().map).toBe(fm.map));
-		// its parts, on the map: the tiles' sources, the atlas's layers, the controls
+		// its parts, on the map: the tiles' sources and the atlas's layers; no controls over it (PO: they are in the
+		// status line, MapButtons)
 		expect(fm.sources.has("terrain") && fm.sources.has("atlas")).toBe(true);
 		expect(fm.layerIds()).toEqual(expect.arrayContaining(["terrain", "paths", "maps", "selected", "bookmarks"]));
-		expect(fm.controls.size).toBe(2);
+		expect(fm.controls.size).toBe(0);
 	});
 
 	it("puts every layer in its place in the stack, whenever it comes", async () => {

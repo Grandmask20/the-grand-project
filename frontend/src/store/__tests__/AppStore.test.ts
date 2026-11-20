@@ -60,6 +60,26 @@ describe("useAppStore", () => {
 		expect(useAppStore.getState().mode).toEqual({ kind: "normal" });
 	});
 
+	it("a tab opens the side panel's drawer; Log and Debug open the log drawer on their page, not a tab", () => {
+		const s = useAppStore.getState();
+		s.setPanelOpen(false);
+		s.setTab("view");
+		expect(useAppStore.getState()).toMatchObject({ tab: "view", panelOpen: true, logOpen: false });
+		s.setTab("debug");
+		expect(useAppStore.getState()).toMatchObject({ tab: "view", logOpen: true, logPage: "debug" });
+		s.setLogOpen(false);
+		s.setTab("log");
+		expect(useAppStore.getState()).toMatchObject({ logOpen: true, logPage: "log" });
+	});
+
+	it("closing the drawer lets go of the View settings held (their layers go back to their switches)", () => {
+		const s = useAppStore.getState();
+		s.setTab("view");
+		s.hold("Icons");
+		s.setPanelOpen(false);
+		expect(useAppStore.getState().editing).toEqual([]);
+	});
+
 	it("patches the replay only while one is open", () => {
 		const s = useAppStore.getState();
 		s.patchReplay({ pos: 3 });

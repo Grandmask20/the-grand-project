@@ -28,5 +28,5 @@ export class FrameLog {
 	}
 }
 
-/** The page's one frame log (the Log tab saves it). */
+/** The page's one frame log (the log drawer saves it). */
 export const frameLog = new FrameLog();

@@ -60,14 +60,14 @@ describe("RevealWhileUsed", () => {
 		expect(useAppStore.getState().editing).toEqual([]);
 	});
 
-	it("the other view's settings show a notice, not their layer (3D settings on the flat map)", () => {
+	it("the other view's settings show nothing, not their layer (3D settings on the flat map)", () => {
 		render(
 			<RevealWhileUsed layer="Paths" view="3d">
 				<button type="button">slider</button>
 			</RevealWhileUsed>,
 		);
 		fireEvent.pointerDown(screen.getByRole("button", { name: "slider" }));
-		expect(useAppStore.getState().editing).toEqual(["view:3d"]);
+		expect(useAppStore.getState().editing).toEqual([]);
 		fireEvent.pointerUp(window);
 		act(() => useAppStore.getState().setCamera({ pitch: 40 } as never)); // tilted: now they show
 		fireEvent.pointerDown(screen.getByRole("button", { name: "slider" }));

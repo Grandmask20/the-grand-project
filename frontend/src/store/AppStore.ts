@@ -9,14 +9,17 @@ import type { ItemInfo } from "@/domain/map/ItemInfo";
 import type { ReplayPlan } from "@/domain/replay/ReplayPlan";
 import type { Point } from "@/logic/Geo";
 
-/** What a click on the map does. */
-/** The tabs that became pages of another (user's side panel: Find, View, Bookmarks, Atlases, Log): id -> [tab, page].
- * The app still asks for "auto" (screenshots waiting for a place) and the page's own code for the others. */
+/** The tabs that became pages of another (the side panel: Find, View, Saved, Atlases): id -> [tab, page]. The app
+ * still asks for "auto" (screenshots waiting for a place) and the page's own code for the others. */
 export const PAGE_OF: Record<string, [string, string]> = {
 	auto: ["atlases", "auto"],
 	route: ["bookmarks", "route"],
-	debug: ["log", "debug"],
 };
+
+/** The pages of the log drawer (under the map, from the status line: it was the side panel's Log tab). */
+export const LOG_PAGES = new Set(["log", "debug"]);
+
+/** What a click on the map does. */
 
 export type MapMode =
 	| { kind: "normal" }
@@ -83,13 +86,21 @@ export interface AppStoreState {
 	camera: Camera | null;
 	setCamera: (c: Camera | null) => void;
 	tab: string;
-	/** Open a tab, or a page of one by its own id ("auto", "route", "debug": they were tabs of their own). */
+	/** Open a tab (the side panel opens with it), or a page of one by its own id ("auto", "route": they were tabs of
+	 * their own); "log" and "debug" open the log drawer on that page. */
 	setTab: (tab: string) => void;
+	/** The side panel's drawer is open (the rail's tab clicked again closes it, for more map). */
+	panelOpen: boolean;
+	setPanelOpen: (open: boolean) => void;
+	/** The log drawer under the map, and its page (log / debug). */
+	logOpen: boolean;
+	logPage: string;
+	setLogOpen: (open: boolean) => void;
+	setLogPage: (page: string) => void;
 	/** The page each tab with pages shows (Atlases: atlases / auto; Bookmarks: bookmarks / route; Log: log / debug). */
 	pages: Record<string, string>;
 	setPage: (tab: string, page: string) => void;
-	/** Layers shown because you changed one of their View settings (cleared when you leave the tab). */
-	/** The layers shown because a View setting of theirs is in use (RevealWhileUsed), and notices (VIEW_NOTICE). */
+	/** The layers shown because a View setting of theirs is in use (RevealWhileUsed; let go when you leave the tab). */
 	editing: string[];
 	/** A layer's setting is in use: it shows until the returned release (user: only while a slider is held or a
 	 * dropdown open; no timer). */
@@ -197,20 +208,28 @@ export const useAppStore = create<AppStoreState>()((set) => ({
 	camera: null,
 	setCamera: (camera) => set({ camera }),
 	tab: "find",
-	// leaving the Bookmarks tab ends "Add bookmark" (user: it stayed on, and a later click on the map added one)
+	// leaving the Saved tab ends "Adjust route" (its maps are picked there). Add bookmark is a map tool of the top bar
+	// now: it stays on in any tab
 	setTab: (asked) =>
 		set((st) => {
+			if (LOG_PAGES.has(asked)) return { logOpen: true, logPage: asked };
 			const [tab, page] = PAGE_OF[asked] ?? [asked, null];
 			return {
 				tab,
+				panelOpen: true,
 				// leaving the View tab: the layers its settings showed go back to their switches
 				...(tab !== st.tab && st.editing.length ? letGoAll() : {}),
 				...(page ? { pages: { ...st.pages, [tab]: page } } : {}),
-				...((st.mode.kind === "bookmark" || st.mode.kind === "route-edit") && tab !== "bookmarks"
-					? { mode: { kind: "normal" } as MapMode }
-					: {}),
+				...(st.mode.kind === "route-edit" && tab !== "bookmarks" ? { mode: { kind: "normal" } as MapMode } : {}),
 			};
 		}),
+	panelOpen: true,
+	// closing the drawer is leaving its tab for the View settings held (their layers go back to their switches)
+	setPanelOpen: (panelOpen) => set((st) => ({ panelOpen, ...(!panelOpen && st.editing.length ? letGoAll() : {}) })),
+	logOpen: false,
+	logPage: "log",
+	setLogOpen: (logOpen) => set({ logOpen }),
+	setLogPage: (logPage) => set({ logPage }),
 	pages: {},
 	setPage: (tab, page) => set((st) => ({ pages: { ...st.pages, [tab]: page } })),
 	editing: [],

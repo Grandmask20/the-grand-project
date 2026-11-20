@@ -60,7 +60,7 @@ test("adds a batch through File › Add screenshots; the page stays usable while
 	}
 	expect(whileBusy, "measured while the job ran").toBeGreaterThan(0);
 	expect(slowest, "the page waited on the job").toBeLessThan(5_000);
-	await page.getByRole("tab", { name: "Log" }).click();
+	await page.getByRole("button", { name: "Log", exact: true }).click(); // (the log drawer, from the status line)
 	await expect(page.getByText(/adding: 6 screenshot\(s\)/)).toBeVisible();
 
 	const s = await waitIdle(page);

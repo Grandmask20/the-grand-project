@@ -9,10 +9,10 @@ import { useListType } from "@/hooks/find/UseListType";
 import { useSearch } from "@/hooks/find/UseSearch";
 import { useAppStore } from "@/store/AppStore";
 import { ResultList } from "./ResultList";
-import { SelectedBox } from "./SelectedBox";
 import { TypeList } from "./TypeList";
 
-/** Find: search, the type list (what the map shows), the results and the selected item's details. */
+/** Find: search, the type list (what the map shows) and the results. What is selected shows at the map's side
+ * (InspectorPanel). */
 export function FindTab() {
 	// Find's state lives in the store (one owner: the map's Esc clears it too, and it outlasts this tab: CodeRabbit)
 	const text = useAppStore((s) => s.findText);
@@ -99,7 +99,6 @@ export function FindTab() {
 				<TypeList onList={listType} />
 			</Section>
 			<ResultList />
-			<SelectedBox />
 		</div>
 	);
 }

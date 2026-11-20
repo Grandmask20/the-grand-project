@@ -9,7 +9,6 @@ import { MapViewContext } from "@/hooks/map/UseMapView";
 import { Geo } from "@/logic/Geo";
 import { mapStyle } from "@/logic/map/LayerOrder";
 import { useAppStore } from "@/store/AppStore";
-import { MapControls } from "./controls/MapControls";
 import { FrameRecorder } from "./FrameRecorder";
 import { AtlasLayers } from "./layers/AtlasLayers";
 import { BookmarkLayer } from "./layers/BookmarkLayer";
@@ -107,7 +106,6 @@ export function AtlasMap({ info, meta }: Props) {
 			>
 				{map && (
 					<MapViewContext.Provider value={view}>
-						<MapControls />
 						<MapPan />
 						<MapSprites />
 						<TileSources />

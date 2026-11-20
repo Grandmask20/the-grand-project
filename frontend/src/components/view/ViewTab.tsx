@@ -139,7 +139,7 @@ export function ViewTab() {
 						<p className="text-xs text-gold">These apply in the 3D view (the 3D button, or right-drag to tilt).</p>
 					)}
 					<RevealWhileUsed layer="Paths" view="3d">
-						<Section title="Paths" locked={lock}>
+						<Section foldable title="Paths" locked={lock}>
 							<Path3DPreview st={st} meta={meta} />
 							{slider("height", "d3_path_lift", 0, 30, 1, 3, (v) => `${v}`)}
 							{slider("reach", "d3_path_far", 1, 6, 0.1, 2.6, times)}
@@ -148,16 +148,16 @@ export function ViewTab() {
 						</Section>
 					</RevealWhileUsed>
 					<RevealWhileUsed layer="Icons" view="3d">
-						<Section title="Icons" locked={lock}>
+						<Section foldable title="Icons" locked={lock}>
 							{slider("reach", "d3_icon_far", 1, 8, 0.1, 2.5, times)}
 							{slider("size", "d3_icon_size", 0.5, 2.5, 0.1, 1.5, times)}
 						</Section>
 					</RevealWhileUsed>
-					<Section title="Ground" locked={lock}>
+					<Section foldable title="Ground" locked={lock}>
 						{slider("fades out at", "d3_ground_far", 0, 6, 0.1, 2.4, (v) => (v ? times(v) : "never"))}
 					</Section>
 					<RevealWhileUsed layer="3D models" view="3d">
-						<Section title="3D models" locked={lock}>
+						<Section foldable title="3D models" locked={lock}>
 							{slider("reach", "d3_model_far", 1, 8, 0.1, 2.4, times)}
 							{slider("size", "d3_model_size", 0.3, 3, 0.1, 1, times)}
 							{slider("height", "d3_model_height", 0.2, 3, 0.1, 0.8, times)}
@@ -192,7 +192,7 @@ export function ViewTab() {
 			{tabs}
 			<div {...panel} className="flex flex-col gap-5">
 				{lockNote}
-				<Section title="Background" locked={lock}>
+				<Section foldable title="Background" locked={lock}>
 					<div className="flex gap-1.5" role="radiogroup" aria-label="Background" onKeyDown={radioKeys}>
 						{(["picture", "vector", "none"] as Background[]).map((b) => (
 							<Button
@@ -209,7 +209,7 @@ export function ViewTab() {
 					</div>
 				</Section>
 
-				<Section title="Side panel">
+				<Section foldable title="Side panel">
 					<div className="flex gap-1.5" role="radiogroup" aria-label="Side panel" onKeyDown={radioKeys}>
 						{(["left", "right"] as const).map((side) => (
 							<Button
@@ -230,7 +230,7 @@ export function ViewTab() {
 				</Section>
 
 				<RevealWhileUsed layer="Paths" view="2d">
-					<Section title="Paths" locked={lock}>
+					<Section foldable title="Paths" locked={lock}>
 						<PathPreview st={st} meta={meta} />
 						<div className="flex flex-wrap items-center gap-3">
 							<ColourSwatch
@@ -279,7 +279,7 @@ export function ViewTab() {
 				</RevealWhileUsed>
 
 				<RevealWhileUsed layer="Icons" view="2d">
-					<Section title="Icons" locked={lock}>
+					<Section foldable title="Icons" locked={lock}>
 						<IconPreview style={iconStyle} size={Number(st.icon_size) || 1} />
 						{choice(
 							"style",
@@ -293,7 +293,7 @@ export function ViewTab() {
 				</RevealWhileUsed>
 
 				<RevealWhileUsed layer="Nodes" view="2d">
-					<Section title="Maps" locked={lock}>
+					<Section foldable title="Maps" locked={lock}>
 						<MapPreview st={st} meta={meta} />
 						<ColourSwatch
 							label="colour"
@@ -325,7 +325,7 @@ export function ViewTab() {
 					</Section>
 				</RevealWhileUsed>
 
-				<Section title="City biomes and landmarks" locked={lock}>
+				<Section foldable title="City biomes and landmarks" locked={lock}>
 					<div className="grid grid-cols-2 gap-2">
 						{Object.entries(cityColours(meta, st)).map(([k, c]) => (
 							<ColourSwatch key={k} label={`${k} biome`} value={c} onChange={(v) => set({ [`city_col_${k}`]: v })} />
@@ -338,7 +338,7 @@ export function ViewTab() {
 					</div>
 				</Section>
 
-				<Section title="Colour by" locked={replay === "recording"}>
+				<Section foldable title="Colour by" locked={replay === "recording"}>
 					{choice("colour by", tint, meta.colour_by, (v) => set({ age_tint: v }))}
 					{choice("colours", st.colour_spread, meta.colour_spreads, (v) => set({ colour_spread: v }))}
 					<p className="text-xs text-muted-foreground">colours: for oldest to newest and times seen</p>

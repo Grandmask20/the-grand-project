@@ -62,7 +62,7 @@ test("Find: searches, goes to a result and selects it", async ({ page }) => {
 
 test("bookmarks: lists them, adds one on the map, saved in the atlas", async ({ page }) => {
 	const canvas = await open(page);
-	await page.getByRole("tab", { name: "Bookmarks" }).click();
+	await page.getByRole("tab", { name: "Saved" }).click(); // (the bookmarks are in the Saved tab)
 	await expect(page.getByRole("button", { name: "farm <here>", exact: true })).toBeVisible();
 	await page.getByRole("button", { name: "Add bookmark" }).click();
 	const box = await canvas.boundingBox();
@@ -81,7 +81,7 @@ test("bookmarks: lists them, adds one on the map, saved in the atlas", async ({ 
 test("layers: switching one off is kept", async ({ page }) => {
 	await open(page);
 	const paths = page.locator("button[aria-pressed]", { hasText: /^Paths$/ }).first();
-	if (!(await paths.isVisible())) await page.getByRole("button", { name: /^Layers/ }).click(); // the folded dock
+	if (!(await paths.isVisible())) await page.getByRole("button", { name: "Layers" }).click(); // (the status line's)
 	await expect(paths).toHaveAttribute("aria-pressed", "true");
 	await paths.click();
 	await expect(paths).toHaveAttribute("aria-pressed", "false");
@@ -106,6 +106,6 @@ test("the screenshots of a spot show the atlas's screenshot", async ({ page }) =
 
 test("the log tells what happened", async ({ page }) => {
 	await open(page);
-	await page.getByRole("tab", { name: "Log" }).click();
+	await page.getByRole("button", { name: "Log", exact: true }).click(); // (the log drawer, from the status line)
 	await expect(page.getByText(/opened atlas e2e/).first()).toBeVisible();
 });

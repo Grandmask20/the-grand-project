@@ -1,4 +1,4 @@
-import { screen, waitFor } from "@testing-library/react";
+import { act, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, describe, expect, it } from "vitest";
 import { RouteTab } from "@/components/route/RouteTab";
 import { useAppStore } from "@/store/AppStore";
@@ -73,6 +73,22 @@ describe("RouteTab", () => {
 		expect(useAppStore.getState().fly).toMatchObject({ x: 500, y: 200 });
 		await user.click(screen.getByRole("button", { name: "Stop tracking" }));
 		expect(useAppStore.getState().route).toBeNull();
+	});
+
+	it("the tracked route's maps as steps: the start, where you are, the next one; the ones run struck through", async () => {
+		useAppStore.getState().setRoute({ path: [12, 13], message: "1 map left", at: 0 });
+		renderWithApp(<RouteTab />, { "GET /api/state": withPlayer, "GET /api/graph": graph, "GET /api/types": types });
+		const steps = await screen.findByRole("list", { name: "The route's maps" });
+		await waitFor(() => expect(steps.querySelectorAll("li")).toHaveLength(2));
+		expect(steps.textContent).toMatch(/map #12 · start/);
+		expect(screen.getByText("next")).toBeInTheDocument();
+		act(() => useAppStore.getState().setRoute({ path: [12, 13], message: "there", at: 1 }));
+		expect(screen.queryByText("next")).toBeNull();
+		expect(
+			within(steps)
+				.getByText(/map #12/)
+				.closest("span"),
+		).toHaveClass("line-through");
 	});
 
 	it("the nearest map with an icon is tracked, as a route from Route in the top bar is (user)", async () => {

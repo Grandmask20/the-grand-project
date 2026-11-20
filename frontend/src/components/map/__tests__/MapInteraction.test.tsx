@@ -1,7 +1,7 @@
 import { act, screen, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { MapInteraction } from "@/components/map/MapInteraction";
-import { MapNotes } from "@/components/map/MapNotes";
+import { ModeBar } from "@/components/map/ModeBar";
 import type { Point } from "@/logic/Geo";
 import { modeCursor, modeHint } from "@/logic/ModeHint";
 import { useAppStore } from "@/store/AppStore";
@@ -44,7 +44,7 @@ function setup(routes: Record<string, unknown> = {}) {
 	return renderOnMap(
 		<>
 			<MapInteraction />
-			<MapNotes />
+			<ModeBar />
 		</>,
 		{ "POST /api/pick": nodeInfo, "GET /api/graph": graph, "PATCH /api/settings": (b: unknown) => b, ...routes },
 		fm,
@@ -56,11 +56,12 @@ describe("MapInteraction", () => {
 		lasso.drawn = null;
 	});
 
-	it("a click selects what is there and opens Find", async () => {
+	it("a click selects what is there (the panel at the map's side shows it: the tab open stays)", async () => {
 		const { fm, calls } = setup();
+		act(() => useAppStore.getState().setTab("view"));
 		act(() => fm.fire("click", at(440, 200)));
 		await waitFor(() => expect(useAppStore.getState().selected?.id).toBe(12));
-		expect(useAppStore.getState().tab).toBe("find");
+		expect(useAppStore.getState().tab).toBe("view");
 		expect(calls.find((c) => c.path === "/api/pick")?.body).toMatchObject({
 			x: expect.closeTo(440, 3),
 			y: expect.closeTo(200, 3),

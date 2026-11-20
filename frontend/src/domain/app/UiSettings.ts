@@ -21,8 +21,6 @@ export interface PageSettings {
 	side_width?: number;
 	/** Which side of the window the side panel is on (user). */
 	side?: "left" | "right";
-	/** The Layers dock unfolded (folded by default). */
-	layers_open?: boolean;
 }
 
 export type Background = "picture" | "vector" | "none";

@@ -7,14 +7,13 @@ import { resetStore } from "@/test/RenderWithApp";
 describe("useRevealedLayers", () => {
 	afterEach(resetStore);
 
-	it("shows the debug marks while the Debug page is open", () => {
+	it("shows the debug marks while the log drawer is open on Debug", () => {
 		const { result } = renderHook(() => useRevealedLayers());
 		expect(result.current).toEqual([]);
-		act(() => {
-			useAppStore.getState().setTab("log");
-			useAppStore.getState().setPage("log", "debug");
-		});
+		act(() => useAppStore.getState().setTab("debug"));
 		expect(result.current).toEqual(["Debug marks"]);
+		act(() => useAppStore.getState().setLogPage("log"));
+		expect(result.current).toEqual([]);
 	});
 
 	it("shows the route in Route mode and while one is shown, the biomes in Biome select", () => {
@@ -27,15 +26,14 @@ describe("useRevealedLayers", () => {
 		expect(result.current).toEqual([]);
 	});
 
-	it("shows a layer while its setting is held, not after, and never as a notice; the tab change lets go", () => {
+	it("shows a layer while its setting is held, not after; the tab change, or the panel closed, lets go", () => {
 		const { result } = renderHook(() => useRevealedLayers());
 		let release = () => {};
 		act(() => {
 			useAppStore.getState().setTab("view");
 			release = useAppStore.getState().hold("Icons");
-			useAppStore.getState().hold("view:3d");
 		});
-		expect(result.current).toEqual(["Icons"]); // (the notice isn't a layer)
+		expect(result.current).toEqual(["Icons"]);
 		act(() => {
 			release();
 			release(); // (let go twice: counted once)
@@ -47,6 +45,12 @@ describe("useRevealedLayers", () => {
 		});
 		expect(result.current).toEqual([]);
 		expect(useAppStore.getState().editing).toEqual([]);
+		act(() => {
+			useAppStore.getState().setTab("view");
+			useAppStore.getState().hold("Paths");
+			useAppStore.getState().setPanelOpen(false);
+		});
+		expect(result.current).toEqual([]);
 	});
 
 	it("a route found or tracked follows the Routes switch; Route while picking shows it", () => {

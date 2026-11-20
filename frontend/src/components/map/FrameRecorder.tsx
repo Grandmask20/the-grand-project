@@ -3,7 +3,7 @@ import { useMapLibre } from "@/hooks/map/UseMapLibre";
 import { frameLog } from "@/logic/FrameLog";
 import { useAppStore } from "@/store/AppStore";
 
-/** While the frame log is on, notes every frame the map draws (Log tab). */
+/** While the frame log is on, notes every frame the map draws (the log drawer). */
 export function FrameRecorder() {
 	const map = useMapLibre();
 	const on = useAppStore((s) => s.frameLog);
