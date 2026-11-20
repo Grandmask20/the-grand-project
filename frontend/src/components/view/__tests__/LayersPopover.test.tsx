@@ -1,5 +1,5 @@
 import { act, screen, waitFor } from "@testing-library/react";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { LayersPopover } from "@/components/view/LayersPopover";
 import { useAppStore } from "@/store/AppStore";
 import { state } from "@/test/Fixtures";
@@ -56,6 +56,18 @@ describe("LayersPopover", () => {
 		await user.click(screen.getByRole("button", { name: "Layers" }));
 		await user.keyboard("{Escape}");
 		expect(screen.queryByRole("dialog")).toBeNull();
+	});
+
+	it("Esc from a switch: the focus back on Layers, and the key goes no further (no map tool ends, Find stays)", async () => {
+		const further = vi.fn();
+		window.addEventListener("keydown", further);
+		const { user } = renderWithApp(<LayersPopover />, settings);
+		await user.click(screen.getByRole("button", { name: "Layers" }));
+		screen.getByRole("button", { name: "Paths" }).focus();
+		await user.keyboard("{Escape}");
+		window.removeEventListener("keydown", further);
+		expect(screen.getByRole("button", { name: "Layers" })).toHaveFocus();
+		expect(further).not.toHaveBeenCalled();
 	});
 
 	it("the layers stay as recorded while the timelapse records, and the 3D view lists its models", async () => {

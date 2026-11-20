@@ -57,7 +57,7 @@ export function TopBar() {
 		});
 
 	return (
-		<header className="flex h-11 shrink-0 items-center gap-1.5 overflow-hidden border-b bg-card px-2">
+		<header className="flex h-11 shrink-0 items-center gap-1.5 overflow-x-auto overflow-y-hidden border-b [scrollbar-width:thin] bg-card px-2">
 			<span className="mr-2 flex shrink-0 items-center gap-1.5 font-semibold tracking-wide whitespace-nowrap text-gold">
 				{/* the in-game tablet the program is named after (user) */}
 				<img src={tablet} alt="" className="size-7" />

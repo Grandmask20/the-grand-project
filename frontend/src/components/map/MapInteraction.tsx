@@ -27,6 +27,9 @@ import { LassoDraw } from "./draw/LassoDraw";
 import { MapMenu } from "./MapMenu";
 import { RouteMenu } from "./RouteMenu";
 
+/** What Enter presses itself when focused: Enter there is not the map's. */
+const PRESSABLE = "button, a[href], select, summary, [role='button'], [role='menuitem'], [role='tab'], [role='option']";
+
 const HOVER = ["maps", "landmarks", "bookmarks", "icons", "paths"];
 
 /** Clicks, drags and keys on the map, by mode: select, draw a city biome, add a bookmark, place a screenshot by
@@ -337,7 +340,8 @@ export function MapInteraction() {
 			} else if (e.key === "Escape") {
 				// with nothing to cancel, Esc empties Find and takes its rings off the map (user: it only worked in the box)
 				useAppStore.getState().clearFind();
-			} else if (e.key === "Enter" && mode.kind === "ghost") {
+			} else if (e.key === "Enter" && mode.kind === "ghost" && !(t instanceof Element && t.closest(PRESSABLE))) {
+				// (Enter on a focused button presses that button, not places the screenshot: CodeRabbit)
 				try {
 					await app.placeByHand(mode.ghost.path, mode.centre[0], mode.centre[1]);
 					setMode({ kind: "normal" });

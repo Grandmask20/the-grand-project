@@ -185,6 +185,18 @@ describe("MapInteraction", () => {
 		expect(useAppStore.getState().fitAtlas).not.toBe(fit);
 	});
 
+	it("Enter on a focused button is that button's, not placing the screenshot (CodeRabbit)", async () => {
+		const { calls } = setup({ "POST /api/place": { ok: true } });
+		act(() => useAppStore.getState().setMode({ kind: "ghost", ghost, centre: [1, 2] }));
+		const button = document.createElement("button");
+		document.body.append(button);
+		act(() => button.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true })));
+		button.remove();
+		await new Promise((r) => setTimeout(r, 20));
+		expect(calls.some((c) => c.path === "/api/place")).toBe(false);
+		expect(useAppStore.getState().mode.kind).toBe("ghost");
+	});
+
 	it("a right-click selects what is there and opens the map menu", async () => {
 		const { fm } = setup();
 		act(() => fm.fire("contextmenu", at(440, 200)));

@@ -18,7 +18,7 @@ import { Checkbox } from "@/components/ui/checkbox";
 import type { Bookmark, Bookmarks, SavedRoute } from "@/domain/bookmarks/Bookmarks";
 import { useAppClient } from "@/hooks/app/UseAppClient";
 import { useBookmarks } from "@/hooks/bookmarks/UseBookmarks";
-import { routeBox, routeTitle } from "@/hooks/map/UseRoutes";
+import { mapsLeft, routeBox, routeTitle } from "@/hooks/map/UseRoutes";
 import { useAppStoreCalm } from "@/store/AppStore";
 import { cn } from "@/utils/Cn";
 import { plural } from "@/utils/Format";
@@ -204,28 +204,29 @@ export function BookmarksTab() {
 				</button>
 				<span className="flex-1" />
 				{groups.length > 0 && (
-					<>
-						<button
-							type="button"
-							className={link}
-							onClick={() =>
-								fold(
-									groups.map((g) => g.name),
-									anyOpen,
-								)
-							}
-						>
-							{anyOpen ? "Fold all" : "Open all"}
-						</button>
-						<button
-							type="button"
-							className={link}
-							aria-pressed={selecting}
-							onClick={() => (selecting ? endSelecting() : setSelecting(true))}
-						>
-							{selecting ? "Done" : "Select"}
-						</button>
-					</>
+					<button
+						type="button"
+						className={link}
+						onClick={() =>
+							fold(
+								groups.map((g) => g.name),
+								anyOpen,
+							)
+						}
+					>
+						{anyOpen ? "Fold all" : "Open all"}
+					</button>
+				)}
+				{/* Done stays while selecting, also once its last group is deleted (CodeRabbit: no way out) */}
+				{(groups.length > 0 || selecting) && (
+					<button
+						type="button"
+						className={link}
+						aria-pressed={selecting}
+						onClick={() => (selecting ? endSelecting() : setSelecting(true))}
+					>
+						{selecting ? "Done" : "Select"}
+					</button>
 				)}
 			</div>
 
@@ -346,7 +347,7 @@ export function BookmarksTab() {
 							g.items.map((b) => {
 								const route = b.route;
 								const tracking = !!route && s.route?.saved === b.id && s.route.at !== undefined;
-								const left = tracking && s.route ? s.route.path.length - 1 - (s.route.at ?? 0) : 0;
+								const left = tracking && s.route ? mapsLeft(s.route.path, s.route.at ?? 0) : 0; // (as the Route page counts)
 								const lit = !!route && s.routeLit === b.id;
 								return (
 									<div

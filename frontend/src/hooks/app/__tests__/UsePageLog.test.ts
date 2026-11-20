@@ -15,7 +15,7 @@ describe("pageChanges", () => {
 		};
 		// in plain words, no ids (user: the log has to make sense to players)
 		expect(pageChanges(after, before)).toEqual([
-			"Opened the Bookmarks tab",
+			"Opened the Saved tab",
 			"Add bookmark started",
 			"Selected Map #12: Breach",
 			"Error shown: no maps inside the lasso",
@@ -27,6 +27,16 @@ describe("pageChanges", () => {
 		const pick = { title: "Open your screenshot folder", folders: true, onPick: () => {} };
 		expect(pageChanges({ ...before, filePick: pick }, before)).toEqual(["Open your screenshot folder: dialog opened"]);
 		expect(pageChanges(before, before)).toEqual([]);
+	});
+
+	it("the side panel closed and opened again, and the log drawer, are logged too (CodeRabbit)", () => {
+		const before = useAppStore.getState();
+		expect(pageChanges({ ...before, panelOpen: false }, before)).toEqual(["Closed the side panel"]);
+		expect(pageChanges(before, { ...before, panelOpen: false })).toEqual(["Opened the Find tab"]);
+		const log = { ...before, logOpen: true, logPage: "log" };
+		expect(pageChanges(log, before)).toEqual(["Opened the log drawer: Log"]);
+		expect(pageChanges({ ...log, logPage: "debug" }, log)).toEqual(["Log drawer: Debug"]);
+		expect(pageChanges(before, { ...log, logPage: "debug" })).toEqual(["Closed the log drawer"]);
 	});
 
 	it("says what happened to the route (user: Route here left no line)", () => {

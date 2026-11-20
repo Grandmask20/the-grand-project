@@ -29,18 +29,26 @@ export function LayersPopover() {
 	const recording = useAppStore((s) => !!s.replay?.recording); // the layers stay as recorded
 	const [open, setOpen] = useState(false);
 	const box = useRef<HTMLDivElement>(null);
+	const trigger = useRef<HTMLButtonElement>(null);
 
 	useEffect(() => {
 		if (!open) return;
 		const away = (e: PointerEvent) => {
 			if (!box.current?.contains(e.target as Node)) setOpen(false);
 		};
-		const esc = (e: KeyboardEvent) => e.key === "Escape" && setOpen(false);
+		// Esc closes it and goes no further: caught first (capture), it neither ends a map tool nor empties Find, and the
+		// focus goes back to the Layers button (CodeRabbit). A click elsewhere leaves the focus where it went
+		const esc = (e: KeyboardEvent) => {
+			if (e.key !== "Escape") return;
+			e.stopPropagation();
+			setOpen(false);
+			trigger.current?.focus();
+		};
 		window.addEventListener("pointerdown", away, true);
-		window.addEventListener("keydown", esc);
+		window.addEventListener("keydown", esc, true);
 		return () => {
 			window.removeEventListener("pointerdown", away, true);
-			window.removeEventListener("keydown", esc);
+			window.removeEventListener("keydown", esc, true);
 		};
 	}, [open]);
 
@@ -62,6 +70,7 @@ export function LayersPopover() {
 	return (
 		<div ref={box} className="relative">
 			<button
+				ref={trigger}
 				type="button"
 				aria-expanded={open}
 				aria-haspopup="dialog"

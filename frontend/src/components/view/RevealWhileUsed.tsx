@@ -31,12 +31,15 @@ const CHANGE_KEYS = new Set([
  * control in it is held (a slider dragged, a colour picker open) or a dropdown of it is open, no longer (user: a
  * hidden layer stayed hidden while restyled, then stayed shown until the tab changed). Settings of the view not shown
  * (`view`: the 3D view's while the map is flat, or the other way round) show nothing (user: their notice over the map
- * was of no use: the View tab says which view they are for).
+ * was of no use: the View tab says which view they are for), and none while the replay is open.
  */
 export function RevealWhileUsed({ layer, view, children }: { layer: string; view: "2d" | "3d"; children: ReactNode }) {
 	const hold = useAppStore((s) => s.hold);
 	const tilted = useAppStore((s) => (s.camera?.pitch ?? 0) > 1);
-	const held = (view === "3d") === tilted ? layer : null;
+	// nothing while the replay is open: its settings are locked, and a press on a section's heading showed its layer
+	// over the replay (CodeRabbit)
+	const replaying = useAppStore((s) => s.replay !== null);
+	const held = !replaying && (view === "3d") === tilted ? layer : null;
 	// what is held now, each let go once: a press (until the mouse is let go anywhere), a key (until it is let go or
 	// the control is left), a colour picker (until it closes or is left)
 	const press = useRef<(() => void) | null>(null);

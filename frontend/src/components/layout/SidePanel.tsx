@@ -73,7 +73,11 @@ export function SidePanel() {
 							type="button"
 							aria-label="Close the panel"
 							title="Close the panel (its tab on the rail opens it again)"
-							onClick={() => setOpen(false)}
+							onClick={() => {
+								// the focus goes to the tab on the rail, not lost with the button (CodeRabbit)
+								document.getElementById(`side-tab-${tab}`)?.focus();
+								setOpen(false);
+							}}
 							className="rounded p-1 text-muted-foreground hover:bg-accent hover:text-foreground"
 						>
 							<XIcon className="size-4" />

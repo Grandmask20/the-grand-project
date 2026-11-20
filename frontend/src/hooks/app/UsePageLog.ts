@@ -8,12 +8,12 @@ const TABS: Record<string, string> = {
 	find: "Find",
 	view: "View",
 	auto: "Auto-add",
-	bookmarks: "Bookmarks",
-	atlases: "Saved atlases",
-	route: "Route",
-	log: "Log",
-	debug: "Debug",
+	bookmarks: "Saved",
+	atlases: "Atlases",
 };
+
+// the log drawer's pages (under the map: no longer tabs)
+const LOG_PAGES: Record<string, string> = { log: "Log", debug: "Debug" };
 
 // a map mode starting, in plain words (its end says "... ended")
 const MODES: Record<MapMode["kind"], string> = {
@@ -32,7 +32,14 @@ const MODES: Record<MapMode["kind"], string> = {
  * players, not only to developers). */
 export function pageChanges(s: AppStoreState, before: AppStoreState): string[] {
 	const out: string[] = [];
-	if (s.tab !== before.tab) out.push(`Opened the ${TABS[s.tab] ?? s.tab} tab`);
+	// the side panel: a tab opened (also the open one again, after the panel was closed), or the panel closed
+	if (s.tab !== before.tab || (s.panelOpen && !before.panelOpen)) out.push(`Opened the ${TABS[s.tab] ?? s.tab} tab`);
+	else if (!s.panelOpen && before.panelOpen) out.push("Closed the side panel");
+	// the log drawer, opened, closed or on another page (CodeRabbit: it left the log as it left the tabs)
+	const page = LOG_PAGES[s.logPage] ?? s.logPage;
+	if (s.logOpen && !before.logOpen) out.push(`Opened the log drawer: ${page}`);
+	else if (s.logOpen && s.logPage !== before.logPage) out.push(`Log drawer: ${page}`);
+	else if (!s.logOpen && before.logOpen) out.push("Closed the log drawer");
 	if (s.mode.kind !== before.mode.kind) {
 		if (before.mode.kind !== "normal") out.push(`${MODES[before.mode.kind]} ended`);
 		if (s.mode.kind !== "normal") out.push(`${MODES[s.mode.kind]} started`);

@@ -121,10 +121,15 @@ export function nextNew(path: number[], at: number): number | null {
 	return null;
 }
 
+/** How many maps of a tracked route are left: each once, none run already (a branch's way back is not counted). */
+export function mapsLeft(path: number[], at: number): number {
+	const run = new Set(path.slice(0, at + 1));
+	return new Set(path.slice(at + 1).filter((m) => !run.has(m))).size;
+}
+
 /** What the Route page says while a route is tracked: how many maps are left (each once). */
 export function tracking(path: number[], at: number): string {
-	const run = new Set(path.slice(0, at + 1));
-	const left = new Set(path.slice(at + 1).filter((m) => !run.has(m))).size;
+	const left = mapsLeft(path, at);
 	return left > 0 ? `${plural(left, "map")} left` : "You're there: the route's last map.";
 }
 

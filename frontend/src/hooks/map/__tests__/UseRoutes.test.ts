@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { nextNew, routeBox, routeTitle, savedRoute, tracking } from "@/hooks/map/UseRoutes";
+import { mapsLeft, nextNew, routeBox, routeTitle, savedRoute, tracking } from "@/hooks/map/UseRoutes";
 import { RouteGraph } from "@/logic/Routes";
 
 const graph = new RouteGraph({
@@ -26,6 +26,7 @@ describe("routes", () => {
 		expect(tracking(walk, 2)).toBe("3 maps left");
 		expect(nextNew(walk, 3)).toBe(5); // from 4 on to 5, past 3
 		expect(tracking(walk, 3)).toBe("2 maps left");
+		expect(mapsLeft([252, 253, 252, 262], 1)).toBe(1); // (the saved route's row counts the same: CodeRabbit)
 		expect(nextNew(walk, 6)).toBeNull();
 	});
 

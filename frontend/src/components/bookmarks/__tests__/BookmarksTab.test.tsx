@@ -35,6 +35,14 @@ describe("BookmarksTab", () => {
 		expect(screen.queryByRole("checkbox")).toBeNull();
 	});
 
+	it("Done stays once the last group is gone, a way out of picking (CodeRabbit)", async () => {
+		const { user, queryClient } = renderWithApp(<BookmarksTab />, { "GET /api/bookmarks": bookmarks });
+		await user.click(await screen.findByRole("button", { name: "Select" }));
+		act(() => queryClient.setQueryData(["bookmarks"], { groups: [] }));
+		await user.click(await screen.findByRole("button", { name: "Done" }));
+		expect(screen.queryByRole("button", { name: "Done" })).toBeNull();
+	});
+
 	it("deletes the picked bookmarks after asking", async () => {
 		const { user } = renderWithApp(<BookmarksTab />, { "GET /api/bookmarks": bookmarks });
 		await user.click(await screen.findByRole("button", { name: "Select" }));
@@ -163,6 +171,12 @@ describe("BookmarksTab", () => {
 
 	it("a tracked saved route shows the maps left", async () => {
 		useAppStore.getState().setRoute({ path: [252, 253, 262], message: "", at: 1, saved: 5 });
+		renderWithApp(<BookmarksTab />, { "GET /api/bookmarks": withRoute });
+		expect(await screen.findByText(/· 1 left/)).toBeInTheDocument();
+	});
+
+	it("a route back down a branch: its maps left each once, as the Route page counts (CodeRabbit)", async () => {
+		useAppStore.getState().setRoute({ path: [252, 253, 252, 262], message: "", at: 1, saved: 5 });
 		renderWithApp(<BookmarksTab />, { "GET /api/bookmarks": withRoute });
 		expect(await screen.findByText(/· 1 left/)).toBeInTheDocument();
 	});

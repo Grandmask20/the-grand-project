@@ -33,6 +33,17 @@ describe("RevealWhileUsed", () => {
 		expect(useAppStore.getState().editing).toEqual([]);
 	});
 
+	it("nothing while the replay is open: its settings are locked (CodeRabbit: a heading's press showed the layer)", () => {
+		useAppStore.setState({ replay: {} as never });
+		render(
+			<RevealWhileUsed layer="Paths" view="2d">
+				<button type="button">heading</button>
+			</RevealWhileUsed>,
+		);
+		fireEvent.pointerDown(screen.getByRole("button", { name: "heading" }));
+		expect(useAppStore.getState().editing).toEqual([]);
+	});
+
 	it("shows its layer while a dropdown in it is open (the list is outside the section)", () => {
 		render(
 			<RevealWhileUsed layer="Icons" view="2d">

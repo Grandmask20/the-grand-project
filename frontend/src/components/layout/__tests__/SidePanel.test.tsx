@@ -41,6 +41,7 @@ describe("SidePanel", () => {
 		expect(useAppStore.getState().panelOpen).toBe(false);
 		expect(screen.queryByRole("heading", { name: "Find" })).toBeNull();
 		expect(screen.getByRole("tablist", { name: "Side panel" })).toBeInTheDocument();
+		expect(screen.getByRole("tab", { name: "Find" })).toHaveFocus(); // (the focus is not lost with the button)
 	});
 
 	it("the drawer's edge resizes it and saves the width; a double-click puts it back", async () => {
