@@ -1,6 +1,6 @@
 import { XIcon } from "lucide-react";
 import type { Map as MapLibreMap } from "maplibre-gl";
-import { useEffect, useLayoutEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { SelectedBox } from "@/components/find/SelectedBox";
 import type { Geo } from "@/logic/Geo";
 import { useAppStore } from "@/store/AppStore";
@@ -66,7 +66,6 @@ export function SelectedPopup({ map, geo }: { map: MapLibreMap; geo: Geo }) {
 	const select = useAppStore((s) => s.select);
 	const [at, setAt] = useState<{ x: number; y: number; w: number; h: number } | null>(null);
 	const [size, setSize] = useState({ w: WIDTH, h: 0 });
-	const card = useRef<HTMLElement>(null);
 	const x = selected?.x;
 	const y = selected?.y;
 
@@ -84,21 +83,22 @@ export function SelectedPopup({ map, geo }: { map: MapLibreMap; geo: Geo }) {
 		};
 	}, [map, geo, x, y]);
 
-	// the window's size, measured again as its content changes (the map icons come later)
-	const shown = !!selected && !!at;
-	useLayoutEffect(() => {
-		const c = card.current;
-		if (!shown || !c) return;
+	// the window's size, measured as it comes into view (also after waiting out of sight: CodeRabbit) and again as its
+	// content changes (the map icons come later)
+	const watch = useRef<ResizeObserver | null>(null);
+	const card = useCallback((el: HTMLElement | null) => {
+		watch.current?.disconnect();
+		watch.current = null;
+		if (!el) return;
 		const measure = () => {
-			const w = c.offsetWidth || WIDTH;
-			const h = c.offsetHeight;
+			const w = el.offsetWidth || WIDTH;
+			const h = el.offsetHeight;
 			setSize((s) => (s.w === w && s.h === h ? s : { w, h }));
 		};
 		measure();
-		const ro = new ResizeObserver(measure);
-		ro.observe(c);
-		return () => ro.disconnect();
-	}, [shown]);
+		watch.current = new ResizeObserver(measure);
+		watch.current.observe(el);
+	}, []);
 
 	if (!selected || !at) return null;
 	const out = at.x < 0 || at.y < 0 || (at.w > 0 && at.x > at.w) || (at.h > 0 && at.y > at.h);

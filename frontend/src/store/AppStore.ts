@@ -122,6 +122,10 @@ export interface AppStoreState {
 	results: ResultRow[];
 	resultsTitle: string;
 	setResults: (rows: ResultRow[], title: string) => void;
+	/** Find's results dropped down under the search: opened by a new list (a search, a type listed, also the same
+	 * type again), closed by a pick, a click elsewhere or Esc. */
+	resultsOpen: boolean;
+	setResultsOpen: (open: boolean) => void;
 	/** Find: the search box's text, the search made from it, and a type listed from the type list. */
 	findText: string;
 	setFindText: (t: string) => void;
@@ -286,7 +290,13 @@ export const useAppStore = create<AppStoreState>()((set) => ({
 	},
 	results: [],
 	resultsTitle: "",
-	setResults: (results, resultsTitle) => set({ results, resultsTitle }),
+	// a new title is a new list: it drops down (the same list again, refreshed, stays as it is)
+	setResults: (results, resultsTitle) =>
+		set((st) =>
+			resultsTitle === st.resultsTitle ? { results } : { results, resultsTitle, resultsOpen: !!resultsTitle },
+		),
+	resultsOpen: false,
+	setResultsOpen: (resultsOpen) => set({ resultsOpen }),
 	findText: "",
 	setFindText: (findText) => set({ findText }),
 	query: "",
@@ -298,9 +308,20 @@ export const useAppStore = create<AppStoreState>()((set) => ({
 			findKinds: st.findKinds.includes(kind) ? st.findKinds.filter((k) => k !== kind) : [...st.findKinds, kind],
 		})),
 	listed: null,
-	listType: (label, icon) => set({ findText: "", query: "", listed: { label, icon }, highlight: icon, goto: null }),
+	// (open: the same type again, its title as before, opens it too: CodeRabbit)
+	listType: (label, icon) =>
+		set({ findText: "", query: "", listed: { label, icon }, highlight: icon, goto: null, resultsOpen: true }),
 	clearFind: () =>
-		set({ findText: "", query: "", listed: null, highlight: null, goto: null, results: [], resultsTitle: "" }),
+		set({
+			findText: "",
+			query: "",
+			listed: null,
+			highlight: null,
+			goto: null,
+			results: [],
+			resultsTitle: "",
+			resultsOpen: false,
+		}),
 	highlight: null,
 	setHighlight: (highlight) => set({ highlight }),
 	mode: { kind: "normal" },
@@ -372,6 +393,7 @@ export const useAppStore = create<AppStoreState>()((set) => ({
 			routeLit: null,
 			results: [],
 			resultsTitle: "",
+			resultsOpen: false,
 			query: "",
 			findText: "",
 			listed: null,

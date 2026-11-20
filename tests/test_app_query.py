@@ -57,6 +57,15 @@ def test_search_rows_are_named_as_the_page_names_them(opened):
     assert all({"icon", "map", "icons", "note", "bookmarked"} <= r.keys() for r in s.search("a")["results"])
 
 
+def test_a_landmarks_row_has_its_map_and_its_icons(opened):
+    s, _path, _pts = opened
+    vaal = next(r for r in s.search("vaal")["results"] if r["kind"] == "landmark")
+    v = next(k for k, n in enumerate(s.V["nodes"]) if n.get("icons"))
+    s.D.setdefault("landmark_node", {})[vaal["id"]] = v  # (item_node has none for a landmark: CodeRabbit)
+    row = next(r for r in s.search("vaal")["results"] if r["kind"] == "landmark")
+    assert row["map"] == v and row["icons"] and row["note"].startswith(f"on map #{v}")
+
+
 def test_find_score_is_loose_and_ranks():
     from grand_project.app.query import find_score
 
@@ -66,6 +75,15 @@ def test_find_score_is_loose_and_ranks():
     assert find_score("abydep", "Abyssal Depths") is not None  # letters in order
     assert find_score("tower", "Abyssal Depths") is None
     assert find_score("ab", "Lab") is not None and find_score("xb", "Lab") is None  # (short: as typed)
+    assert find_score("東京", "東京") == 110 and find_score("東", "東京 farm") == 100  # any letters (CodeRabbit)
+    assert find_score("!!", "boss !!") is not None and find_score("!!", "boss") is None  # punctuation as typed
+
+
+def test_find_score_in_order_stops_at_a_matchs_reach():
+    from grand_project.app.query import _in_order
+
+    assert _in_order("abz", "a" * 10000) is None  # (a long note: each start scans 6 letters, not the rest)
+    assert _in_order("abd", "xxabcdxx") == 40.0 and _in_order("abd", "a" + "x" * 10 + "bd") is None
 
 
 def test_type_list_and_list_of_one_type(opened):

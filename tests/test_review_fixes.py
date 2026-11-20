@@ -477,6 +477,7 @@ def test_the_timelapse_replans_in_the_models_locked_step(session, monkeypatch):
     # replanned too when it ended after the patching below (CI on macOS: [True, True])
     if t := getattr(session, "_lock_thread", None):
         t.join(timeout=30)
+        assert not t.is_alive(), "the locked-stronghold search did not end in 30 s"
     held = []
     monkeypatch.setattr(session, "_replay_on", True)
     monkeypatch.setattr(session, "_replan", lambda: held.append(session._lock._is_owned()))

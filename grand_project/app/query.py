@@ -414,6 +414,9 @@ class QueryMixin:
             if near and not city and not self.near_city_text(v):
                 continue
             x, y = self.item_pos(kind, i)
+            # a landmark's map too (item_node has none for it), for its map and icons (CodeRabbit)
+            if kind == "landmark":
+                v = self.D.get("landmark_node", {}).get(i)
             icons = self.V["nodes"][v].get("icons", []) if v is not None and kind != "bookmark" else []
             icon = None
             if kind == "node":
@@ -672,8 +675,9 @@ def _pkind(label: str) -> str:
 
 
 def _words(text: str) -> list[str]:
-    """The words of a text, lower case, without punctuation ("Map #12: Breach" -> map, 12, breach)."""
-    return re.findall(r"[a-z0-9]+", text.lower())
+    """The words of a text, lower case, without punctuation ("Map #12: Breach" -> map, 12, breach); any letters
+    (a bookmark named "東京" is one word: CodeRabbit)."""
+    return re.findall(r"[^\W_]+", text.lower())
 
 
 def _close(a: str, b: str) -> bool:
@@ -704,12 +708,13 @@ def find_score(q: str, name: str, more: str = "") -> float | None:
             continue
         words = _words(t)
         qw = _words(q)
-        if not qw:
-            return None
+        # the text as typed first, whatever it is made of (punctuation only too)
         if t.strip() == q:
             score = 110
         elif q in t:
             score = 100 if t.startswith(q) else 90
+        elif not qw:
+            score = None
         elif all(any(w.startswith(x) for w in words) for x in qw):
             score = 80
         elif all(any(x in w for w in words) for x in qw):
@@ -730,7 +735,8 @@ def _in_order(q: str, t: str) -> float | None:
     start = t.find(q[0])
     while start >= 0:
         k, j = 0, start
-        while j < len(t) and k < len(q):
+        # (no further than a match may reach: a long note costs no more: CodeRabbit)
+        while j < len(t) and k < len(q) and j - start < 2 * len(q):
             if t[j] == q[k]:
                 k += 1
             j += 1

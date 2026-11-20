@@ -1,5 +1,5 @@
 import { SearchIcon, XIcon } from "lucide-react";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef } from "react";
 import { Pill } from "@/components/common/Pill";
 import { Section } from "@/components/common/Section";
 import { Input } from "@/components/ui/input";
@@ -59,9 +59,9 @@ export function FindTab() {
 	// the results drop down under the search when a list comes (a search, a type clicked); a pick, a click elsewhere or
 	// Esc closes them, and the search's focus or ↓ opens them again (user: like the route's combo)
 	const resultsTitle = useAppStore((s) => s.resultsTitle);
-	const [open, setOpen] = useState(false);
+	const open = useAppStore((s) => s.resultsOpen);
+	const setOpen = useAppStore((s) => s.setResultsOpen);
 	const searchBox = useRef<HTMLDivElement>(null);
-	useEffect(() => setOpen(!!resultsTitle), [resultsTitle]);
 	useEffect(() => {
 		if (!open) return;
 		const away = (e: PointerEvent) => {
@@ -74,7 +74,7 @@ export function FindTab() {
 			window.removeEventListener("pointerdown", away, true);
 			window.removeEventListener("keydown", esc);
 		};
-	}, [open]);
+	}, [open, setOpen]);
 	const down = () => {
 		setOpen(true);
 		// the list is drawn by now when it was open; else on the next frame

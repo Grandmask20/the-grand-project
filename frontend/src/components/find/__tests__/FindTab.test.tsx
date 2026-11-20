@@ -1,4 +1,4 @@
-import { screen, waitFor } from "@testing-library/react";
+import { act, screen, waitFor } from "@testing-library/react";
 import { afterEach, describe, expect, it } from "vitest";
 import { FindTab } from "@/components/find/FindTab";
 import { useAppStore } from "@/store/AppStore";
@@ -76,6 +76,17 @@ describe("FindTab", () => {
 		expect(screen.getByRole("region", { name: "Results" })).toBeInTheDocument();
 		await user.click(screen.getByText("Only"));
 		expect(screen.queryByRole("region", { name: "Results" })).toBeNull();
+	});
+
+	it("the same type listed again opens its results again (CodeRabbit)", () => {
+		renderWithApp(<FindTab />, { "GET /api/types": types });
+		act(() => {
+			useAppStore.getState().listType("City", null);
+			useAppStore.getState().setResults([], "77 City");
+			useAppStore.getState().setResultsOpen(false); // (a pick closed them)
+			useAppStore.getState().listType("City", null);
+		});
+		expect(useAppStore.getState().resultsOpen).toBe(true);
 	});
 
 	it("↓ in the search goes to the first result", async () => {

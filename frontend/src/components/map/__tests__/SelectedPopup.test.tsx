@@ -51,6 +51,22 @@ describe("SelectedPopup", () => {
 		expect(screen.queryByRole("region", { name: "Selected" })).toBeNull();
 	});
 
+	it("measured when it comes back into view: a tall one goes beside the spot (CodeRabbit)", () => {
+		const tall = Object.getOwnPropertyDescriptor(HTMLElement.prototype, "offsetHeight");
+		Object.defineProperty(HTMLElement.prototype, "offsetHeight", { configurable: true, get: () => 600 });
+		try {
+			const { fm } = setup();
+			act(() => fm.map.panBy([-100000, 0])); // (out of sight first)
+			act(() => useAppStore.getState().select(nodeInfo));
+			expect(screen.queryByRole("region", { name: "Selected" })).toBeNull();
+			act(() => fm.map.panBy([100000, 0]));
+			// 600 px high in an 800 px map, its spot in the middle: neither above nor below, beside it
+			expect(screen.getByTestId("selected-point").style.top).not.toBe("");
+		} finally {
+			if (tall) Object.defineProperty(HTMLElement.prototype, "offsetHeight", tall);
+		}
+	});
+
 	it("its close button lets go of the selection", async () => {
 		const { user } = setup();
 		act(() => useAppStore.getState().select(nodeInfo));
