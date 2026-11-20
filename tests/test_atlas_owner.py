@@ -106,6 +106,10 @@ def test_nothing_of_a_shows_while_b_is_being_loaded(session, two, monkeypatch):
     a, b = two
     session.open_atlas(a)
     assert any(f["corners"] for f in session.frames_payload()["frames"])
+    # A's locked-stronghold search ends with a model rebuild: started just before the switch, it built B's model
+    # before B's own first rebuild was seen (flaky on a slow CI machine), so it is waited for
+    if getattr(session, "_lock_thread", None):
+        session._lock_thread.join(10)
     seen = []
     real = session.rebuild_model
 
