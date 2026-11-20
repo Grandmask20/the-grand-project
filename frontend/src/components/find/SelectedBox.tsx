@@ -1,23 +1,18 @@
 import {
 	BookmarkIcon,
+	BookmarkXIcon,
 	CastleIcon,
-	EllipsisIcon,
+	CrosshairIcon,
 	ImageIcon,
 	LocateFixedIcon,
 	RouteIcon,
 	SplineIcon,
+	Trash2Icon,
 } from "lucide-react";
 import { useEffect } from "react";
 import mapNodeIcon from "@/assets/map_node_icon.webp";
 import { IconPicture } from "@/components/common/IconPicture";
 import { Button } from "@/components/ui/button";
-import {
-	DropdownMenu,
-	DropdownMenuContent,
-	DropdownMenuItem,
-	DropdownMenuSeparator,
-	DropdownMenuTrigger,
-} from "@/components/ui/dropdown-menu";
 import type { ItemInfo } from "@/domain/map/ItemInfo";
 import { useAppClient } from "@/hooks/app/UseAppClient";
 import { useInfo } from "@/hooks/find/UseInfo";
@@ -48,7 +43,7 @@ function Badge({ info }: { info: ItemInfo }) {
 }
 
 /** The selected map, path, landmark, icon or bookmark (in its window over the map, SelectedPopup; PO's canvas): what
- * it is, its map icons, and what can be done with it, the rarer actions under More. */
+ * it is, its map icons, and every action as a button with its icon and words (PO: no menu in it). */
 export function SelectedBox() {
 	const app = useAppClient();
 	const selected = useAppStore((s) => s.selected);
@@ -104,7 +99,7 @@ export function SelectedBox() {
 					))}
 				</div>
 			)}
-			{/* the actions, words and icons, on as many lines as they need (PO); the rarer ones under More */}
+			{/* the actions, words and icons, on as many lines as they need (PO) */}
 			<div className="flex flex-wrap items-center gap-1.5">
 				{node !== null && (
 					<Button size="xs" onClick={() => routes.routeTo(node)}>
@@ -134,59 +129,57 @@ export function SelectedBox() {
 					<ImageIcon />
 					Screenshots
 				</Button>
-				<DropdownMenu>
-					<DropdownMenuTrigger asChild>
-						<Button size="xs" variant="ghost" title="Go to, delete">
-							<EllipsisIcon />
-							More
-						</Button>
-					</DropdownMenuTrigger>
-					<DropdownMenuContent align="end">
-						<DropdownMenuItem onSelect={() => flyTo(info.x, info.y, 1)}>Go to</DropdownMenuItem>
-						{(mark || canDelete) && <DropdownMenuSeparator />}
-						{mark && (
-							<DropdownMenuItem
-								variant="destructive"
-								onSelect={() =>
-									askConfirm({
-										title: "Remove bookmark",
-										text: `Remove the bookmark "${mark.name}"?`,
-										yes: "Remove",
-										danger: true,
-										onYes: () =>
-											void app
-												.deleteBookmarks([mark.id as number])
-												// a bookmark pin goes away with it; a bookmarked map stays selected (user)
-												.then(() => info.kind === "bookmark" && clearIf(info))
-												.catch(showError),
-									})
-								}
-							>
-								Remove bookmark
-							</DropdownMenuItem>
-						)}
-						{canDelete && (
-							<DropdownMenuItem
-								variant="destructive"
-								onSelect={() =>
-									askConfirm({
-										title: "Delete landmark",
-										text: `Delete this ${info.title}? (Kept in the atlas: Layers > Removed shows it.)`,
-										yes: "Delete",
-										danger: true,
-										onYes: () =>
-											void app
-												.setLandmark(info.x, info.y, "")
-												.then(() => clearIf(info))
-												.catch(showError),
-									})
-								}
-							>
-								Delete landmark
-							</DropdownMenuItem>
-						)}
-					</DropdownMenuContent>
-				</DropdownMenu>
+				<Button size="xs" variant="outline" onClick={() => flyTo(info.x, info.y, 1)}>
+					<CrosshairIcon />
+					Go to
+				</Button>
+				{mark && (
+					<Button
+						size="xs"
+						variant="outline"
+						className="text-destructive"
+						onClick={() =>
+							askConfirm({
+								title: "Remove bookmark",
+								text: `Remove the bookmark "${mark.name}"?`,
+								yes: "Remove",
+								danger: true,
+								onYes: () =>
+									void app
+										.deleteBookmarks([mark.id as number])
+										// a bookmark pin goes away with it; a bookmarked map stays selected (user)
+										.then(() => info.kind === "bookmark" && clearIf(info))
+										.catch(showError),
+							})
+						}
+					>
+						<BookmarkXIcon />
+						Remove bookmark
+					</Button>
+				)}
+				{canDelete && (
+					<Button
+						size="xs"
+						variant="outline"
+						className="text-destructive"
+						onClick={() =>
+							askConfirm({
+								title: "Delete landmark",
+								text: `Delete this ${info.title}? (Kept in the atlas: Layers > Removed shows it.)`,
+								yes: "Delete",
+								danger: true,
+								onYes: () =>
+									void app
+										.setLandmark(info.x, info.y, "")
+										.then(() => clearIf(info))
+										.catch(showError),
+							})
+						}
+					>
+						<Trash2Icon />
+						Delete landmark
+					</Button>
+				)}
 			</div>
 			<p className="text-xs text-muted-foreground">Right-click on the map for more (change a landmark, city type…).</p>
 		</div>

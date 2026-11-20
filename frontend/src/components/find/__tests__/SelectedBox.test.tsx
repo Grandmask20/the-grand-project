@@ -45,11 +45,10 @@ describe("SelectedBox", () => {
 		expect(useAppStore.getState().mode).toEqual({ kind: "player" }); // (no position yet: it asks where you are)
 	});
 
-	it("Go to is under ⋯", async () => {
+	it("Go to centres the map on it", async () => {
 		const { user } = renderWithApp(<SelectedBox />, { "GET /api/info": nodeInfo });
 		act(() => useAppStore.getState().select(nodeInfo));
-		await user.click(await screen.findByRole("button", { name: "More" }));
-		await user.click(await screen.findByRole("menuitem", { name: "Go to" }));
+		await user.click(await screen.findByRole("button", { name: "Go to" }));
 		expect(useAppStore.getState().fly).toMatchObject({ x: 440, y: 200 });
 	});
 
@@ -69,8 +68,7 @@ describe("SelectedBox", () => {
 			group: "Boss",
 			note: "daily",
 		});
-		await user.click(screen.getByRole("button", { name: "More" })); // (the rarer actions, under ⋯)
-		await user.click(await screen.findByRole("menuitem", { name: "Remove bookmark" }));
+		await user.click(screen.getByRole("button", { name: "Remove bookmark" }));
 		expect(useAppStore.getState().confirm?.text).toBe('Remove the bookmark "big boss"?');
 		act(() => useAppStore.getState().confirm?.onYes());
 		await waitFor(() => expect(calls.some((c) => c.path === "/api/bookmarks/delete")).toBe(true));

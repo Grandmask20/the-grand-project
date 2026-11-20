@@ -122,9 +122,7 @@ export function RouteTab() {
 											map #{id}
 											{k === 0 && <span className="text-muted-foreground"> · start</span>}
 										</span>
-										{isNext && (
-											<span className="rounded bg-accent px-1.5 text-xs font-semibold text-gold">next</span>
-										)}
+										{isNext && <span className="rounded bg-accent px-1.5 text-xs font-semibold text-gold">next</span>}
 										{what && <span className="max-w-32 truncate text-xs text-muted-foreground">{what}</span>}
 									</button>
 								</li>
