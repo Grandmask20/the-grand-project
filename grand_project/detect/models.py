@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import sqlite3
 from datetime import datetime
+from pathlib import Path
 
 from .constants import DB_PATH
 
@@ -18,28 +19,32 @@ def _skops():
 
 
 # ---------------------------------------------------------------- models in the DB
-def _db() -> sqlite3.Connection:
+def _db(path: Path | None = None) -> sqlite3.Connection:
     """Open the reference DB for writing, creating the detector_models table if needed.
 
+    Args:
+        path: Database file; None uses DB_PATH.
+
     Returns:
-        An open sqlite3 connection to DB_PATH.
+        An open sqlite3 connection.
     """
-    c = sqlite3.connect(str(DB_PATH))
+    c = sqlite3.connect(str(path or DB_PATH))
     c.execute("""CREATE TABLE IF NOT EXISTS detector_models (
                      name TEXT PRIMARY KEY, blob BLOB NOT NULL, info TEXT, created TEXT NOT NULL)""")
     return c
 
 
-def save_model(name: str, model, info: dict) -> None:
+def save_model(name: str, model, info: dict, path: Path | None = None) -> None:
     """Store a trained model in the DB as a skops archive (training mode only).
 
     Args:
         name: Model name, e.g. "maps", "badges", "towers"; replaces a stored model of that name.
         model: The fitted scikit-learn model.
         info: Extra facts about the training (stored as JSON).
+        path: Database file; None uses DB_PATH (tools/split_icon_type.py writes other icon databases too).
     """
     buf = _skops().dumps(model)
-    with _db() as c:
+    with _db(path) as c:
         c.execute(
             "INSERT OR REPLACE INTO detector_models VALUES (?, ?, ?, ?)",
             (name, buf, json.dumps(info), datetime.now().isoformat(timespec="seconds")),
@@ -110,11 +115,12 @@ def safe_model_loads(blob: bytes):
         raise UnsafeModel("the detector database contains an invalid or unsupported model: refused") from exc
 
 
-def load_model(name: str):
+def load_model(name: str, path: Path | None = None):
     """Read a model from the DB (live mode: the DB is opened read-only).
 
     Args:
         name: Model name, e.g. "maps", "badges", "towers".
+        path: Database file; None uses DB_PATH.
 
     Returns:
         The loaded model, or None when it (or the table) is not in the DB.
@@ -122,7 +128,8 @@ def load_model(name: str):
     Raises:
         UnsafeModel: The stored archive is not a trusted detector model (see safe_model_loads).
     """
-    c = sqlite3.connect(f"file:{DB_PATH.as_posix()}?mode=ro", uri=True)
+    # as_uri percent-encodes the path: a raw "#" or "?" in it would end the path early and drop "mode=ro"
+    c = sqlite3.connect(f"{Path(path or DB_PATH).resolve().as_uri()}?mode=ro", uri=True)
     try:
         row = c.execute("SELECT blob FROM detector_models WHERE name = ?", (name,)).fetchone()
     except sqlite3.OperationalError:

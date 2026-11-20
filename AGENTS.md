@@ -22,6 +22,18 @@ It must run on Windows, macOS and Linux.
   green-roofed fortress in sand); always the same orientation
 - **halls**: deadly-boss map on a normal base with an orange beam on a structure next to it
 - **deadly bosses**: map nodes with the red "powerful map boss" icon
+- **citadel names** (the dataset's labels): Iron citadel = Ezomyte, Stone citadel = Vaal, Copper citadel = Faridun;
+  `citadel_*` boxes frame a city's own map node and barrel
+- **node classes**: in the RF-DETR dataset every map node is labelled with its biome (`map_node_grass` / `_desert` /
+  `_water` / `_mountain`) or the city area it lies in (`map_node_ezomyte` / `_vaal` / `_faridun`); `map_node` when its
+  ground can't be seen. The `icon_*influence` icons are map mods, not the map's biome
+- **reveal buttons**: the square framed buttons that reveal maps when clicked (a locked Breach stronghold's hand, the
+  Expedition ship); one `reveal_button` class in the dataset, named by the symbol inside (`cities.name_button`). A
+  Breach stronghold is one structure, locked when its hand button stands beside it (`landmarks.stronghold_kind`)
+- **labels**: one registry, `RF_DETR_LABEL_INFO` (`grand_project/detect/labels.py`); changing it means rerunning the
+  annotator's detection (the annotator README has the steps). The Lost Tower and Checkpoint icons are no labels. The
+  rule: RF-DETR finds and places what is hard to see; the classical code names what it finds where it is reliable
+  (every icon is one `icon` class, every reveal button one `reveal_button` class)
 
 ## Layout
 
@@ -29,7 +41,8 @@ It must run on Windows, macOS and Linux.
 file, terrain, waiting groups `islands.py`, clean map `seams.py`), `detect/` (the per-screenshot detector),
 `finalize/` (the atlas-wide check), `app/` (the server and the session, one mixin per file), `webmap/` (tiles),
 plus `builder.py`, `cities.py`, `towers.py`, `paths.py` (every folder location). `frontend/` is the page (see the
-README's developer section). `tools/` are developer helpers, `tests/` regression tests,
+README's developer section). `tools/` are developer helpers
+(`tools/detection_dataset_annotator/` is the Streamlit RF-DETR dataset annotator), `tests/` regression tests,
 `references/` every data file the program reads.
 
 ## Conventions
@@ -83,9 +96,12 @@ pytest, from the program folder. `pytest` alone runs the offline tests and the o
 (~10 minutes), `pytest -m ""` everything. The page: `npm test` in `frontend/` (Vitest). The map's parts are tested on a
 fake map (`src/test/`: `renderOnMap` with react-map-gl mocked by `ReactMapGlMock`, `FakeMap`, `FakeGl` for the 3D
 view's WebGL layers); their looks stay plain functions in `logic/map/`. Randomised tests
-take `--runs N --seed S` and print their seed. Shared fixtures and helpers live in `tests/conftest.py` (test data
-paths, the crawl atlas, `check` for scenario tests that report every failed check, `copy_cache`, `seed` / `rng`);
-use them instead of module-level setup, and `tmp_path` instead of temporary folders made by hand. Detector changes:
+take `--runs N --seed S` and print their seed. Related tests are grouped in subpackages named after what they test
+(`tests/detection_dataset_annotator/` for `tools/detection_dataset_annotator/`, `tests/rf_detr/`; run one with
+`pytest tests/rf_detr`); setup only one group shares goes in that subpackage's `conftest.py`. Shared fixtures and
+helpers live in `tests/conftest.py` (test data paths, the crawl atlas, `check` for scenario tests that report every
+failed check, `copy_cache`, `seed` / `rng`); use them instead of module-level setup, and `tmp_path` instead of
+temporary folders made by hand. Detector changes:
 compare `python -m grand_project.detect score` before and after. When piping test output on Windows set
 `PYTHONIOENCODING=utf-8` (some checks print non-ASCII).
 

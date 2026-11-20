@@ -134,7 +134,19 @@ def read_screenshot(path) -> np.ndarray | None:
     # missing or unreadable: said so, not raised (Screenshots of this spot answered 500)
     except (OSError, ValueError, cv2.error):
         return None
-    if img is None or img.shape[0] == K.SCREEN_HEIGHT:
+    return None if img is None else scale_screenshot(img)
+
+
+def scale_screenshot(img: np.ndarray) -> np.ndarray:
+    """A decoded screenshot as the detector sees it (see read_screenshot), for callers that keep the original too.
+
+    Args:
+        img: BGR image at its original size.
+
+    Returns:
+        The image scaled to SCREEN_HEIGHT px tall, or ``img`` itself when it is 1080p already or a crop.
+    """
+    if img.shape[0] == K.SCREEN_HEIGHT:
         return img
     if img.shape[0] < 720 or not 1.5 <= img.shape[1] / img.shape[0] <= 2.5:
         return img

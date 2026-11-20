@@ -5,6 +5,7 @@ from __future__ import annotations
 import os
 
 from grand_project import __version__, core
+from grand_project.detect.constants import ICON_INFO  # noqa: F401  (the icon table lives with the detector)
 
 VERSION = __version__  # one place: grand_project/__init__.py
 
@@ -167,106 +168,6 @@ WEAK_NCC = 0.45  # ... AND terrain agreement below this
 
 
 ATLAS_THUMB = (112, 84)  # px: an atlas's thumbnail on its card in the Saved atlases tab
-
-
-# game icon -> (poe2db name, BGR colour, other names it can be searched by).  Names follow
-# poe2db.tw Waystones > Map Legends / Map Content.
-ICON_INFO = {
-    "MapBoss": ("Powerful Map Boss", (70, 120, 255), "map boss, defeat the map boss"),
-    "MapBossSpecial": ("Deadly Map Boss", (50, 50, 255), "special boss, hall boss, city boss"),
-    "UniqueMap": ("Unique Map", (0, 190, 255), ""),
-    "Abyss": ("Abyss", (90, 230, 60), "complete all abysses, abyssal fissure"),
-    "AbyssOverrun": ("Overrun by the Abyssal", (40, 190, 40), "abyss overrun, many extra abysses"),
-    "AbyssalDepths": ("Abyssal Depths", (40, 160, 40), "complete the abyssal depths"),
-    "AzmeriSpirit": ("Spirit Guide", (255, 200, 90), "azmeri spirit, complete all azmeri spirits, viridian wildwood"),
-    "Delirium": ("Delirium", (225, 225, 225), "delirium mirror, simulacrum"),
-    "Breach": ("Breach", (235, 90, 220), "unstable breaches, breach hive"),
-    "Expedition": ("Expedition", (90, 200, 255), "kalguuran expedition, grand expedition"),
-    "ExpeditionRemnant": ("Verisium Remnants", (90, 200, 255), "collect the verisium remnants"),
-    "Ritual": ("Ritual", (60, 60, 200), "ritual altars"),
-    "Essence": ("Essence Trove", (200, 120, 255), "essence, free all essence monsters"),
-    "Irradiated": ("Irradiated", (60, 255, 200), "+1 monster level"),
-    "StrongBox": ("Monstrous Treasure", (80, 170, 230), "strongbox, open all strongboxes"),
-    "Incursion": ("Vaal Beacons", (120, 160, 120), "incursion, energise the vaal beacons"),
-    "Shrine": ("Shrines", (200, 200, 120), "activate all shrines"),
-    "RogueExile": ("Rogue Exiles", (60, 60, 230), "defeat all rogue exiles"),
-    "RareMonster": ("Rare Monsters", (40, 200, 230), "defeat all rare monsters"),
-    "Checkpoint": ("Checkpoints", (200, 200, 200), "activate all checkpoints"),
-    "StoneCircle": ("Summoning Circles", (150, 150, 200), "stone circle, complete all summoning circles"),
-    "Corruption": ("Corruption", (130, 40, 160), ""),
-    "CorruptionNexus": ("Corrupted Boss", (160, 40, 200), "defeat the corrupted boss, corrupted nexus"),
-    "CorruptionNexusNoGrowth": ("Corrupted Nexus", (160, 60, 200), ""),
-    "Sanctification": ("Cleansed", (220, 240, 255), "sanctification"),
-    "SanctificationBoss": ("Immured Fury", (200, 220, 255), "doryani"),
-    "Trader": ("Wandering Trader", (120, 220, 255), "trader"),
-    "NamelessSeer": ("Nameless Seer", (200, 140, 255), "seer"),
-    "Hideout": ("Hideout", (200, 255, 200), "felled hideout"),
-    "HideoutRed": ("Red hideout", (230, 90, 90), "hideout, red fleur-de-lis (user: kept apart from Hideout)"),
-    "LostTower": ("Precursor Tower", (100, 235, 100), "lost tower, tower"),
-    "Unidentified": ("Unidentified badge", (160, 160, 160), "unknown"),
-    # taught by hand on the badge sheet (atlas_icon_refs, badge_refs table in the icon database);
-    # poe2db Map Content names
-    "MirageOfRiches": ("Mirage of Riches", (120, 200, 220), "equipment replaced"),
-    "ZealousReverence": ("Zealous Reverence", (200, 120, 160), "shrine duration"),
-    "SurprisingAlliances": ("Surprising Alliances", (60, 160, 230), "rogue exiles in pairs"),
-    "SpiritMigration": ("Spirit Migration", (220, 140, 255), "azmeri spirit moves"),
-    "PowerOfFaith": ("Power of Faith", (60, 120, 220), "additional shrines"),
-    "TwiceLockedBoxes": ("Twice-Locked Boxes", (90, 160, 210), "strongboxes openable twice"),
-    "BehemothsBounty": ("Behemoth's Bounty", (230, 190, 120), "map boss drops a unique"),
-    "ExceptionalFind": ("Exceptional Find", (230, 170, 90), "exceptional items"),
-    "GiganticUprising": ("Gigantic Uprising", (240, 200, 110), "gigantic monsters"),
-    "ScatteredStones": ("Scattered Stones", (220, 180, 100), "summoning circles"),
-    "TwinnedTerrors": ("Twinned Terrors", (200, 160, 90), "summoning circles additional boss"),
-    "Headhunters": ("Headhunters", (60, 80, 230), "rare monster modifiers"),
-    "ArcaneOrProsperous": (
-        "Arcane Hordes / Prosperous Populous",
-        (60, 100, 240),
-        "arcane hordes, prosperous populous, magic monsters, rarity",
-    ),
-    "CorruptedMirage": ("Corrupted Mirage", (40, 70, 240), "additional waystone modifiers"),
-    "GrandMirror": ("Grand Mirror", (200, 200, 200), "mirror"),
-    "Simulacrum": ("Simulacrum", (230, 230, 230), "delirium manifestation"),
-    "IndomitableEssence": ("Indomitable Essence", (255, 200, 150), "essence"),
-    "AzmeriEnergisation": ("Azmeri Energisation", (240, 90, 220), "azmeri spirits empowerment"),
-    "EchoesOfPower": ("Echoes of Power", (200, 80, 180), "rare monsters duplicated"),
-    "ChaoticCacophony": ("Chaotic Cacophony", (120, 200, 120), "extra of each content"),
-    "GrassInfluence": ("Grass Influence", (80, 210, 120), "grass area, biome"),
-    "PowerStruggle": ("Power Struggle", (230, 80, 140), "additional map bosses"),
-    "HuntingGrounds": ("Hunting Grounds", (60, 220, 60), "rogue exiles rare beasts"),
-    "AzmeriChampion": ("Azmeri Champion", (255, 170, 80), "map boss is possessed"),
-    "LargeCongregation": ("Large Congregation", (90, 150, 210), "shrines worshippers"),
-    "AncientTrove": ("Ancient Trove", (60, 120, 200), "unique trove, unique strongbox"),
-    "SacredSpirit": ("Sacred Spirit", (60, 120, 255), "azmeri sacred spirit"),
-    "SwarmingSpirits": ("Swarming Spirits", (200, 160, 80), "additional azmeri spirits"),
-    "AzmeriBloodline": ("Azmeri Bloodline", (80, 200, 120), "rogue exile azmeri"),
-    "NatureShrines": ("Nature Shrines", (140, 200, 120), "shrines azmeri spirit"),
-    "RitesOfTheRogues": ("Rites of the Rogues", (40, 150, 230), "shrines rogue exile"),
-    "AffluentArmies": ("Affluent Armies", (60, 210, 230), "rarity"),
-    "FragmentOfImmortality": ("Fragment of Immortality", (200, 100, 200), "unlimited revivals"),
-    "PersistentDevotion": ("Persistent Devotion", (120, 180, 140), "shrine buffs"),
-    "CrystalisedTwinning": ("Crystalised Twinning", (220, 120, 140), "essence packs"),
-    "TightPockets": ("Tight Pockets", (200, 110, 150), "gold replaced"),
-    "ForestInfluence": ("Forest Influence", (60, 160, 60), "forest area, biome"),
-    "MountainInfluence": ("Mountain Influence", (190, 190, 190), "mountain area, biome"),
-    # named from poe2db's Map Content art (no on-screen example taught yet, or only a few)
-    "WaterInfluence": ("Water Influence", (70, 150, 230), "water area, biome"),
-    "SwampInfluence": ("Swamp Influence", (110, 140, 80), "swamp area, biome"),
-    "DesertInfluence": ("Desert Influence", (220, 190, 120), "desert area, biome"),
-    "EnergizedLeyLines": ("Energized Ley Lines", (240, 220, 150), "doubles effect of tablets"),
-    "FleeingExile": (
-        "Fleeing Exile",
-        (90, 130, 220),
-        "rogue exile, defeat all rogue exiles (the icon the atlas shows: user)",
-    ),
-    "GreatBeast": ("Great Beast", (200, 150, 90), "hilda's favour"),
-    "MapAreaModified": ("Map Area Modified", (170, 170, 170), "world area manipulated"),
-    "NotableLocation": ("Notable Location", (230, 210, 120), "important objective"),
-    "SekhemasStudent": ("Sekhema's Student", (220, 180, 90), "map boss drops a djinn barya"),
-    "TrialmastersTrainee": ("Trialmaster's Trainee", (200, 120, 90), "map boss drops an inscribed ultimatum"),
-    "StolenPower": ("Stolen Power", (40, 120, 255), "summoning circle bosses, power of enemy slain"),
-    "GlimmeringMutation": ("Glimmering Mutation", (40, 200, 255), "currency replaced with rarer varieties"),
-    "PlayerOrBookmark": ("Player / bookmark marker", (255, 255, 255), "player, bookmark, pin, ritual"),
-}
 
 
 PLACE_ICON = {

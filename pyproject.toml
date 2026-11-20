@@ -1,6 +1,6 @@
 [project]
 name = "the-grand-project"
-version = "1.21"
+version = "1.22"
 description = "Builds one big map of your Path of Exile 2 atlas from screenshots: maps, paths, badges, towers and cities."
 readme = "README.md"
 requires-python = ">=3.11"
@@ -28,6 +28,15 @@ dev = [
     "coverage>=7.6",
     "pytest>=8",
     "ruff>=0.9",
+]
+training = [
+    "datasets>=3.0",
+    "torch>=2.5",
+    "torchvision>=0.20",
+    "transformers>=5.9",  # the first release with RF-DETR (rf_detr model type and image processor)
+]
+annotator = [
+    "streamlit>=1.53",
 ]
 
 [build-system]

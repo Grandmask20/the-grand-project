@@ -4,6 +4,10 @@
     pytest -m slow                           the long ones (waiting islands, ~10 min)
     pytest -m ""                             everything
     pytest tests/test_drop_placement.py --runs 20 --seed 123      randomised tests: more runs / a fixed seed
+    pytest tests/detection_dataset_annotator one group: the dataset annotator (tests/rf_detr: the RF-DETR detector)
+
+Related tests are grouped in subpackages (``tests/detection_dataset_annotator``, ``tests/rf_detr``); a subpackage's
+own ``conftest.py`` holds the setup only its tests share, and every fixture here applies to them too.
 
 Markers (declared in pyproject.toml): `data` tests are skipped when the test screenshots are not there (Git LFS:
 git lfs pull --include="atlas_test_data/**", or set ATLAS_TEST_DATA).
@@ -13,6 +17,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import random
 import shutil
 from pathlib import Path
@@ -22,6 +27,7 @@ import numpy as np
 import pytest
 
 from grand_project import paths as rc_paths
+from grand_project.detect.constants import RF_DETR_USE_ENV
 
 
 def pytest_addoption(parser):
@@ -34,6 +40,17 @@ def pytest_addoption(parser):
     g.addoption("--runs", type=int, default=None, help="randomised tests: how many runs (each test has a default)")
     g.addoption("--seed", type=int, default=None, help="randomised tests: the seed (default: a new one, printed)")
     g.addoption("--cached", action="store_true", help="test_waiting_islands: reuse the saved detections (quick)")
+    g.addoption(
+        "--rf-detr",
+        action="store_true",
+        help="use the optional fine-tuned RF-DETR backend (set GRAND_PROJECT_RF_DETR_MODEL if needed)",
+    )
+
+
+def pytest_configure(config):
+    """Enable the optional detector before tests import or call the live pipeline."""
+    if config.getoption("--rf-detr"):
+        os.environ[RF_DETR_USE_ENV] = "1"
 
 
 def pytest_collection_modifyitems(config, items):

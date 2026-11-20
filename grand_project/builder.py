@@ -56,6 +56,7 @@ def detector_stamp() -> str:
         import sqlite3
 
         from grand_project.detect.constants import BADGE_FINDER_FILE, CITY_BARREL_FILE, DB_PATH
+        from grand_project.detect.rf_detr_model import rf_detr_enabled, rf_detr_model_path
 
         h = hashlib.sha1()
         try:
@@ -67,6 +68,15 @@ def detector_stamp() -> str:
             h.update(b"no database")
         for f in (BADGE_FINDER_FILE, CITY_BARREL_FILE):
             h.update(f.read_bytes() if f.exists() else b"-")
+        use_rf_detr = rf_detr_enabled()
+        rf_model = rf_detr_model_path()
+        if use_rf_detr:
+            h.update(f"rf-detr:{rf_model}".encode())
+        if use_rf_detr and rf_model.is_dir():
+            for f in sorted(rf_model.iterdir()):
+                if f.is_file():
+                    stat = f.stat()
+                    h.update(f"{f.name}:{stat.st_size}:{stat.st_mtime_ns}".encode())
         _STAMP.append(h.hexdigest()[:12])
     return _STAMP[0]
 

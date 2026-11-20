@@ -27,6 +27,7 @@ from .constants import (
     SPECIAL_R,
 )
 from .maps import _keep_best
+from .models import _models, load_model
 
 
 def _finder() -> dict:
@@ -308,6 +309,62 @@ def badge_rows(icons: list[dict]) -> list[list[dict]]:
     return rows
 
 
+def naming_book() -> dict:
+    """The icon model's labelled pictures, which the classical namer uses beside the stored ones (``badges_from``).
+
+    Loaded once (into ``models._models``, where the classical detector keeps it). Without an icon model in the
+    reference database the set is empty and icons are named from the stored pictures alone.
+
+    Returns:
+        {"names": [...], "F": (m, k) picture features}.
+    """
+    if "badges" not in _models:
+        model = load_model("badges")
+        if model is None:
+            return {"names": [], "F": np.zeros((0, 0), np.float32)}
+        _models["badges"] = model
+    return _models["badges"]
+
+
+def name_found_icons(
+    img: np.ndarray, icons: list[dict], book: dict, *, influence_min: float | None = INFLUENCE_MIN
+) -> list[dict]:
+    """Name the icons a finder found, as the classical detector names them.
+
+    The one naming step of both detectors (the classical rim finder's icons and the RF-DETR model's): each icon is
+    named by its closest picture among the stored pictures (``icon_refs``) and the icon model's (``book``). Icons
+    with their own rim (``SPECIAL_ICONS``) are found and named by their whole-icon template and replace a found icon
+    on them. Expedition only appears in the water zone (user); an icon named "not an icon" is dropped.
+
+    Args:
+        img: BGR screenshot (1080p).
+        icons: Found icons, dicts with "x", "y", "score" (kept in the result).
+        book: The icon model's labelled pictures (``naming_book``): {"names": [...], "F": (m, k) array}.
+        influence_min: An icon named a biome influence needs this score, else it is dropped: the rim finder's
+            "very strong rim assurance" (user: weak circles named an influence are usually terrain). None for a
+            finder whose score is not the rim finder's probability (the RF-DETR model, trained on reviewed boxes).
+
+    Returns:
+        The special icons, then the named found icons as dicts with "name" and "dist" (1 - correlation) added.
+    """
+    R = icon_refs.refs()
+    names = R.names + book["names"]
+    F = np.vstack([R.F, book["F"]]) if len(book["names"]) else R.F
+    special = special_icons(img)  # own rims: found and named by their template, they win over the rim finder
+    out = list(special)
+    for b in icons:
+        if any(np.hypot(b["x"] - s_["x"], b["y"] - s_["y"]) <= BADGE_NMS for s_ in special):
+            continue
+        nm, d = name_badge(img, b["x"], b["y"], names, F)
+        if influence_min is not None and nm.endswith("Influence") and b["score"] < influence_min:
+            continue  # a weak circle named a biome influence is usually terrain (user)
+        if nm == EXPEDITION and not _in_water(img, b["x"], b["y"]):
+            nm = "Unidentified"  # Expedition only appears in the water zone (user)
+        if nm != icon_refs.NOT_A_BADGE:
+            out.append(dict(b, name=nm, dist=round(d, 3)))
+    return out
+
+
 def badges_from(
     img: np.ndarray,
     pts: np.ndarray,
@@ -349,21 +406,7 @@ def badges_from(
         mate = any(abs(y - b["y"]) <= 5 and abs(abs(x - b["x"]) - ROW_STEP) <= 5 for b in icons)
         if mate or _row_slot(x, y, maps):
             icons.append({"x": x, "y": y, "score": round(float(p[i]), 3), "row": True})
-    R = icon_refs.refs()
-    names = R.names + book["names"]
-    F = np.vstack([R.F, book["F"]]) if len(book["names"]) else R.F
-    special = special_icons(img)  # own rims: found and named by their template, they win over the rim finder
-    out = list(special)
-    for b in icons:
-        if any(np.hypot(b["x"] - s_["x"], b["y"] - s_["y"]) <= BADGE_NMS for s_ in special):
-            continue
-        nm, d = name_badge(img, b["x"], b["y"], names, F)
-        if nm.endswith("Influence") and b["score"] < INFLUENCE_MIN:
-            continue  # a weak circle named a biome influence is usually terrain (user)
-        if nm == EXPEDITION and not _in_water(img, b["x"], b["y"]):
-            nm = "Unidentified"  # Expedition only appears in the water zone (user)
-        if nm != icon_refs.NOT_A_BADGE:
-            out.append(dict(b, name=nm, dist=round(d, 3)))
+    out = name_found_icons(img, icons, book)
     more: list[dict] = []
     for row in badge_rows(out):
         cx = (row[0]["x"] + row[-1]["x"]) / 2  # the map sits under the row's middle (user)

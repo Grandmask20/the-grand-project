@@ -11,6 +11,8 @@ City types
     labelled city in city_refs.npz (colour + edge-direction look of the ground around the city,
     "look-alike"). Faridun is easy to tell by its sand; Vaal vs Ezomyte by look alone is weak, so
     the trio rule and hand-set types (atlas.city_types, right-click on the map) win over it.
+    On ONE screenshot (screenshot_city_types: the dataset annotator's first pass, the RF-DETR dataset) only the look
+    and "close cities differ" apply; a guess under CITY_LOOK_SURE is reported as unsure.
 
 Potential maps
     Maps within a few path steps of a City or a Breach stronghold may take on its biome.
@@ -35,6 +37,10 @@ REFS = rc_paths.ref("city_refs.npz")
 LOCK_ICON = rc_paths.ref("lock_icon.png")  # the hand badge of a locked Breach stronghold
 LOCK_SAME = 150.0  # atlas units: hand badges this close are the same one
 COLOR_W = 2.0  # weight of the colour histogram against the edge directions
+# Look-alike distance margin (second-best type minus best) from which one screenshot's guess counts as sure:
+# leave-one-out over the 173 looks in city_refs.npz was 95% right overall (mostly Ezomyte <-> Vaal mix-ups) and
+# 100% right (124 of 173) at a margin of 0.1 or more.
+CITY_LOOK_SURE = 0.10
 _refs = None
 
 
@@ -100,10 +106,97 @@ def city_features(atlas, x: float, y: float, n: int = 3) -> list[np.ndarray]:
         im = atlas.image(f["path"])
         if im is None:
             continue
-        X, Y = int(p[0]), int(p[1])
-        win = im[max(0, Y - 220) : Y + 140, max(0, X - 270) : X + 270]
+        win, _whole = city_window(im, p[0], p[1])
         if win.shape[0] >= 200 and win.shape[1] >= 300:
             out.append(window_feature(win))
+    return out
+
+
+def city_window(img: np.ndarray, x: float, y: float) -> tuple[np.ndarray, bool]:
+    """Cut the ground window around a city base out of a 1080p screenshot (what window_feature describes).
+
+    Args:
+        img: BGR screenshot (detector pixels, as core.read_screenshot gives).
+        x: x of the city's map node in the screenshot.
+        y: y of the city's map node in the screenshot.
+
+    Returns:
+        (the window, ~540x360 px with the base at the bottom middle; True when it lies wholly inside the screenshot).
+    """
+    X, Y = int(x), int(y)
+    H, W = img.shape[:2]
+    whole = Y - 220 >= 0 and X - 270 >= 0 and Y + 140 <= H and X + 270 <= W
+    return img[max(0, Y - 220) : Y + 140, max(0, X - 270) : X + 270], whole
+
+
+def screenshot_city_types(img: np.ndarray, points: list[tuple[float, float]]) -> list[tuple[str, bool]]:
+    """Guess the type of each city seen in ONE screenshot (no atlas: no hand-set types and no trio partners).
+
+    The look-alike part of city_types on a single view: each city's ground window is matched against city_refs.npz,
+    the clearest city (biggest margin between its two best allowed types) is decided first, and cities closer than
+    TRIO_GAP never share a type (screenshot px are about atlas units).
+
+    Args:
+        img: BGR screenshot in detector pixels (1080p, core.read_screenshot / core.scale_screenshot).
+        points: (x, y) of each city's map node in the screenshot.
+
+    Returns:
+        One (type, sure) per point; sure is False when the margin is under CITY_LOOK_SURE, the window is cut off by
+        the screenshot edge, there is nothing to compare with (then the type is TYPES[0]), or a city decided before
+        it closer than TRIO_GAP, whose type ruled one out, is unsure itself.
+    """
+    n = len(points)
+    dist: list[list[float] | None] = [None] * n
+    whole = [False] * n
+    for k, (x, y) in enumerate(points):
+        win, whole[k] = city_window(img, x, y)
+        if win.shape[0] >= 8 and win.shape[1] >= 8:
+            dist[k] = look_distances([window_feature(win)])
+    P = np.array(points, float).reshape(-1, 2)
+    D = np.hypot(P[:, None, 0] - P[None, :, 0], P[:, None, 1] - P[None, :, 1])
+    out: list[tuple[str, bool] | None] = [None] * n
+    while True:
+        best = None
+        for k in range(n):
+            if out[k] is not None:
+                continue
+            near = [j for j in np.nonzero(D[k] < TRIO_GAP)[0] if j != k and out[j]]
+            taken = {out[j][0] for j in near}
+            al = [t for t in TYPES if t not in taken] or list(TYPES)
+            # the neighbours that narrowed the choice (none when every type was taken): their doubt carries over
+            leaned = near if len(al) < len(TYPES) else []
+            if dist[k] is None:
+                cand = (-1.0, k, al[0], leaned)
+            else:
+                ds = sorted((dist[k][TYPES.index(t)], t) for t in al)
+                cand = (ds[1][0] - ds[0][0] if len(ds) > 1 else 9.0, k, ds[0][1], leaned)
+            if best is None or cand[0] > best[0]:
+                best = cand
+        if best is None:
+            break
+        margin, k, t, leaned = best
+        sure = dist[k] is not None and whole[k] and margin >= CITY_LOOK_SURE and all(out[j][1] for j in leaned)
+        out[k] = (t, bool(sure))
+    return [o for o in out if o is not None]
+
+
+def landmark_city_types(img: np.ndarray, landmarks: list[dict]) -> dict[int, tuple[str, bool]]:
+    """The type of every City among one screenshot's landmarks: its own ``city_type`` when it has one (sure), else
+    the look-alike guess of screenshot_city_types.
+
+    Args:
+        img: BGR screenshot in detector pixels.
+        landmarks: landmark dicts with "kind", "x", "y" and maybe "city_type" (screenshot px).
+
+    Returns:
+        Index in landmarks -> (type, sure), for the City landmarks only.
+    """
+    found = [i for i, lm in enumerate(landmarks) if lm.get("kind") == "City"]
+    out = {i: (str(landmarks[i]["city_type"]), True) for i in found if landmarks[i].get("city_type") in TYPES}
+    open_ = [i for i in found if i not in out]
+    if open_:
+        points = [(float(landmarks[i]["x"]), float(landmarks[i]["y"])) for i in open_]
+        out.update(zip(open_, screenshot_city_types(img, points), strict=True))
     return out
 
 
@@ -460,19 +553,42 @@ def square_buttons(img) -> list[dict]:
         if mx < BUTTON_FRAME:
             return out
         r[max(0, y - h) : y + h, max(0, x - w) : x + w] = 0
-        c = g[y + 14 - BUTTON_EDGE : y + h - 14 + BUTTON_EDGE, x + 14 - BUTTON_EDGE : x + w - 14 + BUTTON_EDGE]
-        best, kind = -1.0, "unknown"
-        for k, sy in R["symbols"].items():
-            if c.shape[0] < sy.shape[0] or c.shape[1] < sy.shape[1]:
-                continue
-            v = float(cv2.matchTemplate(c, sy, cv2.TM_CCOEFF_NORMED).max())
-            if v > best:
-                best, kind = v, k
-        if best < BUTTON_SYMBOL:
-            if mx < 0.9:  # a weak frame with no known symbol: not a button
-                continue
-            kind = "unknown"
+        kind, best = name_button(g, x + w / 2, y + h / 2)
+        if kind == "unknown" and mx < 0.9:
+            continue  # a weak frame with no known symbol: not a button
         out.append({"kind": kind, "x": x + w / 2, "y": y + h / 2, "frame": round(mx, 3), "symbol": round(best, 3)})
+
+
+def name_button(img, x: float, y: float, margin: int = BUTTON_EDGE) -> tuple[str, float]:
+    """Name the square framed button centred at (x, y) by the symbol inside its frame.
+
+    The one naming step of the buttons, wherever they were found: ``square_buttons`` finds them by their frame, the
+    RF-DETR detector by its ``reveal_button`` class (a centre a few px off: a wider ``margin``; measured on the 195
+    buttons of the dataset screenshots, a 16 px search names every button up to 16 px off, never as another kind).
+
+    Args:
+        img: the screenshot (BGR or grey, 1080p).
+        x: the button's centre x in screen px.
+        y: the button's centre y in screen px.
+        margin: px around the symbol's place the symbol is searched within.
+
+    Returns:
+        (kind, score): kind "lock", "ship" (a symbol of ``_button_refs``) or "unknown" when no symbol scores
+        ``BUTTON_SYMBOL``; score the best symbol match (-1 when the button is too near the screenshot's edge).
+    """
+    R = _button_refs()
+    h, w = R["frame"].shape
+    g = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY) if img.ndim == 3 else img
+    left, top = int(round(x - w / 2)), int(round(y - h / 2))
+    c = g[max(0, top + 14 - margin) : top + h - 14 + margin, max(0, left + 14 - margin) : left + w - 14 + margin]
+    best, kind = -1.0, "unknown"
+    for k, sy in R["symbols"].items():
+        if c.shape[0] < sy.shape[0] or c.shape[1] < sy.shape[1]:
+            continue
+        v = float(cv2.matchTemplate(c, sy, cv2.TM_CCOEFF_NORMED).max())
+        if v > best:
+            best, kind = v, k
+    return (kind if best >= BUTTON_SYMBOL else "unknown"), best
 
 
 def locks_in(img) -> list[tuple[float, float]]:
