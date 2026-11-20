@@ -197,7 +197,8 @@ def test_quick_checks_ask_github_once_a_minute(installed):
 
     for _ in range(5):
         s.check_update(background=False, fetch=counting)
-    assert len(asked) == 1 and 0 < s.update_status()["next"] - time.time() <= K.UPDATE_CHECK_GAP
+    # (the time is given to a tenth of a second: it can be a few hundredths past the minute from here, CI)
+    assert len(asked) == 1 and 0 < s.update_status()["next"] - time.time() <= K.UPDATE_CHECK_GAP + 0.2
 
 
 def test_github_s_used_up_limit_is_said_with_when():
