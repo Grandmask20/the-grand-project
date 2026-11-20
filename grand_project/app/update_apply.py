@@ -147,19 +147,25 @@ def freeze(python: str) -> dict[str, str] | None:
 
 
 def put_back_packages(python: str, before: dict[str, str], log: Path) -> None:
-    """Install again, at their versions before, the packages a failed install changed (its log gets the outcome)."""
-    after = freeze(python) or {}
-    changed = [f"{n}=={v}" for n, v in before.items() if after.get(n) != v]
-    if not changed:
-        return
-    try:
-        r = subprocess.run([python, "-m", "pip", "install", *changed], capture_output=True, text=True, timeout=PIP_WAIT)
-        note = f"\n--- packages put back ({', '.join(changed)}): {'done' if r.returncode == 0 else 'failed'}\n"
-        note += r.stdout + r.stderr
-    except (OSError, subprocess.SubprocessError) as e:
-        note = f"\n--- packages couldn't be put back ({', '.join(changed)}): {e}\n"
-    with log.open("a", encoding="utf-8", errors="replace") as f:
-        f.write(note)
+    """Put the packages back as they were before a failed install: the ones it changed installed again at their
+    versions before, the ones it added removed (they stayed: GPT audit). Its log gets the outcome."""
+    after = freeze(python)
+    changed = [f"{n}=={v}" for n, v in before.items() if (after or {}).get(n) != v]
+    added = sorted(set(after) - set(before)) if after is not None else []  # (unknown when pip can't say)
+    steps = [("put back", ["install", *changed], changed), ("removed", ["uninstall", "-y", *added], added)]
+    note = ""
+    for what, args, names in steps:
+        if not names:
+            continue
+        try:
+            r = subprocess.run([python, "-m", "pip", *args], capture_output=True, text=True, timeout=PIP_WAIT)
+            note += f"\n--- packages {what} ({', '.join(names)}): {'done' if r.returncode == 0 else 'failed'}\n"
+            note += r.stdout + r.stderr
+        except (OSError, subprocess.SubprocessError) as e:
+            note += f"\n--- packages couldn't be {what} ({', '.join(names)}): {e}\n"
+    if note:
+        with log.open("a", encoding="utf-8", errors="replace") as f:
+            f.write(note)
 
 
 def restart(plan: dict) -> None:

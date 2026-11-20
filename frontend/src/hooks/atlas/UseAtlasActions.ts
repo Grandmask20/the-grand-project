@@ -157,14 +157,28 @@ export function useAtlasActions() {
 		async (files: File[]) => {
 			const shots = files.filter((f) => /\.(png|jpe?g|webp|bmp)$/i.test(f.name));
 			if (!shots.length) return fail("Drop screenshot image files (.png, .jpg).");
+			// each file on its own: the ones sent are placed, the others named (one failing upload dropped them all,
+			// the ones already sent left unused: GPT audit)
+			const paths: string[] = [];
+			const failed: string[] = [];
+			for (const f of shots) {
+				try {
+					paths.push((await app.upload(f)).path);
+				} catch (e) {
+					failed.push(`${f.name} (${e instanceof Error ? e.message : String(e)})`);
+				}
+			}
 			try {
-				const paths = [];
-				for (const f of shots) paths.push((await app.upload(f)).path);
-				if (paths.length === 1) await startGhost(paths[0]);
-				else await addScreenshots(paths);
+				if (paths.length === 1 && shots.length === 1) await startGhost(paths[0]);
+				else if (paths.length) await addScreenshots(paths);
 			} catch (e) {
 				fail(e);
+				return;
 			}
+			if (failed.length)
+				fail(
+					`${failed.length} of ${shots.length} screenshot(s) could not be sent${paths.length ? " (the others are being added)" : ""}: ${failed.join(", ")}`,
+				);
 		},
 		[app, startGhost, addScreenshots, fail],
 	);

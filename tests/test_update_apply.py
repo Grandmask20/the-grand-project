@@ -138,3 +138,21 @@ def test_no_install_without_a_list_of_the_packages_to_put_back(tmp_path, monkeyp
     out = ua.apply(plan)
     assert not out["ok"] and "couldn't be listed" in out["error"] and ran == []
     assert (root / "grand_project" / "a.py").read_text(encoding="utf-8") == "old a\n"
+
+
+def test_packages_a_failed_install_added_are_removed(tmp_path, monkeypatch):
+    # (GPT audit: only changed ones were put back, new ones stayed)
+    root, plan = program(tmp_path)
+    plan["pip"] = True
+    frozen = iter([{"numpy": "1.0"}, {"numpy": "1.0", "newpkg": "0.1"}])
+    monkeypatch.setattr(ua, "freeze", lambda python: next(frozen))
+    ran = []
+
+    def fake_run(args, **kw):
+        ran.append(args)
+        return subprocess.CompletedProcess(args, 1 if "-r" in args else 0, "", "")
+
+    monkeypatch.setattr(ua.subprocess, "run", fake_run)
+    assert not ua.apply(plan)["ok"]
+    assert ran[-1][-3:] == ["uninstall", "-y", "newpkg"]
+    assert not any("install" in a and "numpy==1.0" in a for a in ran)  # (unchanged: not installed again)
