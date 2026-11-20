@@ -2,7 +2,7 @@
 
 Builds one big map of your Path of Exile 2 atlas from your screenshots. Named after the in-game tablet, *The Grand Project*. It finds maps, paths, icons, towers and cities, and lets you search, bookmark and route through them.
 
-The app runs in your web browser: starting it opens a page served by the program on this computer (`http://127.0.0.1:8765`). Nothing leaves your computer: the only thing it asks the internet is GitHub's latest release, once a day when it starts (to say an update is out; it can be turned off) and when you press the version.
+The app runs in your web browser: starting it opens a page served by the program on this computer (`http://127.0.0.1:8765`). Nothing leaves your computer: the only thing it asks the internet is GitHub's latest release, once a day when it starts (to say an update is out; it can be turned off) and when you ask in the update box (click the version, then **Check now**).
 
 ## Run it
 
@@ -40,7 +40,7 @@ On first start the app opens the empty atlas **`atlases/default`**.
 
 ### Updating
 
-**From 1.3 on, in the app:** the version at the top right says **Up to date** (green) or **Check update** / **Update to 1.x** (red). Click it: it asks GitHub for the latest release and shows what's new. **Update now** downloads it, checks every file, and the app restarts on it (the page reloads by itself). Only the program's own files change: your atlases (`atlases/`) and settings (`user_data/`) stay, a file that fails to go in puts the old ones back, and the Python packages are installed again when the new release needs others. The app checks once a day when it starts (the box has the switch to turn that off).
+**From 1.3 on, in the app:** the version at the top right says **Up to date** (green) or **Check update** / **Update to 1.x** (red). Click it to open the update box, and **Check now** (or **Check again**) asks GitHub for the latest release and shows what's new (at most once a minute: GitHub limits how often it answers). **Update now** downloads it, checks every file, and the app restarts on it (the page reloads by itself). Only the program's own files change: your atlases (`atlases/`) and settings (`user_data/`) stay, a file that fails to go in puts the old ones back, and the Python packages are installed again when the new release needs others. The app checks once a day when it starts (the box has the switch to turn that off).
 
 **By hand** (an older release, or a copy the app can't update): first quit the app (**File ▾ → Quit the app**). Then download the new release and unzip it: it holds one folder (`the-grand-project-<version>`). Open that folder and copy everything in it into your current program folder, replacing the files. The release has no `atlases` or `user_data` folder, so yours are never replaced (never delete or replace those two folders yourself): your atlases (`atlases/`) and settings (`user_data/`) stay. Then run the install file again (**`Install (run once).bat`** or **`./install.sh`**): a new version can need new packages. (From 1.18 the Windows start file is `Start The Grand Project.bat`: an old `Start Atlas Viewer.bat` left in the folder can be deleted.)
 

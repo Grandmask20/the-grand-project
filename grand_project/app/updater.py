@@ -13,6 +13,7 @@ Only the release's own files (its manifest's) change: atlases/, user_data/, loca
 
 from __future__ import annotations
 
+import http.client
 import json
 import os
 import shutil
@@ -67,6 +68,8 @@ def _get_json(url: str) -> dict:
             return json.loads(r.read().decode("utf-8"))
     except urllib.error.HTTPError as e:
         raise OSError(limit_message(e.code, e.headers) or f"GitHub answered {e.code}") from e
+    except http.client.HTTPException as e:  # (an answer cut off midway: it isn't an OSError, CodeRabbit)
+        raise OSError(f"GitHub's answer was cut off ({e})") from e
 
 
 def limit_message(code: int, headers) -> str | None:
@@ -121,6 +124,10 @@ def unpack(zip_path: Path, dest: Path) -> dict:
                 raise ValueError(f"{rel} in the download isn't the release's (broken download?)")
             out.parent.mkdir(parents=True, exist_ok=True)
             out.write_bytes(data)
+            # its permissions as the release has them (start.sh can be run: it lost them, CodeRabbit)
+            mode = (z.getinfo(top + rel).external_attr >> 16) & 0o777
+            if mode and os.name != "nt":
+                out.chmod(mode)
         (dest / rm.MANIFEST).write_text(json.dumps(manifest, indent=1), encoding="utf-8")
     return manifest
 
@@ -159,7 +166,15 @@ class UpdatesMixin:
 
     def _update_state(self) -> dict:
         if not hasattr(self, "_update"):
-            self._update = {"state": "idle", "latest": None, "error": None, "got": 0, "size": 0, "just": None}
+            self._update = {
+                "state": "idle",
+                "latest": None,
+                "error": None,
+                "got": 0,
+                "size": 0,
+                "just": None,
+                "seq": 0,
+            }
             self._update_lock = threading.Lock()
         return self._update
 
@@ -168,11 +183,13 @@ class UpdatesMixin:
 
         Returns:
             {"channel", "release", "program", "can", "why", "auto", "checked", "next", "state", "latest",
-            "available", "error", "got", "size", "just"}; state is idle / checking / downloading / restarting /
+            "available", "error", "got", "size", "just", "seq"}; state is idle / checking / downloading /
+            restarting /
             error; next: when GitHub may be asked again (s since 1970; 0: now), a time and not a count of seconds,
             so a page that opens the box later counts down to the same moment (user: it started again at 60).
         """
         u = self._update_state()
+        seq = u["seq"]  # (first: a change made meanwhile comes with a higher number, in its own event)
         installed = rm.read(rc_paths.ROOT)
         latest = u["latest"]
         mine = installed["release"] if installed else None
@@ -194,6 +211,9 @@ class UpdatesMixin:
             "got": u["got"],
             "size": u["size"],
             "just": u["just"],
+            # goes up with each change: the page keeps the newest it has (a button's answer could land after the
+            # event of what followed, and showed "Checking…" for good: CodeRabbit)
+            "seq": seq,
         }
 
     def _next_check(self) -> float:
@@ -208,6 +228,8 @@ class UpdatesMixin:
         return True, ""
 
     def _publish_update(self) -> None:
+        u = self._update_state()
+        u["seq"] += 1
         self.events.publish("update", self.update_status())
 
     def set_update_auto(self, on: bool) -> None:
@@ -247,7 +269,7 @@ class UpdatesMixin:
                     if st["available"]
                     else f"Update check: you have the latest release ({st['release'] or K.VERSION})"
                 )
-            except (OSError, ValueError) as e:
+            except Exception as e:  # noqa: BLE001 (any failure ends the check: it stayed "checking" for good)
                 u.update(state="error", error=f"Couldn't reach GitHub to check for an update: {e}")
                 LOG.warning(f"update check failed: {e}")
             self._publish_update()

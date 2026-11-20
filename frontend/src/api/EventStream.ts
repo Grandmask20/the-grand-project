@@ -1,6 +1,7 @@
 import type { QueryClient } from "@tanstack/react-query";
 import type { AppState } from "@/domain/app/AppState";
 import type { Question } from "@/domain/app/Question";
+import type { UpdateStatus } from "@/domain/app/Update";
 import { useAppStore } from "@/store/AppStore";
 import { AppQueryKeys } from "./AppQueryKeys";
 
@@ -29,6 +30,12 @@ export const EVENT_KINDS = [
 export type EventKind = (typeof EVENT_KINDS)[number];
 
 const LOG_KEEP = 2000;
+
+/** Keep an update status unless the page has a newer one (its number, "seq", goes up with each change: a button's
+ * answer could land after the event of what followed it, CodeRabbit). */
+export function keepUpdate(queryClient: QueryClient, r: UpdateStatus): void {
+	queryClient.setQueryData<UpdateStatus>(AppQueryKeys.update, (old) => (old && old.seq > r.seq ? old : r));
+}
 
 /** Applies one event: small ones patch the cached state, the rest refetch what they change (batched). */
 export function createEventHandler(queryClient: QueryClient) {
@@ -104,7 +111,9 @@ export function createEventHandler(queryClient: QueryClient) {
 				refresh("atlases");
 				break;
 			case "update":
-				queryClient.setQueryData(AppQueryKeys.update, data);
+				// a status request under way may answer older: dropped (CodeRabbit), and the newest kept
+				void queryClient.cancelQueries({ queryKey: AppQueryKeys.update });
+				keepUpdate(queryClient, data as UpdateStatus);
 				break;
 			case "lists":
 				refresh("state", "recent");

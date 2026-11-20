@@ -7,7 +7,9 @@ files change) and quits. This then:
 1. waits for the app to have closed (its process id);
 2. backs up every file it replaces or removes, then copies the new release's files in and removes the ones the
    release dropped; on any failure everything backed up is put back;
-3. installs the Python packages again when requirements.txt changed (a failure there puts the old files back too);
+3. installs the Python packages again when requirements.txt changed; a failure there puts the old files back, and
+   the packages back at the versions they had (pip freeze before: a half-done install left the old release on
+   changed packages, CodeRabbit);
 4. writes what happened (result.json, which the app logs when it starts) and starts the app.
 
 Standard library only (it runs from a copy, beside no package).
@@ -15,6 +17,7 @@ Standard library only (it runs from a copy, beside no package).
 
 from __future__ import annotations
 
+import contextlib
 import json
 import os
 import shutil
@@ -92,15 +95,22 @@ def apply(plan: dict) -> dict:
             except OSError as e:
                 raise RuntimeError(f"{rel}: {e}") from e  # (which file, in the log)
         if plan.get("pip"):
-            r = subprocess.run(
-                [plan["python"], "-m", "pip", "install", "-r", str(root / "requirements.txt")],
-                cwd=root,
-                capture_output=True,
-                text=True,
-                timeout=PIP_WAIT,
-            )
-            (backup.parent / "pip.log").write_text(r.stdout + r.stderr, encoding="utf-8", errors="replace")
-            if r.returncode:
+            before = freeze(plan["python"])
+            log = backup.parent / "pip.log"
+            try:
+                r = subprocess.run(
+                    [plan["python"], "-m", "pip", "install", "-r", str(root / "requirements.txt")],
+                    cwd=root,
+                    capture_output=True,
+                    text=True,
+                    timeout=PIP_WAIT,
+                )
+                log.write_text(r.stdout + r.stderr, encoding="utf-8", errors="replace")
+                ok = r.returncode == 0
+            except subprocess.TimeoutExpired:
+                ok = False
+            if not ok:
+                put_back_packages(plan["python"], before, log)
                 raise RuntimeError("installing the Python packages failed (see pip.log in user_data/update)")
         out["ok"] = True
     except Exception as e:  # noqa: BLE001 (anything: the old files go back)
@@ -116,6 +126,36 @@ def apply(plan: dict) -> dict:
             except OSError as e2:
                 out["error"] += f"; {rel} couldn't be put back: {e2}"
     return out
+
+
+def freeze(python: str) -> dict[str, str]:
+    """The installed packages and their versions ({name: version}; {} when pip can't say)."""
+    try:
+        r = subprocess.run([python, "-m", "pip", "freeze"], capture_output=True, text=True, timeout=PIP_WAIT)
+    except (OSError, subprocess.SubprocessError):
+        return {}
+    out = {}
+    for line in r.stdout.splitlines():
+        name, sep, ver = line.partition("==")
+        if sep:
+            out[name.strip().lower()] = ver.strip()
+    return out
+
+
+def put_back_packages(python: str, before: dict[str, str], log: Path) -> None:
+    """Install again, at their versions before, the packages a failed install changed (its log gets the outcome)."""
+    after = freeze(python)
+    changed = [f"{n}=={v}" for n, v in before.items() if after.get(n) != v]
+    if not changed:
+        return
+    try:
+        r = subprocess.run([python, "-m", "pip", "install", *changed], capture_output=True, text=True, timeout=PIP_WAIT)
+        note = f"\n--- packages put back ({', '.join(changed)}): {'done' if r.returncode == 0 else 'failed'}\n"
+        note += r.stdout + r.stderr
+    except (OSError, subprocess.SubprocessError) as e:
+        note = f"\n--- packages couldn't be put back ({', '.join(changed)}): {e}\n"
+    with log.open("a", encoding="utf-8", errors="replace") as f:
+        f.write(note)
 
 
 def restart(plan: dict) -> None:
@@ -141,7 +181,9 @@ def main(argv: list[str]) -> int:
         result = {"ok": False, "from": plan.get("from"), "to": plan.get("to"), "error": "the app didn't close"}
     else:
         result = apply(plan)
-    Path(plan["result"]).write_text(json.dumps(result, indent=1), encoding="utf-8")
+    # (a full disk: the app starts again regardless, with its files as they are now: CodeRabbit)
+    with contextlib.suppress(OSError):
+        Path(plan["result"]).write_text(json.dumps(result, indent=1), encoding="utf-8")
     restart(plan)
     return 0 if result["ok"] else 1
 

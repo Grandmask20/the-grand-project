@@ -1,5 +1,6 @@
 import { screen, waitFor } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { keepUpdate } from "@/api/EventStream";
 import { pillOf, UpdateButton } from "@/components/layout/UpdateButton";
 import type { UpdateStatus } from "@/domain/app/Update";
 import { renderWithApp, resetStore } from "@/test/RenderWithApp";
@@ -13,6 +14,7 @@ const base: UpdateStatus = {
 	auto: true,
 	checked: null,
 	next: 0,
+	seq: 1,
 	state: "idle",
 	latest: null,
 	available: false,
@@ -85,8 +87,11 @@ describe("UpdateButton", () => {
 	});
 
 	it("Check again waits out the minute between checks (GitHub's limit: quick clicks used it up, user)", async () => {
+		// the clock stands still (a slow run took the countdown from 42 to 41: CodeRabbit)
+		const now = Date.now();
+		vi.spyOn(Date, "now").mockReturnValue(now);
 		const { user, calls } = renderWithApp(<UpdateButton />, {
-			"GET /api/update": { ...base, latest: latest("1.3"), next: Date.now() / 1000 + 41.5 },
+			"GET /api/update": { ...base, latest: latest("1.3"), next: now / 1000 + 41.5 },
 		});
 		await user.click(await screen.findByRole("button", { name: /Up to date/i }));
 		expect(screen.getByRole("button", { name: "Check again in 42 s" })).toBeDisabled();
@@ -94,6 +99,15 @@ describe("UpdateButton", () => {
 		// closed and opened again: the same moment, not a new minute (it started again at 60: user)
 		await user.keyboard("{Escape}");
 		await user.click(screen.getByRole("button", { name: /Up to date/i }));
-		expect(screen.getByRole("button", { name: /Check again in (41|42) s/ })).toBeDisabled();
+		expect(screen.getByRole("button", { name: "Check again in 42 s" })).toBeDisabled();
+		vi.restoreAllMocks();
+	});
+
+	it("an older status that lands later doesn't replace a newer one (CodeRabbit)", async () => {
+		const { queryClient } = renderWithApp(<UpdateButton />, { "GET /api/update": { ...base, seq: 5 } });
+		await screen.findByRole("button", { name: /Check update/i });
+		keepUpdate(queryClient, { ...base, seq: 7, latest: latest("1.3") }); // (the event: done, up to date)
+		keepUpdate(queryClient, { ...base, seq: 6, state: "checking" }); // (the button's answer, older)
+		expect(await screen.findByRole("button", { name: /Up to date/i })).toBeInTheDocument();
 	});
 });

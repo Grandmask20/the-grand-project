@@ -62,6 +62,7 @@ def test_packages_that_fail_to_install_put_the_old_files_back(tmp_path, monkeypa
         return subprocess.CompletedProcess(args, 1, "", "no network")
 
     monkeypatch.setattr(ua.subprocess, "run", fake_run)
+    monkeypatch.setattr(ua, "freeze", lambda python: {})
     out = ua.apply(plan)
     assert ran and ran[0][1:4] == ["-m", "pip", "install"]
     assert not out["ok"] and (root / "grand_project" / "a.py").read_text(encoding="utf-8") == "old a\n"
@@ -96,3 +97,32 @@ def test_a_process_that_ended_is_waited_for_at_once():
     p = subprocess.Popen([sys.executable, "-c", "pass"])
     p.wait()
     assert ua.wait_for_exit(p.pid, timeout=2.0)
+
+
+def test_packages_a_failed_install_changed_are_put_back_at_their_versions(tmp_path, monkeypatch):
+    # (a half-done install left the old files on changed packages: CodeRabbit)
+    root, plan = program(tmp_path)
+    plan["pip"] = True
+    frozen = iter([{"numpy": "1.0", "scipy": "1.5"}, {"numpy": "2.0", "scipy": "1.5"}])
+    monkeypatch.setattr(ua, "freeze", lambda python: next(frozen))
+    ran = []
+
+    def fake_run(args, **kw):
+        ran.append(args)
+        return subprocess.CompletedProcess(args, 1 if "-r" in args else 0, "", "")
+
+    monkeypatch.setattr(ua.subprocess, "run", fake_run)
+    assert not ua.apply(plan)["ok"]
+    assert ran[-1][-1:] == ["numpy==1.0"]  # (only the one it changed)
+
+
+def test_the_app_starts_again_even_when_the_result_can_t_be_written(tmp_path, monkeypatch):
+    root, plan = program(tmp_path)
+    plan.update(pid=1, result=str(tmp_path / "no_such_dir" / "result.json"), restart=["python"])
+    started = []
+    monkeypatch.setattr(ua, "wait_for_exit", lambda pid, timeout=0: True)
+    monkeypatch.setattr(ua, "restart", lambda p: started.append(1))
+    f = tmp_path / "plan.json"
+    f.write_text(json.dumps(plan), encoding="utf-8")
+    ua.main(["update_apply.py", str(f)])
+    assert started == [1]

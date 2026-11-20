@@ -1,6 +1,7 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useRef, useState } from "react";
 import { AppQueryKeys } from "@/api/AppQueryKeys";
+import { keepUpdate } from "@/api/EventStream";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Label } from "@/components/ui/label";
@@ -44,7 +45,7 @@ export function UpdateButton() {
 		else if (now && now !== first.current) window.location.reload();
 	}, [now]);
 
-	const keep = (r: UpdateStatus) => queryClient.setQueryData(AppQueryKeys.update, r);
+	const keep = (r: UpdateStatus) => keepUpdate(queryClient, r);
 	const run = (fn: () => Promise<UpdateStatus>) => void fn().then(keep).catch(showError);
 	const check = () => run(() => app.checkUpdate());
 	const pill = pillOf(u);

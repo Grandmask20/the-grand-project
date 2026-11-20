@@ -2,6 +2,7 @@
 the download and the helper faked."""
 
 import json
+import os
 import time
 import zipfile
 
@@ -91,7 +92,7 @@ def test_the_check_at_start_runs_once_a_day_and_not_when_turned_off(installed):
         return fetch(url)
 
     assert s.check_update_at_start(fetch=counting)
-    _wait(lambda: s.update_status()["state"] == "idle" and asked)
+    _wait(lambda: s.update_status()["state"] == "idle" and asked and s.settings.get("update_checked"))
     assert not s.check_update_at_start(fetch=counting)  # (checked today)
     s.settings["update_checked"] = time.time() - 2 * 24 * 3600
     s.set_update_auto(False)
@@ -205,3 +206,36 @@ def test_github_s_used_up_limit_is_said_with_when():
     assert "limit" in msg and time.strftime("%H:%M", time.localtime(int(reset))) in msg
     assert updater.limit_message(403, {"X-RateLimit-Remaining": "12"}) is None  # (another refusal)
     assert updater.limit_message(404, {}) is None
+
+
+def test_a_status_carries_a_number_that_goes_up_with_each_change(installed):
+    s, _, _ = installed
+    a = s.update_status()["seq"]
+    s.check_update(background=False, fetch=github("1.4"))
+    assert s.update_status()["seq"] > a
+
+
+def test_an_answer_cut_off_ends_the_check_as_an_error(installed):
+    import http.client
+
+    s, _, _ = installed
+
+    def cut(url):
+        raise http.client.IncompleteRead(b"{")
+
+    s.check_update(background=False, fetch=cut)
+    assert s.update_status()["state"] == "error"
+
+
+@pytest.mark.skipif(os.name == "nt", reason="no executable bit on Windows")
+def test_a_launcher_keeps_its_permission_to_run(tmp_path):
+    # (start.sh lost it: ./start.sh said permission denied, CodeRabbit)
+    data = b"#!/bin/sh\n"
+    m = {"release": "1.4", "program": "1.21", "files": {"start.sh": rm.content_hash(data)}}
+    with zipfile.ZipFile(tmp_path / "dl.zip", "w") as z:
+        info = zipfile.ZipInfo("top/start.sh")
+        info.external_attr = 0o755 << 16
+        z.writestr(info, data)
+        z.writestr("top/" + rm.MANIFEST, json.dumps(m))
+    updater.unpack(tmp_path / "dl.zip", tmp_path / "new")
+    assert (tmp_path / "new" / "start.sh").stat().st_mode & 0o111
