@@ -204,3 +204,33 @@ def test_on_windows_the_folder_opens_in_front_in_the_background(session, tmp_pat
             break
         time.sleep(0.02)
     assert opened == [path.parent]
+
+
+def test_deleting_an_atlas_waits_for_its_background_writes(session, tmp_path, monkeypatch):
+    # (macOS CI: a background write still filling atlas_files made deleting it fail, "Directory not empty")
+    import threading
+    import time
+
+    (tmp_path / "one").mkdir()
+    path, _pts, _img = make_atlas(tmp_path / "one")
+    session.open_atlas(path)
+    started, release = threading.Event(), threading.Event()
+    real = session.write_thumb
+
+    def slow_thumb(p, canvas):
+        started.set()
+        release.wait(5)
+        real(p, canvas)
+
+    monkeypatch.setattr(session, "write_thumb", slow_thumb)
+    canvas = session.terrain[0]
+    t = threading.Thread(target=session._write_thumb_now, args=(path, canvas))
+    t.start()
+    assert started.wait(5)
+    threading.Timer(0.2, release.set).start()  # (the write ends a moment after Delete was asked)
+    t0 = time.monotonic()
+    assert session.delete_atlas(str(path)) == []
+    assert time.monotonic() - t0 >= 0.15  # (it waited for the write)
+    t.join(5)
+    session._write_thumb_now(path, canvas)  # (one still waiting afterwards writes nothing)
+    assert not (path.parent / "atlas_files").exists()

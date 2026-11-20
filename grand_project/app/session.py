@@ -40,7 +40,7 @@ from .edits import EditsMixin
 from .events import Events
 from .icons import icon_label, icon_rows
 from .library import LibraryMixin
-from .mapimage import MapImageMixin
+from .mapimage import MapImageMixin, files_key
 from .model import view_model
 from .parts import Parts
 from .query import QueryMixin
@@ -305,6 +305,8 @@ class AtlasSession(
         # a queued Fix seams was for the atlas before: retired with it, here where every switch passes (one left
         # behind made a new request for the next atlas report "queued" without being recorded: CodeRabbit)
         self._seams_waiting, self._seams_trouble = None, []
+        if p is not None:  # (an atlas opened at a path deleted before writes its files again: retire_files)
+            self._retired.discard(files_key(p))
         # what was the atlas before's goes first, then the new record: a state read without the lock that sees the
         # new generation never counts the old atlas's maps (the record first, it could: CodeRabbit)
         self.V = {"nodes": [], "paths": [], "icons": [], "landmarks": [], "final": None}

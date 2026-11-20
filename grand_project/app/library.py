@@ -385,6 +385,7 @@ class LibraryMixin:
             raise ValueError("wait until the screenshots being added are done")
         paths = atlas_data_paths(json_path)
         self._close_if_open(json_path)
+        self.retire_files(json_path)  # (no background write fills its folder while it is deleted)
         failed = []
         for q in paths:
             try:

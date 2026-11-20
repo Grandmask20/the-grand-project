@@ -113,6 +113,12 @@ class _LRU:
             self.data.clear()
 
 
+def files_key(path) -> str:
+    """An atlas file as one spelling (resolved, case folded where the file system ignores case): retire_files."""
+    p = str(Path(path).resolve())
+    return p.lower() if os.name == "nt" else p
+
+
 class MapImageMixin:
     """AtlasSession mixin: the map image, Fix seams and the map's tiles (see the module docstring)."""
 
@@ -130,7 +136,8 @@ class MapImageMixin:
         self._seams_trouble: list[str] = []  # why adding didn't finish while one waited (_start_waiting_seams asks)
         self._seams_asking = False  # that question is open
         self._cache_writes: dict[str, int] = {}  # per atlas file: cache writes asked for, the newest written
-        self._cache_lock = threading.Lock()
+        self._cache_lock = threading.Lock()  # (every background write of an atlas's files: retire_files)
+        self._retired: set[str] = set()  # atlas files being deleted: their background writes are skipped
         self._sharp_key = None  # the sharp tile folder in use (kept with the new one: _sharp_folder)
         self._terrain_job = 0
         self.filter_version = 0
@@ -320,7 +327,7 @@ class MapImageMixin:
                 time, and only the newest: an older one finishing last left the older image in the cache, or a
                 picture of one with the key of another (GPT audit)."""
                 with self._cache_lock:
-                    if mine != self._cache_writes.get(str(path)):
+                    if mine != self._cache_writes.get(str(path)) or files_key(path) in self._retired:
                         return  # a newer image was shown meanwhile: its own write follows
                     try:
                         png, npz = core.map_image_files(path)
@@ -337,7 +344,7 @@ class MapImageMixin:
 
             threading.Thread(target=write, daemon=True).start()
         elif self.path and not self.thumb_exists(self.path):
-            threading.Thread(target=self.write_thumb, args=(self.path, canvas), daemon=True).start()
+            threading.Thread(target=self._write_thumb_now, args=(self.path, canvas), daemon=True).start()
         try:
             if cities and self.V.get("nodes"):
                 self.rebuild_model()  # the biomes follow the ground now
@@ -363,6 +370,23 @@ class MapImageMixin:
         h.update(np.ascontiguousarray(labels).tobytes())  # (every pixel: a sample missed changes, CodeRabbit)
         h.update("|".join(names).encode())
         return h.hexdigest()
+
+    def _write_thumb_now(self, path, canvas) -> None:
+        """Write an atlas card picture (background thread), unless the atlas is being deleted (retire_files)."""
+        with self._cache_lock:
+            if files_key(path) not in self._retired:
+                self.write_thumb(path, canvas)
+
+    def retire_files(self, path) -> None:
+        """Stop every background write of an atlas's files before they are deleted: the one running ends first (its
+        lock is taken), the ones waiting skip. A write still running filled the folder while it was deleted
+        ("Directory not empty", seen on macOS CI). Opening an atlas at that path again lets them write (_switch).
+
+        Args:
+            path: The atlas file.
+        """
+        with self._cache_lock:
+            self._retired.add(files_key(path))
 
     def _sharp_folder(self) -> Path | None:
         """Return the folder sharp tiles of the current screenshots are kept in (older ones are removed, except the
