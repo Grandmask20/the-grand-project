@@ -64,7 +64,7 @@ def test_packages_that_fail_to_install_put_the_old_files_back(tmp_path, monkeypa
     monkeypatch.setattr(ua.subprocess, "run", fake_run)
     monkeypatch.setattr(ua, "freeze", lambda python: {})
     out = ua.apply(plan)
-    assert ran and ran[0][1:4] == ["-m", "pip", "install"]
+    assert any(a[1:4] == ["-m", "pip", "install"] and "-r" in a for a in ran)  # (after listing the versions)
     assert not out["ok"] and (root / "grand_project" / "a.py").read_text(encoding="utf-8") == "old a\n"
     assert "no network" in (tmp_path / "pip.log").read_text(encoding="utf-8")
 
@@ -199,3 +199,29 @@ def test_package_names_are_read_whole_and_spelt_one_way(monkeypatch):
     )
     monkeypatch.setattr(ua.subprocess, "run", lambda *a, **k: subprocess.CompletedProcess(a, 0, lines, ""))
     assert set(ua.freeze("python")) == {"dev-tool", "demo-pkg", "other-lib"}
+
+
+def test_a_folder_install_whose_version_changed_is_put_back_and_the_log_names_it_only(tmp_path, monkeypatch):
+    # (CodeRabbit: "pkg @ file:///src/pkg" reads the same for any version in it; the log got whole freeze lines,
+    # which can hold a Git token)
+    root, plan = program(tmp_path)
+    plan["pip"] = True
+    line = "mylib @ file:///C:/src/mylib"
+    secret = "-e git+https://user:token@host/repo.git#egg=private_tool"
+    frozen = iter([{"mylib": line, "private-tool": secret}, {"mylib": line, "private-tool": "private-tool==9"}])
+    monkeypatch.setattr(ua, "freeze", lambda python: next(frozen))
+    vers = iter([{"mylib": "1.0", "private-tool": "1.0"}, {"mylib": "2.0", "private-tool": "9"}])
+    monkeypatch.setattr(ua, "installed_versions", lambda python: next(vers))
+    ran = []
+
+    def fake_run(args, **kw):
+        ran.append(args)
+        return subprocess.CompletedProcess(args, 1 if "-r" in args else 0, "", "")
+
+    monkeypatch.setattr(ua.subprocess, "run", fake_run)
+    assert not ua.apply(plan)["ok"]
+    put_back = [a for a in ran if "install" in a and "-r" not in a][-1]
+    assert line in put_back  # (its version moved: put back too)
+    logs = list(tmp_path.rglob("pip.log"))
+    text = "".join(p.read_text(encoding="utf-8") for p in logs)
+    assert "token" not in text and "mylib" in text

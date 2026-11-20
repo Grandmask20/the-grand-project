@@ -216,7 +216,7 @@ class AtlasSession(
                 self.stop_seams()
             self.save()
         name = p.stem if p.stem != "atlas" else p.parent.name
-        with self._lock:
+        with self._lock, self._admit:  # (no job admitted between the check below and the switch: _init_adding)
             if expect_gen is not None and not self.owns(expect_gen):  # another atlas opened while this one loaded
                 return
             if self.working():  # a job slipped in meanwhile
@@ -272,7 +272,7 @@ class AtlasSession(
         self.stop_seams()
         self.save()
         p.parent.mkdir(parents=True, exist_ok=True)
-        with self._lock:
+        with self._lock, self._admit:  # (no job admitted between the check and the switch: _init_adding)
             if self.working():
                 self._resume_watch()  # (stopped above for a switch that doesn't happen: CodeRabbit)
                 raise ValueError("wait until the screenshots being added are done")
@@ -371,7 +371,10 @@ class AtlasSession(
             self.stop_watch()
             self.stop_seams()
             self.save()
-            with self._lock:
+            with self._lock, self._admit:  # (no job admitted between the check and the close: _init_adding)
+                if self.working():  # a job slipped in meanwhile: not closed (CodeRabbit)
+                    self._resume_watch()
+                    raise ValueError("wait until the screenshots being added are done")
                 self._forget_session()
                 before = self.opened
                 self._switch(None, None)

@@ -99,6 +99,7 @@ def apply(plan: dict) -> dict:
             before = freeze(plan["python"])
             if before is None:  # (no way to put the packages back after a failed install: none is tried, CodeRabbit)
                 raise RuntimeError("the installed Python packages couldn't be listed, so none were installed")
+            versions_before = installed_versions(plan["python"])
             log = backup.parent / "pip.log"
             try:
                 r = subprocess.run(
@@ -113,7 +114,7 @@ def apply(plan: dict) -> dict:
             except subprocess.TimeoutExpired:
                 ok = False
             if not ok:
-                put_back_packages(plan["python"], before, log)
+                put_back_packages(plan["python"], before, log, versions_before)
                 raise RuntimeError("installing the Python packages failed (see pip.log in user_data/update)")
         out["ok"] = True
     except Exception as e:  # noqa: BLE001 (anything: the old files go back)
@@ -158,16 +159,54 @@ def freeze(python: str) -> dict[str, str] | None:
     return out
 
 
-def put_back_packages(python: str, before: dict[str, str], log: Path) -> None:
+def installed_versions(python: str) -> dict[str, str]:
+    """Each installed package's version ({name: "1.2"}, names as freeze keys them), {} when pip can't say. Kept
+    apart from freeze's lines: a package installed from a local folder keeps one line ("pkg @ file:///src/pkg")
+    whatever version is in it, so a changed one looked unchanged (CodeRabbit)."""
+    try:
+        r = subprocess.run(
+            [python, "-m", "pip", "list", "--format=json"], capture_output=True, text=True, timeout=PIP_WAIT
+        )
+        rows = json.loads(r.stdout) if r.returncode == 0 else []
+    except Exception:  # (versions only add to what freeze says: without them, lines alone are compared)
+        return {}
+    if not isinstance(rows, list):
+        return {}
+    return {
+        re.sub(r"[-_.]+", "-", str(p.get("name", ""))).lower(): str(p.get("version", ""))
+        for p in rows
+        if isinstance(p, dict)
+    }
+
+
+def put_back_packages(python: str, before: dict[str, str], log: Path, versions: dict[str, str] | None = None) -> None:
     """Put the packages back as they were before a failed install: the ones it changed installed again at their
-    versions before, the ones it added removed (they stayed: GPT audit). Its log gets the outcome."""
+    versions before, the ones it added removed (they stayed: GPT audit). Its log gets the outcome, by package name
+    only (a freeze line can hold a Git token: CodeRabbit).
+
+    Args:
+        python: The app's Python.
+        before: freeze() before the install.
+        log: The install's log file.
+        versions: installed_versions() before the install (None: lines alone are compared).
+    """
     after = freeze(python)
+    now = installed_versions(python) if versions else {}
+
+    def moved(n: str) -> bool:
+        return bool(versions) and n in versions and n in now and versions[n] != now[n]
+
+    changed = [n for n, line in before.items() if (after or {}).get(n) != line or moved(n)]
     # each one put back in the form it was installed in (an index install never replaces a file / URL one)
-    changed = [line for n, line in before.items() if (after or {}).get(n) != line]
-    args = [a for line in changed for a in (line.split(None, 1) if line.startswith("-e ") else [line])]
+    lines = [before[n] for n in changed]
+    args = [a for line in lines for a in (line.split(None, 1) if line.startswith("-e ") else [line])]
     added = sorted(set(after) - set(before)) if after is not None else []  # (unknown when pip can't say)
     steps = [("put back", ["install", *args], changed), ("removed", ["uninstall", "-y", *added], added)]
     note = ""
+    # from a local folder or URL, the old version comes back only if that source still holds it: said so
+    direct = [n for n in changed if " @ " in before[n] or before[n].startswith("-e ")]
+    if direct:
+        note += f"\n--- installed from a folder or URL, put back from there as it is now: {', '.join(direct)}\n"
     for what, args, names in steps:
         if not names:
             continue

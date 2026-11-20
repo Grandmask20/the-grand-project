@@ -224,7 +224,7 @@ class MapImageMixin:
                 if job != self._terrain_job:
                     return  # a newer build took over
                 try:
-                    shown = self.set_terrain(canvas, weight, origin, gen=gen)
+                    shown = self.set_terrain(canvas, weight, origin, gen=gen, job=job)
                 except Exception as e:
                     # once the image is in, an error comes from the model rebuilt after it, which reports itself:
                     # not the map image's (it marked a shown image failed, CodeRabbit)
@@ -245,7 +245,15 @@ class MapImageMixin:
             work()
 
     def set_terrain(
-        self, canvas, weight, origin, save: bool = True, labels=None, cities: bool = True, gen: int | None = None
+        self,
+        canvas,
+        weight,
+        origin,
+        save: bool = True,
+        labels=None,
+        cities: bool = True,
+        gen: int | None = None,
+        job: int | None = None,
     ) -> bool:
         """Show a new map image: keep it, set up its grid and tilers and, when asked, write its cache files.
 
@@ -257,12 +265,18 @@ class MapImageMixin:
             labels: (ownership map, screenshot names) of the clean map, or None.
             cities: Rebuild the model (biomes follow the ground).
             gen: The atlas generation the image was made for (None: now): another atlas opened since drops it.
+            job: The map image build it comes from (None: not a build): a newer one, or a clean map put in since
+                (Fix seams retires the builds), drops it, checked under the lock it is put in with (checked
+                before, an older build put in after the clean map replaced it: CodeRabbit).
 
         Returns:
             Whether it was shown (False: made for an atlas no longer open).
         """
         origin = tuple(float(v) for v in origin)
         with self._lock:
+            if job is not None and job != self._terrain_job:
+                LOG.info("a map image from a build no longer current was dropped")
+                return False
             if gen is not None and not self.owns(gen):
                 LOG.info("a map image made for another atlas was dropped")
                 return False
@@ -548,7 +562,8 @@ class MapImageMixin:
                 return "started"
             self._seams_proc, self._seams_busy = proc, True
         t0 = time.monotonic()
-        self.events.set_progress("fixing seams: building the clean map...", owner="seams")
+        owner = f"seams{next(self._seams_tokens)}"  # (each run its own line: a run ending cleared the next one's)
+        self.events.set_progress("fixing seams: building the clean map...", owner=owner)
         self.events.log("Fix seams: building the clean map in the background")
         self.events.publish("seams", True)
 
@@ -556,7 +571,7 @@ class MapImageMixin:
             """Pass the process's progress lines on, then show the clean map (background thread)."""
             for line in proc.stdout:
                 if line.strip() and line.strip() != "done":
-                    self.events.set_progress(line.strip(), scope, owner="seams")
+                    self.events.set_progress(line.strip(), scope, owner=owner)
             proc.wait()
             try:
                 if proc.returncode == 0 and out.exists() and self.owns(gen) and not self._seams_stopped:
@@ -568,9 +583,11 @@ class MapImageMixin:
                         # a Stop while it was being loaded counts too (it was put in anyway: GPT audit)
                         if self._seams_stopped:
                             self.events.log("Fix seams: stopped (its clean map was left out)", scope)
-                        elif self.set_terrain(canvas, weight, origin, labels=(labels, names), gen=gen):
-                            self.events.log(f"Fix seams: clean map ready ({time.monotonic() - t0:.0f} s)", scope)
-                            self._seams_ready(names)
+                        elif self.owns(gen):
+                            self._terrain_job += 1  # (a map image build still running is older: retired)
+                            if self.set_terrain(canvas, weight, origin, labels=(labels, names), gen=gen):
+                                self.events.log(f"Fix seams: clean map ready ({time.monotonic() - t0:.0f} s)", scope)
+                                self._seams_ready(names)
                 elif self._seams_stopped:
                     self.events.log("Fix seams: stopped (its clean map was left out)", scope)
                 elif proc.returncode != 0:
@@ -581,7 +598,7 @@ class MapImageMixin:
                 shutil.rmtree(tmp, ignore_errors=True)
                 if self._seams_proc is proc:  # (a newer Fix seams may have started meanwhile: CodeRabbit)
                     self._seams_proc, self._seams_busy = None, False
-                self.events.set_progress(None, owner="seams")
+                self.events.set_progress(None, owner=owner)
                 self.events.publish("seams", False)
 
         threading.Thread(target=watch, daemon=True).start()

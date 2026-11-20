@@ -769,3 +769,48 @@ def test_an_undo_during_the_stronghold_search_drops_its_result(session, two, mon
     if getattr(session, "_lock_thread", None):
         session._lock_thread.join(10)
     assert not any(abs(k["x"] - 500.0) < 1 for k in session.atlas.locks)
+
+
+def test_a_job_queued_while_closing_keeps_its_atlas_open(session, two, monkeypatch):
+    # (CodeRabbit: a job admitted after Close's first check had its atlas closed under it)
+    a, _b = two
+    session.open_atlas(a)
+    real_save = session.save
+
+    def save_then_add():
+        real_save()
+        session._queue_job([], "recheck_all")  # (an add comes in while Close saves)
+
+    monkeypatch.setattr(session, "save", save_then_add)
+    with pytest.raises(ValueError, match="being added"):
+        session.close()
+    assert session.path == a and session._jobs.queue[-1][2] == session.generation
+    session._jobs.get()
+    session._jobs.task_done()
+
+
+def test_an_older_map_image_build_never_replaces_a_newer_image(session, two):
+    # (CodeRabbit: a build still running put its plain image in after the clean map; Fix seams retires builds)
+    a, _b = two
+    session.open_atlas(a)
+    canvas, weight, origin = session.terrain
+    session._terrain_job += 1  # (a newer build, or a clean map put in)
+    assert session.set_terrain(canvas, weight, origin, save=False, job=session._terrain_job - 1) is False
+    assert session.set_terrain(canvas, weight, origin, save=False, job=session._terrain_job) is True
+
+
+def test_the_worker_goes_on_when_the_queued_fix_seams_cannot_start(two, monkeypatch, quiet_locks):
+    # (CodeRabbit: a failure starting the queued Fix seams ended the worker; screenshots queued after were never added)
+    s = AtlasSession(settings={}, worker=True)
+    try:
+        a, _b = two
+        s.open_atlas(a)
+        ran = []
+        monkeypatch.setattr(s, "run_job", lambda paths, mode: ran.append(mode))
+        monkeypatch.setattr(s, "_start_waiting_seams", lambda: (_ for _ in ()).throw(RuntimeError("no thread")))
+        s._queue_job([], "recheck_all")
+        assert wait_until(lambda: len(ran) == 1 and not s.working())
+        s._queue_job([], "recheck_all")
+        assert wait_until(lambda: len(ran) == 2)
+    finally:
+        s.shutdown()

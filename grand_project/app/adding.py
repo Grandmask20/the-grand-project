@@ -94,6 +94,10 @@ class AddingMixin:
             start: Start the worker (tests run jobs with run_job on their own thread).
         """
         self._jobs: queue.Queue = queue.Queue()
+        # held while a job is queued, and while an atlas switch checks that none is (taken inside the session lock,
+        # never around it): a job admitted between that check and the switch ran on no atlas / the next one, the
+        # worker then dropped it (CodeRabbit). Apart from the session lock, which a running job holds for long.
+        self._admit = threading.RLock()
         self._busy = False
         self._pictures: dict[int, bytes] = {}
         self._picture_ids = itertools.count(1)
@@ -143,14 +147,21 @@ class AddingMixin:
             mode: "manual", "watch", "recheck_all", "undo", ("drop", x, y) or ("retry", indices or None).
             gen: The atlas generation it is for (None: the open one); the worker skips it once another is open.
         """
+        with self._admit:
+            queued = self._admit_job(paths, mode, gen)
+        if queued:
+            self.events.publish("busy", True)
+
+    def _admit_job(self, paths, mode, gen: int | None) -> bool:
+        """Put a job in the queue (with _admit held: see _init_adding); False when closing."""
         if self._closing:
             self.events.log(f"closing: {len(paths) or 'a'} job(s) not started")
-            return
+            return False
         if gen is None:  # the page request's atlas when it is one, else the open one: a request made just before a
             # switch is skipped by the worker, never run on the atlas opened after it (CodeRabbit)
             gen = self._lock.expected()
         self._jobs.put((list(paths), mode, self.generation if gen is None else gen))
-        self.events.publish("busy", True)
+        return True
 
     def _drop_queued_jobs(self) -> None:
         """Forget jobs that have not started."""
@@ -530,7 +541,12 @@ class AddingMixin:
                 if not self._busy:
                     self.scan_locks()
                     self.events.publish("busy", False)
-                    self._start_waiting_seams()  # (one queued while this ran: fix_seams)
+                    try:  # (one queued while this ran: fix_seams). Never the worker's end: a failure here
+                        # left the queued screenshots with no one to add them (CodeRabbit)
+                        self._start_waiting_seams()
+                    except Exception as e:
+                        LOG.exception("starting the queued Fix seams failed")
+                        self.events.log(f"Fix seams could not start: {e}")
 
     def _cache_dir(self) -> Path:
         """Return the detection cache folder of the open atlas (<stem>_frames next to it).
