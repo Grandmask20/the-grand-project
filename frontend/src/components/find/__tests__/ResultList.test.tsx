@@ -1,5 +1,5 @@
 import { screen, waitFor } from "@testing-library/react";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { ResultList } from "@/components/find/ResultList";
 import type { ResultRow } from "@/domain/find/SearchResult";
 import { useAppStore } from "@/store/AppStore";
@@ -32,13 +32,31 @@ describe("ResultList", () => {
 		useAppStore.getState().toggleFindKind("landmark");
 		renderWithApp(<ResultList />);
 		expect(screen.queryByRole("button", { name: "Tower (seen 2x)" })).toBeNull();
-		expect(screen.getByText("1 more of the kinds switched off above")).toBeInTheDocument();
+		expect(screen.getByText("1 more of the kinds switched off under the search")).toBeInTheDocument();
 	});
 
-	it("goes to a result and selects it", async () => {
+	it("drops down as a list over the panel, named Results", () => {
 		useAppStore.getState().setResults(rows, "found");
-		const { user, calls } = renderWithApp(<ResultList />, { "GET /api/info": nodeInfo });
+		renderWithApp(<ResultList />);
+		expect(screen.getByRole("region", { name: "Results" })).toHaveClass("absolute");
+	});
+
+	it("↑ and ↓ move between the results", async () => {
+		useAppStore.getState().setResults(rows, "found");
+		const { user } = renderWithApp(<ResultList />);
+		screen.getByRole("button", { name: "Map #12: Breach" }).focus();
+		await user.keyboard("{ArrowDown}");
+		expect(screen.getByRole("button", { name: "Tower (seen 2x)" })).toHaveFocus();
+		await user.keyboard("{ArrowUp}{ArrowUp}");
+		expect(screen.getByRole("button", { name: "Map #12: Breach" })).toHaveFocus();
+	});
+
+	it("goes to a result, selects it and says it was picked", async () => {
+		useAppStore.getState().setResults(rows, "found");
+		const picked = vi.fn();
+		const { user, calls } = renderWithApp(<ResultList onPick={picked} />, { "GET /api/info": nodeInfo });
 		await user.click(screen.getByRole("button", { name: "Map #12: Breach" }));
+		expect(picked).toHaveBeenCalledOnce();
 		expect(useAppStore.getState().fly).toMatchObject({ x: 440, y: 200, px: 1 });
 		await waitFor(() => expect(useAppStore.getState().selected?.id).toBe(12));
 		expect(calls.find((c) => c.path === "/api/info")?.params).toEqual({ kind: "node", id: 12 });

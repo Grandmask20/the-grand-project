@@ -1,5 +1,5 @@
 import { SearchIcon, XIcon } from "lucide-react";
-import { useEffect } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Pill } from "@/components/common/Pill";
 import { Section } from "@/components/common/Section";
 import { Input } from "@/components/ui/input";
@@ -10,8 +10,8 @@ import { useAppStore } from "@/store/AppStore";
 import { ResultList } from "./ResultList";
 import { TypeList } from "./TypeList";
 
-/** Find: search, the type list (what the map shows) and the results. What is selected shows at the map's side
- * (InspectorPanel). */
+/** Find: search with its results dropping down under it, the filters' pills and the type list (what the map shows).
+ * What is selected shows in the window over the map. */
 export function FindTab() {
 	// Find's state lives in the store (one owner: the map's Esc clears it too, and it outlasts this tab: CodeRabbit)
 	const text = useAppStore((s) => s.findText);
@@ -56,6 +56,31 @@ export function FindTab() {
 		if (listed && !query.trim() && list.data) setResults(list.data, `${list.data.length} ${listed.label}`);
 	}, [listed, list.data, query, setResults]);
 
+	// the results drop down under the search when a list comes (a search, a type clicked); a pick, a click elsewhere or
+	// Esc closes them, and the search's focus or ↓ opens them again (user: like the route's combo)
+	const resultsTitle = useAppStore((s) => s.resultsTitle);
+	const [open, setOpen] = useState(false);
+	const searchBox = useRef<HTMLDivElement>(null);
+	useEffect(() => setOpen(!!resultsTitle), [resultsTitle]);
+	useEffect(() => {
+		if (!open) return;
+		const away = (e: PointerEvent) => {
+			if (!searchBox.current?.contains(e.target as Node)) setOpen(false);
+		};
+		const esc = (e: KeyboardEvent) => e.key === "Escape" && setOpen(false);
+		window.addEventListener("pointerdown", away, true);
+		window.addEventListener("keydown", esc);
+		return () => {
+			window.removeEventListener("pointerdown", away, true);
+			window.removeEventListener("keydown", esc);
+		};
+	}, [open]);
+	const down = () => {
+		setOpen(true);
+		// the list is drawn by now when it was open; else on the next frame
+		requestAnimationFrame(() => searchBox.current?.querySelector<HTMLButtonElement>("ul button")?.focus());
+	};
+
 	const kinds = useAppStore((s) => s.findKinds);
 	const toggleKind = useAppStore((s) => s.toggleFindKind);
 	// the filters as pills under the search (PO's canvas): the kinds of results, then what the map shows; a setting's
@@ -68,14 +93,21 @@ export function FindTab() {
 
 	return (
 		<div className="flex flex-col gap-4">
-			<div className="relative">
+			<div ref={searchBox} className="relative">
 				<SearchIcon className="absolute top-2 left-2 size-4 text-muted-foreground" />
 				<Input
 					aria-label="Find"
 					placeholder="Find: a name, an icon, #12, or x, y"
 					value={text}
 					onChange={(e) => setText(e.target.value)}
-					onKeyDown={(e) => e.key === "Escape" && clear()}
+					onFocus={() => resultsTitle && setOpen(true)}
+					onKeyDown={(e) => {
+						if (e.key === "Escape") clear();
+						else if (e.key === "ArrowDown") {
+							e.preventDefault();
+							down();
+						}
+					}}
 					className="pr-8 pl-8"
 				/>
 				<button
@@ -87,6 +119,7 @@ export function FindTab() {
 				>
 					<XIcon className="size-4" />
 				</button>
+				{open && <ResultList onPick={() => setOpen(false)} />}
 			</div>
 			<div className="flex flex-wrap gap-1.5">
 				{(
@@ -108,8 +141,6 @@ export function FindTab() {
 				{filter("only_icon_maps", "ticked icons only", "only maps with a ticked icon")}
 				{filter("near_only", "potential cities", "only potential city maps")}
 			</div>
-			{/* the results under the search, the types after them (user: results far below 80+ types) */}
-			<ResultList />
 			<Section title="Types">
 				<TypeList onList={listType} />
 			</Section>

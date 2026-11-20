@@ -2,7 +2,7 @@ import { screen, waitFor } from "@testing-library/react";
 import { afterEach, describe, expect, it } from "vitest";
 import { FindTab } from "@/components/find/FindTab";
 import { useAppStore } from "@/store/AppStore";
-import { state, types } from "@/test/Fixtures";
+import { nodeInfo, state, types } from "@/test/Fixtures";
 import { renderWithApp, resetStore } from "@/test/RenderWithApp";
 
 const found = { results: [{ kind: "landmark", id: 2, label: "Vaal city (seen 3x)", x: 1, y: 2 }] };
@@ -59,5 +59,29 @@ describe("FindTab", () => {
 		await user.click(multi);
 		await waitFor(() => expect(calls.find((c) => c.method === "PATCH")?.body).toEqual({ multi_only: true }));
 		await waitFor(() => expect(multi).toHaveAttribute("aria-pressed", "true"));
+	});
+
+	it("the results drop down under the search; a pick or a click elsewhere closes them, the search opens them again", async () => {
+		const { user } = renderWithApp(<FindTab />, {
+			"GET /api/types": types,
+			"GET /api/search": found,
+			"GET /api/info": nodeInfo,
+		});
+		const box = screen.getByLabelText("Find");
+		await user.type(box, "vaal");
+		await user.click(await screen.findByRole("button", { name: "Vaal city (seen 3x)" }));
+		expect(screen.queryByRole("region", { name: "Results" })).toBeNull();
+		await user.click(box);
+		expect(screen.getByRole("region", { name: "Results" })).toBeInTheDocument();
+		await user.click(screen.getByText("Only"));
+		expect(screen.queryByRole("region", { name: "Results" })).toBeNull();
+	});
+
+	it("↓ in the search goes to the first result", async () => {
+		const { user } = renderWithApp(<FindTab />, { "GET /api/types": types, "GET /api/search": found });
+		await user.type(screen.getByLabelText("Find"), "vaal");
+		const first = await screen.findByRole("button", { name: "Vaal city (seen 3x)" });
+		await user.keyboard("{ArrowDown}");
+		await waitFor(() => expect(first).toHaveFocus());
 	});
 });
