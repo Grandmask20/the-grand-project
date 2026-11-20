@@ -1,8 +1,8 @@
 import { useQueryClient } from "@tanstack/react-query";
 import { BookmarkIcon, CastleIcon, SplineIcon } from "lucide-react";
 import { type KeyboardEvent, useEffect, useRef } from "react";
-import mapNodeIcon from "@/assets/map_node_icon.webp";
 import { IconPicture } from "@/components/common/IconPicture";
+import { MapMark } from "@/components/common/MapMark";
 import { Button } from "@/components/ui/button";
 import type { ResultRow } from "@/domain/find/SearchResult";
 import { useAppClient } from "@/hooks/app/UseAppClient";
@@ -19,7 +19,7 @@ function RowPicture({ row }: { row: ResultRow }) {
 	const inner = row.icon ? (
 		<IconPicture name={row.icon} size={22} />
 	) : row.kind === "node" ? (
-		<img src={mapNodeIcon} alt="" width={22} height={22} />
+		<MapMark size={20} />
 	) : row.kind === "bookmark" ? (
 		<BookmarkIcon className="size-4 text-gold" />
 	) : row.kind === "landmark" ? (

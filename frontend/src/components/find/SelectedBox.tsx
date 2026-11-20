@@ -10,8 +10,8 @@ import {
 	Trash2Icon,
 } from "lucide-react";
 import { useEffect } from "react";
-import mapNodeIcon from "@/assets/map_node_icon.webp";
 import { IconPicture } from "@/components/common/IconPicture";
+import { MapMark } from "@/components/common/MapMark";
 import { Button } from "@/components/ui/button";
 import type { ItemInfo } from "@/domain/map/ItemInfo";
 import { useAppClient } from "@/hooks/app/UseAppClient";
@@ -25,7 +25,7 @@ import { useAppStore } from "@/store/AppStore";
 function Badge({ info }: { info: ItemInfo }) {
 	const inner =
 		info.kind === "node" ? (
-			<img src={mapNodeIcon} alt="" width={30} height={30} />
+			<MapMark size={26} />
 		) : info.kind === "icon" && info.icon ? (
 			<IconPicture name={info.icon} size={28} />
 		) : info.kind === "bookmark" ? (
