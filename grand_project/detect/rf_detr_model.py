@@ -1,16 +1,29 @@
 """Optional RF-DETR inference backend.
 
-The backend is deliberately opt-in.  It loads the fine-tuned Transformers model only when
+The backend is deliberately opt-in. It loads the fine-tuned Transformers model only when
 ``GRAND_PROJECT_USE_RF_DETR=1`` (or ``true`` / ``on``) is present, and returns the same detector result shape as the
-classical pipeline.  Torch and Transformers stay lazy imports so normal installs and offline tests do not need the
+classical pipeline. Torch and Transformers stay lazy imports so normal installs and offline tests do not need the
 training stack.
+
+The model sees the screenshot as it was trained: native-scale tiles with the game HUD painted over
+(``rf_detr_tiles.py``). Classes of one family (a map node is one of the node classes, a citadel one of three) are
+scored together: an object is found when its family's score (the sum of its classes' scores) clears the threshold,
+its class is the best one within the family, and duplicates are suppressed within the family across tiles. Classes
+are matched by name (the checkpoint's own label map), never by id.
+
+What the program gets back (as the classical detector reports it): every node class is a map node (with its
+``biome`` or ``city_type``); a citadel is a City with its type at the city's map node; a hall a Hall at its map node;
+a deadly-boss icon whose map is neither a citadel nor a hall a "Deadly boss map". The model finds every icon as the
+one ``icon`` class and the classical naming step names it (``badges.name_found_icons``), as it names the classical
+finder's icons; likewise every square reveal button as ``reveal_button``, named by its symbol
+(``cities.name_button``): a ship button is an ``ExpeditionShip`` icon, a hand button makes the Breach stronghold
+beside it locked (``landmarks.stronghold_kind``). Paths and fortress walls come from the classical finders.
 """
 
 from __future__ import annotations
 
 import json
 import os
-import re
 from pathlib import Path
 from typing import Any
 
@@ -18,22 +31,13 @@ import cv2
 import numpy as np
 
 from grand_project import core
+from grand_project.cities import name_button
 
-from .constants import (
-    RF_DETR_CITY_LABELS,
-    RF_DETR_DEFAULT_MODEL_DIR,
-    RF_DETR_DEVICE_ENV,
-    RF_DETR_LANDMARK_KINDS,
-    RF_DETR_MODEL_ENV,
-    RF_DETR_NMS_IOU,
-    RF_DETR_SCORE_THRESHOLD,
-    RF_DETR_TOWER_NODE_REACH,
-    RF_DETR_USE_ENV,
-    TOWER_NMS,
-    WALL_CROSS,
-)
-from .icon_types import icon_type
-from .landmarks import expedition_rules, ship_markers
+from . import constants as K
+from . import labels as L
+from . import rf_detr_tiles as T
+from .badges import name_found_icons, naming_book
+from .landmarks import expedition_rules, stronghold_kind
 from .paths import path_dashes as classical_path_dashes
 from .paths import trace_paths
 from .walls import fortress_walls, wall_share
@@ -43,13 +47,13 @@ _RUNTIME: dict[str, Any] | None = None
 
 def rf_detr_enabled() -> bool:
     """Return whether the optional RF-DETR detector was explicitly enabled."""
-    return os.environ.get(RF_DETR_USE_ENV, "").strip().lower() in {"1", "true", "yes", "on"}
+    return os.environ.get(K.RF_DETR_USE_ENV, "").strip().lower() in {"1", "true", "yes", "on"}
 
 
 def rf_detr_model_path() -> Path:
     """Return the configured fine-tuned model directory."""
-    value = os.environ.get(RF_DETR_MODEL_ENV)
-    return Path(value).expanduser() if value else RF_DETR_DEFAULT_MODEL_DIR
+    value = os.environ.get(K.RF_DETR_MODEL_ENV)
+    return Path(value).expanduser() if value else K.RF_DETR_DEFAULT_MODEL_DIR
 
 
 def reset_rf_detr_runtime() -> None:
@@ -60,7 +64,7 @@ def reset_rf_detr_runtime() -> None:
 
 def _device(torch):
     """Select the configured device, preferring the same accelerators as the trainer."""
-    value = os.environ.get(RF_DETR_DEVICE_ENV, "auto").strip().lower()
+    value = os.environ.get(K.RF_DETR_DEVICE_ENV, "auto").strip().lower()
     if value == "auto":
         value = "cuda" if torch.cuda.is_available() else "mps" if torch.backends.mps.is_available() else "cpu"
     return torch.device(value)
@@ -73,6 +77,21 @@ def _labels(model_dir: Path, model) -> dict[int, str]:
         raw = json.loads(label_file.read_text(encoding="utf-8"))
         return {int(index): str(name) for index, name in raw.items()}
     return {int(index): str(name) for index, name in model.config.id2label.items()}
+
+
+def class_families(labels: dict[int, str]) -> dict[str, list[tuple[int, str]]]:
+    """A checkpoint's classes grouped by family.
+
+    Args:
+        labels: class id -> name, as the checkpoint saved them.
+
+    Returns:
+        family -> [(class id, name)]; a class of no family (a reviewer's own label) is a family of its own.
+    """
+    out: dict[str, list[tuple[int, str]]] = {}
+    for index, name in sorted(labels.items()):
+        out.setdefault(L.family(name) or name, []).append((index, name))
+    return out
 
 
 def _load_runtime() -> dict[str, Any]:
@@ -97,75 +116,106 @@ def _load_runtime() -> dict[str, Any]:
     device = _device(torch)
     model.to(device)
     model.eval()
-    _RUNTIME = {"processor": processor, "model": model, "device": device, "labels": _labels(model_dir, model)}
+    families = class_families(_labels(model_dir, model))
+    _RUNTIME = {"processor": processor, "model": model, "device": device, "families": families}
     return _RUNTIME
 
 
-def _canonical_label(label: str) -> str:
-    """Normalise labels from the saved map or a hand-edited Transformers config."""
-    text = re.sub(r"[^a-z0-9]+", "_", label.strip().lower()).strip("_")
-    aliases = {
-        "map": "map_node",
-        "map_base": "map_node",
-        "landmark_tower": "tower",
-        "landmark_city": "city",
-        "landmark_hall": "hall",
-        "landmark_deadly_boss_map": "deadly_boss_map",
-        "landmark_breach_stronghold": "breach_stronghold",
-        "landmark_locked_stronghold": "locked_stronghold",
-        "path_segment": "path",
-    }
-    return aliases.get(text, text)
+def family_detections(
+    probs: np.ndarray, boxes: np.ndarray, families: dict[str, list[tuple[int, str]]], threshold: float
+) -> list[dict[str, Any]]:
+    """Turn one tile's query outputs into detections, scoring each family's classes together.
+
+    Args:
+        probs: (queries, classes) sigmoid class scores.
+        boxes: (queries, 4) ``[x0, y0, x1, y1]`` boxes in tile px.
+        families: ``class_families`` of the checkpoint.
+        threshold: the family score a detection needs.
+
+    Returns:
+        Detections {"label", "family", "score", "box"}: per query the family with the highest score (the sum of its
+        classes' scores, at most 1) when it reaches ``threshold``, labelled with its best class.
+    """
+    if not len(probs) or not families:
+        return []
+    names = list(families)
+    scores = np.stack([probs[:, [i for i, _n in families[f]]].sum(axis=1) for f in names], axis=1).clip(max=1.0)
+    best = scores.argmax(axis=1)
+    out = []
+    for query in np.nonzero(scores[np.arange(len(scores)), best] >= threshold)[0]:
+        name = names[int(best[query])]
+        members = families[name]
+        index = int(np.argmax(probs[query, [i for i, _n in members]]))
+        out.append(
+            {
+                "label": members[index][1],
+                "family": name,
+                "score": float(scores[query, best[query]]),
+                "box": [float(v) for v in boxes[query]],
+            }
+        )
+    return out
 
 
-def _iou(a: list[float], b: list[float]) -> float:
-    """Intersection over union for two ``xyxy`` boxes."""
-    left, top = max(a[0], b[0]), max(a[1], b[1])
-    right, bottom = min(a[2], b[2]), min(a[3], b[3])
-    intersection = max(0.0, right - left) * max(0.0, bottom - top)
-    area_a = max(0.0, a[2] - a[0]) * max(0.0, a[3] - a[1])
-    area_b = max(0.0, b[2] - b[0]) * max(0.0, b[3] - b[1])
-    return intersection / max(1e-6, area_a + area_b - intersection)
+def predict_tiles(
+    model, processor, img: np.ndarray, families: dict[str, list[tuple[int, str]]], device, *, threshold: float
+) -> list[dict[str, Any]]:
+    """Run a model over a screenshot's tiles and merge what it finds, as training showed it the screenshots.
 
+    Args:
+        model: the RF-DETR model (eval mode).
+        processor: its image processor (size: one tile).
+        img: the screenshot (BGR) as the detector reads it (1080p).
+        families: ``class_families`` of the model's classes.
+        device: the model's torch device.
+        threshold: the family score a detection needs.
 
-def _dedupe(detections: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    """Apply class-wise greedy NMS because DETR post-processing does not always suppress duplicates."""
-    kept = []
-    for label in sorted({d["label"] for d in detections}):
-        candidates = sorted((d for d in detections if d["label"] == label), key=lambda d: -d["score"])
-        selected = []
-        for candidate in candidates:
-            if all(_iou(candidate["box"], other["box"]) < RF_DETR_NMS_IOU for other in selected):
-                selected.append(candidate)
-        kept.extend(selected)
-    return kept
+    Returns:
+        Detections {"label", "family", "score", "box" ``[x0, y0, x1, y1]`` in screenshot px}, one per object.
+    """
+    import torch
+
+    height, width = img.shape[:2]
+    prepared = T.pad_to_tile(T.fill_hud(img, rgb=False), rgb=False)
+    tile = K.RF_DETR_TILE
+    origins = T.tile_origins(prepared.shape[1], prepared.shape[0])
+    detections: list[dict[str, Any]] = []
+    for start in range(0, len(origins), K.RF_DETR_INFER_BATCH):
+        batch = origins[start : start + K.RF_DETR_INFER_BATCH]
+        tiles = [cv2.cvtColor(prepared[y : y + tile, x : x + tile], cv2.COLOR_BGR2RGB) for x, y in batch]
+        inputs = processor(images=tiles, return_tensors="pt")
+        inputs = {key: value.to(device) if torch.is_tensor(value) else value for key, value in inputs.items()}
+        with torch.inference_mode():
+            outputs = model(**inputs)
+        probs = outputs.logits.sigmoid().float().cpu().numpy()
+        centre = outputs.pred_boxes.float().cpu().numpy() * tile  # (cx, cy, w, h) of the tile, in tile px
+        corners = np.concatenate([centre[..., :2] - centre[..., 2:] / 2, centre[..., :2] + centre[..., 2:] / 2], -1)
+        for (x, y), tile_probs, tile_boxes in zip(batch, probs, corners, strict=True):
+            for det in family_detections(tile_probs, tile_boxes, families, threshold):
+                if T.cut_by_inner_edge(det["box"], (x, y), (prepared.shape[1], prepared.shape[0])):
+                    continue
+                x0, y0, x1, y1 = det["box"]
+                det["box"] = [
+                    max(0.0, x0 + x),
+                    max(0.0, y0 + y),
+                    min(float(width), x1 + x),
+                    min(float(height), y1 + y),
+                ]
+                detections.append(det)
+    return T.nms(detections, K.RF_DETR_FAMILY_NMS_IOU)
 
 
 def _predict(img: np.ndarray) -> list[dict[str, Any]]:
-    """Run the model and return class names, scores and screen-pixel boxes."""
-    import torch
-    from PIL import Image
-
+    """Run the loaded model over a screenshot's tiles (``predict_tiles``)."""
     runtime = _load_runtime()
-    rgb = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
-    inputs = runtime["processor"](images=Image.fromarray(rgb), return_tensors="pt")
-    inputs = {key: value.to(runtime["device"]) if torch.is_tensor(value) else value for key, value in inputs.items()}
-    with torch.inference_mode():
-        outputs = runtime["model"](**inputs)
-    target_sizes = torch.tensor([img.shape[:2]], device=runtime["device"])
-    result = runtime["processor"].post_process_object_detection(
-        outputs, threshold=RF_DETR_SCORE_THRESHOLD, target_sizes=target_sizes
-    )[0]
-    detections = []
-    for box, score, label_id in zip(result["boxes"], result["scores"], result["labels"], strict=True):
-        detections.append(
-            {
-                "label": _canonical_label(runtime["labels"].get(int(label_id), str(int(label_id)))),
-                "score": float(score),
-                "box": [float(value) for value in box.tolist()],
-            }
-        )
-    return _dedupe(detections)
+    return predict_tiles(
+        runtime["model"],
+        runtime["processor"],
+        img,
+        runtime["families"],
+        runtime["device"],
+        threshold=K.RF_DETR_SCORE_THRESHOLD,
+    )
 
 
 def _centre(box: list[float]) -> tuple[float, float]:
@@ -173,39 +223,34 @@ def _centre(box: list[float]) -> tuple[float, float]:
     return (box[0] + box[2]) / 2, (box[1] + box[3]) / 2
 
 
-def _icon_name(label: str, img: np.ndarray, x: float, y: float) -> str:
-    """Recover the project's icon spelling from a generic or named RF-DETR class."""
-    if label == "icon":
-        try:
-            from grand_project import icon_refs
+def _inside(box: list[float], x: float, y: float) -> bool:
+    """Whether a point lies in an ``xyxy`` box."""
+    return box[0] <= x <= box[2] and box[1] <= y <= box[3]
 
-            from .badges import name_badge
 
-            refs = icon_refs.refs()
-            name, _ = name_badge(img, x, y, refs.names, refs.F)
-            return name
-        except Exception:
-            return "Unidentified"
-    known = icon_type(label)  # every ICON_INFO type, spelt as the program spells it
-    if known:
-        return known
-    suffix = label.removeprefix("icon_")
-    try:
-        from grand_project import icon_refs
+def _name_icons(img: np.ndarray, found: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Name the model's icons with the classical detector's naming step (``badges.name_found_icons``: the stored
+    pictures and the icon model's, the whole-icon templates of the icons with their own rim, the Expedition rule).
 
-        for name in icon_refs.refs().names:
-            if re.sub(r"[^a-z0-9]+", "", name.lower()) == suffix.replace("_", ""):
-                return name
-    except Exception:
-        pass  # the RF-DETR detector can still report the stable class without the optional icon database
-    return "".join(part.title() for part in suffix.split("_")) or "Unidentified"
+    The model's score is not the rim finder's probability, so the rim finder's influence rule (``INFLUENCE_MIN``) is
+    left out: the model learned from reviewed boxes that terrain circles are no icons.
+    """
+    return name_found_icons(img, found, naming_book(), influence_min=None)
+
+
+def _boss_node(nodes: list[dict], x: float, y: float) -> dict | None:
+    """The map node under a deadly-boss icon at (x, y): ``RF_DETR_BOSS_ROW`` below it, ``RF_DETR_BOSS_DX`` aside."""
+    low, high = K.RF_DETR_BOSS_ROW
+    near = [n for n in nodes if low <= n["y"] - y <= high and abs(n["x"] - x) <= K.RF_DETR_BOSS_DX]
+    return min(near, key=lambda n: abs(n["x"] - x) + abs(n["y"] - y - K.ROW_DY), default=None)
 
 
 def _wall_mask(img: np.ndarray, detections: list[dict[str, Any]]) -> np.ndarray:
     """Build a wall mask by merging RF-DETR wall boxes with the precise classical wall mask."""
-    walls = [d for d in detections if d["label"] == "fortress_wall"]
     mask = fortress_walls(img)
-    for item in walls:
+    for item in detections:
+        if item["family"] != "wall":
+            continue
         x0, y0, x1, y1 = map(round, item["box"])
         box_mask = np.zeros(img.shape[:2], np.uint8)
         cv2.rectangle(box_mask, (x0, y0), (x1, y1), 1, -1)
@@ -220,57 +265,83 @@ def detect_rf_detr(img: np.ndarray) -> dict:
     centres = [_centre(d["box"]) for d in detections]
     on_hud = core.on_hud_mask(np.asarray(centres, float), w, h, pad=0) if centres else np.zeros(0, bool)
     detections = [d for d, hidden in zip(detections, on_hud, strict=True) if not hidden]
+    by_family: dict[str, list[dict[str, Any]]] = {}
+    for d in detections:
+        by_family.setdefault(d["family"], []).append(d)
 
     nodes = []
-    for item in detections:
-        if item["label"] != "map_node":
-            continue
+    for item in by_family.get("node", []):
         x, y = _centre(item["box"])
-        nodes.append({"x": x, "y": y, "score": round(item["score"], 3), "source": "rf-detr"})
+        node = {"x": round(x, 1), "y": round(y, 1), "score": round(item["score"], 3), "source": "rf-detr"}
+        if biome := L.biome(item["label"]):
+            node["biome"] = biome
+        if city := L.city_type(item["label"]):
+            node["city_type"] = city
+        nodes.append(node)
 
-    icons = []
-    for item in detections:
-        if not item["label"].startswith("icon"):
-            continue
+    # The reveal buttons (a locked stronghold's hand, the Expedition ship ...): the model finds them, the classical
+    # namer names them by their symbol (user), searching a little wider around the model's middle.
+    buttons = []
+    for item in by_family.get("button", []):
         x, y = _centre(item["box"])
-        icons.append(
-            {
-                "name": _icon_name(item["label"], img, x, y),
-                "x": round(x, 1),
-                "y": round(y, 1),
-                "score": round(item["score"], 3),
-                "source": "rf-detr",
-            }
-        )
+        kind, _symbol = name_button(img, x, y, margin=K.RF_DETR_BUTTON_SHIFT)
+        buttons.append({"kind": kind, "x": round(x, 1), "y": round(y, 1), "score": round(item["score"], 3)})
+    button_boxes = [item["box"] for item in by_family.get("button", [])]
 
-    landmarks = []
-    towers = []
-    for item in detections:
-        label = item["label"]
-        if label == "tower":
-            # Tower annotations are anchored at the map base; the bottom of the predicted box is that point.
-            x = (item["box"][0] + item["box"][2]) / 2
-            y = item["box"][3]
-            towers.append((x, y, item["score"]))
-        elif label in RF_DETR_LANDMARK_KINDS:
-            x, y = _centre(item["box"])
-            landmark = {
-                "kind": RF_DETR_LANDMARK_KINDS[label],
-                "x": round(x, 1),
-                "y": round(y, 1),
-                "score": round(item["score"], 3),
-            }
-            city_type = next((t for t, city_label in RF_DETR_CITY_LABELS.items() if city_label == label), None)
-            if city_type:
-                landmark["city_type"] = city_type
-            landmarks.append(landmark)
+    found = []
+    for item in by_family.get("icon", []):
+        x, y = _centre(item["box"])
+        if any(_inside(box, x, y) for box in button_boxes):
+            continue  # an icon the model also reports on a reveal button is that button
+        found.append({"x": round(x, 1), "y": round(y, 1), "score": round(item["score"], 3), "source": "rf-detr"})
+    # icon types that are no icon labels: the detector does not report them as icons
+    icons = [icon for icon in _name_icons(img, found) if icon["name"] not in K.RF_DETR_ICON_EXCLUDED]
+    # a ship button is reported as the classical detector reports it (landmarks.ship_markers): an ExpeditionShip icon
+    icons.extend(
+        {"name": K.RF_DETR_BUTTON_ICONS[b["kind"]], "x": b["x"], "y": b["y"], "score": b["score"], "source": "rf-detr"}
+        for b in buttons
+        if b["kind"] in K.RF_DETR_BUTTON_ICONS
+    )
+    locks = [(b["x"], b["y"]) for b in buttons if b["kind"] == "lock"]
 
-    for x, y, score in towers:
+    landmarks: list[dict[str, Any]] = []
+    for item in by_family.get("citadel", []):
+        x, y = _centre(item["box"])
+        landmark = {"kind": "City", "x": round(x, 1), "y": round(y, 1), "score": round(item["score"], 3)}
+        if city := L.city_type(item["label"]):
+            landmark["city_type"] = city
+        landmarks.append(landmark)
+    bosses = [i for i in icons if i["name"] == "MapBossSpecial"]
+    for item in by_family.get("hall", []):
+        # the Hall is its map node (as the classical detector reports it): the one under its deadly-boss icon
+        inside = [n for n in nodes if _inside(item["box"], n["x"], n["y"])]
+        under_icon = [n for b in bosses if (n := _boss_node(inside, b["x"], b["y"])) is not None]
+        node = under_icon[0] if under_icon else None
+        x, y = (node["x"], node["y"]) if node else _centre(item["box"])
+        landmarks.append({"kind": "Hall", "x": round(x, 1), "y": round(y, 1), "score": round(item["score"], 3)})
+    for item in by_family.get("stronghold", []):
+        # one structure, locked or open: a hand reveal button beside it (or no map node inside) makes it locked, as
+        # in the classical detector
+        x, y = _centre(item["box"])
+        kind, _why = stronghold_kind(x, y, locks, nodes)
+        landmarks.append({"kind": kind, "x": round(x, 1), "y": round(y, 1), "score": round(item["score"], 3)})
+    # a deadly-boss icon over a map that is neither a citadel nor a hall marks a deadly boss map (user)
+    places = [d["box"] for d in [*by_family.get("citadel", []), *by_family.get("hall", [])]]
+    for boss in bosses:
+        node = _boss_node(nodes, boss["x"], boss["y"])
+        x, y = (node["x"], node["y"]) if node else (boss["x"], boss["y"] + K.ROW_DY)
+        if any(_inside(box, x, y) for box in places):
+            continue
+        landmarks.append({"kind": "Deadly boss map", "x": round(x, 1), "y": round(y, 1), "score": boss["score"]})
+
+    for item in by_family.get("tower", []):
+        # Tower boxes stand on the map node; the bottom of the predicted box is that point.
+        x, y, score = (item["box"][0] + item["box"][2]) / 2, item["box"][3], item["score"]
         landmarks.append({"kind": "Tower", "x": round(x, 1), "y": round(y, 1), "score": round(score, 3)})
         if nodes:
             distances = np.hypot([node["x"] - x for node in nodes], [node["y"] - y for node in nodes])
             nearest = int(np.argmin(distances))
-            if distances[nearest] <= RF_DETR_TOWER_NODE_REACH:
+            if distances[nearest] <= K.RF_DETR_TOWER_NODE_REACH:
                 # As in the classical detector (landmarks_from): the tower's map node stays in the graph, flagged, so
                 # paths still reach it (trace_paths) and expedition_rules can unflag it; other map nodes this close
                 # are the same wide tower base.
@@ -279,19 +350,12 @@ def detect_rf_detr(img: np.ndarray) -> dict:
                 nodes = [
                     node
                     for node in nodes
-                    if node is tower or np.hypot(node["x"] - tower["x"], node["y"] - tower["y"]) > TOWER_NMS
+                    if node is tower or np.hypot(node["x"] - tower["x"], node["y"] - tower["y"]) > K.TOWER_NMS
                 ]
 
-    predicted_dashes = np.asarray([_centre(d["box"]) for d in detections if d["label"] == "path_dash"], float).reshape(
-        -1, 2
-    )
-    # The learned path-dash class handles dim and unusual paths; the established amber detector supplies a
-    # safe fallback when a checkpoint has not learned enough dash examples yet.
-    dashes = predicted_dashes if len(predicted_dashes) >= 2 else classical_path_dashes(img)
-    edges = trace_paths(nodes, dashes, img)
+    edges = trace_paths(nodes, classical_path_dashes(img), img)
     wall = _wall_mask(img, detections)
-    edges = [edge for edge in edges if wall_share(edge["line"], wall) < WALL_CROSS]
-    icons.extend(ship_markers(img))
+    edges = [edge for edge in edges if wall_share(edge["line"], wall) < K.WALL_CROSS]
     nodes, icons, landmarks = expedition_rules(nodes, icons, landmarks)
     return {
         "width": w,
@@ -303,4 +367,12 @@ def detect_rf_detr(img: np.ndarray) -> dict:
     }
 
 
-__all__ = ["detect_rf_detr", "reset_rf_detr_runtime", "rf_detr_enabled", "rf_detr_model_path"]
+__all__ = [
+    "class_families",
+    "detect_rf_detr",
+    "family_detections",
+    "predict_tiles",
+    "reset_rf_detr_runtime",
+    "rf_detr_enabled",
+    "rf_detr_model_path",
+]

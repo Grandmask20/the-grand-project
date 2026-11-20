@@ -16,9 +16,13 @@ from pathlib import Path
 from typing import Any
 
 from grand_project import paths
-from grand_project.detect.icon_types import dataset_icon_types, icon_class
+from grand_project.detect.icon_types import icon_class
+from grand_project.detect.labels import annotator_labels
 
 from . import constants as K
+
+UNIDENTIFIED_ICON = icon_class("Unidentified")
+"""The label of icons the detector found but could not name: offered while some box has it, so it can be named."""
 
 
 @dataclass(frozen=True)
@@ -30,7 +34,9 @@ class DetectionOptions:
     include_fortress_walls: bool = False
     """Classical fortress-wall regions as ``fortress_wall`` boxes."""
     named_icons: bool = False
-    """Icons labelled by name (``icon_mapboss``) instead of one ``icon`` class."""
+    """Icons labelled by name (``icon_mapboss``) instead of one ``icon`` label (off: every icon is ``icon``, the
+    deadly-boss icon too). Named or not, an export gives the detector the one ``icon`` class
+    (``labels.export_class``), and the classical namer names what it finds."""
 
     @classmethod
     def from_settings(cls, settings: Mapping[str, Any]) -> DetectionOptions:
@@ -59,13 +65,20 @@ def resolve_input_paths(values: Iterable[str], root: Path = paths.ROOT) -> list[
 
 
 def discover_images(roots: Iterable[Path]) -> list[Path]:
-    """Recursively find supported image files below each input root, without duplicate paths."""
+    """Recursively find supported image files below each input root, without duplicate paths.
+
+    Folders named in ``ANNOTATOR_SKIP_DIRS`` (an atlas's own map pictures) are not entered.
+    """
     found: dict[str, Path] = {}
     for root in roots:
         if root.is_file():
             candidates: Iterable[Path] = (root,)
         elif root.is_dir():
-            candidates = root.rglob("*")
+            candidates = (
+                path
+                for path in root.rglob("*")
+                if not any(part in K.ANNOTATOR_SKIP_DIRS for part in path.relative_to(root).parts[:-1])
+            )
         else:
             continue
         for path in candidates:
@@ -113,21 +126,18 @@ def write_json_atomic(path: Path, value: Any) -> None:
         raise
 
 
-def label_names(used: Iterable[str], *, named_icons: bool, derived: bool) -> list[str]:
-    """The dataset's labels: the core labels (and the derived ones), every icon type, then the other labels in use.
+def label_names(used: Iterable[str], *, named_icons: bool, paths: bool = False, walls: bool = False) -> list[str]:
+    """The editor's labels: the dataset's (``labels.annotator_labels``) and nothing else.
 
-    With named icons the generic ``icon`` label is left out: icons are labelled ``icon_<name>`` instead, one label
-    per icon type (``dataset_icon_types``, in ``ICON_INFO`` order) whether or not a screenshot has one yet, so every
-    type can be labelled and an export numbers the classes the same way every time (user). Labels in ``used`` (the
-    store's ``used_labels``) that are not one of them (``icon_unidentified``, an old type, a custom label) follow in
-    alphabetical order, so their numbers do not depend on which screenshot happens to use them first.
+    With named icons every icon type is a label (``icon_<name>``, in ``ICON_INFO`` order) whether or not a
+    screenshot has one yet, so every type can be labelled, plus ``icon_unidentified`` while some box still has it (the
+    icons to name); without, only ``icon`` (user). ``path`` and ``fortress_wall`` only with their options. Other labels
+    in ``used`` (the store's ``used_labels``: labels the dataset no longer has, such as boxes from before the labels
+    changed) are not offered: rerun those screenshots. A box that still has one shows it as is.
     """
-    labels = list(K.ANNOTATOR_ALL_LABELS if derived else K.ANNOTATOR_CORE_LABELS)
-    if named_icons:
-        labels.remove("icon")
-        labels.extend(icon_class(name) for name in dataset_icon_types())
-    known = set(labels)
-    labels.extend(label for label in sorted(set(used)) if label and label not in known)
+    labels = annotator_labels(named_icons=named_icons, paths=paths, walls=walls)
+    if named_icons and UNIDENTIFIED_ICON in set(used):
+        labels.append(UNIDENTIFIED_ICON)
     return labels
 
 

@@ -212,3 +212,53 @@ def test_a_store_from_a_newer_annotator_is_refused(tmp_path: Path) -> None:
     connection.close()
     with pytest.raises(ValueError, match="newer annotator"):
         ReviewStore.open(path)
+
+
+_V1_SCHEMA = (
+    "CREATE TABLE meta (name TEXT PRIMARY KEY, value TEXT NOT NULL)",
+    """CREATE TABLE images (key TEXT PRIMARY KEY, position INTEGER NOT NULL UNIQUE, path TEXT NOT NULL,
+        source TEXT NOT NULL, reviewed INTEGER NOT NULL DEFAULT 0, detected INTEGER NOT NULL DEFAULT 0, detector TEXT,
+        width INTEGER, height INTEGER, detector_width INTEGER, detector_height INTEGER, error TEXT,
+        edit_version INTEGER NOT NULL DEFAULT 0, next_annotation_id INTEGER NOT NULL DEFAULT 0,
+        extra TEXT NOT NULL DEFAULT '{}')""",
+    """CREATE TABLE annotations (image_key TEXT NOT NULL REFERENCES images(key) ON DELETE CASCADE, ord INTEGER NOT NULL,
+        id TEXT NOT NULL, label TEXT NOT NULL, x REAL, y REAL, w REAL, h REAL, area REAL,
+        iscrowd INTEGER NOT NULL DEFAULT 0, source TEXT, score REAL, PRIMARY KEY (image_key, ord),
+        UNIQUE (image_key, id)) WITHOUT ROWID""",
+    "CREATE INDEX annotations_label ON annotations(label)",
+)
+
+
+def test_a_version_1_store_is_upgraded_after_a_copy_is_saved(tmp_path: Path) -> None:
+    """The first schema's store opens upgraded: its boxes stay as they are, its guesses are counted (for the queue's
+    order), it has no splits yet, and the store as it was is kept next to it."""
+    path = tmp_path / K.ANNOTATOR_STORE_FILE
+    with sqlite3.connect(path) as db:
+        for statement in _V1_SCHEMA:
+            db.execute(statement)
+        db.execute("INSERT INTO images (key, position, path, source, detected) VALUES ('k', 0, 'a.png', 'a.png', 1)")
+        db.execute(
+            "INSERT INTO annotations VALUES ('k', 0, 'b0', 'citadel_stone', 1, 2, 80, 80, 6400, 0, 'city_guess', NULL)"
+        )
+        db.execute("PRAGMA user_version = 1")
+    db.close()
+    with ReviewStore.open(path) as store:
+        (entry,) = store.queue()
+        assert entry.guesses == 1 and store.splits() == {}
+        assert store.item("k")["annotations"][0]["label"] == "citadel_stone"
+    backup = path.with_name(f"{path.name}.v1-backup")
+    with sqlite3.connect(backup) as db:
+        assert db.execute("PRAGMA user_version").fetchone()[0] == 1
+        assert db.execute("SELECT label FROM annotations").fetchall() == [("citadel_stone",)]
+    db.close()
+    with ReviewStore.open(path) as store:  # opening it again changes nothing
+        assert store.queue()[0].guesses == 1
+
+
+def test_splits_are_kept(tmp_path: Path, review_store: ReviewStore) -> None:
+    shots = _shots(tmp_path, "a.png", "b.png")
+    review_store.add_images(shots)
+    review_store.set_splits({image_key(shots[0]): "test"})
+    assert review_store.splits() == {image_key(shots[0]): "test"}
+    assert review_store.item(image_key(shots[0]))["split"] == "test"
+    assert review_store.item(image_key(shots[1]))["split"] is None

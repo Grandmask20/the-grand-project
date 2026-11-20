@@ -20,7 +20,7 @@ import cv2
 from PIL import Image
 
 from grand_project import paths
-from grand_project.detect.constants import ICON_INFO
+from grand_project.detect.constants import ICON_INFO, RF_DETR_LABEL_INFO
 from grand_project.detect.icon_types import file_picture, icon_picture, icon_type
 
 from . import constants as K
@@ -57,11 +57,11 @@ def _hashed_color(label: str) -> str:
 def label_picture(label: str) -> str:
     """A WebP data URL of the picture shown next to a label in the editor, or "" for a label without one.
 
-    An ``icon_<type>`` label shows its icon type's picture (its poe2db art, else a stored on-screen picture), a core
-    label the one ``ANNOTATOR_LABEL_ART`` gives it.
+    A registry label shows the picture its entry names (an icon type or a references/ file), an ``icon_<type>`` label
+    its icon type's picture (its poe2db art, else a stored on-screen picture).
     """
     size = K.ANNOTATOR_LABEL_PICTURE_PX
-    art = K.ANNOTATOR_LABEL_ART.get(label)
+    art = RF_DETR_LABEL_INFO.get(label, {}).get("picture")
     if art is None:
         name = icon_type(label)
         picture = icon_picture(name, size) if name else None
@@ -79,34 +79,43 @@ def label_picture(label: str) -> str:
 
 
 def label_text(label: str) -> tuple[str, str]:
-    """The poe2db name of an icon label ("" for other labels) and the words it can be found by in the editor.
+    """A label's title (its registry title, else an icon's poe2db name, else "") and the words it can be found by.
 
     Returns:
         (title, search): e.g. ("Breach Hive", "icon_breachhive breach hive breach hive, complete all breach hives").
     """
     name = icon_type(label)
-    title, _colour, aliases = ICON_INFO[name] if name else ("", None, "")
-    return title, " ".join(part for part in (label, title, aliases) if part).lower()
+    icon_title, _colour, aliases = ICON_INFO[name] if name else ("", None, "")
+    title = RF_DETR_LABEL_INFO.get(label, {}).get("title") or icon_title
+    return title, " ".join(part for part in (label, title, icon_title, aliases) if part).lower()
 
 
-def label_palette(labels: Iterable[str]) -> list[dict[str, str]]:
-    """Give each editor label a colour, its picture and poe2db name, and, for the first ten, a number hotkey."""
-    fixed = {
-        label: _css_color(color) for label, color in zip(K.ANNOTATOR_CORE_LABELS, K.ANNOTATOR_LABEL_COLORS, strict=True)
-    }
-    fixed.update({label: _css_color(color) for label, color in K.ANNOTATOR_EXTRA_LABEL_COLORS.items()})
-    hotkeys = K.ANNOTATOR_LABEL_HOTKEYS
+def _hotkey(key: str) -> dict[str, Any]:
+    """A registry key ("1", "shift+1") as the editor matches and shows it: the key's code and whether Shift is held
+    (``event.code`` is the same on every keyboard layout; Shift+1 types "!" on one and "+" on another)."""
+    shift = key.startswith("shift+")
+    digit = key.removeprefix("shift+")
+    return {"hotkey": f"⇧{digit}" if shift else digit, "code": f"Digit{digit}", "shift": shift}
+
+
+def label_palette(labels: Iterable[str]) -> list[dict[str, Any]]:
+    """Give each editor label its colour, picture, title, box rule and hotkey (the registry's; hashed colours and no
+    key for icon types and custom labels)."""
     palette = []
-    for index, label in enumerate(labels):
+    for label in labels:
+        entry = RF_DETR_LABEL_INFO.get(label, {})
         title, search = label_text(label)
+        color = entry.get("color")
+        key = entry.get("key")
         palette.append(
             {
                 "name": label,
-                "color": fixed.get(label) or _hashed_color(label),
-                "hotkey": hotkeys[index : index + 1],
+                "color": _css_color(color) if color else _hashed_color(label),
                 "picture": label_picture(label),
                 "title": title,
+                "rule": entry.get("rule", ""),
                 "search": search,
+                **(_hotkey(key) if key else {"hotkey": "", "code": "", "shift": False}),
             }
         )
     return palette

@@ -52,6 +52,7 @@ class Settings:
     max_workers: int
     hide_reviewed: bool
     reviewed_only: bool
+    guesses_first: bool = False
 
     @property
     def store_path(self) -> Path:
@@ -192,7 +193,13 @@ def _render_editor(store: ReviewStore, key: str, keys: list[str], settings: Sett
         st.session_state[_known_key(editor_key)] = {}
     _remember(editor_key, item.get("annotations", []))
     index = keys.index(key) if key in keys else -1
-    labels = label_names(store.used_labels(), named_icons=settings.options.named_icons, derived=True)
+    options = settings.options
+    labels = label_names(
+        store.used_labels(),
+        named_icons=options.named_icons,
+        paths=options.include_paths,
+        walls=options.include_fortress_walls,
+    )
     payload = {
         "dataset": _dataset_id(settings.store_path),
         "image_key": key,
@@ -201,6 +208,7 @@ def _render_editor(store: ReviewStore, key: str, keys: list[str], settings: Sett
         "width": int(item["width"]),
         "height": int(item["height"]),
         "labels": label_palette(labels),
+        "guess_sources": sorted(K.ANNOTATOR_GUESS_SOURCES),
         "boxes": editor_boxes(item.get("annotations", [])),
         "reviewed": bool(item.get("reviewed", False)),
         "position": f"{index + 1} / {len(keys)}" if index >= 0 else "",
@@ -219,7 +227,8 @@ def _render_editor(store: ReviewStore, key: str, keys: list[str], settings: Sett
     )
     st.caption(
         f"`{relative_source(path)}` · {item['width']} × {item['height']} · boxes are saved as source-image pixels; "
-        "the screenshot file is never changed. Press **?** in the editor for shortcuts."
+        "the screenshot file is never changed. Dotted boxes are guesses to check first. Press **?** in the editor for "
+        "shortcuts."
     )
 
 
@@ -253,7 +262,9 @@ def _sidebar() -> Settings:
                 "Name icons by type",
                 value=False,
                 help="Labels icons such as `icon_mapboss`, and lists every icon type (with its picture) as a label. "
-                "Changes labels only, not whether icons are found. Rerun processed screenshots to apply it.",
+                "Off, every icon is `icon` (the deadly-boss icon too). Either way the export gives the detector one "
+                "`icon` class, named by the icon pictures. Changes labels only, not whether icons are found. "
+                "Rerun processed screenshots to apply it.",
             ),
         )
         max_workers = st.number_input(
@@ -266,6 +277,11 @@ def _sidebar() -> Settings:
         )
         st.divider()
         hide_reviewed = st.checkbox("Hide reviewed screenshots", value=True, key=K.ANNOTATOR_SESSION_HIDE_REVIEWED)
+        guesses_first = st.checkbox(
+            "Most guesses first",
+            value=False,
+            help="Order the queue by how many dotted guesses (unsure city type, biome or city area) a screenshot has.",
+        )
         reviewed_only = st.checkbox("Export reviewed screenshots only", value=True)
     return Settings(
         roots=tuple(resolve_input_paths(input_text.splitlines())),
@@ -274,6 +290,7 @@ def _sidebar() -> Settings:
         max_workers=int(max_workers),
         hide_reviewed=hide_reviewed,
         reviewed_only=reviewed_only,
+        guesses_first=guesses_first,
     )
 
 
@@ -322,10 +339,20 @@ def _sidebar_actions(store: ReviewStore, queue: list[QueueEntry], settings: Sett
             result = export_dataset(store, settings.output_dir, reviewed_only=settings.reviewed_only)
             st.success(
                 f"Exported {result.images} images and {result.annotations} boxes to "
-                f"`{result.manifest_path}` and `{result.coco_path}`."
+                f"`{result.manifest_path}` and `{result.coco_path}`. Splits: "
+                + ", ".join(f"{name} {count}" for name, count in (result.splits or {}).items())
             )
+            if result.unknown:
+                st.warning(
+                    "Exported labels the dataset does not know as classes of their own: "
+                    + ", ".join(f"`{label}` ({count})" for label, count in sorted(result.unknown.items()))
+                    + ". If the labels changed since those screenshots were detected, rerun them (Rerun all) instead."
+                )
             if result.skipped_annotations:
-                st.warning(f"Skipped {result.skipped_annotations} invalid annotations.")
+                st.warning(f"Skipped {result.skipped_annotations} invalid annotations or icons the dataset leaves out.")
+            if result.report:
+                with st.expander("Split balance"):
+                    st.code(result.report, language=None)
         manifest = settings.output_dir / K.ANNOTATOR_MANIFEST_FILE
         if manifest.is_file():
             st.caption(f"Last export: `{manifest}`")
@@ -350,7 +377,8 @@ def _queue_picker(store: ReviewStore, queue: list[QueueEntry], settings: Setting
     def option_text(key: str) -> str:
         entry = entries[key]
         marker = "✓" if entry.reviewed else ("·" if entry.detected else "○")
-        return f"{marker} {entry.source}"
+        guesses = f" · {entry.guesses} guesses" if entry.guesses and not entry.reviewed else ""
+        return f"{marker} {entry.source}{guesses}"
 
     processed = sum(entry.detected for entry in queue)
     reviewed = sum(entry.reviewed for entry in queue)
@@ -387,7 +415,10 @@ def _page(store: ReviewStore, settings: Settings) -> None:
     if notice := st.session_state.pop(K.ANNOTATOR_SESSION_NOTICE, None):
         st.toast(notice)
 
-    keys = [entry.key for entry in queue if not settings.hide_reviewed or not entry.reviewed]
+    shown = [entry for entry in queue if not settings.hide_reviewed or not entry.reviewed]
+    if settings.guesses_first:
+        shown.sort(key=lambda entry: -entry.guesses)  # stable: equal counts keep the queue's order
+    keys = [entry.key for entry in shown]
     if not keys:
         st.info(
             "Nothing to review: press **Discover** and **Detect new** in the sidebar, or turn off "

@@ -2,6 +2,12 @@
 
 ``grand_project.detect.rf_detr.load_annotator_manifest`` reads the manifest (``make prepare_rf_detr_data
 RF_DETR_ANNOTATOR_MANIFEST=...``). Both files point at the original screenshots; nothing is copied.
+
+Stored labels become detector classes (``labels.export_class``: icon types the detector does not keep become
+``icon``, the icon types the dataset leaves out are not exported), numbered by ``labels.dataset_classes``. Labels
+outside the dataset's vocabulary (a reviewer's own, or one the labels no longer have: rerun those screenshots) are
+exported as classes of their own and reported (``ExportResult.unknown``). Every exported screenshot gets its
+train / validation / test split (``splits.py``), which the store keeps.
 """
 
 from __future__ import annotations
@@ -16,9 +22,12 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
+from grand_project.detect.labels import dataset_classes, export_class, known
+
 from . import constants as K
 from .detection import decode_image
-from .state import label_names, relative_source, write_json_atomic
+from .splits import assign_splits, pinned_split, split_report
+from .state import relative_source, write_json_atomic
 
 if TYPE_CHECKING:
     from .store import ReviewStore
@@ -35,11 +44,18 @@ class ExportResult:
     """Annotations left out: unknown label or invalid box."""
     coco_path: Path
     manifest_path: Path
+    unknown: dict[str, int] | None = None
+    """Exported boxes per label outside the dataset's vocabulary (``labels.known``)."""
+    splits: dict[str, int] | None = None
+    """Exported screenshots per split."""
+    report: str = ""
+    """The split balance report (``splits.split_report``)."""
 
 
 def _exported_annotation(annotation: dict[str, Any], label_ids: dict[str, int]) -> dict[str, Any] | None:
-    """One annotation as exported, or None when its label is unknown or its box invalid."""
-    label = str(annotation.get("label", "")).strip()
+    """One annotation as exported (under its detector class), or None when its label is unknown, retired or its box
+    invalid."""
+    label = export_class(str(annotation.get("label", "")).strip())
     if label not in label_ids:
         return None
     try:
@@ -119,12 +135,12 @@ def _publish(output_dir: Path, files: dict[str, Any]) -> None:
 def export_dataset(store: ReviewStore, output_dir: Path, *, reviewed_only: bool = True) -> ExportResult:
     """Export the (reviewed) annotations as COCO JSON and a project-native RF-DETR manifest.
 
-    Screenshots that no longer exist are left out. Labels are the core labels, with named icons every icon type
-    (``label_names``), then every other label in use (derived labels only when used), numbered in that order, so
-    the core classes and the icon types keep their ids from one export to the next.
+    Screenshots that no longer exist are left out. Classes are ``labels.dataset_classes`` of the labels in use,
+    numbered in that order. Screenshots without a split get one (``splits.assign_splits``, kept in the store); the
+    manifest carries each screenshot's split.
     """
     output_dir.mkdir(parents=True, exist_ok=True)
-    labels = label_names(store.used_labels(), named_icons=store.settings().named_icons, derived=False)
+    labels = dataset_classes(store.used_labels())
     label_ids = {label: index for index, label in enumerate(labels)}
     image_rows: list[dict[str, Any]] = []
     annotation_rows: list[dict[str, Any]] = []
@@ -165,6 +181,7 @@ def export_dataset(store: ReviewStore, output_dir: Path, *, reviewed_only: bool 
         manifest_rows.append(
             {
                 "image_id": image_id,
+                "key": key,
                 "path": str(path),
                 "source": source or relative_source(path),
                 "source_type": "annotator_reviewed" if reviewed else "annotator_unreviewed",
@@ -176,6 +193,11 @@ def export_dataset(store: ReviewStore, output_dir: Path, *, reviewed_only: bool 
             }
         )
 
+    split_of = _splits(store, manifest_rows)
+    for row in manifest_rows:
+        row["split"] = split_of[row["key"]]
+    for row in image_rows:
+        row["split"] = split_of[row["source_key"]]
     label_map = {str(index): label for label, index in label_ids.items()}
     coco = {
         "info": {
@@ -200,6 +222,7 @@ def export_dataset(store: ReviewStore, output_dir: Path, *, reviewed_only: bool 
         output_dir,
         {K.ANNOTATOR_COCO_FILE: coco, K.ANNOTATOR_MANIFEST_FILE: manifest, K.ANNOTATOR_LABELS_FILE: label_map},
     )
+    counts = {row["key"]: _class_counts(row) for row in manifest_rows}
     return ExportResult(
         images=len(image_rows),
         annotations=len(annotation_rows),
@@ -207,4 +230,39 @@ def export_dataset(store: ReviewStore, output_dir: Path, *, reviewed_only: bool 
         skipped_annotations=skipped,
         coco_path=coco_path,
         manifest_path=manifest_path,
+        unknown=_unknown(manifest_rows),
+        splits={split: sum(1 for s in split_of.values() if s == split) for split in K.ANNOTATOR_SPLITS},
+        report=split_report(counts, split_of) if counts else "",
     )
+
+
+def _unknown(rows: list[dict[str, Any]]) -> dict[str, int]:
+    """Exported boxes per label outside the dataset's vocabulary."""
+    out: dict[str, int] = {}
+    for row in rows:
+        for annotation in row["annotations"]:
+            if not known(annotation["label"]):
+                out[annotation["label"]] = out.get(annotation["label"], 0) + 1
+    return out
+
+
+def _class_counts(row: dict[str, Any]) -> dict[str, int]:
+    """A manifest screenshot's exported boxes per class."""
+    out: dict[str, int] = {}
+    for annotation in row["annotations"]:
+        out[annotation["label"]] = out.get(annotation["label"], 0) + 1
+    return out
+
+
+def _splits(store: ReviewStore, rows: list[dict[str, Any]]) -> dict[str, str]:
+    """Every exported screenshot's split: kept from earlier exports, the pinned ones test, the new ones drawn by
+    ``assign_splits`` around them; the new ones are saved in the store."""
+    items = {row["key"]: _class_counts(row) for row in rows}
+    paths = {row["key"]: row["path"] for row in rows}
+    fixed = {key: split for key, split in store.splits().items() if key in items}
+    pinned = {key: split for key in items if (split := pinned_split(paths[key])) is not None}
+    split_of = assign_splits(items, pinned=pinned, fixed=fixed)
+    changed = {key: split for key, split in split_of.items() if fixed.get(key) != split}
+    if changed:
+        store.set_splits(changed)
+    return split_of

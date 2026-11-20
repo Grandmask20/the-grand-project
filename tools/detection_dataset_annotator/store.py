@@ -4,7 +4,9 @@ One database (``review_state.sqlite3``) in the output folder. An edit reads and 
 it takes milliseconds however many screenshots are detected, and each detection result is committed as it arrives.
 
 - ``images``: one row per screenshot, in queue (discovery) order by ``position``. Detector result fields without a
-  column of their own are kept as JSON in ``extra``.
+  column of their own are kept as JSON in ``extra``. ``split`` is its train / validation / test split once an export
+  gave it one (it keeps it), ``guesses`` how many of its boxes are guesses (``ANNOTATOR_GUESS_SOURCES``), for the
+  queue.
 - ``annotations``: one row per box. ``WITHOUT ROWID`` with the key ``(image_key, ord)`` keeps a screenshot's boxes
   together on disk, so loading or replacing them touches a few pages, however large the dataset grows.
 - ``meta``: the discovery roots and the detection options, as JSON.
@@ -15,8 +17,12 @@ another session. A connection belongs to the thread that opened it; the page ope
 callback (about a millisecond each).
 
 Items come back in the shape the rest of the annotator uses: ``path``, ``source``, ``reviewed``, ``detected``,
-``edit_version``, ``next_annotation_id``, the detector's fields, and ``annotations`` (``id``, ``label``, ``bbox``,
-``area``, ``iscrowd``, ``source``, ``score``). The database is plain SQLite and can be read without this program.
+``edit_version``, ``next_annotation_id``, ``split``, ``guesses``, the detector's fields, and
+``annotations`` (``id``, ``label``, ``bbox``, ``area``, ``iscrowd``, ``source``, ``score``). The database is plain
+SQLite and can be read without this program.
+
+Schema versions (``PRAGMA user_version``): 1 the first; 2 added ``split`` and ``guesses``. An older
+store is upgraded when it is opened, after a copy of it is saved next to it (``ANNOTATOR_STORE_BACKUP``).
 """
 
 from __future__ import annotations
@@ -52,7 +58,9 @@ _SCHEMA = (
         error TEXT,
         edit_version INTEGER NOT NULL DEFAULT 0,
         next_annotation_id INTEGER NOT NULL DEFAULT 0,
-        extra TEXT NOT NULL DEFAULT '{}'
+        extra TEXT NOT NULL DEFAULT '{}',
+        split TEXT,
+        guesses INTEGER NOT NULL DEFAULT 0
     )""",
     # x, y, w, h may be NULL: SQLite stores a NaN as NULL. The editor and export skip such a box, as they skip NaN.
     """CREATE TABLE annotations (
@@ -74,16 +82,39 @@ _SCHEMA = (
     "CREATE INDEX annotations_label ON annotations(label)",
 )
 
+_UPGRADES = {
+    # version 1 -> 2: each screenshot's split and guess count
+    1: (
+        "ALTER TABLE images ADD COLUMN split TEXT",
+        "ALTER TABLE images ADD COLUMN guesses INTEGER NOT NULL DEFAULT 0",
+        "UPDATE images SET guesses = (SELECT COUNT(*) FROM annotations WHERE annotations.image_key = images.key "
+        f"AND annotations.source IN ({', '.join(repr(source) for source in sorted(K.ANNOTATOR_GUESS_SOURCES))}))",
+    ),
+}
+"""Statements that upgrade a store from the version given to the next one."""
+
 _RESULT_COLUMNS = ("detector", "width", "height", "detector_width", "detector_height", "error")
 """Detector result fields with a column of their own (besides ``detected`` and ``annotations``)."""
 
 _ITEM_FIELDS = frozenset(
-    {"path", "source", "reviewed", "detected", "edit_version", "next_annotation_id", "annotations", *_RESULT_COLUMNS}
+    {
+        "path",
+        "source",
+        "reviewed",
+        "detected",
+        "edit_version",
+        "next_annotation_id",
+        "annotations",
+        "split",
+        "guesses",
+        *_RESULT_COLUMNS,
+    }
 )
 """Item fields with a column (or table) of their own; any other field goes to ``extra``."""
 
 _IMAGE_COLUMNS = (
-    "key", "path", "source", "reviewed", "detected", *_RESULT_COLUMNS, "edit_version", "next_annotation_id", "extra"
+    "key", "path", "source", "reviewed", "detected", *_RESULT_COLUMNS, "edit_version", "next_annotation_id", "extra",
+    "split", "guesses",
 )  # fmt: skip
 _ANNOTATION_COLUMNS = ("id", "label", "x", "y", "w", "h", "area", "iscrowd", "source", "score")
 _IMAGE_LIST = ", ".join(f"images.{name}" for name in _IMAGE_COLUMNS)
@@ -116,6 +147,8 @@ class QueueEntry:
     source: str
     detected: bool
     reviewed: bool
+    guesses: int = 0
+    """How many of its boxes are guesses (``ANNOTATOR_GUESS_SOURCES``)."""
 
 
 def _item(row: tuple[Any, ...]) -> dict[str, Any]:
@@ -129,6 +162,8 @@ def _item(row: tuple[Any, ...]) -> dict[str, Any]:
         detected=bool(values["detected"]),
         edit_version=values["edit_version"],
         next_annotation_id=values["next_annotation_id"],
+        split=values["split"],
+        guesses=values["guesses"],
     )
     item.update({name: values[name] for name in _RESULT_COLUMNS if values[name] is not None})
     item["annotations"] = []
@@ -234,22 +269,43 @@ class ReviewStore:
         return int(self._db.execute("PRAGMA user_version").fetchone()[0])
 
     def _initialise(self, input_roots: list[str]) -> None:
-        """Create the schema when the file is new; refuse a store made by a newer annotator."""
+        """Create the schema when the file is new, upgrade an older store (after saving a copy of it); refuse a store
+        made by a newer annotator."""
         version = self._version()
         if version == K.ANNOTATOR_STORE_SCHEMA_VERSION:
             return
+        if version > K.ANNOTATOR_STORE_SCHEMA_VERSION:
+            raise ValueError(f"Review store {self.path} was made by a newer annotator (version {version})")
+        if version:
+            self._backup(version)  # before the upgrade, outside its transaction: the copy is the store as it was
         with self._write():
-            version = self._version()  # again under the lock: another session may have created it meanwhile
+            version = self._version()  # again under the lock: another session may have created or upgraded it
             if version > K.ANNOTATOR_STORE_SCHEMA_VERSION:
                 raise ValueError(f"Review store {self.path} was made by a newer annotator (version {version})")
             if version == K.ANNOTATOR_STORE_SCHEMA_VERSION:
                 return
-            # version 0: a new file. A later schema version adds its upgrade steps from the version before here.
-            for statement in _SCHEMA:
-                self._db.execute(statement)
-            self._set_meta("input_roots", input_roots)
-            self._set_meta("settings", DetectionOptions().as_settings())
+            if version == 0:  # a new file
+                for statement in _SCHEMA:
+                    self._db.execute(statement)
+                self._set_meta("input_roots", input_roots)
+                self._set_meta("settings", DetectionOptions().as_settings())
+            else:
+                for step in range(version, K.ANNOTATOR_STORE_SCHEMA_VERSION):
+                    for statement in _UPGRADES[step]:
+                        self._db.execute(statement)
             self._db.execute(f"PRAGMA user_version = {int(K.ANNOTATOR_STORE_SCHEMA_VERSION)}")
+
+    def _backup(self, version: int) -> Path:
+        """Save a copy of the store (SQLite's backup API: the WAL's pages included) before upgrading it from
+        ``version``; an existing copy is kept, it is the older one."""
+        target = self.path.with_name(K.ANNOTATOR_STORE_BACKUP.format(name=self.path.name, version=version))
+        if not target.exists():
+            copy = sqlite3.connect(str(target))
+            try:
+                self._db.backup(copy)
+            finally:
+                copy.close()
+        return target
 
     # ---- transactions --------------------------------------------------------------------------------------------
 
@@ -325,8 +381,11 @@ class ReviewStore:
 
     def queue(self) -> list[QueueEntry]:
         """Every screenshot in queue order, without boxes."""
-        rows = self._db.execute("SELECT key, source, detected, reviewed FROM images ORDER BY position")
-        return [QueueEntry(key, source, bool(detected), bool(reviewed)) for key, source, detected, reviewed in rows]
+        rows = self._db.execute("SELECT key, source, detected, reviewed, guesses FROM images ORDER BY position")
+        return [
+            QueueEntry(key, source, bool(detected), bool(reviewed), int(guesses))
+            for key, source, detected, reviewed, guesses in rows
+        ]
 
     def item(self, key: str) -> dict[str, Any] | None:
         """One screenshot with its boxes in the editor's order, or None when it is not in the store."""
@@ -364,6 +423,17 @@ class ReviewStore:
     def used_labels(self) -> list[str]:
         """Every label some box has, sorted."""
         return [label for (label,) in self._db.execute(_USED_LABELS)]
+
+    # ---- splits --------------------------------------------------------------------------------------------------
+
+    def splits(self) -> dict[str, str]:
+        """Image key -> split, for the screenshots that have one."""
+        return dict(self._db.execute("SELECT key, split FROM images WHERE split IS NOT NULL"))
+
+    def set_splits(self, splits: Mapping[str, str]) -> None:
+        """Give screenshots their split (it is kept: later exports never move a screenshot to another split)."""
+        with self._write():
+            self._db.executemany("UPDATE images SET split = ? WHERE key = ?", [(s, k) for k, s in splits.items()])
 
     # ---- the editor ----------------------------------------------------------------------------------------------
 
@@ -464,3 +534,5 @@ class ReviewStore:
     def _replace_annotations(self, key: str, annotations: list[dict[str, Any]]) -> None:
         self._db.execute("DELETE FROM annotations WHERE image_key = ?", (key,))
         self._insert_annotations(key, annotations)
+        guesses = sum(annotation.get("source") in K.ANNOTATOR_GUESS_SOURCES for annotation in annotations)
+        self._db.execute("UPDATE images SET guesses = ? WHERE key = ?", (guesses, key))

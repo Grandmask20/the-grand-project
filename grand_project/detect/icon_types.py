@@ -53,9 +53,11 @@ def dataset_icon_types() -> list[str]:
     """Every icon type a dataset labels, in ``ICON_INFO`` order (the annotator numbers its icon classes so).
 
     Returns:
-        The type names, without the old names (``ICON_LEGACY``) and "Unidentified" (``ICON_NOT_A_CLASS``).
+        The type names, without the old names (``ICON_LEGACY``), "Unidentified" (``ICON_NOT_A_CLASS``) and the types
+        the dataset leaves out (``RF_DETR_ICON_EXCLUDED``).
     """
-    return [n for n in K.ICON_INFO if n not in K.ICON_LEGACY and n not in K.ICON_NOT_A_CLASS]
+    skip = K.ICON_LEGACY | K.ICON_NOT_A_CLASS | K.RF_DETR_ICON_EXCLUDED
+    return [n for n in K.ICON_INFO if n not in skip]
 
 
 def icon_type(label: str) -> str | None:

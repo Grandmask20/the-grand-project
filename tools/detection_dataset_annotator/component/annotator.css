@@ -83,7 +83,8 @@
   border-style: dashed;
 }
 
-/* An unsure city type (source city_guess): dotted, so it stands out for checking; relabelling makes it manual. */
+/* A guessed box (an unsure city type, biome or city area: constants.ANNOTATOR_GUESS_SOURCES): dotted, so it stands
+   out for checking; relabelling makes it manual. */
 .ann-box.guess {
   border-style: dotted;
   border-width: calc(2px * var(--inv));

@@ -553,19 +553,42 @@ def square_buttons(img) -> list[dict]:
         if mx < BUTTON_FRAME:
             return out
         r[max(0, y - h) : y + h, max(0, x - w) : x + w] = 0
-        c = g[y + 14 - BUTTON_EDGE : y + h - 14 + BUTTON_EDGE, x + 14 - BUTTON_EDGE : x + w - 14 + BUTTON_EDGE]
-        best, kind = -1.0, "unknown"
-        for k, sy in R["symbols"].items():
-            if c.shape[0] < sy.shape[0] or c.shape[1] < sy.shape[1]:
-                continue
-            v = float(cv2.matchTemplate(c, sy, cv2.TM_CCOEFF_NORMED).max())
-            if v > best:
-                best, kind = v, k
-        if best < BUTTON_SYMBOL:
-            if mx < 0.9:  # a weak frame with no known symbol: not a button
-                continue
-            kind = "unknown"
+        kind, best = name_button(g, x + w / 2, y + h / 2)
+        if kind == "unknown" and mx < 0.9:
+            continue  # a weak frame with no known symbol: not a button
         out.append({"kind": kind, "x": x + w / 2, "y": y + h / 2, "frame": round(mx, 3), "symbol": round(best, 3)})
+
+
+def name_button(img, x: float, y: float, margin: int = BUTTON_EDGE) -> tuple[str, float]:
+    """Name the square framed button centred at (x, y) by the symbol inside its frame.
+
+    The one naming step of the buttons, wherever they were found: ``square_buttons`` finds them by their frame, the
+    RF-DETR detector by its ``reveal_button`` class (a centre a few px off: a wider ``margin``; measured on the 195
+    buttons of the dataset screenshots, a 16 px search names every button up to 16 px off, never as another kind).
+
+    Args:
+        img: the screenshot (BGR or grey, 1080p).
+        x: the button's centre x in screen px.
+        y: the button's centre y in screen px.
+        margin: px around the symbol's place the symbol is searched within.
+
+    Returns:
+        (kind, score): kind "lock", "ship" (a symbol of ``_button_refs``) or "unknown" when no symbol scores
+        ``BUTTON_SYMBOL``; score the best symbol match (-1 when the button is too near the screenshot's edge).
+    """
+    R = _button_refs()
+    h, w = R["frame"].shape
+    g = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY) if img.ndim == 3 else img
+    left, top = int(round(x - w / 2)), int(round(y - h / 2))
+    c = g[max(0, top + 14 - margin) : top + h - 14 + margin, max(0, left + 14 - margin) : left + w - 14 + margin]
+    best, kind = -1.0, "unknown"
+    for k, sy in R["symbols"].items():
+        if c.shape[0] < sy.shape[0] or c.shape[1] < sy.shape[1]:
+            continue
+        v = float(cv2.matchTemplate(c, sy, cv2.TM_CCOEFF_NORMED).max())
+        if v > best:
+            best, kind = v, k
+    return (kind if best >= BUTTON_SYMBOL else "unknown"), best
 
 
 def locks_in(img) -> list[tuple[float, float]]:

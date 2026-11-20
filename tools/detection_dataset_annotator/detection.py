@@ -13,18 +13,15 @@ from typing import Any
 import cv2
 import numpy as np
 
-from grand_project import cities, core
-from grand_project.detect import constants as detect_constants
-from grand_project.detect.icon_types import icon_class
+from grand_project import core
+from grand_project.detect.labels import is_node
+from grand_project.detect.proposals import dataset_boxes
 
 from . import constants as K
 from .state import DetectionOptions
 
-Box = tuple[float, float, float, float]
-"""x, y, width, height."""
-
 DEFAULT_OPTIONS = DetectionOptions()
-"""Core labels only, icons as one ``icon`` class."""
+"""Generic ``icon`` labels (the deadly-boss icon too), no paths, no walls."""
 
 
 def decode_image(path: Path) -> np.ndarray | None:
@@ -47,49 +44,11 @@ def _read_images(path: Path) -> tuple[np.ndarray, np.ndarray] | None:
     return raw, core.scale_screenshot(raw)
 
 
-def _clip(left: float, top: float, right: float, bottom: float, width: int, height: int) -> Box | None:
-    """A box clipped to the image, or None when less than a pixel of it is left."""
-    left, top = max(0.0, left), max(0.0, top)
-    right, bottom = min(float(width), right), min(float(height), bottom)
-    if right - left <= 1 or bottom - top <= 1:
-        return None
-    return left, top, right - left, bottom - top
-
-
-def _box_at_point(
-    x: float, y: float, box_width: float, box_height: float, width: int, height: int, *, anchor: str = "center"
-) -> Box | None:
-    """A clipped detector-space box around a point; with ``anchor="base"`` the box stands on the point."""
-    left = x - box_width / 2
-    top = y - box_height if anchor == "base" else y - box_height / 2
-    return _clip(left, top, left + box_width, top + box_height, width, height)
-
-
-def _box_around_line(line: Any, pad: float, width: int, height: int) -> Box | None:
-    """A clipped detector-space box around a traced path polyline."""
-    points = np.asarray(line, dtype=float).reshape(-1, 2)
-    if len(points) < 2:
-        return None
-    left, top = points.min(axis=0) - pad
-    right, bottom = points.max(axis=0) + pad
-    return _clip(float(left), float(top), float(right), float(bottom), width, height)
-
-
-def _icon_label(icon: dict[str, Any], named_icons: bool) -> str:
-    """The generic ``icon`` label, or a stable ``icon_<name>`` one."""
-    if not named_icons:
-        return "icon"
-    return icon_class(str(icon.get("name") or "Unidentified"))
-
-
-def _wall_boxes(mask: np.ndarray) -> list[Box]:
-    """The classical fortress-wall mask as one box per large enough connected region."""
-    _count, _labels, stats, _centroids = cv2.connectedComponentsWithStats(mask.astype(np.uint8), 8)
-    return [
-        (float(x), float(y), float(width), float(height))
-        for x, y, width, height, area in stats[1:]
-        if area >= detect_constants.RF_DETR_WALL_MIN_AREA
-    ]
+def _source(proposal: dict[str, Any]) -> str:
+    """A box's source: the annotator's own proposals (hidden map nodes, matched icons) say so, else the guess's."""
+    if proposal["item"].get("proposal"):
+        return K.ANNOTATOR_HIDDEN_SOURCE if is_node(proposal["label"]) else K.ANNOTATOR_ICON_SOURCE
+    return proposal["source"]
 
 
 def detection_annotations(
@@ -100,16 +59,20 @@ def detection_annotations(
     *,
     wall_mask: np.ndarray | None = None,
 ) -> list[dict[str, Any]]:
-    """Convert a classical detector result to editable source-image ``xywh`` annotations."""
+    """Convert a classical detector result to editable source-image ``xywh`` annotations (``dataset_boxes``)."""
     height, width = detector_image.shape[:2]
     raw_height, raw_width = raw_image.shape[:2]
     scale_x, scale_y = raw_width / width, raw_height / height
     annotations: list[dict[str, Any]] = []
-
-    def add(label: str, box: Box | None, item: dict[str, Any], source: str = K.ANNOTATOR_CLASSICAL_SOURCE) -> None:
-        if box is None:
-            return
-        x, y, box_width, box_height = box
+    proposals = dataset_boxes(
+        detection,
+        detector_image,
+        named_icons=options.named_icons,
+        include_paths=options.include_paths,
+        wall_mask=wall_mask if options.include_fortress_walls else None,
+    )
+    for proposal in proposals:
+        x, y, box_width, box_height = proposal["box"]
         bbox = [
             round(x * scale_x, 2),
             round(y * scale_y, 2),
@@ -117,53 +80,17 @@ def detection_annotations(
             round(box_height * scale_y, 2),
         ]
         annotation: dict[str, Any] = {
-            "label": label,
+            "label": proposal["label"],
             "bbox": bbox,
             "area": round(bbox[2] * bbox[3], 2),
             "iscrowd": 0,
-            "source": source,
+            "source": _source(proposal),
         }
+        item = proposal["item"]
         score = item.get("score", item.get("conf"))
         if score is not None:
             annotation["score"] = round(float(score), 4)
         annotations.append(annotation)
-
-    map_box = detect_constants.RF_DETR_MAP_BOX
-    for node in detection.get("nodes", []):
-        box = _box_at_point(float(node["x"]), float(node["y"]), map_box, map_box, width, height)
-        add("map_node", box, node, K.ANNOTATOR_HIDDEN_SOURCE if node.get("proposal") else K.ANNOTATOR_CLASSICAL_SOURCE)
-    landmarks = detection.get("landmarks", [])
-    # Cities are always labelled by type (user's rule); an unsure look-alike guess is flagged for the reviewer.
-    city_types = cities.landmark_city_types(detector_image, landmarks)
-    for index, landmark in enumerate(landmarks):
-        spec = K.ANNOTATOR_LANDMARK_LABELS.get(str(landmark.get("kind", "")))
-        if spec is None:
-            continue
-        label, box_width, box_height, anchor = spec
-        source = K.ANNOTATOR_CLASSICAL_SOURCE
-        if index in city_types:
-            city_type, sure = city_types[index]
-            label = detect_constants.RF_DETR_CITY_LABELS[city_type]
-            source = K.ANNOTATOR_CLASSICAL_SOURCE if sure else K.ANNOTATOR_CITY_GUESS_SOURCE
-        box = _box_at_point(
-            float(landmark["x"]), float(landmark["y"]), box_width, box_height, width, height, anchor=anchor
-        )
-        add(label, box, landmark, source)
-    icon_box = detect_constants.RF_DETR_ICON_BOX
-    for icon in detection.get("icons", []):
-        box = _box_at_point(float(icon["x"]), float(icon["y"]), icon_box, icon_box, width, height)
-        add(
-            _icon_label(icon, options.named_icons),
-            box,
-            icon,
-            K.ANNOTATOR_ICON_SOURCE if icon.get("proposal") else K.ANNOTATOR_CLASSICAL_SOURCE,
-        )
-    if options.include_paths:
-        for edge in detection.get("edges", []):
-            add("path", _box_around_line(edge.get("line", []), detect_constants.RF_DETR_PATH_PAD, width, height), edge)
-    if options.include_fortress_walls and wall_mask is not None:
-        for box in _wall_boxes(wall_mask):
-            add("fortress_wall", box, {})
     return annotations
 
 
@@ -183,6 +110,12 @@ def run_classical_detector(path: Path, options: DetectionOptions = DEFAULT_OPTIO
     if loaded is None:
         raise ValueError(f"Could not read image: {path}")
     raw_image, detector_image = loaded
+    max_width, max_height = K.ANNOTATOR_MAX_SIDE
+    if raw_image.shape[1] > max_width or raw_image.shape[0] > max_height:
+        raise ValueError(
+            f"Not a screenshot: {raw_image.shape[1]}x{raw_image.shape[0]} is larger than a {max_width}x{max_height} "
+            "game window (a stitched atlas map?)"
+        )
     # The map finder runs once here and is handed to the detector: its candidates also give the faint map nodes.
     ensure_models()
     found_maps = find_maps(detector_image, _models["maps"])

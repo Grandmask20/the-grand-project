@@ -23,14 +23,11 @@ endif
 PYTHON ?= $(if $(wildcard $(VENV_PYTHON)),$(VENV_PYTHON),$(PYTHON_DEFAULT))
 RUFF ?= $(if $(filter windows,$(PLATFORM)),$(VENV_BIN)/ruff.exe,$(VENV_BIN)/ruff)
 
-# RF_DETR_DATA_ROOT can point at a full/private truth set; when empty, the tool uses the normal test-data lookup.
+# The training data is the dataset annotator's export (reviewed screenshots, their splits): Export dataset there first.
 RF_DETR_OUTPUT_DIR ?= runs/rf-detr-small
 RF_DETR_DATASET_DIR ?= $(RF_DETR_OUTPUT_DIR)/dataset
-RF_DETR_DATA_ROOT ?=
 RF_DETR_OPTIONS ?=
-RF_DETR_ANNOTATOR_MANIFEST ?=
-RF_DETR_DATA_ARGS = $(if $(strip $(RF_DETR_DATA_ROOT)),--data-root "$(RF_DETR_DATA_ROOT)",)
-RF_DETR_ANNOTATOR_ARGS = $(if $(strip $(RF_DETR_ANNOTATOR_MANIFEST)),--annotator-manifest "$(RF_DETR_ANNOTATOR_MANIFEST)",)
+RF_DETR_ANNOTATOR_MANIFEST ?= tools/detection_dataset_annotator/detection-dataset/manifest.json
 
 install:
 	$(PYTHON) -m pip install -e ".[dev]"
@@ -46,10 +43,10 @@ annotate_dataset:
 	$(PYTHON) -m tools.detection_dataset_annotator
 
 prepare_rf_detr_data:
-	$(PYTHON) -m tools.train_rf_detr $(RF_DETR_DATA_ARGS) $(RF_DETR_ANNOTATOR_ARGS) --output-dir "$(RF_DETR_OUTPUT_DIR)" --dataset-dir "$(RF_DETR_DATASET_DIR)" --dataset-only --overwrite-dataset $(RF_DETR_OPTIONS)
+	$(PYTHON) -m tools.train_rf_detr --annotator-manifest "$(RF_DETR_ANNOTATOR_MANIFEST)" --output-dir "$(RF_DETR_OUTPUT_DIR)" --dataset-dir "$(RF_DETR_DATASET_DIR)" --dataset-only --overwrite-dataset $(RF_DETR_OPTIONS)
 
 train_rf_detr: prepare_rf_detr_data
-	$(PYTHON) -m tools.train_rf_detr $(RF_DETR_DATA_ARGS) $(RF_DETR_ANNOTATOR_ARGS) --output-dir "$(RF_DETR_OUTPUT_DIR)" --dataset-dir "$(RF_DETR_DATASET_DIR)" --reuse-dataset $(RF_DETR_OPTIONS)
+	$(PYTHON) -m tools.train_rf_detr --output-dir "$(RF_DETR_OUTPUT_DIR)" --dataset-dir "$(RF_DETR_DATASET_DIR)" --reuse-dataset $(RF_DETR_OPTIONS)
 
 lint:
 	$(RUFF) check grand_project tools tests --fix --config pyproject.toml

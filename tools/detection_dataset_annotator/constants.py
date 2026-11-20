@@ -4,17 +4,23 @@ from __future__ import annotations
 
 from grand_project import paths
 from grand_project.detect.constants import (
-    RF_DETR_CORE_LABELS,
-    RF_DETR_LANDMARK_BOX,
-    RF_DETR_STRONGHOLD_BOX,
-    RF_DETR_TOWER_HEIGHT,
-    RF_DETR_TOWER_WIDTH,
+    RF_DETR_GUESS_SOURCES,
+    RF_DETR_SOURCE_CITY_GUESS,
+    RF_DETR_SOURCE_CLASSICAL,
 )
 
 # ---- screenshots and output folders ----------------------------------------------------------------------------
 
 ANNOTATOR_IMAGE_EXTENSIONS = frozenset({".bmp", ".jpeg", ".jpg", ".png", ".webp"})
 """Image suffixes accepted during recursive screenshot discovery."""
+
+ANNOTATOR_SKIP_DIRS = frozenset({"atlas_files"})
+"""Folder names discovery never enters: an atlas folder keeps its stitched map pictures there (roa-atlas's
+``atlas_terrain.png`` is 9950x4019 with 741 boxes, over the 300 objects an image may hold), not screenshots."""
+
+ANNOTATOR_MAX_SIDE = (3840, 2160)
+"""Largest screenshot (width, height) detection accepts: a 4K game window (``core.read_screenshot`` scales 1440p and
+4K windows to 1080p); anything larger is not a screenshot."""
 
 ANNOTATOR_DEFAULT_INPUT_DIRS = (
     paths.TEST_DATA / "res_atlases",
@@ -29,8 +35,12 @@ ANNOTATOR_DEFAULT_OUTPUT_DIR = "tools/detection_dataset_annotator/detection-data
 ANNOTATOR_STORE_FILE = "review_state.sqlite3"
 """Filename of the review store (``store.py``): the editable detector results, review flags and dataset settings."""
 
-ANNOTATOR_STORE_SCHEMA_VERSION = 1
-"""``PRAGMA user_version`` of the review store; a store made by a newer annotator is refused."""
+ANNOTATOR_STORE_SCHEMA_VERSION = 2
+"""``PRAGMA user_version`` of the review store; a store made by a newer annotator is refused. Version 2 added each
+screenshot's split and guess count (``store.py`` upgrades a version 1 store after saving a copy of it)."""
+
+ANNOTATOR_STORE_BACKUP = "{name}.v{version}-backup"
+"""Name of the copy of the review store saved before its schema is upgraded from ``version``."""
 
 ANNOTATOR_STORE_BUSY_S = 10.0
 """Seconds a store write waits while another session (a browser tab, a detection run) writes. Writes are one
@@ -45,11 +55,37 @@ ANNOTATOR_COCO_FILE = "annotations.json"
 ANNOTATOR_LABELS_FILE = "labels.json"
 """Filename for the exported numeric label ids."""
 
-ANNOTATOR_SCHEMA_VERSION = 1
-"""Version of the manifest schema."""
+ANNOTATOR_SCHEMA_VERSION = 2
+"""Version of the manifest schema. Version 2 added each screenshot's split."""
 
 ANNOTATOR_MANIFEST_FORMAT = "the-grand-project-rf-detr-manifest"
 """The manifest's ``format`` value; ``rf_detr.load_annotator_manifest`` refuses other files."""
+
+# ---- train / validation / test splits (splits.py) -------------------------------------------------------------
+
+ANNOTATOR_SPLITS = ("train", "validation", "test")
+"""The splits a screenshot can be in (the dataset's Hugging Face split names)."""
+
+ANNOTATOR_SPLIT_FRACTIONS = (0.8, 0.1, 0.1)
+"""Share of the screenshots each split gets, in ``ANNOTATOR_SPLITS`` order."""
+
+ANNOTATOR_SPLIT_BINS = 8
+"""Bins of exported boxes per screenshot (quantiles) the splits are drawn from, so each split holds screenshots as
+busy as the others (user: splits aware of the detections per image, which the model's queries must cover)."""
+
+ANNOTATOR_SPLIT_SEED = 1337
+"""Seed of the split's random draw and refinement: the same screenshots give the same splits."""
+
+ANNOTATOR_SPLIT_ROUNDS = 20000
+"""Swaps tried when refining the splits so every class is spread across them as the split shares say (user)."""
+
+ANNOTATOR_SPLIT_PINNED_TEST = (
+    paths.TEST_DATA / "screenshots" / "random_samples",
+    paths.TEST_DATA / "screenshots" / "ocean",
+    paths.TEST_DATA / "res_atlases",
+)
+"""Screenshots always in the test split: the hand truth and the reference atlases that ``python -m
+grand_project.detect score`` and ``tools/compare_detectors.py`` measure on, so those numbers stay on unseen data."""
 
 # ---- detector worker processes ---------------------------------------------------------------------------------
 
@@ -88,75 +124,28 @@ ANNOTATOR_WORKER_EXIT_S = 10.0
 """Seconds a worker may take to exit after its input closes before it is terminated."""
 
 # ---- labels ----------------------------------------------------------------------------------------------------
+# The labels themselves (names, colours, keys, pictures, box rules) are the registry's: RF_DETR_LABEL_INFO in
+# grand_project/detect/constants.py, read through grand_project/detect/labels.py.
 
-ANNOTATOR_CORE_LABELS = tuple(RF_DETR_CORE_LABELS)
-"""The ten sparse object classes used by the current RF-DETR training run (cities by type: ``city_vaal`` ...)."""
-
-ANNOTATOR_DERIVED_LABELS = ("path", "fortress_wall")
-"""Optional derived labels: traced paths (including dashes) and fortress walls."""
-
-ANNOTATOR_ALL_LABELS = ANNOTATOR_CORE_LABELS + ANNOTATOR_DERIVED_LABELS
-"""All labels the annotator can emit before icon naming and custom labels."""
-
-ANNOTATOR_LANDMARK_LABELS = {
-    "Tower": ("tower", RF_DETR_TOWER_WIDTH, RF_DETR_TOWER_HEIGHT, "base"),
-    "City": ("city", RF_DETR_LANDMARK_BOX, RF_DETR_LANDMARK_BOX, "center"),  # label: city_<type>, see detection.py
-    "Hall": ("hall", RF_DETR_LANDMARK_BOX, RF_DETR_LANDMARK_BOX, "center"),
-    "Deadly boss map": ("deadly_boss_map", RF_DETR_LANDMARK_BOX, RF_DETR_LANDMARK_BOX, "center"),
-    "Breach stronghold": ("breach_stronghold", RF_DETR_STRONGHOLD_BOX, RF_DETR_STRONGHOLD_BOX, "center"),
-    "Locked stronghold": ("locked_stronghold", RF_DETR_STRONGHOLD_BOX, RF_DETR_STRONGHOLD_BOX, "center"),
-}
-"""Classical landmark kind -> (label, box width, box height, anchor) in detector px. A tower's point is its base,
-so its box stands on the point; every other box is centred on it. A City's label is replaced by its typed one
-(``RF_DETR_CITY_LABELS``)."""
-
-ANNOTATOR_CLASSICAL_SOURCE = "classical"
+ANNOTATOR_CLASSICAL_SOURCE = RF_DETR_SOURCE_CLASSICAL
 """Annotation source of boxes the classical detector found."""
 
 ANNOTATOR_MANUAL_SOURCE = "manual"
 """Annotation source of boxes a reviewer drew or changed."""
 
-ANNOTATOR_CITY_GUESS_SOURCE = "city_guess"
-"""Annotation source of a classical city whose type is an unsure look-alike guess (``cities.screenshot_city_types``:
-margin under ``CITY_LOOK_SURE`` or a window cut off by the screenshot edge); the editor draws these boxes dashed."""
+ANNOTATOR_CITY_GUESS_SOURCE = RF_DETR_SOURCE_CITY_GUESS
+"""Annotation source of a citadel whose city type is an unsure look-alike guess (``cities.screenshot_city_types``:
+margin under ``CITY_LOOK_SURE`` or a window cut off by the screenshot edge)."""
 
-ANNOTATOR_LABEL_COLORS = (
-    (255, 100, 80),
-    (80, 190, 255),
-    (90, 210, 90),
-    (60, 90, 235),
-    (110, 170, 210),
-    (190, 120, 255),
-    (255, 190, 50),
-    (80, 220, 220),
-    (220, 100, 180),
-    (130, 180, 255),
-)
-"""BGR box colours for the ten core labels, in ``ANNOTATOR_CORE_LABELS`` order, chosen to read on the atlas. The
-city types are green (Ezomyte, grass), red (Vaal) and tan (Faridun, sand): the tower's orange and the yellows of
-paths and icons are taken."""
-
-ANNOTATOR_EXTRA_LABEL_COLORS = {"path": (60, 230, 255), "fortress_wall": (170, 170, 170)}
-"""BGR box colours for the optional derived labels (yellow like the paths themselves, grey for walls)."""
+ANNOTATOR_GUESS_SOURCES = RF_DETR_GUESS_SOURCES
+"""Sources of guessed boxes (an unsure city type, biome or city area): the editor draws them dotted and the queue
+lists the screenshots with the most of them first."""
 
 ANNOTATOR_HASHED_LIGHTNESS = 0.62
 """HLS lightness of the hashed colours of labels without a fixed one: light enough to read on the dark atlas."""
 
 ANNOTATOR_HASHED_SATURATION = 0.75
 """HLS saturation of the hashed label colours."""
-
-ANNOTATOR_LABEL_HOTKEYS = "1234567890"
-"""Number keys that pick a label in the editor, assigned in label-palette order (core, derived, then custom)."""
-
-ANNOTATOR_LABEL_ART = {
-    "map_node": "map_node_icon.webp",
-    "tower": "LostTower",
-    "deadly_boss_map": "MapBossSpecial",
-    "locked_stronghold": "lock_icon.png",
-}
-"""Pictures shown next to core labels in the editor: an icon type (its picture, as for ``icon_<type>`` labels) or a
-file in references/. Icon labels show their type's picture (``icon_types.icon_picture``: its poe2db art, else a stored
-on-screen picture); the other labels show only their colour."""
 
 ANNOTATOR_LABEL_PICTURE_PX = 40
 """Side of the label pictures sent to the editor, px: sharp at the 34 px the inspector shows them on a 1x screen and

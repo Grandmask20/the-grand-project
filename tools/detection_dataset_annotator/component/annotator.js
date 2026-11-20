@@ -31,7 +31,6 @@ const SCALE_WHEEL_DELTA = 100; // wheel delta per resize step: one mouse-wheel n
 const SCALE_UNDO_MS = 600; // resize steps closer together than this are one undo step (one wheel gesture)
 const REVEAL_MARGIN_PX = 24; // J / K pan when the box comes closer than this to the viewport edge
 const MANUAL = "manual"; // box source of drawn or changed boxes (constants.ANNOTATOR_MANUAL_SOURCE)
-const CITY_GUESS = "city_guess"; // box source of an unsure city type (constants.ANNOTATOR_CITY_GUESS_SOURCE)
 
 const HANDLES = ["nw", "n", "ne", "e", "se", "s", "sw", "w"];
 const HANDLE_CURSORS = {
@@ -51,7 +50,7 @@ const SHORTCUTS = [
   ["Alt+click", "cycle through boxes stacked under the pointer"],
   ["Drag box / handle", "move / resize"],
   ["Ctrl+drag", "move the selected boxes, even from a handle (small boxes)"],
-  ["1 … 9, 0", "label the selected boxes, or pick the label for new boxes"],
+  ["1 … 9, 0, Shift+1 … 0", "label the selected boxes, or pick the label for new boxes (keys in the label list)"],
   ["/", "find a label by its name, icon name or other names (Enter: use the first one, Esc: clear)"],
   ["Del, Backspace", "delete selected"],
   ["Ctrl+D", "duplicate selected"],
@@ -93,6 +92,17 @@ function isTyping(event) {
   const target = event.composedPath()[0];
   if (!(target instanceof Element)) return false;
   return target.isContentEditable || ["INPUT", "SELECT", "TEXTAREA"].includes(target.tagName);
+}
+
+// The label a key press picks: labels name a key by its code (Digit1 …) and whether Shift is held, the same on every
+// keyboard layout (Shift+1 types "!" on one and "+" on another). Exported for tests/detection_dataset_annotator.
+export function labelForKey(labels, code, shift) {
+  return labels.find((label) => label.code && label.code === code && Boolean(label.shift) === Boolean(shift));
+}
+
+// Whether a box is a guess to check first (an unsure city type, biome or city area: constants.ANNOTATOR_GUESS_SOURCES).
+export function isGuess(guessSources, box) {
+  return guessSources.has(box.source);
 }
 
 function round2(value) {
@@ -152,6 +162,8 @@ class Annotator {
       this.data.revision !== data.revision;
     this.data = data;
     this.labels = data.labels ?? [];
+    // Sources of guessed boxes (an unsure city type, biome or city area: constants.ANNOTATOR_GUESS_SOURCES)
+    this.guessSources = new Set(data.guess_sources ?? []);
     this.labelByName = Object.fromEntries(this.labels.map((label) => [label.name, label]));
     this.colors = Object.fromEntries(this.labels.map((label) => [label.name, label.color]));
     if (!this.currentLabel || !this.colors[this.currentLabel]) {
@@ -835,7 +847,7 @@ class Annotator {
         this.filterEl.select();
         return true;
       default: {
-        const label = this.labels.find((item) => item.hotkey && item.hotkey === key);
+        const label = labelForKey(this.labels, event.code, shiftKey);
         if (label) this.useLabel(label.name);
         return Boolean(label);
       }
@@ -1070,7 +1082,7 @@ class Annotator {
     if (!node) return;
     Object.assign(node.style, { left: `${box.x}px`, top: `${box.y}px`, width: `${box.w}px`, height: `${box.h}px` });
     node.classList.toggle("manual", box.source === MANUAL);
-    node.classList.toggle("guess", box.source === CITY_GUESS);
+    node.classList.toggle("guess", isGuess(this.guessSources, box));
   }
 
   renderSide() {
@@ -1171,6 +1183,8 @@ class Annotator {
     }
     select.value = box.label;
     select.addEventListener("change", () => this.useLabel(select.value));
+    const rule = this.labelByName[box.label]?.rule;
+    if (rule) el("p", "ann-muted ann-rule", panel).textContent = rule;
     const grid = el("div", "ann-grid", panel);
     for (const field of ["x", "y", "w", "h"]) {
       const label = el("label", "", grid);

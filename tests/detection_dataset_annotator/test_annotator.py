@@ -17,6 +17,7 @@ from PIL import Image
 from grand_project import cities, core
 from grand_project.detect import constants as detect_constants
 from grand_project.detect.icon_types import dataset_icon_types, icon_class
+from grand_project.detect.labels import annotator_labels, dataset_classes, structural_labels
 from tools.detection_dataset_annotator import (
     DetectionOptions,
     ReviewStore,
@@ -141,20 +142,30 @@ def test_stale_editor_messages_and_queue_neighbours() -> None:
     assert neighbour_key([], "a", 1) is None
 
 
-def test_label_palette_has_colours_and_number_keys() -> None:
-    palette = label_palette([*K.ANNOTATOR_ALL_LABELS, "icon_map_boss", "custom"])
-    assert [entry["hotkey"] for entry in palette[:10]] == list("1234567890")
-    assert palette[10]["hotkey"] == ""
-    colours = [entry["color"] for entry in palette]
+def test_label_palette_has_colours_rules_and_registry_keys() -> None:
+    """Keys come from the registry: 1-8 the node classes, 9 hall, 0 tower, Shift+digits the rest; icon types and
+    custom labels get a hashed colour and no key; every registry label carries its box rule."""
+    labels = structural_labels()  # every registry label: the icon classes, path and fortress_wall too
+    palette = {entry["name"]: entry for entry in label_palette([*labels, "icon_map_boss", "custom"])}
+    keys = {name: (entry["hotkey"], entry["code"], entry["shift"]) for name, entry in palette.items()}
+    assert keys["map_node"] == ("1", "Digit1", False)
+    assert keys["map_node_faridun"] == ("8", "Digit8", False)
+    assert keys["hall"] == ("9", "Digit9", False) and keys["tower"] == ("0", "Digit0", False)
+    assert keys["citadel_iron"] == ("⇧1", "Digit1", True)
+    assert keys["custom"] == ("", "", False) and keys["icon_map_boss"][0] == ""
+    pressed = [(code, shift) for _key, code, shift in keys.values() if code]
+    assert len(pressed) == len(set(pressed))  # one label per key
+    colours = [palette[name]["color"] for name in labels]
     assert all(colour.startswith("#") and len(colour) == 7 for colour in colours)
-    assert len(set(colours[:10])) == 10
-    assert label_palette(["icon_map_boss"])[0]["color"] == palette[12]["color"]  # stable
+    assert len(set(colours)) == len(colours)
+    assert all(palette[name]["rule"] for name in labels)
+    assert label_palette(["custom"])[0]["color"] == palette["custom"]["color"]  # stable
 
 
-def test_cities_are_labelled_by_type(monkeypatch: pytest.MonkeyPatch) -> None:
-    """User: cities are always labelled by type. A city that already has a type keeps it; the others are typed by
-    look, an unsure look (small margin, or a window cut off by the screenshot edge) is flagged ``city_guess``, and
-    two cities closer than TRIO_GAP never share a type."""
+def test_citadels_are_labelled_by_type(monkeypatch: pytest.MonkeyPatch) -> None:
+    """User: a city's own map is labelled by its citadel (Iron = Ezomyte, Stone = Vaal, Copper = Faridun). A city
+    that already has a type keeps it; the others are typed by look, an unsure look (small margin, or a window cut
+    off by the screenshot edge) is flagged ``city_guess``, and two cities closer than TRIO_GAP never share a type."""
     # A: clearly Vaal. B, next to A: looks Vaal too, less clearly, so it takes the best type left (Ezomyte, unsure).
     # E: clearly Faridun, but its window is cut off by the screenshot's corner (unsure).
     looks = iter([[0.50, 0.30, 0.60], [0.60, 0.45, 0.62], [0.70, 0.70, 0.20]])
@@ -171,13 +182,13 @@ def test_cities_are_labelled_by_type(monkeypatch: pytest.MonkeyPatch) -> None:
     }
     found = [(a["label"], a["source"]) for a in detection_annotations(detection, image, image)]
     assert found == [
-        ("city_vaal", K.ANNOTATOR_CLASSICAL_SOURCE),
-        ("city_ezomyte", K.ANNOTATOR_CITY_GUESS_SOURCE),
-        ("city_faridun", K.ANNOTATOR_CLASSICAL_SOURCE),
+        ("citadel_stone", K.ANNOTATOR_CLASSICAL_SOURCE),
+        ("citadel_iron", K.ANNOTATOR_CITY_GUESS_SOURCE),
+        ("citadel_copper", K.ANNOTATOR_CLASSICAL_SOURCE),
         ("hall", K.ANNOTATOR_CLASSICAL_SOURCE),
-        ("city_faridun", K.ANNOTATOR_CITY_GUESS_SOURCE),
+        ("citadel_copper", K.ANNOTATOR_CITY_GUESS_SOURCE),
     ]
-    assert {label for label, _source in found} <= set(K.ANNOTATOR_CORE_LABELS)
+    assert {label for label, _source in found} <= set(dataset_classes())
 
 
 @pytest.mark.data
@@ -199,14 +210,22 @@ def test_sure_city_types_are_right(test_data: Path) -> None:
     assert checked
 
 
-def test_label_names_follow_options_and_used_labels() -> None:
-    """Core labels first (and the derived ones for the editor), then the other labels in use in alphabetical order;
-    named icons drop ``icon``."""
-    used = ["icon_map_boss", "map_node", "", "custom"]
-    assert label_names(used, named_icons=False, derived=False) == [*K.ANNOTATOR_CORE_LABELS, "custom", "icon_map_boss"]
-    named = label_names(used, named_icons=True, derived=True)
-    assert "icon" not in named
-    assert named[-2:] == ["custom", "icon_map_boss"]
+def test_label_names_offer_only_the_datasets_labels() -> None:
+    """User: with icons not named by type the list has one ``icon`` label, ``path`` and ``fortress_wall`` only with
+    their options, and labels the dataset no longer has (``deadly_boss_map``, the old ``city_<type>``) are never
+    offered, even while old boxes still use them."""
+    used = ["deadly_boss_map", "city_vaal", "icon_breachhive", "icon_unidentified", "map_node", "", "custom"]
+    plain = label_names(used, named_icons=False)
+    assert plain == annotator_labels(named_icons=False)
+    assert plain[:2] == ["map_node", "map_node_grass"] and not {"path", "fortress_wall"} & set(plain)
+    assert [label for label in plain if label.startswith("icon")] == ["icon"]
+    assert "path" in label_names(used, named_icons=False, paths=True)
+    assert "fortress_wall" in label_names(used, named_icons=False, walls=True)
+    assert not {"deadly_boss_map", "city_vaal", "custom", "icon_unidentified"} & set(plain)
+    named = label_names(used, named_icons=True, paths=True, walls=True)
+    assert "icon" not in named and {"path", "fortress_wall", "icon_breachhive"} <= set(named)
+    assert named[-1] == "icon_unidentified"  # still to be named
+    assert not {"deadly_boss_map", "city_vaal", "custom"} & set(named)
 
 
 def test_named_icons_list_every_icon_type() -> None:
@@ -215,14 +234,14 @@ def test_named_icons_list_every_icon_type() -> None:
     used = ["icon_unidentified", "icon_breachhive"]
     icons = [icon_class(name) for name in dataset_icon_types()]
     assert {"icon_breachhive", "icon_wisdomsteachings", "icon_arcanehordes", "icon_hideoutred"} <= set(icons)
-    core = [label for label in K.ANNOTATOR_CORE_LABELS if label != "icon"]
-    assert label_names(used, named_icons=True, derived=False) == [*core, *icons, "icon_unidentified"]
-    assert label_names([], named_icons=True, derived=False) == [*core, *icons]  # nothing labelled yet
+    structural = [label for label in annotator_labels(named_icons=True) if label not in icons]
+    assert label_names(used, named_icons=True) == [*structural, *icons, "icon_unidentified"]
+    assert label_names([], named_icons=True) == [*structural, *icons]  # nothing labelled yet
 
 
 def test_label_palette_shows_icon_pictures_and_names() -> None:
     """Each icon label carries its icon's picture and poe2db name (the editor shows them next to the label)."""
-    names = ["map_node", "city_vaal", "icon_breachhive", "icon_unidentified", "x"]
+    names = ["map_node", "citadel_stone", "icon_breachhive", "icon_unidentified", "x"]
     palette = {e["name"]: e for e in label_palette(names)}
     breach = palette["icon_breachhive"]
     assert breach["picture"].startswith("data:image/webp;base64,")
@@ -231,8 +250,9 @@ def test_label_palette_shows_icon_pictures_and_names() -> None:
     assert picture.getchannel("A").getextrema() == (0, 255)  # a disc on a transparent square
     assert breach["title"] == "Breach Hive"
     assert "breach hive" in breach["search"] and "icon_breachhive" in breach["search"]
-    assert palette["map_node"]["picture"]  # ANNOTATOR_LABEL_ART
-    assert palette["city_vaal"]["picture"] == palette["x"]["picture"] == palette["x"]["title"] == ""
+    assert palette["map_node"]["picture"]  # the registry's picture
+    assert palette["citadel_stone"]["title"] == "Stone Citadel: a Vaal city's own map"
+    assert palette["citadel_stone"]["picture"] == palette["x"]["picture"] == palette["x"]["title"] == ""
     assert palette["icon_unidentified"]["picture"] == ""  # no art and no stored picture: only its colour
 
 
@@ -309,14 +329,16 @@ def test_editor_never_changes_the_screenshot(tmp_path: Path, review_store: Revie
     assert manifest["format"] == K.ANNOTATOR_MANIFEST_FORMAT
     assert manifest["images"][0]["source_type"] == "annotator_reviewed"
 
-    # with named icons the export lists every icon type, used or not, in a fixed order (user)
+    assert manifest["images"][0]["split"] in K.ANNOTATOR_SPLITS
+
+    # named icons are exported as the detector finds them: one `icon` class, named from the stored pictures
     review_store.set_settings(DetectionOptions(named_icons=True))
     edited[1]["label"] = "icon_breachhive"
     assert review_store.save_review(key, item["edit_version"], annotations=edited)
     named = export_dataset(review_store, tmp_path / "named")
-    labels = json.loads(named.manifest_path.read_text(encoding="utf-8"))["labels"]
-    core = [label for label in K.ANNOTATOR_CORE_LABELS if label != "icon"]
-    assert list(labels.values()) == [*core, *(icon_class(name) for name in dataset_icon_types())]
+    exported = json.loads(named.manifest_path.read_text(encoding="utf-8"))
+    assert list(exported["labels"].values()) == dataset_classes()
+    assert [a["label"] for a in exported["images"][0]["annotations"]][1] == "icon"
 
 
 @pytest.mark.skipif(sys.platform == "win32", reason="POSIX file names can hold bytes that are not UTF-8")
@@ -409,3 +431,26 @@ def test_a_failed_export_keeps_the_previous_one(
         export_dataset(review_store, output, reviewed_only=False)
 
     assert {path.name: path.read_bytes() for path in output.iterdir()} == before
+
+
+def test_discovery_skips_atlas_map_pictures_and_missing_roots(tmp_path: Path) -> None:
+    """An atlas folder keeps its stitched map in atlas_files/ (roa-atlas: 9950x4019, 741 boxes): not a screenshot."""
+    (tmp_path / "atlas" / "atlas_files").mkdir(parents=True)
+    (tmp_path / "atlas" / "shot.png").write_bytes(b"x")
+    (tmp_path / "atlas" / "atlas_files" / "atlas_terrain.png").write_bytes(b"x")
+    found = discover_images([tmp_path / "atlas", tmp_path / "missing"])
+    assert [path.name for path in found] == ["shot.png"]
+
+
+def test_detection_refuses_what_is_not_a_screenshot(tmp_path: Path) -> None:
+    """Larger than a 4K game window is a stitched map, not a screenshot; an unreadable file is an error too."""
+    from tools.detection_dataset_annotator import run_classical_detector
+
+    huge = tmp_path / "huge.png"
+    cv2.imwrite(str(huge), np.zeros((50, 3900, 3), np.uint8))
+    with pytest.raises(ValueError, match="Not a screenshot: 3900x50"):
+        run_classical_detector(huge)
+    broken = tmp_path / "broken.png"
+    broken.write_bytes(b"")
+    with pytest.raises(ValueError, match="Could not read image"):
+        run_classical_detector(broken)

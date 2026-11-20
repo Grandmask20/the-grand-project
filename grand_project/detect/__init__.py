@@ -11,7 +11,7 @@ Stages, each scored against atlas_test_data/truth/truth.json (not shipped) with 
               strongholds (old purple rule), locked when a hand badge is near or no map is inside
   5. paths    amber / dim-gold / fog-orange dash mask -> dash-by-dash tracing between maps by the user's
               path rules; two dead ends meeting = a missed map; dashes around a spot are map evidence too
-  6. biome    ground type per map
+  6. biome    ground type per map: only as first guesses of the RF-DETR dataset's node classes (biomes.py)
 Modes: TRAINING fits models from the hand-labelled truth and stores them in the reference DB
 (table detector_models); LIVE only reads them and never writes the DB.
 
@@ -38,7 +38,15 @@ from .badges import (  # noqa: F401
     badges_from,
     find_badges,
     name_badge,
+    name_found_icons,
+    naming_book,
     rim_score,
+)
+from .biomes import (  # noqa: F401
+    BiomeGuess,
+    city_area_nodes,
+    node_biomes,
+    ocean_flags,
 )
 from .cache import (  # noqa: F401
     _PER_IMAGE,
@@ -48,6 +56,14 @@ from .constants import (  # noqa: F401
     BADGE_MIN,
     BADGE_NMS,
     BADGE_ROW_MIN,
+    BIOME_GROUND,
+    BIOME_ICON_PAD,
+    BIOME_MIN_PIXELS,
+    BIOME_MIST_ICONS,
+    BIOME_MIST_REACH,
+    BIOME_RING,
+    BIOME_SURE_MARGIN,
+    BIOME_SURE_SHARE,
     BLOB_MIN,
     BLOB_SIGMA,
     BLOB_WIN,
@@ -99,26 +115,56 @@ from .constants import (  # noqa: F401
     PATH_START,
     PATH_STEP,
     RF_DETR_AUGMENT_CROP_ATTEMPTS,
-    RF_DETR_AUGMENT_CROP_MIN_SCALE,
     RF_DETR_AUGMENT_CROP_MIN_VISIBILITY,
-    RF_DETR_AUGMENT_CROP_PROBABILITY,
     RF_DETR_AUGMENT_FLIP_PROBABILITY,
-    RF_DETR_CITY_LABELS,
-    RF_DETR_CORE_LABELS,
+    RF_DETR_AUGMENT_RARE_PROBABILITY,
+    RF_DETR_AUGMENT_RENDER_PROBABILITY,
+    RF_DETR_AUGMENT_RENDER_SCALE,
+    RF_DETR_AUGMENT_SCALE_JITTER,
+    RF_DETR_BOSS_DX,
+    RF_DETR_BOSS_ROW,
+    RF_DETR_BUTTON_BOX,
+    RF_DETR_BUTTON_ICONS,
+    RF_DETR_BUTTON_SHIFT,
     RF_DETR_DEFAULT_MODEL_DIR,
     RF_DETR_DEVICE_ENV,
+    RF_DETR_EMA_DECAY,
+    RF_DETR_EMA_TAU,
+    RF_DETR_EVAL_RADIUS,
+    RF_DETR_FAMILY_NMS_IOU,
+    RF_DETR_GRAD_CLIP,
+    RF_DETR_GUESS_SOURCES,
+    RF_DETR_HALL_BEAM_MIN,
+    RF_DETR_HALL_BEAM_SPREAD,
+    RF_DETR_HALL_STRUCTURE_BOX,
+    RF_DETR_HALL_STRUCTURE_DX,
+    RF_DETR_HALL_STRUCTURE_DY,
+    RF_DETR_HUD_FILL,
     RF_DETR_ICON_BOX,
+    RF_DETR_ICON_EXCLUDED,
+    RF_DETR_INFER_BATCH,
+    RF_DETR_LABEL_INFO,
     RF_DETR_LANDMARK_BOX,
-    RF_DETR_LANDMARK_KINDS,
+    RF_DETR_LAYER_DECAY,
+    RF_DETR_LEARNING_RATE,
     RF_DETR_MAP_BOX,
     RF_DETR_MODEL_ENV,
     RF_DETR_MODEL_NAME,
-    RF_DETR_NMS_IOU,
     RF_DETR_PATH_DASH_BOX,
     RF_DETR_PATH_PAD,
+    RF_DETR_PATIENCE,
+    RF_DETR_REPEAT_THRESHOLD,
     RF_DETR_SCORE_THRESHOLD,
     RF_DETR_SOFT_FLAGS,
+    RF_DETR_SOURCE_BIOME_GUESS,
+    RF_DETR_SOURCE_CITY_AREA_GUESS,
+    RF_DETR_SOURCE_CITY_GUESS,
+    RF_DETR_SOURCE_CLASSICAL,
     RF_DETR_STRONGHOLD_BOX,
+    RF_DETR_TILE,
+    RF_DETR_TILE_EDGE,
+    RF_DETR_TILE_OVERLAP,
+    RF_DETR_TILES_PER_IMAGE,
     RF_DETR_TOWER_HEIGHT,
     RF_DETR_TOWER_WIDTH,
     RF_DETR_USE_ENV,
@@ -130,6 +176,7 @@ from .constants import (  # noqa: F401
     SEEN_CELL,
     SHOTS,
     STRONGHOLD_EMPTY,
+    STRONGHOLD_LOCK_REACH,
     TESTS,
     TOWER_BADGES,
     TOWER_MIN,
@@ -155,6 +202,16 @@ from .icon_types import (  # noqa: F401
     icon_picture,
     icon_type,
 )
+from .labels import (  # noqa: F401
+    GENERIC_ICON,
+    annotator_labels,
+    citadel_label,
+    dataset_classes,
+    export_class,
+    node_label,
+    node_labels,
+    structural_labels,
+)
 from .landmarks import (  # noqa: F401
     _TP,
     deadly_kind,
@@ -163,6 +220,7 @@ from .landmarks import (  # noqa: F401
     landmarks_from,
     old_landmarks,
     ship_markers,
+    stronghold_kind,
     tower_features,
     tower_labels,
 )
@@ -220,19 +278,42 @@ from .pipeline import (  # noqa: F401
     ensure_models,
     find_maps,
 )
+from .proposals import (  # noqa: F401
+    box_around_line,
+    box_at_point,
+    clip_box,
+    dataset_boxes,
+    hall_box,
+    node_classes,
+    wall_boxes,
+)
 from .rf_detr import (  # noqa: F401
     Record,
-    augment_detection_example,
+    TileTransform,
     build_dataset,
-    load_records,
-    processor_transform,
-    split_records,
+    load_annotator_manifest,
+    records_by_split,
+    tile_transform,
+)
+from .rf_detr_eval import (  # noqa: F401
+    average_precision,
+    evaluate,
+    format_report,
 )
 from .rf_detr_model import (  # noqa: F401
+    class_families,
     detect_rf_detr,
+    family_detections,
+    predict_tiles,
     reset_rf_detr_runtime,
     rf_detr_enabled,
     rf_detr_model_path,
+)
+from .rf_detr_tiles import (  # noqa: F401
+    fill_hud,
+    random_tile,
+    repeat_factors,
+    tile_origins,
 )
 from .training import (  # noqa: F401
     _extra_maps,

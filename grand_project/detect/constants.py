@@ -20,7 +20,6 @@ RF_DETR_DEVICE_ENV = "GRAND_PROJECT_RF_DETR_DEVICE"  # optional torch device ove
 RF_DETR_CUDA_REEXEC_ENV = "GRAND_PROJECT_RF_DETR_CUDA_REEXEC"
 RF_DETR_DEFAULT_MODEL_DIR = rc_paths.ROOT / "runs" / "rf-detr-small" / "best"
 RF_DETR_SCORE_THRESHOLD = 0.35  # confidence: tuned as a safe starting point for the small fine-tuned checkpoint
-RF_DETR_NMS_IOU = 0.50  # overlap: remove duplicate predictions of the same RF-DETR class
 RF_DETR_MAX_TARGETS = 300  # objects/image: RF-DETR Small's default decoder query count; path dashes can exceed it
 RF_DETR_MAP_BOX_SHRINK = 0.9  # factor: user's rule, the map node box is 10% smaller per side than first set
 # (reviewers found it too large); only map nodes: every other box keeps its size
@@ -32,45 +31,283 @@ RF_DETR_TOWER_WIDTH = 80.0  # px: tower box width around its map node
 RF_DETR_TOWER_HEIGHT = 220.0  # px: tower box extends upward from its map node to the spire
 RF_DETR_TOWER_NODE_REACH = 55.0  # px: a tower box's base and the map node it stands on are at most this far apart
 RF_DETR_STRONGHOLD_BOX = 150.0  # px: square around a Breach stronghold structure
+RF_DETR_BUTTON_BOX = (68.0, 66.0)  # px: width, height of a square reveal button's frame (references/lock_icon.png,
+# the frame cities.square_buttons matches at 1080p)
 RF_DETR_PATH_PAD = 8.0  # px: padding around a traced path centre line
 RF_DETR_PATH_DASH_BOX = 18.0  # px: square around one path dash for the low-level path detector
 RF_DETR_WALL_MIN_AREA = 12000  # px²: ignore tiny connected components in optional painted wall masks
 RF_DETR_SOFT_FLAGS = frozenset({"ui", "offcenter"})  # ambiguous hand labels are excluded unless requested
 
-# RF-DETR training augmentation. These conservative values are for the 1920x1080 atlas screenshots: horizontal
-# mirroring is valid for the atlas, while crops are kept large enough that sparse landmarks remain visible.
-RF_DETR_AUGMENT_FLIP_PROBABILITY = 0.5  # chance: the paper recommends horizontal flips for target-domain transfer
-RF_DETR_AUGMENT_CROP_PROBABILITY = 0.5  # chance: apply a random crop before the processor's resize/padding
-RF_DETR_AUGMENT_CROP_MIN_SCALE = 0.75  # fraction: smallest crop side, tuned to retain most map nodes in a view
-RF_DETR_AUGMENT_CROP_MIN_VISIBILITY = 0.5  # fraction: keep a clipped box only when at least half remains visible
-RF_DETR_AUGMENT_CROP_ATTEMPTS = 10  # attempts: find a crop retaining at least one labelled object
+# RF-DETR input: native-scale tiles. Every screenshot is first read as the classical detector reads it (1440p and
+# 4K windows scaled to 1080p, core.scale_screenshot), then cut into square tiles the model sees at their own size:
+# map nodes (39 px) and icons (34 px) keep their size, where squashing a whole 1920x1080 screenshot into the
+# checkpoint's 512x512 shrank them to ~10x18 px (the paper: input resolution drives small-object accuracy).
+RF_DETR_TILE = 768  # px: tile side, one of the paper's training resolutions (a multiple of patch 16 x 2 windows)
+RF_DETR_TILE_OVERLAP = 224  # px: tiles overlap at least the tallest box (a tower, 220 px), so every object lies
+# whole in some tile: 8 tiles for a 1080p screenshot, ~36 objects each (a whole screenshot holds up to 275)
+RF_DETR_TILE_EDGE = 2.0  # px: a predicted box this close to an inner tile edge is cut by it; another tile holds it
+RF_DETR_HUD_FILL = (114, 114, 114)  # BGR: the game HUD is painted over with this grey in training and inference, so
+# its round buttons never look like map icons and objects half under it are not half labelled (HUD never labelled)
 
-# Stable classes shared by every generated dataset. Icon names are appended as icon_<slug> classes when naming is
-# enabled; keeping these first means adding a new icon does not renumber the detector's core tasks.
-# City type (cities.TYPES) -> its RF-DETR class: cities are always labelled by type (user's rule), so a model can tell
-# Ezomyte, Vaal and Faridun cities apart. Older checkpoints with one plain "city" class still load (rf_detr_model).
-RF_DETR_CITY_LABELS = {"Ezomyte": "city_ezomyte", "Vaal": "city_vaal", "Faridun": "city_faridun"}
-# RF-DETR landmark class -> the classical detector's landmark kind (towers are handled apart: their box stands on
-# the map node). "city" is the untyped class of older checkpoints; a typed city class also gives the City its
-# city_type (rf_detr_model).
-RF_DETR_LANDMARK_KINDS = {
-    "city": "City",
-    **{label: "City" for label in RF_DETR_CITY_LABELS.values()},
-    "hall": "Hall",
-    "deadly_boss_map": "Deadly boss map",
-    "breach_stronghold": "Breach stronghold",
-    "locked_stronghold": "Locked stronghold",
+# RF-DETR training augmentation. The paper keeps only horizontal flips and crops and warns that augmentations bias
+# a detector toward images that never occur. The atlas has a fixed camera: citadels always face the same way and
+# icons are never mirrored, so a mirrored screenshot never occurs and flips are off.
+RF_DETR_AUGMENT_FLIP_PROBABILITY = 0.0  # chance: off, see above (kept as a setting for experiments)
+RF_DETR_AUGMENT_CROP_MIN_VISIBILITY = 0.5  # fraction: keep a clipped box only when at least half remains visible
+RF_DETR_AUGMENT_CROP_ATTEMPTS = 10  # attempts: find a tile holding at least one labelled object
+RF_DETR_AUGMENT_SCALE_JITTER = 0.10  # fraction: tiles cut 10% larger or smaller and resized to RF_DETR_TILE
+RF_DETR_AUGMENT_RENDER_PROBABILITY = 0.3  # chance: blur a tile as a lower in-game render scale draws it
+RF_DETR_AUGMENT_RENDER_SCALE = (0.33, 1.0)  # factor: shrink and re-enlarge range, the res_atlases' 33-100% render
+# scales (they change map nodes, terrain and paths; icons are UI and stay sharp, so this is an approximation)
+RF_DETR_AUGMENT_RARE_PROBABILITY = 0.5  # chance: centre a training tile on a rare class's object (repeat factor > 1)
+RF_DETR_TILES_PER_IMAGE = 4  # training tiles cut from each screenshot per epoch (more for rare classes, below)
+RF_DETR_REPEAT_THRESHOLD = 0.1  # LVIS repeat-factor sampling: a class on fewer than this share of the training
+# screenshots repeats them max(1, sqrt(threshold / share)) times (locked strongholds: 21 of 1,421 screenshots)
+
+# RF-DETR inference: classes of one family (a map node is one of the 8 node classes) are scored together, so a node
+# unsure between two biomes is still found once: its family score is the sum of its classes' scores, its class
+# the best of them, and duplicates are suppressed within the family (across tiles too).
+RF_DETR_FAMILY_NMS_IOU = 0.50  # overlap: one object predicted twice within a family (two tiles, two classes)
+RF_DETR_INFER_BATCH = 8  # tiles per forward pass (a 1080p screenshot has 8)
+RF_DETR_BOSS_ROW = (10.0, 45.0)  # px: a deadly-boss icon's map node is this far below it (the row is ROW_DY = 24
+# above the map; the res atlases' larger icons sat 26-36 above it)
+RF_DETR_BOSS_DX = 30.0  # px: and at most this far left or right of it (the icon is the middle one of its row)
+
+# RF-DETR fine-tuning recipe (the paper's Appendix A): learning rate 1e-4, the DINOv2 backbone's layers decayed
+# 0.8x per layer from the top (earlier layers keep more of their pre-training), an exponential moving average of
+# the weights (EMA), no warm-up and no fixed-length schedule (the paper: cosine schedules assume a known horizon),
+# gradient clipping 0.1; the best checkpoint is picked by the validation's task metrics (rf_detr_eval), not its loss.
+RF_DETR_LEARNING_RATE = 1e-4
+RF_DETR_LAYER_DECAY = 0.8  # factor per DINOv2 layer from the top (12 layers: the patch embedding gets 0.8^13)
+RF_DETR_EMA_DECAY = 0.999  # per optimizer step: weights averaged over the last ~1,000 steps
+RF_DETR_EMA_TAU = 100.0  # optimizer steps: the EMA's decay warms up as decay * (1 - exp(-step / tau)), so early
+# averages are not stuck near the starting weights (a smoke run of 12 steps scored as if untrained without it)
+RF_DETR_GRAD_CLIP = 0.1  # max gradient norm
+RF_DETR_PATIENCE = 8  # epochs without a better validation score before training stops
+# RF-DETR evaluation (rf_detr_eval): a prediction matches a box of its family whose middle is this close, px, as
+# python -m grand_project.detect score matches (truth.py: MAP_R 20 for maps, BADGE_R 14 for icons, LM_R 90 for
+# landmarks); tests/rf_detr/test_eval.py keeps them equal.
+RF_DETR_EVAL_RADIUS = {
+    "node": 20.0,
+    "icon": 14.0,
+    "button": 14.0,  # as icons: a reveal button's middle is as exact as an icon's (and under RF_DETR_BUTTON_SHIFT)
+    "citadel": 90.0,
+    "hall": 90.0,
+    "tower": 90.0,
+    "stronghold": 90.0,
+    "path": 90.0,
+    "wall": 90.0,
 }
-RF_DETR_CORE_LABELS = (
-    "map_node",
-    "tower",
-    *RF_DETR_CITY_LABELS.values(),
-    "hall",
-    "deadly_boss_map",
-    "breach_stronghold",
-    "locked_stronghold",
-    "icon",
-)  # sparse objects only: paths and fortress walls are derived by the established detector
+
+# ---- RF-DETR labels: the one registry (detect/labels.py reads it) ----------------------------------------------
+# Every dataset label the annotator offers, the exporter numbers and the RF-DETR detector maps back, in export order.
+# APPEND NEW LABELS AT THE END (as ICON_INFO): ids are positions, and although everything matches classes by name
+# (checkpoints keep their own label map; --init-from copies class rows by name), a stable order keeps exports easy
+# to compare. Icon types are not listed here: the store keeps icon_<type> labels (ICON_INFO), and the detector
+# finds every one as the one `icon` class below (export_class), named by the classical namer
+# (badges.name_found_icons), as the classical finder's icons are (AGENTS.md: icons, finding vs naming).
+# Fields: title (shown in the editor), family (classes of one object that compete at inference: a map node is one
+# of the node classes), rule (the box rule shown to the reviewer), color (BGR), key (editor hotkey: "1" or
+# "shift+1"), picture (an ICON_INFO type or a references/ file), biome / city_type (what a node or citadel class
+# says), landmark (the classical landmark kind it becomes), parent (the class a new class's head row starts from
+# when a checkpoint is fine-tuned with --init-from), optional (derived labels, exported only when used).
+_NODE_RULE = "Map node box ({:.1f} px) centred on the map node."
+RF_DETR_LABEL_INFO = {
+    "map_node": {
+        "title": "Map node, its ground not visible",
+        "family": "node",
+        "rule": _NODE_RULE.format(RF_DETR_MAP_BOX) + " Only when fog, the screen edge or the HUD hides the ground "
+        "around it, or the ground can't be told.",
+        "color": (255, 100, 80),
+        "key": "1",
+        "picture": "map_node_icon.webp",
+    },
+    "map_node_grass": {
+        "title": "Map node on green ground (grass, swamp, forest)",
+        "family": "node",
+        "rule": _NODE_RULE.format(RF_DETR_MAP_BOX) + " The ground around it (about the Fix-seams disc, 38 px) is "
+        "mostly green: grass, swamp or forest.",
+        "color": (70, 200, 70),
+        "key": "2",
+        "picture": "map_node_icon.webp",
+        "biome": "grass",
+        "parent": "map_node",
+    },
+    "map_node_desert": {
+        "title": "Map node on sand (desert)",
+        "family": "node",
+        "rule": _NODE_RULE.format(RF_DETR_MAP_BOX) + " The ground around it is mostly sand.",
+        "color": (90, 215, 245),
+        "key": "3",
+        "picture": "map_node_icon.webp",
+        "biome": "desert",
+        "parent": "map_node",
+    },
+    "map_node_water": {
+        "title": "Map node in water or the ocean",
+        "family": "node",
+        "rule": _NODE_RULE.format(RF_DETR_MAP_BOX) + " The map lies in water or the ocean (Expedition) biome, "
+        "islands included.",
+        "color": (240, 170, 40),
+        "key": "4",
+        "picture": "map_node_icon.webp",
+        "biome": "water",
+        "parent": "map_node",
+    },
+    "map_node_mountain": {
+        "title": "Map node on white rock or snow (mountain)",
+        "family": "node",
+        "rule": _NODE_RULE.format(RF_DETR_MAP_BOX) + " The ground around it is mostly white rock or snow (not the "
+        "white Delirium mist over other ground).",
+        "color": (245, 245, 245),
+        "key": "5",
+        "picture": "map_node_icon.webp",
+        "biome": "mountain",
+        "parent": "map_node",
+    },
+    "map_node_ezomyte": {
+        "title": "Map node in an Ezomyte city's area (Iron Citadel)",
+        "family": "node",
+        "rule": _NODE_RULE.format(RF_DETR_MAP_BOX) + " The map lies in an Ezomyte city's area (the farmland "
+        "around an Iron Citadel), the citadel's own map included.",
+        "color": (160, 235, 160),
+        "key": "6",
+        "picture": "map_node_icon.webp",
+        "city_type": "Ezomyte",
+        "parent": "map_node",
+    },
+    "map_node_vaal": {
+        "title": "Map node in a Vaal city's area (Stone Citadel)",
+        "family": "node",
+        "rule": _NODE_RULE.format(RF_DETR_MAP_BOX) + " The map lies in a Vaal city's area (the farmland around a "
+        "Stone Citadel), the citadel's own map included.",
+        "color": (150, 140, 250),
+        "key": "7",
+        "picture": "map_node_icon.webp",
+        "city_type": "Vaal",
+        "parent": "map_node",
+    },
+    "map_node_faridun": {
+        "title": "Map node in a Faridun city's area (Copper Citadel)",
+        "family": "node",
+        "rule": _NODE_RULE.format(RF_DETR_MAP_BOX) + " The map lies in a Faridun city's area (the desert around a "
+        "Copper Citadel), the citadel's own map included.",
+        "color": (150, 200, 235),
+        "key": "8",
+        "picture": "map_node_icon.webp",
+        "city_type": "Faridun",
+        "parent": "map_node",
+    },
+    "citadel_iron": {
+        "title": "Iron Citadel: an Ezomyte city's own map",
+        "family": "citadel",
+        "rule": f"{RF_DETR_LANDMARK_BOX:.0f} px box centred on the city's own map node, framing the node and its "
+        "brass barrel. The node keeps its own node box, the red deadly-boss icon its icon box.",
+        "color": (200, 170, 130),
+        "key": "shift+1",
+        "city_type": "Ezomyte",
+        "landmark": "City",
+    },
+    "citadel_stone": {
+        "title": "Stone Citadel: a Vaal city's own map",
+        "family": "citadel",
+        "rule": f"{RF_DETR_LANDMARK_BOX:.0f} px box centred on the city's own map node, framing the node and its "
+        "brass barrel. The node keeps its own node box, the red deadly-boss icon its icon box.",
+        "color": (60, 90, 235),
+        "key": "shift+2",
+        "city_type": "Vaal",
+        "landmark": "City",
+    },
+    "citadel_copper": {
+        "title": "Copper Citadel: a Faridun city's own map",
+        "family": "citadel",
+        "rule": f"{RF_DETR_LANDMARK_BOX:.0f} px box centred on the city's own map node, framing the node and its "
+        "brass barrel. The node keeps its own node box, the red deadly-boss icon its icon box.",
+        "color": (50, 120, 210),
+        "key": "shift+3",
+        "city_type": "Faridun",
+        "landmark": "City",
+    },
+    "hall": {
+        "title": "Hall: its map node and the whole hall structure",
+        "family": "hall",
+        "rule": "The hall's map node and the whole hall structure beside it: the building the orange beam rises "
+        "from, not the beam above it. The red deadly-boss icon keeps its icon box.",
+        "color": (190, 120, 255),
+        "key": "9",
+        "landmark": "Hall",
+    },
+    "tower": {
+        "title": "Tower",
+        "family": "tower",
+        "rule": f"{RF_DETR_TOWER_WIDTH:.0f} px wide, standing on its map node (the box's bottom edge) up to the top "
+        "of the spire.",
+        "color": (80, 190, 255),
+        "key": "0",
+        "picture": "LostTower",  # the Lost Tower icon's game art, as a picture only (the icon is no label)
+        "landmark": "Tower",
+    },
+    "breach_stronghold": {
+        "title": "Breach stronghold (locked or open)",
+        "family": "stronghold",
+        "rule": f"{RF_DETR_STRONGHOLD_BOX:.0f} px box centred on the purple Breach stronghold structure, locked or "
+        "open (the hand reveal button beside a locked one says it is locked: reveal_button).",
+        "color": (80, 220, 220),
+        "key": "shift+4",
+        "landmark": "Breach stronghold",
+    },
+    "reveal_button": {
+        "title": "Reveal button (square framed: a locked stronghold's hand, the Expedition ship ...)",
+        "family": "button",
+        "rule": f"{RF_DETR_BUTTON_BOX[0]:.0f} x {RF_DETR_BUTTON_BOX[1]:.0f} px box on the square framed button that "
+        "reveals maps when clicked (a locked Breach stronghold's hand, the Expedition ship, ...); its kind is named "
+        "by the symbol inside.",
+        "color": (220, 100, 180),
+        "key": "shift+5",
+        "picture": "lock_icon.png",
+    },
+    "icon": {
+        "title": "Map icon, the deadly-boss icon included (its type is named by the icon pictures)",
+        "family": "icon",
+        "rule": f"{RF_DETR_ICON_BOX:.0f} px box centred on a round map icon (not the square Expedition ship button).",
+        "color": (130, 180, 255),
+        "key": "shift+6",
+    },
+    "path": {
+        "title": "Traced path with its dashes",
+        "family": "path",
+        "rule": f"Box around a traced path's centre line, {RF_DETR_PATH_PAD:.0f} px padding.",
+        "color": (60, 230, 255),
+        "key": "shift+7",
+        "optional": True,
+    },
+    "fortress_wall": {
+        "title": "Fortress wall region",
+        "family": "wall",
+        "rule": "Box around one connected fortress-wall region.",
+        "color": (170, 170, 170),
+        "key": "shift+8",
+        "optional": True,
+    },
+}
+RF_DETR_ICON_EXCLUDED = frozenset({"LostTower", "Checkpoint", "ExpeditionShip"})  # icon types that are no icon
+# labels: the annotator never boxes them as icons, exports leave them out, and the RF-DETR detector does not report
+# them as icons. Lost Tower and Checkpoint are no labels at all (user); the Expedition ship is a reveal button
+# (reveal_button, named by its symbol: RF_DETR_BUTTON_ICONS), not a round icon.
+RF_DETR_BUTTON_ICONS = {"ship": "ExpeditionShip"}  # a reveal button's kind (cities.name_button) -> the icon the
+# program reports for it, as landmarks.ship_markers does; a "lock" button makes its Breach stronghold locked
+# (landmarks.stronghold_kind), an "unknown" one (a symbol not taught yet) is not reported, as in the classical detector
+RF_DETR_BUTTON_SHIFT = 16  # px: how far around an RF-DETR reveal button's middle its symbol is searched (measured on
+# the 195 buttons of the 1,423 dataset screenshots: every one named right up to 16 px off, none as another kind;
+# 2 of 4,752 random spots reached the symbol threshold)
+# Box sources of first guesses (the annotator draws guessed boxes dotted, for the reviewer to check first)
+RF_DETR_SOURCE_CLASSICAL = "classical"  # a classical detector result taken as it is
+RF_DETR_SOURCE_CITY_GUESS = "city_guess"  # a citadel whose type is an unsure look-alike guess (CITY_LOOK_SURE)
+RF_DETR_SOURCE_BIOME_GUESS = "biome_guess"  # a node whose biome the ground ring could not tell surely
+RF_DETR_SOURCE_CITY_AREA_GUESS = "city_area_guess"  # a node in a city's area (one screenshot may cut the area off)
+RF_DETR_GUESS_SOURCES = frozenset(
+    {RF_DETR_SOURCE_CITY_GUESS, RF_DETR_SOURCE_BIOME_GUESS, RF_DETR_SOURCE_CITY_AREA_GUESS}
+)
 
 
 DETECTOR_ID = "detect1"  # in builder cache file names: results of another detector are never reused
@@ -312,6 +549,7 @@ HALL_ORANGE = 700  # orange beam pixels within +-80 px (the beam on the Hall's s
 
 
 STRONGHOLD_EMPTY = 120  # a Breach stronghold with no map found this close is locked (only ground shows)
+STRONGHOLD_LOCK_REACH = 200  # px: a Breach stronghold with a hand (lock) reveal button this close is locked
 
 
 TREE_NEG_WEIGHT = 1.0  # x15 tried: 48 -> 64 wrong maps on the labelled shots
@@ -343,6 +581,34 @@ CITY_TRAIN_SNAP = 40  # px: a truth point belongs to the nearest detected map no
 CITY_TRAIN_C = 0.05  # logistic regularisation: few cities, many features
 # robustness report only (training on them made the model worse): ordinary map nodes looked at a few px off
 CITY_OFF_SHIFTS = [(0, -8), (0, -5), (0, 5), (0, 8), (-6, 0), (6, 0)]
+
+
+# a map node's biome from the ground around it (detect/biomes.py: the first guess of the map_node_<biome> classes).
+# The ring is the PM's idea: the disc Fix seams protects around a map node minus the node itself. Its outer radius
+# is core.constants.SEAM_NODE_R (38 atlas units, about 38 px of a 1080p screenshot); tune both with
+# `python -m tools.detection_dataset_annotator.score_nodes` on reviewed screenshots.
+BIOME_RING = (RF_DETR_MAP_BOX / 2, 38.0)  # px: inner radius (the map node's box) and outer radius of the ring
+BIOME_MIN_PIXELS = 300  # ring pixels with a ground class needed for any guess (the whole ring holds ~3,400)
+BIOME_SURE_SHARE = 0.55  # share of the classified ring the leading biome needs for a sure guess
+BIOME_SURE_MARGIN = 0.25  # lead of the leading biome's share over the second one's for a sure guess
+# finalize.landmarks._ground_classes (0 water, 1 sand, 2 rock / snow, 3 grass, 4 forest) -> biome. The PM's groups:
+# green = grass, swamp, forest; sand = desert; blue = ocean, water; white = mountain.
+BIOME_GROUND = {0: "water", 1: "desert", 2: "mountain", 3: "grass", 4: "grass"}
+BIOME_MIST_ICONS = frozenset({"Delirium"})  # icons whose white mist covers the ground around their map: white
+# there is the mist, not mountain (PM: mountain and Delirium both look white), so the guess leaves it out and is unsure
+BIOME_MIST_REACH = 150.0  # px: the mist spreads over the maps around a Delirium map too (roa-atlas: clouds reach
+# ~100-150 px from the misted maps), so maps this close to one are treated as misted as well
+BIOME_ICON_PAD = 2.0  # px around an icon's box also left out of the ring (the rim's glow)
+
+
+# the hall box: the hall's map node and the whole hall structure beside it (user). Measured on 6 roa-atlas halls:
+# the structure (the scaffold its orange beam rises from) stands up-left of the map node, the beam ~50 px left of
+# the node; the scaffold reaches from ~100 px above to ~25 px below the node, ~105 px wide around the beam.
+RF_DETR_HALL_STRUCTURE_BOX = (110.0, 125.0)  # px: width and height of the structure, centred on its beam column
+RF_DETR_HALL_STRUCTURE_DY = -38.0  # px: the structure box's middle above (-) the hall's map node
+RF_DETR_HALL_STRUCTURE_DX = -50.0  # px: the beam column left (-) of the node when no beam is seen (left on all 6)
+RF_DETR_HALL_BEAM_SPREAD = 80  # px: how far left / right of the node the beam column is looked for (as deadly_kind)
+RF_DETR_HALL_BEAM_MIN = 350  # orange beam pixels from which the beam column places the structure (HALL_ORANGE / 2)
 
 
 # the icon finder's rim template (the average icon as seen on screen, from the hand labels), so teaching new icon
