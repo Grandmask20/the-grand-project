@@ -284,3 +284,5 @@ CITY_OFF_SHIFTS = [(0, -8), (0, -5), (0, 5), (0, 8), (-6, 0), (6, 0)]
 # the icon finder's rim template (the average icon as seen on screen, from the hand labels), so teaching new icon
 # pictures (naming) never changes which icons are found: tools/freeze_badge_finder.py
 BADGE_FINDER_FILE = rc_paths.ref("badge_finder.npz")
+
+DETECT_DIGEST_MEMO = 20000  # screenshot hashes kept in memory (builder.file_digest), then forgotten

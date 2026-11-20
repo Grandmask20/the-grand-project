@@ -43,6 +43,7 @@ from .constants import (
     APP_STOP_PROBE,
     APP_URL_FILE,
     HELLO_APP,
+    STATE_TRIES,
     UPLOAD_MAX,
     VERSION,
 )
@@ -57,7 +58,6 @@ LOG = atlas_log.get("app")
 
 DIST = rc_paths.ROOT / "frontend" / "dist"
 SSE_PING_S = 15.0
-STATE_TRIES = 3  # the state is put together again at most this often when another atlas opens meanwhile
 HEADER = "X-Grand"
 GEN_HEADER = "X-Atlas-Gen"  # the open atlas's generation: on every answer, and on the page's changes
 # changes that don't belong to one atlas (switching atlas itself, settings, the atlas list, answers, quitting)

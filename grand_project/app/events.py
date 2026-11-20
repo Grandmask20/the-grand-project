@@ -40,10 +40,11 @@ class Events:
         self.history: deque = deque(maxlen=EVENT_HISTORY)  # recent events, for a page that reconnects
         self.progress: str | None = None
         self._progress_by: dict[str, str] = {}  # each job's own progress (set_progress's owner)
-        # progress steps already written to the log: (atlas log, step with its numbers left out) -> its tenth; per step,
-        # so two jobs reporting at once (adding and Fix seams) don't each write every line, and per atlas, so the same
-        # step in another atlas's job still reaches that atlas's log (CodeRabbit)
-        self._progress_logged: dict[tuple[str, str], int | None] = {}
+        # progress steps already written to the log: (job, atlas log, step with its numbers left out) -> its tenth; per
+        # step, so two jobs reporting at once (adding and Fix seams) don't each write every line, per atlas, so the
+        # same step in another atlas's job still reaches that atlas's log (CodeRabbit), and per job, so one ending
+        # forgets only its own (one ending wrote the other's step again: self review)
+        self._progress_logged: dict[tuple[str, str, str], int | None] = {}
         self.status = ""
         self._questions: dict[int, dict] = {}
         self.closing = False  # the app is closing: no question is asked any more (end_questions)
@@ -110,19 +111,21 @@ class Events:
             shown = " · ".join(self._progress_by.values()) or None
             self.progress = shown
         self.publish("progress", shown)
-        self._log_progress(text, scope)
+        self._log_progress(text, scope, owner)
 
-    def _log_progress(self, text: str | None, scope: str | None) -> None:
+    def _log_progress(self, text: str | None, scope: str | None, owner: str = "job") -> None:
         """Write a progress line to the log when a new step starts, and every 10% of a counted one ("fixing seams
         120 / 500"): what runs is in the log, not only in the progress box (user: "it should list ongoing processes").
 
         Args:
             text: The progress text, or None when it ended (how it ended its caller logs: done, stopped, failed).
             scope: The atlas log to write in (see set_progress).
+            owner: The job (see set_progress).
         """
         if text is None:
             with self._lock:
-                self._progress_logged.clear()
+                for key in [k for k in self._progress_logged if k[0] == owner]:
+                    del self._progress_logged[key]
             return
         task = re.sub(r"\S*\d\S*", "#", text)  # the step without its numbers (and file names, which have digits)
         m = re.search(r"(\d+)\s*/\s*(\d+)", text)
@@ -131,7 +134,7 @@ class Events:
             # the atlas log looked up once, for the "already written" record and the line: looked up again by log(),
             # an atlas switch between wrote the line into the other atlas's log (CodeRabbit)
             scope = self.scope if scope is None else scope
-            key = (scope, task)
+            key = (owner, scope, task)
             if key in self._progress_logged and self._progress_logged[key] == tenth:
                 return
             if len(self._progress_logged) > 200:  # steps with names in them (one per screenshot)
@@ -184,13 +187,14 @@ class Events:
         Returns:
             The answer.
         """
+        qid = next(self._ids)
+        box = {"id": qid, "question": question, "preview": preview, "event": threading.Event(), "answer": False}
+        # checked and registered in one step: in two, a close between them (end_questions) missed this question,
+        # which then waited for an answer nobody could give (self review)
         with self._lock:
             if not self._listeners or self.closing:
                 LOG.info(f"no page open to ask (or closing): {question!r} -> no")
                 return False
-        qid = next(self._ids)
-        box = {"id": qid, "question": question, "preview": preview, "event": threading.Event(), "answer": False}
-        with self._lock:
             self._questions[qid] = box
         self.publish("question", {"id": qid, "question": question, "preview": preview})
         box["event"].wait(timeout)

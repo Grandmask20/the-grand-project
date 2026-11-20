@@ -215,11 +215,7 @@ class QueryMixin:
         elif kind == "landmark":
             lm = V["landmarks"][i]
             out["title"] = self.landmark_name(i)
-            lines += self._landmark_lines(i)
-            v = D.get("landmark_node", {}).get(i)
-            if v is not None:  # (not reached: a landmark on a map is shown as that map, above)
-                lines.append(f"its map: #{v}")
-                out["node"] = v
+            lines += self._landmark_lines(i)  # (a landmark on a map is shown as that map, above)
             ct = D.get("city_type", {}).get(i)
             out.update(
                 landmark_kind=lm["kind"],
@@ -250,6 +246,9 @@ class QueryMixin:
         out.update(lines=lines, x=x, y=y)
         if kind != "bookmark":
             bm = self.bookmark_at(x, y)
+            lm = out.get("on_landmark")
+            if bm is None and lm:  # one made on its landmark, which stands up to LANDMARK_NODE_REACH away (self review)
+                bm = self.bookmark_at(lm["x"], lm["y"])
             out["bookmark"] = bm
             # its own name, group and note with it: the page edits it from these (with the list's, which comes
             # separately, an edit could pair this id with another moment's list, or guess them before it loaded:
@@ -257,8 +256,10 @@ class QueryMixin:
             if bm is not None:
                 b = self._bookmark(bm)
                 out["bookmark_of"] = {"id": bm, "name": b["name"], "group": bm_group(b), "note": b.get("note", "")}
+            # a map with a landmark is named after it ("Vaal city", not "Map #12")
+            named = ("landmark", lm["id"]) if lm else (kind, i)
             out["suggest"] = (
-                dict(zip(("name", "group"), self.default_name(kind, i), strict=True)) if kind != "path" else None
+                dict(zip(("name", "group"), self.default_name(*named), strict=True)) if kind != "path" else None
             )
         return out
 

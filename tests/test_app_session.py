@@ -75,6 +75,10 @@ def test_vector_tiles_hold_the_maps_where_they_are(session, tmp_path):
         assert abs(gx - x) < 0.1 and abs(gy - y) < 0.1 and props["status"] == "confirmed"
     assert maps[6][2]["icons"] == "|Breach|Delirium|"
     assert not points(session, "removed")
+    # the locked-stronghold search ends with a model rebuild (a filter version): waited for, it landed in the middle
+    # on a busy machine
+    if getattr(session, "_lock_thread", None):
+        session._lock_thread.join(10)
     v = session.filter_version
     session.set_ui_settings({"layers": {"Removed": True}})
     assert session.filter_version == v + 1 and list(points(session, "removed")) == [15]
@@ -369,3 +373,32 @@ def test_closing_answers_open_questions_no_and_asks_none(session):
     t.join(2)
     assert got == [False]
     assert session.events.ask("again?") is False  # (none asked while closing)
+
+
+def test_a_bookmark_made_on_a_landmark_is_its_maps_bookmark(session, tmp_path):
+    # (self review: a landmark selects its map now, whose bookmark was only looked for at the map itself)
+    path, _pts, _img = make_atlas(tmp_path)
+    session.open_atlas(path)
+    node = session.V["nodes"][3]
+    session.set_landmark(node["x"] + 35, node["y"], "Tower", on="map")  # (beside its map, within reach)
+    k = next(k for k, lm in enumerate(session.V["landmarks"]) if abs(lm["x"] - node["x"] - 35) < 1)
+    assert session.D["landmark_node"][k] == 3
+    b = session.add_bookmark(node["x"] + 35, node["y"], "my tower", "Towers")  # (made on the landmark)
+    info = session.info("node", 3)
+    assert info["bookmark"] == b  # (35 from the map: not its spot, but its landmark's)
+    assert info["suggest"]["name"] == session.landmark_name(k)
+
+
+def test_a_retired_setting_sent_by_an_older_page_is_brought_up_to_date(session):
+    session.set_ui_settings({"layers": {"Doubtful": True}})
+    assert session.settings["layers"]["Doubtful"] is False
+
+
+def test_one_job_ending_forgets_only_its_own_logged_steps(session):
+    ev = session.events
+    ev.set_progress("detecting 5 / 10")
+    ev.set_progress("building the map image", owner="map")
+    ev.set_progress(None, owner="map")
+    before = len(ev.log_lines)
+    ev.set_progress("detecting 5 / 10")  # (the same step and tenth: not written again)
+    assert len(ev.log_lines) == before

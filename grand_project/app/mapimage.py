@@ -123,7 +123,7 @@ class MapImageMixin:
         self._seams_starting = False  # Fix seams claimed, its process not registered yet
         self._seams_stopped = False
         self._seams_waiting = None  # the atlas generation a Fix seams waits for adding to finish in (fix_seams)
-        self._cache_writes = 0  # map image cache writes asked for: only the newest is written (set_terrain)
+        self._cache_writes: dict[str, int] = {}  # per atlas file: cache writes asked for, the newest written
         self._cache_lock = threading.Lock()
         self._sharp_key = None  # the sharp tile folder in use (kept with the new one: _sharp_folder)
         self._terrain_job = 0
@@ -281,16 +281,15 @@ class MapImageMixin:
             self.parts.done("map_image", self.generation)
         if save and self.path:
             key, path = self.atlas.terrain_key(), self.path
-            with self._lock:
-                self._cache_writes += 1
-                mine = self._cache_writes
+            with self._lock:  # (per atlas file: another atlas's newer image skipped this one's write: self review)
+                mine = self._cache_writes[str(path)] = self._cache_writes.get(str(path), 0) + 1
 
             def write():
                 """Write the map image cache files and the atlas card picture (background thread). One write at a
                 time, and only the newest: an older one finishing last left the older image in the cache, or a
                 picture of one with the key of another (GPT audit)."""
                 with self._cache_lock:
-                    if mine != self._cache_writes:
+                    if mine != self._cache_writes.get(str(path)):
                         return  # a newer image was shown meanwhile: its own write follows
                     try:
                         png, npz = core.map_image_files(path)

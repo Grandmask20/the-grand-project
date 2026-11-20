@@ -168,6 +168,7 @@ class AtlasSession(
             s["icon_hidden"] = sorted(set(changes["hidden_types"]))
         if "style" in changes and changes["style"].get("reset"):
             s["style"] = {}
+        migrate_settings(s)  # (a tab still on an older page can send a retired setting: self review)
         self.save_settings()
         # every change you make, in one line of the Log tab (user: "every user made change should be listed")
         self.events.log(f"Changed: {settings_change_text(changes, hidden_before)}")
@@ -207,9 +208,11 @@ class AtlasSession(
         # stopping it there cancelled that atlas's Fix seams (CodeRabbit)
         if expect_gen is None:
             self.stop_watch()
-            if self.seams_running() or self.seams_waiting():
+            if self.seams_running():
                 self.stop_seams()
                 self.events.log("Fix seams stopped: another atlas was opened")
+            elif self.seams_waiting():  # (only queued: nothing ran, its own line says it was taken off)
+                self.stop_seams()
             self.save()
         name = p.stem if p.stem != "atlas" else p.parent.name
         with self._lock:

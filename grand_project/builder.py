@@ -90,10 +90,12 @@ def file_digest(path: Path) -> str:
     Returns:
         Its sha256 in hex.
     """
+    from grand_project.detect.constants import DETECT_DIGEST_MEMO
+
     st = path.stat()
     key = (str(path.resolve()), st.st_size, st.st_mtime_ns)
     if key not in _DIGESTS:
-        if len(_DIGESTS) > 20000:  # (a long session over many atlases)
+        if len(_DIGESTS) > DETECT_DIGEST_MEMO:  # (a long session over many atlases)
             _DIGESTS.clear()
         _DIGESTS[key] = hashlib.sha256(path.read_bytes()).hexdigest()
     return _DIGESTS[key]

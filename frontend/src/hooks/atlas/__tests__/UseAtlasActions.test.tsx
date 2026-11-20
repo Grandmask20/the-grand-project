@@ -30,5 +30,17 @@ describe("useAtlasActions: dropped screenshots", () => {
 		);
 		expect(useAppStore.getState().error).toContain("1 of 3 screenshot(s) could not be sent");
 		expect(useAppStore.getState().error).toContain("bad.png (too large)");
+		expect(useAppStore.getState().error).toContain("The other 2 are being added.");
+	});
+
+	it("says when the ones sent could not be added either", async () => {
+		// (self review: the add's own error was hidden by the upload one)
+		renderWithApp(<Probe />, {
+			"POST /api/upload": (b: unknown) =>
+				(b as { name: string }).name === "bad.png" ? new ApiError("too large", 413) : { path: "C:/up/1.png" },
+			"POST /api/screenshots": new ApiError("no atlas open", 409),
+		});
+		await actions.dropFiles([shot("a.png"), shot("bad.png")]);
+		expect(useAppStore.getState().error).toContain("The other 1 could not be added: no atlas open");
 	});
 });

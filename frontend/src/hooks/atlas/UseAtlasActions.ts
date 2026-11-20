@@ -168,19 +168,29 @@ export function useAtlasActions() {
 					failed.push(`${f.name} (${e instanceof Error ? e.message : String(e)})`);
 				}
 			}
-			try {
-				if (paths.length === 1 && shots.length === 1) await startGhost(paths[0]);
-				else if (paths.length) await addScreenshots(paths);
-			} catch (e) {
-				fail(e);
+			if (paths.length === 1 && shots.length === 1) return startGhost(paths[0]);
+			// added here, not through addScreenshots (which shows its own error): one message says both what wasn't
+			// sent and whether the rest went in (the add's error was hidden by the upload one: self review)
+			let addError = "";
+			if (paths.length)
+				try {
+					await app.addScreenshots(paths);
+					void queryClient.invalidateQueries({ queryKey: AppQueryKeys.state });
+				} catch (e) {
+					addError = e instanceof Error ? e.message : String(e);
+				}
+			if (!failed.length) {
+				if (addError) fail(addError);
 				return;
 			}
-			if (failed.length)
-				fail(
-					`${failed.length} of ${shots.length} screenshot(s) could not be sent${paths.length ? " (the others are being added)" : ""}: ${failed.join(", ")}`,
-				);
+			const rest = !paths.length
+				? ""
+				: addError
+					? ` The other ${paths.length} could not be added: ${addError}`
+					: ` The other ${paths.length} are being added.`;
+			fail(`${failed.length} of ${shots.length} screenshot(s) could not be sent: ${failed.join(", ")}.${rest}`);
 		},
-		[app, startGhost, addScreenshots, fail],
+		[app, queryClient, startGhost, fail],
 	);
 
 	const closeAtlas = useCallback(() => app.closeAtlas().then(afterOpen).catch(fail), [app, afterOpen, fail]);
