@@ -174,7 +174,9 @@ class Events:
                 self._listeners.remove(q)
 
     # ------------------------------------------------------------------ questions
-    def ask(self, question: str, preview: dict | None = None, timeout: float | None = None) -> bool:
+    def ask(
+        self, question: str, preview: dict | None = None, timeout: float | None = None, labels: dict | None = None
+    ) -> bool:
         """Ask the browser a yes / no question and wait for the answer (from a background thread).
 
         With no page open the answer is No (nothing is added that nobody saw).
@@ -183,12 +185,20 @@ class Events:
             question: The question text.
             preview: Optional {"picture" (id), "box" [x0, y0, x1, y1]} of where a screenshot would go.
             timeout: Seconds to wait at most (None: until answered).
+            labels: {"title", "yes", "no"}: the box's title and buttons (default: a screenshot check, Yes / No).
 
         Returns:
             The answer.
         """
         qid = next(self._ids)
-        box = {"id": qid, "question": question, "preview": preview, "event": threading.Event(), "answer": False}
+        box = {
+            "id": qid,
+            "question": question,
+            "preview": preview,
+            "labels": labels,
+            "event": threading.Event(),
+            "answer": False,
+        }
         # checked and registered in one step: in two, a close between them (end_questions) missed this question,
         # which then waited for an answer nobody could give (self review)
         with self._lock:
@@ -196,7 +206,7 @@ class Events:
                 LOG.info(f"no page open to ask (or closing): {question!r} -> no")
                 return False
             self._questions[qid] = box
-        self.publish("question", {"id": qid, "question": question, "preview": preview})
+        self.publish("question", {"id": qid, "question": question, "preview": preview, "labels": labels})
         box["event"].wait(timeout)
         with self._lock:
             self._questions.pop(qid, None)
@@ -241,11 +251,12 @@ class Events:
         """Return the questions waiting for an answer (a page opened while one is waiting shows it).
 
         Returns:
-            [{"id", "question", "preview"}].
+            [{"id", "question", "preview", "labels"}].
         """
         with self._lock:
             return [
-                {"id": b["id"], "question": b["question"], "preview": b["preview"]} for b in self._questions.values()
+                {"id": b["id"], "question": b["question"], "preview": b["preview"], "labels": b["labels"]}
+                for b in self._questions.values()
             ]
 
 

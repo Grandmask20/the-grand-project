@@ -513,6 +513,7 @@ class AddingMixin:
             except Exception as e:
                 LOG.exception(f"adding failed ({mode}): {paths}")
                 self.events.log(f"adding failed: {e}")
+                self._note_seams_trouble(f"adding failed: {e}")  # (a queued Fix seams asks first)
                 if mode == "watch" and self.owns(gen):
                     self._watch_failed([str(p) for p in paths])
             finally:
@@ -577,6 +578,7 @@ class AddingMixin:
             except Exception as e:
                 LOG.exception(f"{p.name}: detection failed")
                 self.events.log(f"{p.name}: detection failed: {e}")
+                self._note_seams_trouble(f"{p.name} could not be read: {e}")
                 failed.append(str(p))
         return frames, failed
 

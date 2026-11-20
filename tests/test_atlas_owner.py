@@ -545,3 +545,45 @@ def test_each_job_has_its_own_progress_line(session):
     assert ev.progress == "adding 1 / 4"
     ev.set_progress(None)
     assert ev.progress is None
+
+
+@pytest.mark.parametrize("anyway", [True, False], ids=["fix-seams-anyway", "cancel"])
+def test_a_queued_fix_seams_asks_first_when_adding_failed(session, two, fake_seams, monkeypatch, anyway):
+    # (you: it starts only when adding finishes; failed, it says why and asks: Cancel or Fix seams anyway)
+    a, _b = two
+    session.open_atlas(a)
+    asked = []
+    monkeypatch.setattr(session.events, "ask", lambda q, **kw: (asked.append((q, kw.get("labels"))), anyway)[1])
+    session._jobs.put(([], "recheck_all", session.generation))
+    assert session.fix_seams(after_adding=True) == "queued"
+    session._note_seams_trouble("adding failed: disk full")  # (the job failed)
+    session._jobs.get()
+    session._jobs.task_done()
+    session._start_waiting_seams()
+    assert wait_until(lambda: not session._seams_asking and asked)
+    question, labels = asked[0]
+    assert "disk full" in question and labels == {"title": "Fix seams", "yes": "Fix seams anyway", "no": "Cancel"}
+    if anyway:
+        assert wait_until(session.seams_running)
+        fake_seams.release.set()
+        assert wait_until(lambda: session._seams_proc is None)
+    else:
+        assert not session.seams_running() and not session.state()["seams"]
+
+
+def test_a_stop_while_it_asks_leaves_fix_seams_off(session, two, fake_seams, monkeypatch):
+    a, _b = two
+    session.open_atlas(a)
+    answer = threading.Event()
+    monkeypatch.setattr(session.events, "ask", lambda q, **kw: answer.wait(5))
+    session._jobs.put(([], "recheck_all", session.generation))
+    session.fix_seams(after_adding=True)
+    session._note_seams_trouble("x.png could not be read: damaged")
+    session._jobs.get()
+    session._jobs.task_done()
+    session._start_waiting_seams()
+    assert wait_until(lambda: session._seams_asking)
+    session.stop_seams()  # Stop while the question is open
+    answer.set()  # then "Fix seams anyway"
+    assert wait_until(lambda: not session._seams_asking)
+    assert not session.seams_running() and not session.state()["seams"]

@@ -123,6 +123,8 @@ class MapImageMixin:
         self._seams_starting = False  # Fix seams claimed, its process not registered yet
         self._seams_stopped = False
         self._seams_waiting = None  # the atlas generation a Fix seams waits for adding to finish in (fix_seams)
+        self._seams_trouble: list[str] = []  # why adding didn't finish while one waited (_start_waiting_seams asks)
+        self._seams_asking = False  # that question is open
         self._cache_writes: dict[str, int] = {}  # per atlas file: cache writes asked for, the newest written
         self._cache_lock = threading.Lock()
         self._sharp_key = None  # the sharp tile folder in use (kept with the new one: _sharp_folder)
@@ -480,7 +482,7 @@ class MapImageMixin:
                 if not after_adding:
                     return "adding"
                 if self._seams_waiting is None:
-                    self._seams_waiting = self.opened.gen
+                    self._seams_waiting, self._seams_trouble = self.opened.gen, []
                     self.events.log("Fix seams: queued, starts once adding is done")
                     self.events.publish("seams", True)
                 return "queued"
@@ -561,17 +563,68 @@ class MapImageMixin:
         threading.Thread(target=watch, daemon=True).start()
         return "started"
 
-    def _start_waiting_seams(self) -> None:
-        """Start a Fix seams queued while adding ran (the worker, once it has nothing left to do). Not for another
-        atlas than the one it was queued in, nor while closing."""
+    def _note_seams_trouble(self, why: str) -> None:
+        """Adding didn't finish as it should (a job failed, a screenshot couldn't be read): a queued Fix seams then
+        asks before it starts (_start_waiting_seams)."""
         with self._lock:
-            gen, self._seams_waiting = self._seams_waiting, None
-            if gen is None:
+            if self._seams_waiting is not None:
+                self._seams_trouble.append(why)
+
+    def _start_waiting_seams(self) -> None:
+        """Start a Fix seams queued while adding ran (the worker, once it has nothing left to do), only when adding
+        finished: after a failure it asks first, why and whether to start anyway (you). Not for another atlas than
+        the one it was queued in, nor while closing."""
+        with self._lock:
+            gen = self._seams_waiting
+            if gen is None or self._seams_asking:  # (asked already: the answer decides)
                 return
             if not self.owns(gen) or self._closing:
+                self._seams_waiting = None
                 self.events.publish("seams", self.seams_running())
                 return
+            trouble, self._seams_trouble = self._seams_trouble, []
+            if trouble:
+                self._seams_asking = True
+            else:
+                self._seams_waiting = None
+        if trouble:  # (asked on a thread of its own: the worker goes on with what is added meanwhile)
+            threading.Thread(target=self._ask_seams_anyway, args=(gen, trouble), daemon=True).start()
+            return
         self.events.log("Fix seams: adding is done, starting")
+        self._start_queued_seams()
+
+    def _ask_seams_anyway(self, gen: int, trouble: list[str]) -> None:
+        """Ask whether to start a queued Fix seams although adding didn't finish (background thread)."""
+        shown = trouble[:5] + ([f"... and {len(trouble) - 5} more"] if len(trouble) > 5 else [])
+        self.events.log("Fix seams: adding didn't finish, asking whether to start it anyway")
+        try:
+            yes = self.events.ask(
+                "Adding didn't finish:\n" + "\n".join(f"- {t}" for t in shown) + "\n\nFix seams was queued to start "
+                "once adding finished. Start it anyway, on the atlas as it is now?",
+                labels={"title": "Fix seams", "yes": "Fix seams anyway", "no": "Cancel"},
+            )
+        except Exception:  # (the question failing counts as Cancel; the flag is let go below all the same)
+            LOG.exception("asking whether to start Fix seams failed")
+            yes = False
+        with self._lock:
+            self._seams_asking = False
+            still = self._seams_waiting == gen and self.owns(gen) and not self._closing
+            if still and not yes:
+                self._seams_waiting = None
+                self.events.log("Fix seams: cancelled (adding didn't finish)")
+            elif still and self.working():  # adding again meanwhile: starts once that finishes (yes covers the asked)
+                self._seams_trouble = []
+                return
+            elif still:
+                self._seams_waiting, self._seams_trouble = None, []
+        if not still or not yes:  # (stopped, another atlas, or closing meanwhile)
+            self.events.publish("seams", self.seams_running())
+        else:
+            self.events.log("Fix seams: starting anyway")
+            self._start_queued_seams()
+
+    def _start_queued_seams(self) -> None:
+        """Start the queued Fix seams now (its queue already cleared)."""
         try:
             self.fix_seams(after_adding=True)  # (a job queued just now: it waits again)
         except Exception as e:  # (no screenshots left after an Undo...)

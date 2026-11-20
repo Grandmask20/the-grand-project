@@ -139,7 +139,7 @@ A screenshot that might be placed wrong is shown on the map, see-through and out
 - **File menu:**
   - *New atlas*, *Open atlas*, *Open a screenshot folder*, *Save* (adding screenshots also saves).
   - *Re-check the whole atlas* runs the full clean-up pass again (a few minutes on a big atlas).
-  - *Fix seams (clean map)* rebuilds the map image with care: each map node comes whole from one screenshot with its icons, seams stay off paths and away from screenshot edges, and lit copies win over fogged ones. It takes several minutes on a big atlas and runs in the background. While screenshots are being added it doesn't start: it asks to *Queue* it (it starts once adding is done) or cancel. Screenshots added while it runs are added as usual. *Stop fixing seams* stops it, or takes a queued one off.
+  - *Fix seams (clean map)* rebuilds the map image with care: each map node comes whole from one screenshot with its icons, seams stay off paths and away from screenshot edges, and lit copies win over fogged ones. It takes several minutes on a big atlas and runs in the background. While screenshots are being added it doesn't start: it asks to *Queue* it or cancel. A queued one starts once adding finishes; if adding failed (a screenshot couldn't be read, ...) it says why and asks: *Cancel* or *Fix seams anyway*. Screenshots added while it runs are added as usual. *Stop fixing seams* stops it, or takes a queued one off.
   - *Export map PNGs*.
   - *Close atlas*, *Quit the app*.
 
