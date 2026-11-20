@@ -1,7 +1,6 @@
 import { useQueryClient } from "@tanstack/react-query";
 import { AppQueryKeys } from "@/api/AppQueryKeys";
 import { IconPicture } from "@/components/common/IconPicture";
-import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import type { AppState } from "@/domain/app/AppState";
 import { useSettings, useUpdateSettings } from "@/hooks/app/UseSettings";
@@ -27,41 +26,44 @@ export function TypeList({ onList }: { onList: (label: string, icon: string | nu
 
 	if (!types.data?.sections.length) return <p className="text-muted-foreground">Nothing found yet.</p>;
 	return (
-		<div className="flex flex-col gap-2">
-			<div className="flex gap-2">
-				<Button size="xs" variant="outline" onClick={() => update.mutate({ hidden_types: [] })}>
+		<div className="flex flex-col gap-1">
+			<div className="flex gap-4 text-xs">
+				<button type="button" className="text-gold hover:underline" onClick={() => update.mutate({ hidden_types: [] })}>
 					Show all
-				</Button>
-				<Button size="xs" variant="outline" onClick={() => update.mutate({ hidden_types: all })}>
+				</button>
+				<button
+					type="button"
+					className="text-gold hover:underline"
+					onClick={() => update.mutate({ hidden_types: all })}
+				>
 					Hide all
-				</Button>
+				</button>
 			</div>
-			{/* a box of its own (user: the results ended up far below a list of 80+ types) */}
-			<div className="max-h-72 overflow-y-auto rounded border p-1">
-				{types.data.sections.map((sec) => (
-					<div key={sec.title} className="flex flex-col">
-						<div className="py-1 text-xs font-semibold text-muted-foreground">{sec.title}</div>
-						{sec.rows.map((row) => (
-							<div key={row.label} className="flex items-center gap-2 rounded px-1 py-0.5 hover:bg-accent">
-								<Checkbox
-									checked={!hidden.has(row.label)}
-									onCheckedChange={(v) => set(row.label, v === true)}
-									aria-label={`Show ${row.label}`}
-								/>
-								<IconPicture name={row.icon} />
-								<button
-									type="button"
-									className="flex-1 truncate text-left"
-									title={row.aliases || row.label}
-									onClick={() => onList(row.label, sec.title === "Map icons" ? row.icon : null)}
-								>
-									{row.label} <span className="text-muted-foreground">({row.count})</span>
-								</button>
-							</div>
-						))}
-					</div>
-				))}
-			</div>
+			{/* in the panel's own scroll (PO's canvas: no box in a box; the results are above the types now) */}
+			{types.data.sections.map((sec) => (
+				<div key={sec.title} className="flex flex-col">
+					<div className="pt-3 pb-1 text-xs font-medium text-muted-foreground">{sec.title}</div>
+					{sec.rows.map((row) => (
+						<div key={row.label} className="flex min-h-8 items-center gap-2.5 rounded px-1 hover:bg-accent">
+							<Checkbox
+								checked={!hidden.has(row.label)}
+								onCheckedChange={(v) => set(row.label, v === true)}
+								aria-label={`Show ${row.label}`}
+							/>
+							<IconPicture name={row.icon} />
+							<button
+								type="button"
+								className="flex flex-1 items-center gap-2 truncate text-left text-sm"
+								title={row.aliases || row.label}
+								onClick={() => onList(row.label, sec.title === "Map icons" ? row.icon : null)}
+							>
+								<span className="flex-1 truncate">{row.label}</span>
+								<span className="text-xs text-muted-foreground">{row.count}</span>
+							</button>
+						</div>
+					))}
+				</div>
+			))}
 		</div>
 	);
 }

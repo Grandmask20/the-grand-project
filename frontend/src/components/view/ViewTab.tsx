@@ -48,7 +48,7 @@ export function ViewTab() {
 	const replay = useAppStore((s) => (s.replay ? (s.replay.recording ? "recording" : "open") : null));
 	const lock = replay !== null;
 	const lockNote = lock && (
-		<p className="text-xs text-gold">
+		<p className="mb-2 text-xs text-gold">
 			{replay === "recording"
 				? "View settings are locked while the timelapse records."
 				: "View settings are locked while the timelapse is open (Colour by still works); close it to change them."}
@@ -56,6 +56,8 @@ export function ViewTab() {
 	);
 	const frames = useFrames(tint !== "off");
 	const idBase = useId();
+	const viewOpen = useAppStore((s) => s.viewOpen);
+	const toggleViewSection = useAppStore((s) => s.toggleViewSection);
 	if (!meta || !settings) return null;
 	const st = settings.style;
 	const set = (style: Record<string, string | number | boolean>) => {
@@ -112,6 +114,18 @@ export function ViewTab() {
 		);
 	};
 	const times = (v: number) => `${v.toFixed(1)}x`;
+	// a section of the accordion (PO): its title folds it, its summary says what is set while folded
+	const fold = (title: string, summary: string) => {
+		const key = `${page}:${title}`;
+		return {
+			foldable: true,
+			title,
+			summary,
+			open: viewOpen.includes(key),
+			onToggle: () => toggleViewSection(key),
+		};
+	};
+	const num = (key: string, dflt: number) => Number(st[key] ?? dflt);
 
 	// two pages (user: the 3D view's settings mixed in with the flat map's): the flat map's, and what only the
 	// tilted 3D view uses
@@ -133,13 +147,18 @@ export function ViewTab() {
 		return (
 			<div className="flex flex-col gap-5">
 				{tabs}
-				<div {...panel} className="flex flex-col gap-5">
+				<div {...panel} className="flex flex-col">
 					{lockNote}
 					{!tilted && (
-						<p className="text-xs text-gold">These apply in the 3D view (the 3D button, or right-drag to tilt).</p>
+						<p className="mb-2 text-xs text-gold">
+							These apply in the 3D view (3D in the status line, or right-drag to tilt).
+						</p>
 					)}
 					<RevealWhileUsed layer="Paths" view="3d">
-						<Section foldable title="Paths" locked={lock}>
+						<Section
+							{...fold("Paths", `height ${num("d3_path_lift", 3)} · reach ${times(num("d3_path_far", 2.6))}`)}
+							locked={lock}
+						>
 							<Path3DPreview st={st} meta={meta} />
 							{slider("height", "d3_path_lift", 0, 30, 1, 3, (v) => `${v}`)}
 							{slider("reach", "d3_path_far", 1, 6, 0.1, 2.6, times)}
@@ -148,16 +167,22 @@ export function ViewTab() {
 						</Section>
 					</RevealWhileUsed>
 					<RevealWhileUsed layer="Icons" view="3d">
-						<Section foldable title="Icons" locked={lock}>
+						<Section {...fold("Icons", `size ${times(num("d3_icon_size", 1.5))}`)} locked={lock}>
 							{slider("reach", "d3_icon_far", 1, 8, 0.1, 2.5, times)}
 							{slider("size", "d3_icon_size", 0.5, 2.5, 0.1, 1.5, times)}
 						</Section>
 					</RevealWhileUsed>
-					<Section foldable title="Ground" locked={lock}>
+					<Section
+						{...fold(
+							"Ground",
+							num("d3_ground_far", 2.4) ? `fades at ${times(num("d3_ground_far", 2.4))}` : "never fades",
+						)}
+						locked={lock}
+					>
 						{slider("fades out at", "d3_ground_far", 0, 6, 0.1, 2.4, (v) => (v ? times(v) : "never"))}
 					</Section>
 					<RevealWhileUsed layer="3D models" view="3d">
-						<Section foldable title="3D models" locked={lock}>
+						<Section {...fold("3D models", `size ${times(num("d3_model_size", 1))}`)} locked={lock}>
 							{slider("reach", "d3_model_far", 1, 8, 0.1, 2.4, times)}
 							{slider("size", "d3_model_size", 0.3, 3, 0.1, 1, times)}
 							{slider("height", "d3_model_height", 0.2, 3, 0.1, 0.8, times)}
@@ -177,7 +202,7 @@ export function ViewTab() {
 					<Button
 						size="sm"
 						variant="outline"
-						className="self-start"
+						className="mt-4 self-start"
 						disabled={lock}
 						onClick={() => update.mutate({ style: { reset: true } })}
 					>
@@ -190,9 +215,12 @@ export function ViewTab() {
 	return (
 		<div className="flex flex-col gap-5">
 			{tabs}
-			<div {...panel} className="flex flex-col gap-5">
+			<div {...panel} className="flex flex-col">
 				{lockNote}
-				<Section foldable title="Background" locked={lock}>
+				<Section
+					{...fold("Background", bg === "picture" ? "Picture" : bg === "vector" ? "Vector" : "Off")}
+					locked={lock}
+				>
 					<div className="flex gap-1.5" role="radiogroup" aria-label="Background" onKeyDown={radioKeys}>
 						{(["picture", "vector", "none"] as Background[]).map((b) => (
 							<Button
@@ -209,7 +237,7 @@ export function ViewTab() {
 					</div>
 				</Section>
 
-				<Section foldable title="Side panel">
+				<Section {...fold("Side panel", (settings.ui.side ?? "left") === "left" ? "Left" : "Right")}>
 					<div className="flex gap-1.5" role="radiogroup" aria-label="Side panel" onKeyDown={radioKeys}>
 						{(["left", "right"] as const).map((side) => (
 							<Button
@@ -230,7 +258,10 @@ export function ViewTab() {
 				</Section>
 
 				<RevealWhileUsed layer="Paths" view="2d">
-					<Section foldable title="Paths" locked={lock}>
+					<Section
+						{...fold("Paths", `${st.path_style} · ${Number(st.path_width) ? `${st.path_width} px` : "auto width"}`)}
+						locked={lock}
+					>
 						<PathPreview st={st} meta={meta} />
 						<div className="flex flex-wrap items-center gap-3">
 							<ColourSwatch
@@ -279,7 +310,7 @@ export function ViewTab() {
 				</RevealWhileUsed>
 
 				<RevealWhileUsed layer="Icons" view="2d">
-					<Section foldable title="Icons" locked={lock}>
+					<Section {...fold("Icons", `${iconStyle} · ${times(Number(st.icon_size) || 1)}`)} locked={lock}>
 						<IconPreview style={iconStyle} size={Number(st.icon_size) || 1} />
 						{choice(
 							"style",
@@ -293,7 +324,7 @@ export function ViewTab() {
 				</RevealWhileUsed>
 
 				<RevealWhileUsed layer="Nodes" view="2d">
-					<Section foldable title="Maps" locked={lock}>
+					<Section {...fold("Maps", `${st.map_style} · ${times(Number(st.map_size) || 1)}`)} locked={lock}>
 						<MapPreview st={st} meta={meta} />
 						<ColourSwatch
 							label="colour"
@@ -325,7 +356,7 @@ export function ViewTab() {
 					</Section>
 				</RevealWhileUsed>
 
-				<Section foldable title="City biomes and landmarks" locked={lock}>
+				<Section {...fold("City biomes and landmarks", "colours")} locked={lock}>
 					<div className="grid grid-cols-2 gap-2">
 						{Object.entries(cityColours(meta, st)).map(([k, c]) => (
 							<ColourSwatch key={k} label={`${k} biome`} value={c} onChange={(v) => set({ [`city_col_${k}`]: v })} />
@@ -338,7 +369,7 @@ export function ViewTab() {
 					</div>
 				</Section>
 
-				<Section foldable title="Colour by" locked={replay === "recording"}>
+				<Section {...fold("Colour by", tint)} locked={replay === "recording"}>
 					{choice("colour by", tint, meta.colour_by, (v) => set({ age_tint: v }))}
 					{choice("colours", st.colour_spread, meta.colour_spreads, (v) => set({ colour_spread: v }))}
 					<p className="text-xs text-muted-foreground">colours: for oldest to newest and times seen</p>
@@ -371,7 +402,7 @@ export function ViewTab() {
 				<Button
 					size="sm"
 					variant="outline"
-					className="self-start"
+					className="mt-4 self-start"
 					disabled={lock}
 					onClick={() => update.mutate({ style: { reset: true } })}
 				>

@@ -1,13 +1,12 @@
 import { SearchIcon, XIcon } from "lucide-react";
 import { useEffect } from "react";
 import { Section } from "@/components/common/Section";
-import { Checkbox } from "@/components/ui/checkbox";
 import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
 import { useSettings, useUpdateSettings } from "@/hooks/app/UseSettings";
 import { useListType } from "@/hooks/find/UseListType";
 import { useSearch } from "@/hooks/find/UseSearch";
 import { useAppStore } from "@/store/AppStore";
+import { cn } from "@/utils/Cn";
 import { ResultList } from "./ResultList";
 import { TypeList } from "./TypeList";
 
@@ -57,16 +56,25 @@ export function FindTab() {
 		if (listed && !query.trim() && list.data) setResults(list.data, `${list.data.length} ${listed.label}`);
 	}, [listed, list.data, query, setResults]);
 
-	const filter = (key: "multi_only" | "only_icon_maps" | "near_only", label: string) => (
-		<Label className="font-normal">
-			<Checkbox
-				checked={!!settings?.[key]}
-				onCheckedChange={(v) => update.mutate({ [key]: v === true })}
+	// the filters as switches in a row (PO's canvas: chips under the search), their whole sentence as their name
+	const filter = (key: "multi_only" | "only_icon_maps" | "near_only", short: string, label: string) => {
+		const on = !!settings?.[key];
+		return (
+			<button
+				type="button"
+				aria-pressed={on}
 				aria-label={label}
-			/>
-			{label}
-		</Label>
-	);
+				title={label}
+				onClick={() => update.mutate({ [key]: !on })}
+				className={cn(
+					"h-7 rounded-full border px-3 text-xs whitespace-nowrap",
+					on ? "border-gold/70 bg-accent text-foreground" : "text-muted-foreground hover:bg-accent/50",
+				)}
+			>
+				{short}
+			</button>
+		);
+	};
 
 	return (
 		<div className="flex flex-col gap-4">
@@ -90,15 +98,16 @@ export function FindTab() {
 					<XIcon className="size-4" />
 				</button>
 			</div>
-			<div className="flex flex-col gap-2">
-				{filter("multi_only", "only what 2+ screenshots show")}
-				{filter("only_icon_maps", "only maps with a ticked icon")}
-				{filter("near_only", "only potential city maps")}
+			<div className="flex flex-wrap gap-1.5">
+				{filter("multi_only", "2+ screenshots", "only what 2+ screenshots show")}
+				{filter("only_icon_maps", "ticked icons only", "only maps with a ticked icon")}
+				{filter("near_only", "potential cities", "only potential city maps")}
 			</div>
+			{/* the results under the search, the types after them (user: results far below 80+ types) */}
+			<ResultList />
 			<Section title="Types">
 				<TypeList onList={listType} />
 			</Section>
-			<ResultList />
 		</div>
 	);
 }

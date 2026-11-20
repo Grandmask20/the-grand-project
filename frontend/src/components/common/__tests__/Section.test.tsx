@@ -25,13 +25,17 @@ describe("Section", () => {
 		expect(screen.getByText("the sliders")).toBeInTheDocument();
 	});
 
-	it("can start folded", () => {
+	it("kept open or folded elsewhere: folded, it shows its summary; its title asks to open it", async () => {
+		let asked = 0;
 		render(
-			<Section foldable startOpen={false} title="Maps">
+			<Section foldable open={false} onToggle={() => asked++} title="Maps" summary="circles · 1.0x">
 				the sizes
 			</Section>,
 		);
 		expect(screen.queryByText("the sizes")).toBeNull();
+		expect(screen.getByText("circles · 1.0x")).toBeInTheDocument();
+		await userEvent.click(screen.getByRole("button", { name: /Maps/ }));
+		expect(asked).toBe(1);
 	});
 
 	it("locked: greyed out and out of reach", () => {

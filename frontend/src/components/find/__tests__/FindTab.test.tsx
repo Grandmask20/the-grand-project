@@ -39,12 +39,16 @@ describe("FindTab", () => {
 		expect(box).toHaveValue("");
 	});
 
-	it("the filters change the settings", async () => {
+	it("the filters are switches in a row, named in full, and change the settings", async () => {
 		const { user, calls } = renderWithApp(<FindTab />, {
 			"GET /api/types": types,
 			"PATCH /api/settings": (body: unknown) => ({ ...state.settings, ...(body as object) }), // the app answers with all of them
 		});
-		await user.click(screen.getByRole("checkbox", { name: "only what 2+ screenshots show" }));
+		const multi = screen.getByRole("button", { name: "only what 2+ screenshots show" });
+		expect(multi).toHaveTextContent("2+ screenshots");
+		expect(multi).toHaveAttribute("aria-pressed", "false");
+		await user.click(multi);
 		await waitFor(() => expect(calls.find((c) => c.method === "PATCH")?.body).toEqual({ multi_only: true }));
+		await waitFor(() => expect(multi).toHaveAttribute("aria-pressed", "true"));
 	});
 });

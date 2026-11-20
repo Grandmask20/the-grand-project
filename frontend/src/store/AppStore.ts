@@ -92,6 +92,9 @@ export interface AppStoreState {
 	/** The side panel's drawer is open (the rail's tab clicked again closes it, for more map). */
 	panelOpen: boolean;
 	setPanelOpen: (open: boolean) => void;
+	/** The View tab's sections open ("2d:Paths", "3d:Icons"…), kept while the tab is closed (PO: an accordion). */
+	viewOpen: string[];
+	toggleViewSection: (key: string) => void;
 	/** The log drawer under the map, and its page (log / debug). */
 	logOpen: boolean;
 	logPage: string;
@@ -226,6 +229,11 @@ export const useAppStore = create<AppStoreState>()((set) => ({
 	panelOpen: true,
 	// closing the drawer is leaving its tab for the View settings held (their layers go back to their switches)
 	setPanelOpen: (panelOpen) => set((st) => ({ panelOpen, ...(!panelOpen && st.editing.length ? letGoAll() : {}) })),
+	viewOpen: ["2d:Paths", "2d:Maps", "3d:Paths"],
+	toggleViewSection: (key) =>
+		set((st) => ({
+			viewOpen: st.viewOpen.includes(key) ? st.viewOpen.filter((k) => k !== key) : [...st.viewOpen, key],
+		})),
 	logOpen: false,
 	logPage: "log",
 	setLogOpen: (logOpen) => set({ logOpen }),

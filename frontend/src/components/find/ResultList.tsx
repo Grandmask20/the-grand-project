@@ -56,12 +56,12 @@ export function ResultList() {
 				}
 			>
 				<p className="text-xs text-muted-foreground">{title}</p>
-				<ul className="max-h-64 overflow-y-auto rounded border">
+				<ul className="max-h-80 overflow-y-auto">
 					{results.slice(0, 500).map((r) => (
 						<li key={`${r.kind}-${r.id}`}>
 							<button
 								type="button"
-								className="w-full truncate px-2 py-1 text-left hover:bg-accent"
+								className="flex min-h-8 w-full items-center truncate rounded px-2 text-left text-sm hover:bg-accent"
 								onClick={async () => {
 									flyTo(r.x, r.y, 1);
 									try {
