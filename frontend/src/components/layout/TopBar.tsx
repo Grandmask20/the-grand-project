@@ -32,6 +32,21 @@ export function TopBar() {
 	const open = !!state?.atlas;
 	const busy = !!state?.busy;
 	const refresh = () => queryClient.invalidateQueries({ queryKey: AppQueryKeys.state });
+	// while adding runs it doesn't start: cancel, or queue it to start once adding is done (you)
+	const fixSeams = () =>
+		app
+			.fixSeams()
+			.then((r) => {
+				if (r.adding)
+					s.askConfirm({
+						title: "Fix seams",
+						text: "Adding is running. Fix seams can start once it is done (Stop fixing seams takes it off the queue).",
+						yes: "Queue",
+						onYes: () => void app.fixSeams(true).then(refresh).catch(fail),
+					});
+				else void refresh();
+			})
+			.catch(fail);
 
 	const openReplay = async () => {
 		if (s.replay) {
@@ -96,7 +111,7 @@ export function TopBar() {
 					{state?.seams ? (
 						<DropdownMenuItem onSelect={() => void app.stopSeams().catch(fail)}>Stop fixing seams</DropdownMenuItem>
 					) : (
-						<DropdownMenuItem disabled={!open || !state?.atlas?.shots} onSelect={() => void app.fixSeams().catch(fail)}>
+						<DropdownMenuItem disabled={!open || !state?.atlas?.shots} onSelect={() => void fixSeams()}>
 							Fix seams (clean map)
 						</DropdownMenuItem>
 					)}

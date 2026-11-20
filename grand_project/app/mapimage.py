@@ -122,6 +122,10 @@ class MapImageMixin:
         self._seams_proc = None
         self._seams_starting = False  # Fix seams claimed, its process not registered yet
         self._seams_stopped = False
+        self._seams_waiting = None  # the atlas generation a Fix seams waits for adding to finish in (fix_seams)
+        self._cache_writes = 0  # map image cache writes asked for: only the newest is written (set_terrain)
+        self._cache_lock = threading.Lock()
+        self._sharp_key = None  # the sharp tile folder in use (kept with the new one: _sharp_folder)
         self._terrain_job = 0
         self.filter_version = 0
         self._vector = None  # (key, VectorTiler)
@@ -184,7 +188,7 @@ class MapImageMixin:
         except Exception:
             LOG.debug("map image cache not usable, rebuilding", exc_info=True)
         atlas, scope = opened.atlas, opened.scope  # (the record taken in the claim above)
-        self.events.set_progress("building the map image (first time for this atlas)…", scope)
+        self.events.set_progress("building the map image (first time for this atlas)…", scope, owner="map")
 
         def failed(e: Exception) -> None:
             """Report the map image as failed (its log line always; the part only for the build still current: an
@@ -225,7 +229,7 @@ class MapImageMixin:
                     h, w = canvas.shape[:2]
                     self.events.log(f"map image built in {time.monotonic() - t0:.1f} s ({w} x {h} px)", scope)
             finally:
-                self.events.set_progress(None)
+                self.events.set_progress(None, owner="map")
 
         if background:
             threading.Thread(target=work, daemon=True).start()
@@ -277,19 +281,29 @@ class MapImageMixin:
             self.parts.done("map_image", self.generation)
         if save and self.path:
             key, path = self.atlas.terrain_key(), self.path
+            with self._lock:
+                self._cache_writes += 1
+                mine = self._cache_writes
 
             def write():
-                """Write the map image cache files and the atlas card picture (background thread)."""
-                try:
-                    png, npz = core.map_image_files(path)
-                    core.write_png(png, canvas, "map image")
-                    self.write_thumb(path, canvas)
-                    extra = {} if labels is None else {"labels": labels[0], "names": np.array(labels[1])}
-                    np.savez_compressed(
-                        npz, key=key, origin=np.array(origin, float), weight=weight.astype(np.float16), **extra
-                    )
-                except Exception:
-                    LOG.warning("map image cache could not be saved", exc_info=True)
+                """Write the map image cache files and the atlas card picture (background thread). One write at a
+                time, and only the newest: an older one finishing last left the older image in the cache, or a
+                picture of one with the key of another (GPT audit)."""
+                with self._cache_lock:
+                    if mine != self._cache_writes:
+                        return  # a newer image was shown meanwhile: its own write follows
+                    try:
+                        png, npz = core.map_image_files(path)
+                        core.write_png(png, canvas, "map image")
+                        self.write_thumb(path, canvas)
+                        extra = {} if labels is None else {"labels": labels[0], "names": np.array(labels[1])}
+                        tmp = npz.with_name(npz.stem + ".writing.npz")  # (whole, or not there: a quit midway)
+                        np.savez_compressed(
+                            tmp, key=key, origin=np.array(origin, float), weight=weight.astype(np.float16), **extra
+                        )
+                        os.replace(tmp, npz)
+                    except Exception:
+                        LOG.warning("map image cache could not be saved", exc_info=True)
 
             threading.Thread(target=write, daemon=True).start()
         elif self.path and not self.thumb_exists(self.path):
@@ -321,7 +335,8 @@ class MapImageMixin:
         return h.hexdigest()
 
     def _sharp_folder(self) -> Path | None:
-        """Return the folder sharp tiles of the current screenshots are kept in (older ones are removed).
+        """Return the folder sharp tiles of the current screenshots are kept in (older ones are removed, except the
+        one in use until now: tiles still being made or served from it were taken away mid-way, GPT audit).
 
         Returns:
             <stem>_files/<stem>_sharp/<key>, or None with no atlas.
@@ -330,10 +345,12 @@ class MapImageMixin:
             return None
         base = core.atlas_files(self.path) / (self.path.stem + "_sharp")
         key = self.atlas.terrain_key()[:16] + (f"c{self._labels_key()}" if self.labels is not None else "")
+        keep = {key, self._sharp_key}
         if base.exists():
             for d in base.iterdir():  # tiles of other screenshots / placements: never shown again
-                if d.is_dir() and d.name != key:
+                if d.is_dir() and d.name not in keep:
                     shutil.rmtree(d, ignore_errors=True)
+        self._sharp_key = key
         return base / key
 
     def paste_terrain(self, frames: list[dict]) -> bool:
@@ -432,9 +449,20 @@ class MapImageMixin:
         return mask
 
     # ------------------------------------------------------------------ Fix seams
-    def fix_seams(self) -> None:
+    def fix_seams(self, after_adding: bool = False) -> str:
         """Build the clean map (core.seams) in a separate process: map nodes and icons whole, seams where the
         ground matches. Progress lines become the progress box; the clean map replaces the map image when ready.
+
+        It doesn't start while adding runs (or Re-check, Undo...): it built from the atlas as it was, and both
+        jobs' progress shared one box (GPT audit). The page then asks: cancel, or queue it (after_adding), started
+        by the worker once it has nothing left to do (_start_waiting_seams). Adding that starts while Fix seams
+        runs goes on (you: its screenshots get the costlier merging, _seams_ready).
+
+        Args:
+            after_adding: When adding runs: wait for it to finish, then start.
+
+        Returns:
+            "started"; "adding" (adding runs, not started: the page asks); "queued" (starts once adding is done).
 
         Raises:
             ValueError: With no screenshots, or when it is already running.
@@ -449,6 +477,15 @@ class MapImageMixin:
             # processes, the first one then out of stop_seams' reach (CodeRabbit)
             if self.seams_running():
                 raise ValueError("Fix seams is already running")
+            if self.working():
+                if not after_adding:
+                    return "adding"
+                if self._seams_waiting is None:
+                    self._seams_waiting = self.opened.gen
+                    self.events.log("Fix seams: queued, starts once adding is done")
+                    self.events.publish("seams", True)
+                return "queued"
+            self._seams_waiting = None
             self._seams_starting, self._seams_stopped = True, False
         tmp = None
         try:
@@ -483,10 +520,10 @@ class MapImageMixin:
                 shutil.rmtree(tmp, ignore_errors=True)
                 if stopped:
                     self.events.log("Fix seams: stopped", scope)
-                return
+                return "started"
             self._seams_proc, self._seams_busy = proc, True
         t0 = time.monotonic()
-        self.events.set_progress("fixing seams: building the clean map...")
+        self.events.set_progress("fixing seams: building the clean map...", owner="seams")
         self.events.log("Fix seams: building the clean map in the background")
         self.events.publish("seams", True)
 
@@ -494,7 +531,7 @@ class MapImageMixin:
             """Pass the process's progress lines on, then show the clean map (background thread)."""
             for line in proc.stdout:
                 if line.strip() and line.strip() != "done":
-                    self.events.set_progress(line.strip(), scope)
+                    self.events.set_progress(line.strip(), scope, owner="seams")
             proc.wait()
             try:
                 if proc.returncode == 0 and out.exists() and self.owns(gen) and not self._seams_stopped:
@@ -519,10 +556,32 @@ class MapImageMixin:
                 shutil.rmtree(tmp, ignore_errors=True)
                 if self._seams_proc is proc:  # (a newer Fix seams may have started meanwhile: CodeRabbit)
                     self._seams_proc, self._seams_busy = None, False
-                self.events.set_progress(None)
+                self.events.set_progress(None, owner="seams")
                 self.events.publish("seams", False)
 
         threading.Thread(target=watch, daemon=True).start()
+        return "started"
+
+    def _start_waiting_seams(self) -> None:
+        """Start a Fix seams queued while adding ran (the worker, once it has nothing left to do). Not for another
+        atlas than the one it was queued in, nor while closing."""
+        with self._lock:
+            gen, self._seams_waiting = self._seams_waiting, None
+            if gen is None:
+                return
+            if not self.owns(gen) or self._closing:
+                self.events.publish("seams", self.seams_running())
+                return
+        self.events.log("Fix seams: adding is done, starting")
+        try:
+            self.fix_seams(after_adding=True)  # (a job queued just now: it waits again)
+        except Exception as e:  # (no screenshots left after an Undo...)
+            self.events.log(f"Fix seams could not start: {e}")
+            self.events.publish("seams", self.seams_running())
+
+    def seams_waiting(self) -> bool:
+        """Tell whether a Fix seams waits for adding to finish."""
+        return getattr(self, "_seams_waiting", None) is not None
 
     def seams_running(self) -> bool:
         """Tell whether Fix seams is running.
@@ -538,8 +597,13 @@ class MapImageMixin:
 
     def stop_seams(self) -> None:
         """Stop a running Fix seams, whatever its phase: starting, building, or its clean map being loaded (only the
-        building phase was stopped before, the loaded map then went in: GPT audit). Its result is dropped."""
+        building phase was stopped before, the loaded map then went in: GPT audit). Its result is dropped. A queued
+        one (waiting for adding to finish) is taken off."""
         with self._lock:
+            if self._seams_waiting is not None:
+                self._seams_waiting = None
+                self.events.log("Fix seams: taken off the queue")
+                self.events.publish("seams", self.seams_running())
             if self._seams_starting:  # its process not registered yet: kept, honoured at registration (CodeRabbit)
                 self._seams_stopped = True
                 return

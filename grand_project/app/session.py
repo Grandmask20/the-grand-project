@@ -215,7 +215,7 @@ class AtlasSession(
         # stopping it there cancelled that atlas's Fix seams (CodeRabbit)
         if expect_gen is None:
             self.stop_watch()
-            if self.seams_running():
+            if self.seams_running() or self.seams_waiting():
                 self.stop_seams()
                 self.events.log("Fix seams stopped: another atlas was opened")
             self.save()
@@ -532,7 +532,7 @@ class AtlasSession(
             "undo": [e["names"] for e in self._undo],
             "recent": list(reversed(self.recent)),
             "waiting": self.waiting_list(),
-            "seams": self.seams_running(),
+            "seams": self.seams_running() or self.seams_waiting(),  # (queued counts: Stop takes it off)
             "questions": self.events.open_questions(),
             "log": list(self.events.log_lines)[-300:],
             "log_scope": opened.scope,

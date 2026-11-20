@@ -582,9 +582,10 @@ class Handler(BaseHTTPRequestHandler):
 
     @route("POST", "/api/seams")
     def post_seams(self, q) -> None:
-        """Start Fix seams."""
-        self.S.fix_seams()
-        self._json({"ok": True})
+        """Start Fix seams; while adding runs, {"adding": true} and not started (the page asks), or queued after
+        it with {"after_adding": true}."""
+        how = self.S.fix_seams(after_adding=bool(self._body().get("after_adding")))
+        self._json({"ok": how != "adding", "adding": how == "adding", "queued": how == "queued"})
 
     @route("DELETE", "/api/seams")
     def delete_seams(self, q) -> None:

@@ -39,6 +39,7 @@ class Events:
         self._logs: dict[str, deque] = {"": deque(maxlen=LOG_KEEP)}
         self.history: deque = deque(maxlen=EVENT_HISTORY)  # recent events, for a page that reconnects
         self.progress: str | None = None
+        self._progress_by: dict[str, str] = {}  # each job's own progress (set_progress's owner)
         # progress steps already written to the log: (atlas log, step with its numbers left out) -> its tenth; per step,
         # so two jobs reporting at once (adding and Fix seams) don't each write every line, and per atlas, so the same
         # step in another atlas's job still reaches that atlas's log (CodeRabbit)
@@ -88,16 +89,27 @@ class Events:
         self._logs.setdefault(scope, deque(maxlen=LOG_KEEP)).append(line)
         self.publish("log", {"scope": scope, "line": line})
 
-    def set_progress(self, text: str | None, scope: str | None = None) -> None:
-        """Show (or clear, with None) the progress box.
+    def set_progress(self, text: str | None, scope: str | None = None, owner: str = "job") -> None:
+        """Show (or clear, with None) a job's line in the progress box.
+
+        Each job has its own line: adding, the map image build and Fix seams can run at once, and one clearing the
+        box when it ended took another's line away (the map image build ending blanked adding's: GPT audit).
 
         Args:
             text: What is being done, or None when done.
             scope: The atlas log its line goes in (a background job's own, captured when it started), else the open
                 one's.
+            owner: Whose line: "job" (the worker: adding, Re-check, Undo...), "map" (the map image build),
+                "seams" (Fix seams).
         """
-        self.progress = text
-        self.publish("progress", text)
+        with self._lock:
+            if text is None:
+                self._progress_by.pop(owner, None)
+            else:
+                self._progress_by[owner] = text
+            shown = " · ".join(self._progress_by.values()) or None
+            self.progress = shown
+        self.publish("progress", shown)
         self._log_progress(text, scope)
 
     def _log_progress(self, text: str | None, scope: str | None) -> None:

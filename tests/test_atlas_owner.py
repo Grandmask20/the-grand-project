@@ -503,3 +503,45 @@ def test_a_stop_while_the_clean_map_loads_leaves_it_out(session, two, fake_seams
     fake_seams.release.set()
     assert wait_until(lambda: session._seams_proc is None)
     assert np.array_equal(session.terrain[0], before) and session.labels is None
+
+
+def test_fix_seams_waits_for_adding_when_queued_and_stop_takes_it_off(session, two, fake_seams):
+    # (you: Fix seams doesn't start while adding runs; the page asks to cancel, or queue it after adding)
+    a, _b = two
+    session.open_atlas(a)
+    session._jobs.put(([], "recheck_all", session.generation))  # (adding runs)
+    assert session.fix_seams() == "adding" and not session.seams_running()
+    assert session.fix_seams(after_adding=True) == "queued" and session.state()["seams"]
+    session.stop_seams()  # Stop takes it off the queue
+    assert not session.state()["seams"]
+    assert session.fix_seams(after_adding=True) == "queued"
+    session._jobs.get()
+    session._jobs.task_done()  # adding is done: the worker starts what was queued
+    session._start_waiting_seams()
+    assert session.seams_running()
+    fake_seams.release.set()
+    assert wait_until(lambda: session._seams_proc is None)
+
+
+def test_a_queued_fix_seams_is_dropped_for_another_atlas(session, two, fake_seams):
+    a, b = two
+    session.open_atlas(a)
+    session._jobs.put(([], "recheck_all", session.generation))
+    assert session.fix_seams(after_adding=True) == "queued"
+    session._jobs.get()
+    session._jobs.task_done()
+    session.open_atlas(b)  # (opening waits for adding: it takes the queued one off as it switches)
+    session._start_waiting_seams()
+    assert not session.seams_running() and not session.state()["seams"]
+
+
+def test_each_job_has_its_own_progress_line(session):
+    # (GPT audit: the map image build ending blanked adding's progress)
+    ev = session.events
+    ev.set_progress("adding 1 / 4")
+    ev.set_progress("building the map image", owner="map")
+    assert ev.progress == "adding 1 / 4 · building the map image"
+    ev.set_progress(None, owner="map")
+    assert ev.progress == "adding 1 / 4"
+    ev.set_progress(None)
+    assert ev.progress is None

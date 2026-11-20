@@ -528,6 +528,7 @@ class AddingMixin:
                 if not self._busy:
                     self.scan_locks()
                     self.events.publish("busy", False)
+                    self._start_waiting_seams()  # (one queued while this ran: fix_seams)
 
     def _cache_dir(self) -> Path:
         """Return the detection cache folder of the open atlas (<stem>_frames next to it).
