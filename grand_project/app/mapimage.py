@@ -538,7 +538,10 @@ class MapImageMixin:
                 w is None or w["token"] != claim or not self.owns(w["gen"]) or getattr(self, "_closing", False)
             ):
                 return "dropped"
-            if claim is not None and (self._seams_asking or self._seams_trouble):
+            queued = w is not None and self.owns(w["gen"])
+            # any request while one is queued, its own start or another click (a second request skipped the box and
+            # started it, past the box's Cancel: CodeRabbit); with none queued it starts at once as before
+            if queued and (self._seams_asking or self._seams_trouble):
                 # a box is open, or failures wait to be asked about: it stays queued, in the same step as the claim
                 # (claimed anyway, it started without asking, or past a box whose Cancel then did nothing: CodeRabbit)
                 return "queued"

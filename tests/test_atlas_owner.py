@@ -845,3 +845,21 @@ def test_the_cached_map_image_carries_its_build(session, two, monkeypatch):
     monkeypatch.setattr(session, "set_terrain", lambda *args, **kw: (got.append(kw.get("job")), real(*args, **kw))[1])
     session.load_terrain(background=False)
     assert got and got[0] == session._terrain_job
+
+
+def test_a_second_fix_seams_request_never_skips_an_open_box(session, two, fake_seams):
+    # (CodeRabbit: a second request while "adding didn't finish" was open started it past the box's Cancel)
+    a, _b = two
+    session.open_atlas(a)
+    session._jobs.put(([], "recheck_all", session.generation))
+    session.fix_seams(after_adding=True)
+    session._jobs.get()
+    session._jobs.task_done()
+    session._seams_asking = True  # (its box is open, adding is done)
+    assert session.fix_seams(after_adding=True) == "queued" and not session.seams_running()
+    assert session.fix_seams() == "queued" and not session.seams_running()
+    session._seams_asking = False
+    session._seams_waiting = None  # (answered Cancel)
+    assert session.fix_seams() == "started"  # (none queued: at once, as before)
+    fake_seams.release.set()
+    assert wait_until(lambda: session._seams_proc is None)
