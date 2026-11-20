@@ -177,6 +177,11 @@ export type RouteShown = { path: number[]; message: string; at?: number; saved?:
 /** The View settings in use, per layer (AppStoreState.hold). */
 const holds = new Map<string, number>();
 let holdEra = 0;
+/** Let go of every View setting held (another atlas; a test's end: the registry is outside the store). */
+export function releaseHolds(): void {
+	useAppStore.setState(letGoAll());
+}
+
 function letGoAll(): { editing: string[] } {
 	holds.clear();
 	holdEra++;
@@ -280,7 +285,14 @@ export const useAppStore = create<AppStoreState>()((set) => ({
 	goto: null,
 	setGoto: (goto) => set({ goto }),
 	route: null,
-	setRoute: (route) => set({ route }),
+	// tracking another route while adjusting one ends the adjusting (map clicks went on changing it: CodeRabbit)
+	setRoute: (route) =>
+		set((st) => ({
+			route,
+			...(st.mode.kind === "route-edit" && route?.at !== undefined && route.saved !== st.mode.id
+				? { mode: { kind: "normal" } as MapMode }
+				: {}),
+		})),
 	routeDraft: null,
 	setRouteDraft: (routeDraft) => set({ routeDraft }),
 	replay: null,

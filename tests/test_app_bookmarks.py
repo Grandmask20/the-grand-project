@@ -6,6 +6,7 @@ import pytest
 
 from grand_project import core
 from grand_project.app.bookmarks import bm_group
+from grand_project.app.events import StaleAtlas
 from grand_project.app.session import AtlasSession
 from tests.webmap_data import make_atlas
 
@@ -214,3 +215,14 @@ def test_folded_groups_are_kept_per_atlas_and_follow_a_rename(opened):
     folded = {g["name"]: g["folded"] for g in s.bookmarks_payload()["groups"]}
     assert folded["G2"] is True and folded["H"] is False and "G" not in folded
     assert any(line.endswith("Folded bookmark group(s): G, H") for line in s.events.log_lines)
+
+
+def test_a_route_change_made_for_another_atlas_is_refused(opened):
+    # (another atlas opened between the page's request and its change: it got the route, CodeRabbit)
+    s, path, pts = opened
+    main = [[pts[1][0], pts[1][1]], [pts[2][0], pts[2][1]]]
+    legs = [{"maps": main, "line": main}]
+    r = s.add_bookmark(0, 0, "route1", route={"from": 1, "to": 2, "maps": 1, "legs": legs})
+    with pytest.raises(StaleAtlas):
+        s.set_bookmark_route(r, {"from": 1, "to": 2, "maps": 1, "legs": legs}, gen=s.generation + 1)
+    s.set_bookmark_route(r, {"from": 1, "to": 2, "maps": 1, "legs": legs}, gen=s.generation)

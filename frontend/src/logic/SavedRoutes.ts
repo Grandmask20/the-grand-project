@@ -11,15 +11,23 @@ export function routeLines(r: SavedRoute): Point[][] {
 	return r.legs ? r.legs.map((l) => l.line) : r.line ? [r.line] : [];
 }
 
+/** The map at a saved spot: the nearest, when it is within ROUTE_SPOT_REACH (a map gone from the atlas isn't stood
+ * in for by another one further off: CodeRabbit, a route tracked as another one). */
+function mapAt(graph: RouteGraph, x: number, y: number): number | null {
+	const id = graph.nearest(x, y);
+	const p = id !== null ? graph.at(id) : undefined;
+	return p && Math.hypot(p[0] - x, p[1] - y) <= ROUTE_SPOT_REACH ? id : null;
+}
+
 /** A saved route's legs on the atlas as it is now: its maps' spots to the maps there (one saved before routes kept
- * their maps: the route between its line's ends). Null when they aren't on this atlas any more. */
+ * their maps: the route between its line's ends). Null when they aren't all on this atlas any more. */
 export function legsOf(r: SavedRoute, graph: RouteGraph): Legs | null {
 	if (r.legs) {
 		const legs: Legs = [];
 		for (const leg of r.legs) {
 			const ids: number[] = [];
 			for (const [x, y] of leg.maps) {
-				const id = graph.nearest(x, y);
+				const id = mapAt(graph, x, y);
 				if (id === null) return null;
 				if (ids[ids.length - 1] !== id) ids.push(id);
 			}
@@ -29,7 +37,7 @@ export function legsOf(r: SavedRoute, graph: RouteGraph): Legs | null {
 	}
 	const line = r.line ?? [];
 	if (line.length < 2) return null;
-	const [a, b] = [line[0], line[line.length - 1]].map(([x, y]) => graph.nearest(x, y));
+	const [a, b] = [line[0], line[line.length - 1]].map(([x, y]) => mapAt(graph, x, y));
 	if (a === null || b === null || a === b) return null;
 	const path = graph.shortest(a, (u) => u === b);
 	return path ? [path] : null;
@@ -137,13 +145,13 @@ export function removeMap(legs: Legs, node: number, graph?: RouteGraph): Legs | 
 		const on = new Set(best);
 		const waiting = pieces.filter((p) => p !== best); // (biggest first)
 		for (const piece of waiting) {
-			const from = (near.get(node) ?? []).find((n) => piece.has(n)) as number;
-			// round the map taken off, and not through the pieces still waiting (or this one's own maps)
-			const avoid = new Set([node, ...waiting.flatMap((p) => [...p])]);
-			avoid.delete(from);
-			const way = graph.shortest(from, (u) => on.has(u), avoid);
+			// from whichever of its maps is nearest (CodeRabbit: only the one by the gap was tried), round the map taken
+			// off and the pieces not joined yet (the ones joined are the route now: CodeRabbit)
+			const avoid = new Set([node]);
+			for (const p of waiting) if (p !== piece && ![...p].some((m) => on.has(m))) for (const m of p) avoid.add(m);
+			const way = graph.shortest([...piece], (u) => on.has(u), avoid);
 			if (!way || way.length - 2 > piece.size) continue;
-			const own = treeLegs(from, near, piece);
+			const own = treeLegs(way[0], near, piece);
 			out.push([...way.reverse(), ...own[0].slice(1)], ...own.slice(1));
 			for (const m of [...way, ...piece]) on.add(m);
 		}
@@ -213,3 +221,7 @@ export function savedRouteOf(legs: Legs, graph: RouteGraph): SavedRoute {
 		})),
 	};
 }
+
+/** How far (atlas units) a saved map's spot may be from the map found there (as a bookmark's same spot, SAME_SPOT in
+ * the app: a rebuild moves maps a little, another map is further). */
+const ROUTE_SPOT_REACH = 28;

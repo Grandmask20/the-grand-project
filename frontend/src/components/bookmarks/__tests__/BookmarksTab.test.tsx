@@ -1,5 +1,6 @@
 import { act, fireEvent, screen, waitFor } from "@testing-library/react";
 import { afterEach, describe, expect, it } from "vitest";
+import { ApiError } from "@/api/Http";
 import { BookmarksTab } from "@/components/bookmarks/BookmarksTab";
 import { useAppStore } from "@/store/AppStore";
 import { bookmarks, state } from "@/test/Fixtures";
@@ -107,6 +108,17 @@ describe("BookmarksTab", () => {
 		await waitFor(() =>
 			expect(calls.find((c) => c.path === "/api/groups/fold")?.body).toEqual({ names, folded: true }),
 		);
+	});
+
+	it("a fold the app couldn't keep is shown as the app has it again (CodeRabbit)", async () => {
+		const { user, calls } = renderWithApp(<BookmarksTab />, {
+			"GET /api/bookmarks": bookmarks,
+			"POST /api/groups/fold": new ApiError("the settings couldn't be saved", 500),
+		});
+		await user.click(await screen.findByRole("button", { name: "Fold all" }));
+		await waitFor(() => expect(calls.filter((c) => c.path === "/api/bookmarks").length).toBeGreaterThan(1));
+		const first = bookmarks.groups[0].name;
+		expect(await screen.findByRole("button", { name: `Fold ${first}` })).toBeInTheDocument();
 	});
 
 	it("a saved route: a path symbol, its ends in the name, and a click lights it up and fits it in view", async () => {

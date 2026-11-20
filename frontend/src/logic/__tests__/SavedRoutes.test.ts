@@ -155,6 +155,67 @@ describe("saved routes", () => {
 		expect(removeMap([[9, 8, 7, 6, 5, 4, 3]], 4, g)).toEqual([[9, 8, 7, 6, 5]]);
 	});
 
+	it("rejoins from any map of the piece, and through pieces that rejoined before (CodeRabbit)", () => {
+		const line = (edges: [number, number][], n: number) =>
+			new RouteGraph({
+				nodes: Array.from({ length: n }, (_, i) => ({
+					id: i + 1,
+					x: (i + 1) * 100,
+					y: 0,
+					icons: [],
+					status: "confirmed",
+				})),
+				edges: edges.map(([a, b]) => ({ a, b })),
+			});
+		// 1-2-3-4-5-6 and a way 1-6: taking 4 off, [5, 6] joins from 6
+		const g1 = line(
+			[
+				[1, 2],
+				[2, 3],
+				[3, 4],
+				[4, 5],
+				[5, 6],
+				[1, 6],
+			],
+			6,
+		);
+		expect(removeMap([[1, 2, 3, 4, 5, 6]], 4, g1)).toEqual([
+			[1, 2, 3],
+			[1, 6, 5],
+		]);
+		// main 1-2-3-4-5, branch 3-6, ways 2-4 and 5-6: taking 3 off, [4, 5] joins, then 6 through 5
+		const g2 = line(
+			[
+				[1, 2],
+				[2, 3],
+				[3, 4],
+				[4, 5],
+				[3, 6],
+				[2, 4],
+				[5, 6],
+			],
+			6,
+		);
+		const out = removeMap(
+			[
+				[1, 2, 3, 4, 5],
+				[3, 6],
+			],
+			3,
+			g2,
+		) as number[][];
+		expect(new Set(out.flat())).toEqual(new Set([1, 2, 4, 5, 6]));
+	});
+
+	it("a saved map gone from the atlas isn't stood in for by another (CodeRabbit)", () => {
+		const r = savedRouteOf([[1, 2, 3]], graph);
+		const without2 = new RouteGraph({
+			nodes: [1, 3].map((id) => ({ id, x: id * 100, y: id * 10, icons: [], status: "confirmed" })),
+			edges: [{ a: 1, b: 3 }],
+		});
+		expect(legsOf(r, without2)).toBeNull();
+	});
+
 	it("keeps at least two maps", () => {
 		expect(removeMap([[1, 2]], 1)).toBe("A route needs two maps: delete it instead.");
 		expect(removeMap([[1, 2, 3]], 2)).toBe("A route needs two maps: delete it instead.");

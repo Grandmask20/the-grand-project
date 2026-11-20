@@ -1,5 +1,5 @@
 import { act, fireEvent, render, screen } from "@testing-library/react";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { RevealWhileUsed, useHoldWhileOpen } from "@/components/view/RevealWhileUsed";
 import { useAppStore } from "@/store/AppStore";
 import { resetStore } from "@/test/RenderWithApp";
@@ -72,5 +72,36 @@ describe("RevealWhileUsed", () => {
 		act(() => useAppStore.getState().setCamera({ pitch: 40 } as never)); // tilted: now they show
 		fireEvent.pointerDown(screen.getByRole("button", { name: "slider" }));
 		expect(useAppStore.getState().editing).toEqual(["Paths"]);
+	});
+
+	it("the keyboard holds too, from key down to key up (CodeRabbit)", () => {
+		render(
+			<RevealWhileUsed layer="3D models" view="2d">
+				<input type="checkbox" aria-label="beams" />
+			</RevealWhileUsed>,
+		);
+		const box = screen.getByLabelText("beams");
+		fireEvent.keyDown(box, { key: " " });
+		expect(useAppStore.getState().editing).toEqual(["3D models"]);
+		fireEvent.keyUp(box, { key: " " });
+		expect(useAppStore.getState().editing).toEqual([]);
+	});
+
+	it("a press ends once, both window listeners taken off (one stayed and they piled up: CodeRabbit)", () => {
+		const added = vi.spyOn(window, "addEventListener");
+		const removed = vi.spyOn(window, "removeEventListener");
+		render(
+			<RevealWhileUsed layer="Paths" view="2d">
+				<button type="button">slider</button>
+			</RevealWhileUsed>,
+		);
+		fireEvent.pointerDown(screen.getByRole("button", { name: "slider" }));
+		fireEvent.pointerUp(window);
+		const mine = (spy: typeof added) =>
+			spy.mock.calls.filter(([t]) => t === "pointerup" || t === "pointercancel").length;
+		expect(mine(added)).toBe(2);
+		expect(mine(removed)).toBe(2);
+		added.mockRestore();
+		removed.mockRestore();
 	});
 });

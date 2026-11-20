@@ -62,18 +62,22 @@ export class RouteGraph {
 		return best;
 	}
 
-	/** The route from `from` to the first map `done` accepts (fewest maps), or null; never through the maps in
-	 * `avoid`. */
-	shortest(from: number, done: (id: number) => boolean, avoid?: Set<number>): number[] | null {
-		if (!this.adj.has(from)) return null;
-		const cost = new Map<number, number>([[from, 0]]);
+	/** The route from `from` (one map, or the nearest of several) to the first map `done` accepts (fewest maps), or
+	 * null; never through the maps in `avoid`. */
+	shortest(from: number | number[], done: (id: number) => boolean, avoid?: Set<number>): number[] | null {
+		const starts = new Set((Array.isArray(from) ? from : [from]).filter((s) => this.adj.has(s)));
+		if (!starts.size) return null;
+		const cost = new Map<number, number>();
 		const prev = new Map<number, number>();
 		const heap = new MinHeap();
-		heap.push(0, from);
+		for (const s of starts) {
+			cost.set(s, 0);
+			heap.push(0, s);
+		}
 		while (heap.size) {
 			const [c, u] = heap.pop();
 			if (c > (cost.get(u) ?? Number.POSITIVE_INFINITY)) continue;
-			if (u !== from && done(u)) {
+			if (!starts.has(u) && done(u)) {
 				const path = [u];
 				for (let v = prev.get(u); v !== undefined; v = prev.get(v)) path.push(v);
 				return path.reverse();

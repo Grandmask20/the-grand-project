@@ -77,7 +77,11 @@ export function BookmarksTab() {
 			AppQueryKeys.bookmarks,
 			(d) => d && { groups: d.groups.map((g) => (names.includes(g.name) ? { ...g, folded } : g)) },
 		);
-		void app.foldGroups(names, folded).catch(fail);
+		// failed: the groups as the app keeps them (shown folded, they opened again on a reload: CodeRabbit)
+		void app.foldGroups(names, folded).catch((e) => {
+			fail(e);
+			void queryClient.invalidateQueries({ queryKey: AppQueryKeys.bookmarks });
+		});
 	};
 
 	const adding = s.mode.kind === "bookmark";

@@ -787,7 +787,7 @@ class Handler(BaseHTTPRequestHandler):
         b = self._body()
         if not isinstance(b.get("route"), dict):
             raise ApiError("a route is needed", 400)
-        self.S.set_bookmark_route(int(b["id"]), b["route"])
+        self.S.set_bookmark_route(int(b["id"]), b["route"], gen=self._req_gen)
         self._json({"ok": True})
 
     @route("POST", "/api/bookmarks/delete")

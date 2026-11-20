@@ -53,6 +53,12 @@ export function SidePanel({ debug }: { debug: boolean }) {
 
 	useEffect(() => setWidth(saved), [saved]);
 
+	// another page of the tab: back at the top (the tab's own scroll box stays: the picker keeps the focus)
+	const scroller = useRef<HTMLDivElement>(null);
+	useEffect(() => {
+		if (page !== undefined) scroller.current?.scrollTo({ top: 0 });
+	}, [page]);
+
 	const onDown = (e: ReactPointerEvent) => {
 		drag.current = { x: e.clientX, w: width };
 		(e.target as HTMLElement).setPointerCapture(e.pointerId);
@@ -87,8 +93,9 @@ export function SidePanel({ debug }: { debug: boolean }) {
 					))}
 				</TabsList>
 				{/* keyed by the tab, so a tab opens at its top, not at the scroll of the one before; and by the atlas, so
-				    what a tab picked (bookmarks, a waiting group) doesn't carry over to another atlas */}
-				<div key={`${tab}|${page}|${gen}`} className="min-h-0 flex-1 overflow-x-hidden overflow-y-auto p-3">
+				    what a tab picked (bookmarks, a waiting group) doesn't carry over to another atlas. Another page of the
+				    same tab only scrolls back up (keyed by the page too, its picker lost the focus: CodeRabbit) */}
+				<div ref={scroller} key={`${tab}|${gen}`} className="min-h-0 flex-1 overflow-x-hidden overflow-y-auto p-3">
 					<TabsContent value="find" className="h-full">
 						<FindTab />
 					</TabsContent>

@@ -40,8 +40,10 @@ export function MapCamera() {
 		map.flyTo({ center: geo.toLngLat(fly.x, fly.y), zoom: Math.min(zoom, info.maxzoom), speed: 1.6 });
 	}, [map, geo, info, fly]);
 
-	// an area (a saved route): its corners in the view; the room round it is in the box already (routeBox)
-	const fittedArea = useRef(fitTo?.n ?? 0);
+	// an area (a saved route): its corners in the view; the room round it is in the box already (routeBox). Carried
+	// out once, then cleared: one asked for while the map loaded is still to do when it's here (it was taken as done:
+	// CodeRabbit); another atlas clears it (resetAtlas)
+	const fittedArea = useRef(0);
 	useEffect(() => {
 		if (!fitTo) {
 			fittedArea.current = 0;
@@ -49,6 +51,7 @@ export function MapCamera() {
 		}
 		if (fitTo.n === fittedArea.current) return;
 		fittedArea.current = fitTo.n;
+		useAppStore.setState({ fitTo: null });
 		const [x0, y0, x1, y1] = fitTo.box;
 		const corners = [geo.toLngLat(x0, y0), geo.toLngLat(x1, y1)];
 		const lngs = corners.map((c) => c[0]);

@@ -11,6 +11,7 @@ export function RouteTab() {
 	const route = useAppStore((s) => s.route);
 	// the next map not run yet (a branch is run there and back: the maps on the way back are run already)
 	const next = route?.at !== undefined ? nextNew(route.path, route.at) : null;
+	const runSet = new Set(route?.at !== undefined ? route.path.slice(0, route.at + 1) : []); // (the maps run)
 	const mode = useAppStore((s) => s.mode);
 	const setMode = useAppStore((s) => s.setMode);
 	const flyTo = useAppStore((s) => s.flyTo);
@@ -104,7 +105,7 @@ export function RouteTab() {
 						{[...new Set(route.path)].slice(1).map((id) => {
 							const p = routes.graph?.at(id);
 							const what = (routes.graph?.iconsOf(id) ?? []).map((n) => iconOf.get(n) ?? n).join(", ");
-							const run = route.path.slice(0, (route.at ?? 0) + 1).includes(id);
+							const run = runSet.has(id);
 							return (
 								<li key={id} className={run ? "text-muted-foreground line-through" : undefined}>
 									<button type="button" className="hover:text-gold" onClick={() => p && flyTo(p[0], p[1], 0.6)}>

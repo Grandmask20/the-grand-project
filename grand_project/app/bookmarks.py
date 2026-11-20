@@ -337,18 +337,23 @@ class BookmarksMixin:
         b.pop("category", None)
         self._bookmarks_changed()
 
-    def set_bookmark_route(self, i: int, route: dict) -> None:
-        """Change a saved route's maps (Add maps / Remove maps on it in Bookmarks).
+    def set_bookmark_route(self, i: int, route: dict, gen: int | None = None) -> None:
+        """Change a saved route's maps (Adjust route on it in Bookmarks).
 
         Args:
             i: The route bookmark's id.
             route: The route as it is now (see clean_route).
+            gen: The atlas generation the page made it in (checked under the lock: another atlas opened meanwhile
+                would get it on its bookmark with that id, CodeRabbit).
 
         Raises:
             ValueError: With no such bookmark, one that isn't a route, or no route.
+            StaleAtlas: When it was made for an atlas no longer open.
         """
         route = clean_route(route)
         with self._lock:
+            if gen is not None and not self.owns(gen):
+                raise StaleAtlas()
             b = self._bookmark(i)
             if "route" not in b:
                 raise ValueError(f"{b['name']} isn't a route")

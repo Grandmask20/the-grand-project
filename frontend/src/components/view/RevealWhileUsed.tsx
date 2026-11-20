@@ -7,6 +7,26 @@ const HeldBySection = createContext<string | null>(null);
 
 const isPicker = (t: EventTarget) => t instanceof HTMLInputElement && t.type === "color";
 
+/** Let go of what a ref holds, once. */
+function letGo(r: { current: (() => void) | null }) {
+	r.current?.();
+	r.current = null;
+}
+
+/** The keys that change a setting (a box, a slider, a dropdown's choice). */
+const CHANGE_KEYS = new Set([
+	" ",
+	"Enter",
+	"ArrowUp",
+	"ArrowDown",
+	"ArrowLeft",
+	"ArrowRight",
+	"Home",
+	"End",
+	"PageUp",
+	"PageDown",
+]);
+
 /**
  * A View section whose settings show their layer on the map while you use them, even if its switch is off: while a
  * control in it is held (a slider dragged, a colour picker open) or a dropdown of it is open, no longer (user: a
@@ -16,40 +36,57 @@ const isPicker = (t: EventTarget) => t instanceof HTMLInputElement && t.type ===
 export function RevealWhileUsed({ layer, view, children }: { layer: string; view: "2d" | "3d"; children: ReactNode }) {
 	const hold = useAppStore((s) => s.hold);
 	const tilted = useAppStore((s) => (s.camera?.pitch ?? 0) > 1);
-	const key = (view === "3d") === tilted ? layer : `${VIEW_NOTICE}${view}`;
+	const held = (view === "3d") === tilted ? layer : `${VIEW_NOTICE}${view}`;
+	// what is held now, each let go once: a press (until the mouse is let go anywhere), a key (until it is let go or
+	// the control is left), a colour picker (until it closes or is left)
+	const press = useRef<(() => void) | null>(null);
+	const key = useRef<(() => void) | null>(null);
 	const picker = useRef<(() => void) | null>(null);
-	const pickerDone = () => {
-		picker.current?.();
-		picker.current = null;
-	};
-	// gone with a picker open (the tab switched): let go
+	const pickerDone = () => letGo(picker);
+	// gone while held (the tab switched): let go
 	useEffect(
 		() => () => {
-			picker.current?.();
-			picker.current = null;
+			for (const r of [press, key, picker]) letGo(r);
 		},
 		[],
 	);
 	return (
-		<HeldBySection.Provider value={key}>
+		<HeldBySection.Provider value={held}>
 			<div
 				className="contents"
 				onPointerDownCapture={(e) => {
 					if (isPicker(e.target)) return; // (held while its picker is open, below)
-					const release = hold(key);
-					window.addEventListener("pointerup", release, { once: true });
-					window.addEventListener("pointercancel", release, { once: true });
+					letGo(press);
+					const release = hold(held);
+					// one end for both ways a press ends, which takes both listeners off (one stayed: CodeRabbit)
+					const end = () => {
+						window.removeEventListener("pointerup", end);
+						window.removeEventListener("pointercancel", end);
+						release();
+						if (press.current === end) press.current = null;
+					};
+					press.current = end;
+					window.addEventListener("pointerup", end);
+					window.addEventListener("pointercancel", end);
 				}}
+				// the keyboard too (Space on a box, arrows on a slider: CodeRabbit)
+				onKeyDownCapture={(e) => {
+					if (CHANGE_KEYS.has(e.key) && !key.current) key.current = hold(held);
+				}}
+				onKeyUpCapture={() => letGo(key)}
 				// a colour picker: open from its click until it closes (the browser's own "change": React's onChange
 				// comes with every colour passed while dragging in it) or loses focus
 				onClickCapture={(e) => {
 					const t = e.target;
 					if (!isPicker(t)) return;
 					pickerDone();
-					picker.current = hold(key);
+					picker.current = hold(held);
 					t.addEventListener("change", pickerDone, { once: true });
 				}}
-				onBlurCapture={pickerDone}
+				onBlurCapture={() => {
+					letGo(key);
+					pickerDone();
+				}}
 			>
 				{children}
 			</div>

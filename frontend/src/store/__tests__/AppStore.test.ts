@@ -51,6 +51,15 @@ describe("useAppStore", () => {
 		expect(useAppStore.getState().editing).toEqual([]);
 	});
 
+	it("tracking another route ends adjusting one; tracking the same one doesn't (CodeRabbit)", () => {
+		const s = useAppStore.getState();
+		s.setMode({ kind: "route-edit", id: 5 });
+		s.setRoute({ path: [1, 2], message: "", at: 0, saved: 5 });
+		expect(useAppStore.getState().mode).toEqual({ kind: "route-edit", id: 5 });
+		s.setRoute({ path: [3, 4], message: "", at: 0, saved: 6 });
+		expect(useAppStore.getState().mode).toEqual({ kind: "normal" });
+	});
+
 	it("patches the replay only while one is open", () => {
 		const s = useAppStore.getState();
 		s.patchReplay({ pos: 3 });

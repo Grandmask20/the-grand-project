@@ -3,16 +3,16 @@ import type { MapLayerMouseEvent, MapMouseEvent } from "maplibre-gl";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { AppQueryKeys } from "@/api/AppQueryKeys";
 import { sameAtlas } from "@/api/Http";
-import type { Bookmarks, SavedRoute } from "@/domain/bookmarks/Bookmarks";
 import type { ItemInfo } from "@/domain/map/ItemInfo";
 import { useAppClient } from "@/hooks/app/UseAppClient";
 import { useAppState } from "@/hooks/app/UseAppState";
 import { usePlayer, useSettings, useUpdateSettings } from "@/hooks/app/UseSettings";
 import { useBookmarks } from "@/hooks/bookmarks/UseBookmarks";
+import { useAdjustRoute } from "@/hooks/map/UseAdjustRoute";
 import { useLoadRouteGraph, useRouteGraph } from "@/hooks/map/UseGraph";
 import { useMapLibre } from "@/hooks/map/UseMapLibre";
 import { useMapView } from "@/hooks/map/UseMapView";
-import { savedRoute, tracking, useRoutes } from "@/hooks/map/UseRoutes";
+import { savedRoute, useRoutes } from "@/hooks/map/UseRoutes";
 import { bookmarkOf, newBookmark } from "@/logic/BookmarkOf";
 import type { Point } from "@/logic/Geo";
 import type { IconLayer3D } from "@/logic/IconLayer3D";
@@ -21,7 +21,6 @@ import type { ModelLayer3D } from "@/logic/ModelLayer3D";
 import { wasDrag } from "@/logic/map/PanGuard";
 import type { PathLayer3D } from "@/logic/PathLayer3D";
 import { pickItem } from "@/logic/Pick";
-import { addMap, legsOf, nearestOn, removeMap, savedRouteOf, visitOrder } from "@/logic/SavedRoutes";
 import { type MapMode, useAppStore } from "@/store/AppStore";
 import { BiomeMenu } from "./BiomeMenu";
 import { LassoDraw } from "./draw/LassoDraw";
@@ -52,12 +51,7 @@ export function MapInteraction() {
 	// (loaded as these modes start; a click that comes first waits for it)
 	useRouteGraph(mode.kind === "player" || mode.kind === "route" || mode.kind === "route-edit");
 	const loadGraph = useLoadRouteGraph();
-	// Adjust route's saves, one after another in the order of the clicks (sent side by side, an older route could
-	// be saved last)
-	const saving = useRef<Promise<unknown>>(Promise.resolve());
-	// a saved route being changed (Add / Remove maps): as it is after the last click, so a click before the list
-	// came back builds on it
-	const editedRoute = useRef<{ id: number; route: SavedRoute } | null>(null);
+
 	const routes = useRoutes();
 	const [menu, setMenu] = useState<{ x: number; y: number; at: Point; hit: ItemInfo | null } | null>(null);
 	const lassoSeq = useRef(0);
@@ -96,57 +90,12 @@ export function MapInteraction() {
 		[map, app, pick, clickAt],
 	);
 
-	// Adjust route (a saved route's right-click menu in Bookmarks): a map clicked goes on the route (past an end, or a
-	// branch off its side), a map right-clicked comes off it (removeMap) (user)
+	// Adjust route: its edits run per route in click order (useAdjustRoute)
+	const adjust = useAdjustRoute(pick);
 	const adjustRoute = useCallback(
-		async (at: Point, add: boolean, started: MapMode) => {
-			if (started.kind !== "route-edit") return;
-			const [hit, graph] = await Promise.all([pick(at), loadGraph()]);
-			if (useAppStore.getState().mode !== started) return; // (left meanwhile)
-			const picked = hit?.kind === "node" ? hit.id : (hit?.node ?? graph.nearest(at[0], at[1]));
-			const listed = queryClient
-				.getQueryData<Bookmarks>(AppQueryKeys.bookmarks)
-				?.groups.flatMap((g) => g.items)
-				.find((b) => b.id === started.id)?.route;
-			const before = editedRoute.current?.id === started.id ? editedRoute.current.route : listed;
-			if (!before) {
-				setMode({ kind: "normal" });
-				return;
-			}
-			const legs = legsOf(before, graph);
-			if (!legs) {
-				showError("This route's maps aren't on this atlas any more.", true);
-				return;
-			}
-			// taking maps off: the route's own map nearest the click, near enough (an icon beside it can belong to
-			// another map)
-			const reach = ROUTE_EDIT_REACH_PX / geo.pxPerUnit(map.getZoom());
-			const node = add ? picked : (nearestOn(legs, graph, at, reach) ?? picked);
-			if (node === null) return;
-			const next = add ? addMap(legs, node, graph) : removeMap(legs, node, graph);
-			if (typeof next === "string") {
-				showError(next, true);
-				return;
-			}
-			const route = savedRouteOf(next, graph);
-			editedRoute.current = { id: started.id, route };
-			// the route tracked is this one: it follows, on the map you are on (it stayed the route before)
-			const tracked = useAppStore.getState().route;
-			if (tracked?.saved === started.id && tracked.at !== undefined) {
-				const path = visitOrder(next);
-				const at = Math.max(0, path.indexOf(tracked.path[tracked.at]));
-				useAppStore.getState().setRoute({ path, at, saved: started.id, message: tracking(path, at) });
-			}
-			const save = saving.current.then(() => app.setBookmarkRoute(started.id, route));
-			saving.current = save.catch(() => {});
-			try {
-				await save;
-			} catch (err) {
-				editedRoute.current = null; // (the list holds what was saved)
-				throw err;
-			}
-		},
-		[loadGraph, pick, queryClient, setMode, showError, geo, map, app],
+		(at: Point, add: boolean, started: MapMode) =>
+			adjust(at, add, started, ROUTE_EDIT_REACH_PX / geo.pxPerUnit(map.getZoom())),
+		[adjust, geo, map],
 	);
 
 	// --- clicks
@@ -159,6 +108,12 @@ export function MapInteraction() {
 			const pickHere = async () => {
 				const hit = await pick(at);
 				return useAppStore.getState().mode === mode ? { hit } : null;
+			};
+			// what was clicked and the map's paths, for a mode still on once both are in (Esc while the paths loaded
+			// still set your position: CodeRabbit)
+			const pickWithPaths = async () => {
+				const [hit, graph] = await Promise.all([pick(at), loadGraph()]);
+				return useAppStore.getState().mode === mode ? { hit, graph } : null;
 			};
 			try {
 				switch (mode.kind) {
@@ -178,9 +133,9 @@ export function MapInteraction() {
 						break;
 					}
 					case "player": {
-						const [still, graph] = await Promise.all([pickHere(), loadGraph()]);
+						const still = await pickWithPaths();
 						if (!still) break;
-						const { hit } = still;
+						const { hit, graph } = still;
 						const node = hit?.kind === "node" ? hit.id : (hit?.node ?? graph.nearest(at[0], at[1]));
 						const p = node !== null ? graph.at(node) : undefined;
 						if (node !== null && p) update.mutate({ ui: { player: { x: p[0], y: p[1], node, atlas: atlasFile } } });
@@ -189,9 +144,9 @@ export function MapInteraction() {
 					}
 					case "route": {
 						// the first map, then the last: the route between them, fewest maps (user)
-						const [still, graph] = await Promise.all([pickHere(), loadGraph()]);
+						const still = await pickWithPaths();
 						if (!still) break;
-						const { hit } = still;
+						const { hit, graph } = still;
 						const node = hit?.kind === "node" ? hit.id : (hit?.node ?? graph.nearest(at[0], at[1]));
 						if (node === null) break;
 						if (mode.from === null) {
@@ -260,11 +215,6 @@ export function MapInteraction() {
 		atlasFile,
 		adjustRoute,
 	]);
-
-	// another mode, or another route: what was changed is in the list now
-	useEffect(() => {
-		if (mode.kind !== "route-edit" || editedRoute.current?.id !== mode.id) editedRoute.current = null;
-	}, [mode]);
 
 	// a mode ended, however (Esc, End, its button, another mode, the timelapse): what it left goes. Route's picked maps
 	// (a route tracked stays), a lasso drawn and its count still coming, a ghost drag (it moved the next ghost:
@@ -460,7 +410,9 @@ export function MapInteraction() {
 		if (!r) return;
 		if (what === "track") routes.trackRoute(r.path);
 		else if (what === "save") {
+			const still = sameAtlas(); // (the route is this atlas's: another opened meanwhile, it isn't saved there)
 			const graph = await loadGraph();
+			if (!still()) return;
 			const start = graph.at(r.path[0]) ?? [0, 0];
 			// numbered after the routes saved so far: route1, route2, ...
 			const saved = (bookmarks.data?.groups ?? []).flatMap((g) => g.items).filter((b) => b.route).length;

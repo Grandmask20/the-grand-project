@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import ctypes
 import os
+import subprocess
 import time
 from ctypes import wintypes as wt
 from pathlib import Path
@@ -66,6 +67,40 @@ def explorer_titles() -> dict[int, str]:
 def shows(title: str, name: str) -> bool:
     """Whether an Explorer window's title is that of a folder named `name`."""
     return title == name or title.startswith(name + " - ")
+
+
+def explorer_paths() -> dict[int, str]:
+    """The folder each Explorer window shows, by its whole path (a title has only the folder's name: two folders named
+    alike, CodeRabbit). From the Windows shell, in a PowerShell of its own (no COM in the app); {} when it can't say.
+
+    Returns:
+        {window handle: folder path}.
+    """
+    script = (
+        "(New-Object -ComObject Shell.Application).Windows() | "
+        "ForEach-Object { try { '{0}|{1}' -f $_.HWND, $_.Document.Folder.Self.Path } catch {} }"
+    )
+    try:
+        out = subprocess.run(  # noqa: S603 (a fixed script, no input in it)
+            ["powershell", "-NoProfile", "-NonInteractive", "-Command", script],  # noqa: S607
+            capture_output=True,
+            text=True,
+            timeout=K.FOLDER_PATHS_WAIT,
+            creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+        ).stdout
+    except (OSError, subprocess.SubprocessError):
+        return {}
+    found: dict[int, str] = {}
+    for line in out.splitlines():
+        h, _, path = line.partition("|")
+        if h.strip().lstrip("-").isdigit() and path.strip():
+            found[int(h)] = path.strip()
+    return found
+
+
+def same_folder(a: str | Path, b: str | Path) -> bool:
+    """Whether two paths are the same folder (Windows: case and slashes don't matter)."""
+    return os.path.normcase(os.path.normpath(str(a))) == os.path.normcase(os.path.normpath(str(b)))
 
 
 def onto_monitor_of(h: int, other: int) -> bool:
@@ -130,10 +165,11 @@ def open_folder_in_front(folder: Path) -> bool:
     """Bring a folder's Explorer window forward, on the monitor of the window in front: the one already showing it,
     else the one it opens in.
 
-    A window already showing it is brought as it is, without opening it again: Explorer then made no new window (it
-    reused its own, or opened a tab in another), so waiting for one took the whole wait, and a window of another
-    folder blinked (user). Opened, its window is the one whose title turns to the folder's: a new window, or one that
-    showed something else (a tab opened in it).
+    A window already showing it (by its whole path: another folder of that name isn't it, CodeRabbit) is brought as it
+    is, without opening it again: Explorer then made no new window (it reused its own, or opened a tab in another), so
+    waiting for one took the whole wait, and a window of another folder blinked (user). When the paths can't be read,
+    it is opened. Opened, its window is the one whose title turns to the folder's: a new window, or one that showed
+    something else (a tab opened in it).
 
     Args:
         folder: The folder.
@@ -144,7 +180,9 @@ def open_folder_in_front(folder: Path) -> bool:
     u = _user32()
     front = u.GetForegroundWindow()
     before = explorer_titles()
-    win = next((h for h, t in before.items() if shows(t, folder.name)), None)
+    named = [h for h, t in before.items() if shows(t, folder.name)]
+    paths = explorer_paths() if named else {}
+    win = next((h for h in named if same_folder(paths.get(h, ""), folder)), None)
     if win is None:
         os.startfile(folder)  # type: ignore[attr-defined]  # noqa: S606 (a known atlas folder, no shell)
         end = time.monotonic() + K.FOLDER_FRONT_WAIT
