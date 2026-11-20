@@ -485,3 +485,21 @@ def test_the_open_atlas_is_one_record(session, two):
     assert any("switched to atlas" in line for line in session.events._logs[job.scope])  # (in A's own log)
     session.close()
     assert session.opened.atlas is None and session.events.scope == "" and session.state()["log_scope"] == ""
+
+
+def test_a_stop_while_the_clean_map_loads_leaves_it_out(session, two, fake_seams, monkeypatch):
+    # (GPT audit: Stop only reached a live process; once it had ended, the clean map being loaded went in anyway)
+    a, _b = two
+    session.open_atlas(a)
+    before = session.terrain[0].copy()
+    real = mapimage.np.load
+
+    def load_then_stop(*args, **kw):
+        session.stop_seams()  # pressed while the finished process's result is read
+        return real(*args, **kw)
+
+    monkeypatch.setattr(mapimage.np, "load", load_then_stop)
+    session.fix_seams()
+    fake_seams.release.set()
+    assert wait_until(lambda: session._seams_proc is None)
+    assert np.array_equal(session.terrain[0], before) and session.labels is None

@@ -335,3 +335,20 @@ def test_undo_puts_back_all_but_your_hand_edits(session, tmp_path):
     session._run_undo()
     assert session.atlas.locks == before_locks and "added.png" not in session.atlas.lock_scanned
     assert any(x["uid"] == b for x in session.atlas.bookmarks)  # (yours: kept)
+
+
+def test_closing_answers_open_questions_no_and_asks_none(session):
+    import threading
+
+    session.events._listeners.append(__import__("queue").Queue())  # (a page open, so a question waits for its answer)
+    got = []
+    t = threading.Thread(target=lambda: got.append(session.events.ask("go on?")))
+    t.start()
+    for _ in range(200):
+        if session.events.open_questions():
+            break
+        threading.Event().wait(0.01)
+    assert session.events.end_questions() == 1
+    t.join(2)
+    assert got == [False]
+    assert session.events.ask("again?") is False  # (none asked while closing)

@@ -31,6 +31,7 @@ from .constants import (
     LANDMARK_NODE_REACH,
     LANDMARK_NODE_REACH_STRONGHOLD,
     POTENTIAL_TYPES,
+    SHUTDOWN_WAIT,
     STYLE_DEFAULT,
     VERSION,
 )
@@ -375,15 +376,30 @@ class AtlasSession(
         self.events.publish("atlas", self.atlas_summary())
         self.events.publish("model", self.model_version)
 
-    def shutdown(self) -> None:
-        """Stop everything before the app exits: auto-add, Fix seams, queued jobs; save the atlas and settings."""
+    def shutdown(self) -> bool:
+        """Stop everything before the app exits: auto-add, Fix seams, queued jobs, open questions (answered No, so
+        a job waiting on one ends); then save the atlas and settings.
+
+        Returns:
+            True when the work running ended in time; False when it was cut off, which the log says (the wait's
+            outcome was ignored, as if all work had finished: GPT audit).
+        """
         self._closing = True
         self.stop_watch()
         self.stop_seams()
         self._drop_queued_jobs()
-        self.wait_idle(timeout=30)
+        if n := self.events.end_questions():
+            self.events.log(f"closing: {n} open question(s) answered No")
+        done = self.wait_idle(timeout=SHUTDOWN_WAIT)
+        if not done:
+            LOG.warning("closing while a job still runs: cut off")
+            self.events.log(
+                f"closing: the work still running after {SHUTDOWN_WAIT:.0f} s was cut off; what it had not saved yet "
+                "is lost (the atlas is saved as it is now)"
+            )
         self.save()
         self.save_settings()
+        return done
 
     def _after_load(self) -> None:
         """Refresh everything after an atlas was opened or created: map image, model, locked strongholds."""

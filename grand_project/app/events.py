@@ -45,6 +45,7 @@ class Events:
         self._progress_logged: dict[tuple[str, str], int | None] = {}
         self.status = ""
         self._questions: dict[int, dict] = {}
+        self.closing = False  # the app is closing: no question is asked any more (end_questions)
 
     # ------------------------------------------------------------------ publishing
     def publish(self, kind: str, data=None) -> None:
@@ -172,8 +173,8 @@ class Events:
             The answer.
         """
         with self._lock:
-            if not self._listeners:
-                LOG.info(f"no page open to ask: {question!r} -> no")
+            if not self._listeners or self.closing:
+                LOG.info(f"no page open to ask (or closing): {question!r} -> no")
                 return False
         qid = next(self._ids)
         box = {"id": qid, "question": question, "preview": preview, "event": threading.Event(), "answer": False}
@@ -203,6 +204,22 @@ class Events:
         box["answer"] = bool(yes)
         box["event"].set()
         return True
+
+    def end_questions(self) -> int:
+        """The app is closing: every open question is answered No, and none is asked any more. A job waiting for an
+        answer ends instead of holding the close up until nobody answers (GPT audit). (While the app runs, a question
+        stays open until answered: a page opened later shows it again.)
+
+        Returns:
+            How many were open.
+        """
+        with self._lock:
+            self.closing = True
+            boxes = list(self._questions.values())
+        for box in boxes:
+            box["answer"] = False
+            box["event"].set()
+        return len(boxes)
 
     def open_questions(self) -> list[dict]:
         """Return the questions waiting for an answer (a page opened while one is waiting shows it).

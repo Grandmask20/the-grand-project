@@ -503,7 +503,10 @@ class MapImageMixin:
                         origin = tuple(float(v) for v in r["origin"])
                         names = [str(n) for n in r["names"]]
                     with self._lock:  # shown and followed up for the same atlas (a close between: CodeRabbit)
-                        if self.set_terrain(canvas, weight, origin, labels=(labels, names), gen=gen):
+                        # a Stop while it was being loaded counts too (it was put in anyway: GPT audit)
+                        if self._seams_stopped:
+                            self.events.log("Fix seams: stopped (its clean map was left out)", scope)
+                        elif self.set_terrain(canvas, weight, origin, labels=(labels, names), gen=gen):
                             self.events.log(f"Fix seams: clean map ready ({time.monotonic() - t0:.0f} s)", scope)
                             self._seams_ready(names)
                 elif self._seams_stopped:
@@ -534,14 +537,16 @@ class MapImageMixin:
         return p is not None and (p.poll() is None or getattr(self, "_seams_busy", False))
 
     def stop_seams(self) -> None:
-        """Stop a running Fix seams (its result is then dropped quietly)."""
+        """Stop a running Fix seams, whatever its phase: starting, building, or its clean map being loaded (only the
+        building phase was stopped before, the loaded map then went in: GPT audit). Its result is dropped."""
         with self._lock:
             if self._seams_starting:  # its process not registered yet: kept, honoured at registration (CodeRabbit)
                 self._seams_stopped = True
                 return
+            if self.seams_running():
+                self._seams_stopped = True  # (the watcher checks it again right before putting the map in)
         p = self._seams_proc
         if p is not None and p.poll() is None:
-            self._seams_stopped = True
             p.terminate()
             with contextlib.suppress(subprocess.TimeoutExpired):
                 p.wait(timeout=3)
