@@ -12,7 +12,7 @@ const base: UpdateStatus = {
 	why: "",
 	auto: true,
 	checked: null,
-	wait: 0,
+	next: 0,
 	state: "idle",
 	latest: null,
 	available: false,
@@ -39,7 +39,7 @@ describe("UpdateButton", () => {
 		expect(pillOf({ ...base, can: false, channel: "internal", release: null }).label).toBe("Check update");
 	});
 
-	it("a click checks GitHub and shows the box; a newer release can be put in place", async () => {
+	it("the pill opens the box, Check now asks GitHub; a newer release can be put in place", async () => {
 		const found = { ...base, latest: latest("1.4"), available: true, checked: 1 };
 		const { user, calls } = renderWithApp(<UpdateButton />, {
 			"GET /api/update": base,
@@ -47,6 +47,8 @@ describe("UpdateButton", () => {
 			"POST /api/update/install": { ...found, state: "downloading" },
 		});
 		await user.click(await screen.findByRole("button", { name: /Check update.*1\.3/i }));
+		expect(calls.some((c) => c.path === "/api/update/check")).toBe(false); // (the pill only opens the box: user)
+		await user.click(screen.getByRole("button", { name: "Check now" }));
 		expect(calls.some((c) => c.path === "/api/update/check")).toBe(true);
 		expect(await screen.findByText("The Grand Project 1.4 is out.")).toBeInTheDocument();
 		expect(screen.getByText("What's new: routes")).toBeInTheDocument();
@@ -84,10 +86,14 @@ describe("UpdateButton", () => {
 
 	it("Check again waits out the minute between checks (GitHub's limit: quick clicks used it up, user)", async () => {
 		const { user, calls } = renderWithApp(<UpdateButton />, {
-			"GET /api/update": { ...base, latest: latest("1.3"), wait: 42 },
+			"GET /api/update": { ...base, latest: latest("1.3"), next: Date.now() / 1000 + 41.5 },
 		});
 		await user.click(await screen.findByRole("button", { name: /Up to date/i }));
 		expect(screen.getByRole("button", { name: "Check again in 42 s" })).toBeDisabled();
-		expect(calls.some((c) => c.path === "/api/update/check")).toBe(false); // (the box opened: no check either)
+		expect(calls.some((c) => c.path === "/api/update/check")).toBe(false);
+		// closed and opened again: the same moment, not a new minute (it started again at 60: user)
+		await user.keyboard("{Escape}");
+		await user.click(screen.getByRole("button", { name: /Up to date/i }));
+		expect(screen.getByRole("button", { name: /Check again in (41|42) s/ })).toBeDisabled();
 	});
 });

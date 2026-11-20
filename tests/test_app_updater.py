@@ -64,7 +64,7 @@ def test_a_newer_release_is_found_and_said(installed):
     assert st["available"] and st["release"] == "1.3" and st["latest"]["release"] == "1.4" and st["can"]
     assert any("The Grand Project 1.4 is out (you have 1.3)" in line for line in s.events.log_lines)
     s.check_update(background=False, fetch=github("1.3"))  # (within a minute: not asked, the last answer stands)
-    assert s.update_status()["available"] and s.update_status()["wait"] > 0
+    assert s.update_status()["available"] and s.update_status()["next"] > time.time()
     s._update["asked"] -= K.UPDATE_CHECK_GAP
     s.check_update(background=False, fetch=github("1.3"))
     assert not s.update_status()["available"]
@@ -196,7 +196,7 @@ def test_quick_checks_ask_github_once_a_minute(installed):
 
     for _ in range(5):
         s.check_update(background=False, fetch=counting)
-    assert len(asked) == 1 and 0 < s.update_status()["wait"] <= K.UPDATE_CHECK_GAP
+    assert len(asked) == 1 and 0 < s.update_status()["next"] - time.time() <= K.UPDATE_CHECK_GAP
 
 
 def test_github_s_used_up_limit_is_said_with_when():

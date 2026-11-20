@@ -13,8 +13,8 @@ export interface UpdateStatus {
 	auto: boolean;
 	/** When GitHub was last asked (s since 1970), or null. */
 	checked: number | null;
-	/** Seconds before GitHub is asked again (it's asked at most once a minute: its limit). */
-	wait: number;
+	/** When GitHub may be asked again (s since 1970; 0: now): at most once a minute, its limit. */
+	next: number;
 	state: "idle" | "checking" | "downloading" | "restarting" | "error";
 	latest: { release: string; name: string; notes: string; url: string; published: string } | null;
 	/** The latest release is newer than this one. */

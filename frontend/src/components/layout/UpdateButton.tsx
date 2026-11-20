@@ -55,11 +55,8 @@ export function UpdateButton() {
 			<button
 				type="button"
 				className="flex shrink-0 items-center overflow-hidden rounded-full border text-xs font-semibold tracking-wide whitespace-nowrap uppercase"
-				title={u?.can === false ? u.why : "Check for an update"}
-				onClick={() => {
-					setOpen(true);
-					if (u?.can && !u.available && u.state !== "checking" && !u.wait) check();
-				}}
+				title={u?.can === false ? u.why : "The update box"}
+				onClick={() => setOpen(true)} // (it opens the box; checking is its button's: user)
 			>
 				<span className="bg-muted px-2 py-0.5 text-foreground">{pill.label}</span>
 				<span
@@ -86,7 +83,7 @@ function UpdateBox({
 }) {
 	const app = useAppClient();
 	const busy = u.state === "checking" || u.state === "downloading" || u.state === "restarting";
-	const left = useCountdown(u.wait);
+	const left = useCountdown(u.next);
 	const mb = (n: number) => `${(n / 1e6).toFixed(1)} MB`;
 	return (
 		<Dialog open onOpenChange={(o) => !o && onClose()}>
@@ -151,8 +148,8 @@ function UpdateBox({
 				<DialogFooter>
 					{u.can && (
 						// once a minute at most (GitHub answers 60 checks an hour per address: user, quick clicks)
-						<Button variant="outline" disabled={busy || left > 0} onClick={onCheck}>
-							{left > 0 ? `Check again in ${left} s` : "Check again"}
+						<Button variant={u.latest ? "outline" : "default"} disabled={busy || left > 0} onClick={onCheck}>
+							{left > 0 ? `Check again in ${left} s` : u.latest ? "Check again" : "Check now"}
 						</Button>
 					)}
 					{u.available && (
@@ -169,14 +166,17 @@ function UpdateBox({
 	);
 }
 
-/** Seconds left of a wait the app gave, counting down each second (from the last answer). */
-function useCountdown(seconds: number): number {
-	const [left, setLeft] = useState(seconds);
+/** Whole seconds left until a moment the app gave (s since 1970; 0: none), counting down each second: to the same
+ * moment however often the box is opened (it started again from 60 each time: user). */
+function useCountdown(until: number): number {
+	const leftNow = () => Math.max(0, Math.ceil(until - Date.now() / 1000));
+	const [left, setLeft] = useState(leftNow);
 	useEffect(() => {
-		setLeft(seconds);
-		if (seconds <= 0) return;
-		const t = setInterval(() => setLeft((n) => (n > 1 ? n - 1 : 0)), 1000);
+		const tick = () => setLeft(Math.max(0, Math.ceil(until - Date.now() / 1000)));
+		tick();
+		if (until <= Date.now() / 1000) return;
+		const t = setInterval(tick, 1000);
 		return () => clearInterval(t);
-	}, [seconds]);
+	}, [until]);
 	return left;
 }

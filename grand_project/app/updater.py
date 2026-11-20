@@ -167,9 +167,10 @@ class UpdatesMixin:
         """What the page shows for the update (the status bar's version and its box).
 
         Returns:
-            {"channel", "release", "program", "can", "why", "auto", "checked", "wait", "state", "latest",
+            {"channel", "release", "program", "can", "why", "auto", "checked", "next", "state", "latest",
             "available", "error", "got", "size", "just"}; state is idle / checking / downloading / restarting /
-            error; wait: seconds before GitHub is asked again (UPDATE_CHECK_GAP).
+            error; next: when GitHub may be asked again (s since 1970; 0: now), a time and not a count of seconds,
+            so a page that opens the box later counts down to the same moment (user: it started again at 60).
         """
         u = self._update_state()
         installed = rm.read(rc_paths.ROOT)
@@ -185,7 +186,7 @@ class UpdatesMixin:
             "why": why,
             "auto": bool(self.settings.get("update_auto", True)),
             "checked": self.settings.get("update_checked"),
-            "wait": max(0, round(u.get("asked", -1e9) + K.UPDATE_CHECK_GAP - time.monotonic())),
+            "next": self._next_check(),
             "state": u["state"],
             "latest": latest,
             "available": newer,
@@ -194,6 +195,10 @@ class UpdatesMixin:
             "size": u["size"],
             "just": u["just"],
         }
+
+    def _next_check(self) -> float:
+        left = self._update_state().get("asked", -1e9) + K.UPDATE_CHECK_GAP - time.monotonic()
+        return round(time.time() + left, 1) if left > 0 else 0
 
     def _can_update(self, installed: dict | None) -> tuple[bool, str]:
         if rc_paths.CHANNEL != "release" or installed is None:
