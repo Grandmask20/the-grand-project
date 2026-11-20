@@ -12,6 +12,7 @@ const base: UpdateStatus = {
 	why: "",
 	auto: true,
 	checked: null,
+	wait: 0,
 	state: "idle",
 	latest: null,
 	available: false,
@@ -79,5 +80,14 @@ describe("UpdateButton", () => {
 		} finally {
 			vi.unstubAllGlobals();
 		}
+	});
+
+	it("Check again waits out the minute between checks (GitHub's limit: quick clicks used it up, user)", async () => {
+		const { user, calls } = renderWithApp(<UpdateButton />, {
+			"GET /api/update": { ...base, latest: latest("1.3"), wait: 42 },
+		});
+		await user.click(await screen.findByRole("button", { name: /Up to date/i }));
+		expect(screen.getByRole("button", { name: "Check again in 42 s" })).toBeDisabled();
+		expect(calls.some((c) => c.path === "/api/update/check")).toBe(false); // (the box opened: no check either)
 	});
 });

@@ -137,6 +137,9 @@ UPDATE_RELEASES_URL = os.environ.get(  # (another address only for trying an upd
 )
 UPDATE_AGENT = f"TheGrandProject/{VERSION}"  # the User-Agent GitHub asks for (the app's name only, nothing of yours)
 UPDATE_CHECK_EVERY = 24 * 3600.0  # s: the check at start runs at most once a day (user, as Path of Building)
+# s: GitHub is asked at most this often; in between the last answer stands. GitHub answers 60 checks an hour per
+# address without a sign-in, and quick clicks used that up (user: ~20 in 6 s; Path of Building waits ~30 s)
+UPDATE_CHECK_GAP = 60.0
 UPDATE_HTTP_WAIT = 30.0  # s: GitHub's answer / each part of the download, at most
 UPDATE_CHUNK = 256 * 1024  # bytes read at a time while downloading
 UPDATE_PROGRESS_EVERY = 0.25  # s: the download's progress goes to the page at most this often

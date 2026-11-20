@@ -9,6 +9,7 @@ import pytest
 
 from grand_project import paths as rc_paths
 from grand_project import release_manifest as rm
+from grand_project.app import constants as K
 from grand_project.app import updater
 from grand_project.app.session import AtlasSession
 
@@ -62,6 +63,9 @@ def test_a_newer_release_is_found_and_said(installed):
     st = s.update_status()
     assert st["available"] and st["release"] == "1.3" and st["latest"]["release"] == "1.4" and st["can"]
     assert any("The Grand Project 1.4 is out (you have 1.3)" in line for line in s.events.log_lines)
+    s.check_update(background=False, fetch=github("1.3"))  # (within a minute: not asked, the last answer stands)
+    assert s.update_status()["available"] and s.update_status()["wait"] > 0
+    s._update["asked"] -= K.UPDATE_CHECK_GAP
     s.check_update(background=False, fetch=github("1.3"))
     assert not s.update_status()["available"]
 
@@ -178,3 +182,26 @@ def _wait(cond, timeout=5.0):
     while time.monotonic() < end and not cond():
         time.sleep(0.02)
     assert cond()
+
+
+def test_quick_checks_ask_github_once_a_minute(installed):
+    # (user: ~20 checks in 6 s; GitHub answers 60 an hour per address)
+    s, _, _ = installed
+    asked = []
+    fetch = github("1.4")
+
+    def counting(url):
+        asked.append(url)
+        return fetch(url)
+
+    for _ in range(5):
+        s.check_update(background=False, fetch=counting)
+    assert len(asked) == 1 and 0 < s.update_status()["wait"] <= K.UPDATE_CHECK_GAP
+
+
+def test_github_s_used_up_limit_is_said_with_when():
+    reset = str(int(time.time()) + 600)
+    msg = updater.limit_message(403, {"X-RateLimit-Remaining": "0", "X-RateLimit-Reset": reset})
+    assert "limit" in msg and time.strftime("%H:%M", time.localtime(int(reset))) in msg
+    assert updater.limit_message(403, {"X-RateLimit-Remaining": "12"}) is None  # (another refusal)
+    assert updater.limit_message(404, {}) is None

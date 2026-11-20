@@ -20,6 +20,7 @@ import subprocess
 import sys
 import threading
 import time
+import urllib.error
 import urllib.request
 import zipfile
 from pathlib import Path
@@ -61,8 +62,25 @@ def latest_release(fetch=None) -> dict:
 
 def _get_json(url: str) -> dict:
     req = urllib.request.Request(url, headers={"User-Agent": K.UPDATE_AGENT, "Accept": "application/vnd.github+json"})
-    with urllib.request.urlopen(req, timeout=K.UPDATE_HTTP_WAIT) as r:  # noqa: S310 (a fixed https URL)
-        return json.loads(r.read().decode("utf-8"))
+    try:
+        with urllib.request.urlopen(req, timeout=K.UPDATE_HTTP_WAIT) as r:  # noqa: S310 (a fixed https URL)
+            return json.loads(r.read().decode("utf-8"))
+    except urllib.error.HTTPError as e:
+        raise OSError(limit_message(e.code, e.headers) or f"GitHub answered {e.code}") from e
+
+
+def limit_message(code: int, headers) -> str | None:
+    """What to say when GitHub's limit of checks is used up (403 / 429 with no checks left), else None.
+
+    Args:
+        code: The HTTP status.
+        headers: The answer's headers (X-RateLimit-Remaining, X-RateLimit-Reset: when it starts again, s since 1970).
+    """
+    if code not in (403, 429) or str(headers.get("X-RateLimit-Remaining", "")) != "0":
+        return None
+    reset = headers.get("X-RateLimit-Reset")
+    at = time.strftime("%H:%M", time.localtime(int(reset))) if str(reset or "").isdigit() else "within the hour"
+    return f"GitHub's limit of update checks from your address is used up: it answers again at {at}"
 
 
 def unpack(zip_path: Path, dest: Path) -> dict:
@@ -149,8 +167,9 @@ class UpdatesMixin:
         """What the page shows for the update (the status bar's version and its box).
 
         Returns:
-            {"channel", "release", "program", "can", "why", "auto", "checked", "state", "latest", "available",
-            "error", "got", "size", "just"}; state is idle / checking / downloading / restarting / error.
+            {"channel", "release", "program", "can", "why", "auto", "checked", "wait", "state", "latest",
+            "available", "error", "got", "size", "just"}; state is idle / checking / downloading / restarting /
+            error; wait: seconds before GitHub is asked again (UPDATE_CHECK_GAP).
         """
         u = self._update_state()
         installed = rm.read(rc_paths.ROOT)
@@ -166,6 +185,7 @@ class UpdatesMixin:
             "why": why,
             "auto": bool(self.settings.get("update_auto", True)),
             "checked": self.settings.get("update_checked"),
+            "wait": max(0, round(u.get("asked", -1e9) + K.UPDATE_CHECK_GAP - time.monotonic())),
             "state": u["state"],
             "latest": latest,
             "available": newer,
@@ -193,7 +213,8 @@ class UpdatesMixin:
         self._publish_update()
 
     def check_update(self, background: bool = True, fetch=None) -> None:
-        """Ask GitHub for the latest release (once at a time).
+        """Ask GitHub for the latest release (once at a time, and at most once per UPDATE_CHECK_GAP: in between the
+        last answer stands).
 
         Args:
             background: On a thread of its own (the page's button); False runs it here (tests).
@@ -203,7 +224,10 @@ class UpdatesMixin:
         with self._update_lock:
             if u["state"] in ("checking", "downloading", "restarting"):
                 return
-            u.update(state="checking", error=None)
+            if time.monotonic() - u.get("asked", -1e9) < K.UPDATE_CHECK_GAP:
+                self._publish_update()  # (the page learns how long to wait)
+                return
+            u.update(state="checking", error=None, asked=time.monotonic())
         self._publish_update()
 
         def run() -> None:

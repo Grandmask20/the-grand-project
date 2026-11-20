@@ -58,7 +58,7 @@ export function UpdateButton() {
 				title={u?.can === false ? u.why : "Check for an update"}
 				onClick={() => {
 					setOpen(true);
-					if (u?.can && !u.available && u.state !== "checking") check();
+					if (u?.can && !u.available && u.state !== "checking" && !u.wait) check();
 				}}
 			>
 				<span className="bg-muted px-2 py-0.5 text-foreground">{pill.label}</span>
@@ -86,6 +86,7 @@ function UpdateBox({
 }) {
 	const app = useAppClient();
 	const busy = u.state === "checking" || u.state === "downloading" || u.state === "restarting";
+	const left = useCountdown(u.wait);
 	const mb = (n: number) => `${(n / 1e6).toFixed(1)} MB`;
 	return (
 		<Dialog open onOpenChange={(o) => !o && onClose()}>
@@ -149,8 +150,9 @@ function UpdateBox({
 				</div>
 				<DialogFooter>
 					{u.can && (
-						<Button variant="outline" disabled={busy} onClick={onCheck}>
-							Check again
+						// once a minute at most (GitHub answers 60 checks an hour per address: user, quick clicks)
+						<Button variant="outline" disabled={busy || left > 0} onClick={onCheck}>
+							{left > 0 ? `Check again in ${left} s` : "Check again"}
 						</Button>
 					)}
 					{u.available && (
@@ -165,4 +167,16 @@ function UpdateBox({
 			</DialogContent>
 		</Dialog>
 	);
+}
+
+/** Seconds left of a wait the app gave, counting down each second (from the last answer). */
+function useCountdown(seconds: number): number {
+	const [left, setLeft] = useState(seconds);
+	useEffect(() => {
+		setLeft(seconds);
+		if (seconds <= 0) return;
+		const t = setInterval(() => setLeft((n) => (n > 1 ? n - 1 : 0)), 1000);
+		return () => clearInterval(t);
+	}, [seconds]);
+	return left;
 }
