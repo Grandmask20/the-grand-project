@@ -359,37 +359,73 @@ class QueryMixin:
         return best
 
     # ------------------------------------------------------------------ Find
-    def _hit_rows(self, hits: list[tuple[str, int]], labels: list[str]) -> list[dict]:
-        """Turn hits into result rows: only near a city when that is ticked; ⌂ for icons near a city, ★ for
-        items with a bookmark on them.
+    def _hit_rows(self, hits: list[tuple[str, int]], notes: list[str] | None = None) -> list[dict]:
+        """Turn hits into result rows, each as the page names it (the Selected window's title, with no counts), with
+        its picture, the map it is on and that map's icons (user: rows like "icon  text", a map with all its icons).
+        Only near a city when that is ticked.
 
         Args:
             hits: (kind, index) pairs.
-            labels: One text per hit.
+            notes: A line under each one's name (None: where it is).
 
         Returns:
-            [{"kind", "id", "label", "x", "y"}].
+            [{"kind", "id", "label", "x", "y", "icon", "map", "icons", "note", "bookmarked"}]: "icon" the raw name
+            of its picture (None: the page's own: a map's art, a bookmark's sign), "icons" [{"name", "label"}].
         """
+        from .constants import PLACE_ICON
+
         near = self.ui_settings()["near_only"]
         nc = self.D.get("near_city", {})
         rows = []
-        for (kind, i), label in zip(hits, labels, strict=True):
+        for k, (kind, i) in enumerate(hits):
             v = self.item_node(kind, i)
             city = kind == "landmark" and "city" in str(self.V["landmarks"][i].get("kind", "")).lower()
             if near and not city and not self.near_city_text(v):
                 continue
+            x, y = self.item_pos(kind, i)
+            icons = self.V["nodes"][v].get("icons", []) if v is not None and kind != "bookmark" else []
+            icon = None
+            if kind == "node":
+                label = f"Map #{i}"  # (its icons follow it as pictures, named in their tooltips)
+            elif kind == "landmark":
+                label = self.landmark_name(i)
+                kind_of = self.V["landmarks"][i]["kind"]
+                icon = PLACE_ICON.get(label.rstrip("?")) or PLACE_ICON.get(kind_of)
+            elif kind == "icon":
+                ic = self.V["icons"][i]
+                label, icon = icon_label(ic), ic["name"]
+            else:
+                b = self._bookmark(i)
+                label = b["name"]
+            note = notes[k] if notes and notes[k] else ""
+            if not note:
+                if kind == "bookmark":
+                    note = bm_group(self._bookmark(i))
+                elif kind != "node" and v is not None:
+                    note = f"on map #{v}"
             t = nc.get(v)
             if t and kind == "icon":
-                label += f"   ⌂ {t[0]}" + ("" if t[1] == 0 else " +1")
-            x, y = self.item_pos(kind, i)
-            if kind != "bookmark" and self.bookmark_at(x, y) is not None:
-                label = "★ " + label
-            rows.append({"kind": kind, "id": i, "label": label, "x": x, "y": y})
+                note += f" · ⌂ {t[0]}" + ("" if t[1] == 0 else " +1")
+            rows.append(
+                {
+                    "kind": kind,
+                    "id": i,
+                    "label": label,
+                    "x": x,
+                    "y": y,
+                    "icon": icon,
+                    "map": v if kind != "bookmark" else None,
+                    "icons": [{"name": r, "label": icon_name(r)} for r in icons],
+                    "note": note,
+                    "bookmarked": kind != "bookmark" and self.bookmark_at(x, y) is not None,
+                }
+            )
         return rows
 
     def search(self, q: str) -> dict:
         """Search the atlas: "x, y" goes there; else bookmarks (name, group, note), landmarks, icons (name or alias),
-        potential city / stronghold maps, and "#<n>" for map n.
+        potential city / stronghold maps, and "#<n>" for map n. Loosely: words in any order, a typo, letters left
+        out (find_score); the best matches first.
 
         Args:
             q: The search text.
@@ -403,30 +439,28 @@ class QueryMixin:
         m = re.fullmatch(r"\s*(-?\d+(?:\.\d+)?)\s*[, ]\s*(-?\d+(?:\.\d+)?)\s*", q)
         if m:
             return {"goto": [float(m.group(1)), float(m.group(2))]}
-        hits, labels = [], []
+        m = re.fullmatch(r"#\s*(\d+)|map\s*#?\s*(\d+)", q)
+        if m:
+            n = int(m.group(1) or m.group(2))
+            return {"results": self._hit_rows([("node", n)]) if n < len(self.V["nodes"]) else []}
+        found: list[tuple[float, int, tuple[str, int], str]] = []  # (score, order, hit, note)
+
+        def add(score: float | None, hit: tuple[str, int], note: str = "") -> None:
+            if score is not None:
+                found.append((score, len(found), hit, note))
+
         for i, b in self.bookmarks_by_id():
-            if q in f"{b['name']} {bm_group(b)} {b.get('note', '')}".lower():
-                hits.append(("bookmark", i))
-                labels.append(f"[bookmark] {b['name']}  ({bm_group(b)})")
+            add(find_score(q, b["name"], f"{bm_group(b)} {b.get('note', '')}"), ("bookmark", i))
         for i, lm in enumerate(self.V["landmarks"]):
-            if q in self.landmark_name(i).lower() and not lm["status"].startswith("removed"):
-                hits.append(("landmark", i))
-                labels.append(f"{self.landmark_name(i)}  (seen {lm.get('n', 1)}x)")  # (one added by hand has no count)
+            if not lm["status"].startswith("removed"):
+                add(find_score(q, self.landmark_name(i)), ("landmark", i))
         for i, ic in enumerate(self.V["icons"]):
-            nice = icon_label(ic)
-            if q in nice.lower() or q in icon_aliases(ic["name"]):
-                hits.append(("icon", i))
-                labels.append(f"{nice}  (seen {ic['n']}x)")
-        if len(q) >= 4 and q in "potential city map potential stronghold map":
-            for v, (lab, st) in self.D.get("potential", {}).items():
-                if st and q in _pkind(lab).lower():
-                    hits.append(("node", v))
-                    labels.append(self.potential_text(v))
-        m = re.fullmatch(r"#(\d+)", q)
-        if m and int(m.group(1)) < len(self.V["nodes"]):
-            hits.append(("node", int(m.group(1))))
-            labels.append(f"Map #{m.group(1)}")
-        return {"results": self._hit_rows(hits, labels)}
+            add(find_score(q, icon_label(ic), icon_aliases(ic["name"])), ("icon", i))
+        for v, (lab, st) in self.D.get("potential", {}).items():
+            if st:
+                add(find_score(q, _pkind(lab)) if len(q) >= 4 else None, ("node", v), self.potential_text(v))
+        found.sort(key=lambda f: (-f[0], f[1]))
+        return {"results": self._hit_rows([f[2] for f in found], [f[3] for f in found])}
 
     def list_type(self, label: str) -> list[dict]:
         """List every map / place of one type (a type row clicked in Find).
@@ -437,29 +471,31 @@ class QueryMixin:
         Returns:
             Result rows.
         """
-        hits, labels = [], []
+        hits, notes = [], []
         D = self.D
         if label in POTENTIAL_TYPES:
             for v, (lab, st) in sorted(D.get("potential", {}).items(), key=lambda t: (t[1][0], t[1][1])):
                 if st and _pkind(lab) == label:
                     hits.append(("node", v))
-                    labels.append(self.potential_text(v))
+                    notes.append(self.potential_text(v))
         elif label.endswith(" city"):
             for i, (t, how) in D.get("city_type", {}).items():
                 if f"{t} city" == label:
                     hits.append(("landmark", i))
-                    labels.append(f"{self.landmark_name(i)}  ({'set by hand' if how == 'set' else how})")
+                    v = D.get("landmark_node", {}).get(i)
+                    where = f"on map #{v} · " if v is not None else ""
+                    notes.append(where + ("type set by hand" if how == "set" else f"type from its {how}"))
         elif label in D.get("place_types", []):
             for i, lm in enumerate(self.V["landmarks"]):
                 if lm["kind"] == label and not lm["status"].startswith("removed"):
                     hits.append(("landmark", i))
-                    labels.append(f"{lm['kind']}  (seen {lm['n']}x)")
+                    notes.append("")
         else:
             for i, ic in enumerate(self.V["icons"]):
                 if icon_label(ic) == label:
                     hits.append(("icon", i))
-                    labels.append(f"{label}  (seen {ic['n']}x)")
-        return self._hit_rows(hits, labels)
+                    notes.append("")
+        return self._hit_rows(hits, notes)
 
     def types(self) -> dict:
         """Return Find's type list: "Places" and "Map icons", with counts (only near a city when ticked), the
@@ -594,3 +630,72 @@ def _pkind(label: str) -> str:
         "Potential stronghold map" or "Potential city map".
     """
     return "Potential stronghold map" if label == "Breach stronghold" else "Potential city map"
+
+
+def _words(text: str) -> list[str]:
+    """The words of a text, lower case, without punctuation ("Map #12: Breach" -> map, 12, breach)."""
+    return re.findall(r"[a-z0-9]+", text.lower())
+
+
+def _close(a: str, b: str) -> bool:
+    """Whether two words are the same but for a typo or two (4+ letters: a short word must be right)."""
+    from difflib import SequenceMatcher
+
+    return len(a) >= 4 and SequenceMatcher(None, a, b).ratio() >= 0.8
+
+
+def find_score(q: str, name: str, more: str = "") -> float | None:
+    """How well Find's text matches a thing, loosely (user: the search was not fuzzy): None for no match, else higher
+    for better. In its name the whole text, then its words in any order (each the start of a word, or in one), then
+    words with a typo, then its letters in order close together ("abys dep" and "abydep" find "Abyssal Depths");
+    in its other words (aliases, a bookmark's group or note) the same, lower.
+
+    Args:
+        q: The search text, lower case.
+        name: The thing's name.
+        more: Its other words.
+
+    Returns:
+        The score, or None.
+    """
+    best = None
+    for text, weight in ((name, 0), (more, -15)):
+        t = text.lower()
+        if not t.strip():
+            continue
+        words = _words(t)
+        qw = _words(q)
+        if not qw:
+            return None
+        if t.strip() == q:
+            score = 110
+        elif q in t:
+            score = 100 if t.startswith(q) else 90
+        elif all(any(w.startswith(x) for w in words) for x in qw):
+            score = 80
+        elif all(any(x in w for w in words) for x in qw):
+            score = 70
+        elif all(any(w.startswith(x) or x in w or _close(x, w) for w in words) for x in qw):
+            score = 60
+        else:
+            score = _in_order(q.replace(" ", ""), "".join(words))
+        if score is not None and (best is None or score + weight > best):
+            best = score + weight
+    return best
+
+
+def _in_order(q: str, t: str) -> float | None:
+    """q's letters in t in order, close together (3+ letters, the span at most twice q's length): 40, or None."""
+    if len(q) < 3:
+        return None
+    start = t.find(q[0])
+    while start >= 0:
+        k, j = 0, start
+        while j < len(t) and k < len(q):
+            if t[j] == q[k]:
+                k += 1
+            j += 1
+        if k == len(q) and j - start <= 2 * len(q):
+            return 40.0
+        start = t.find(q[0], start + 1)
+    return None

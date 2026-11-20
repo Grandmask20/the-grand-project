@@ -5,7 +5,7 @@ import { useAppStore } from "@/store/AppStore";
 import { nodeInfo, state, types } from "@/test/Fixtures";
 import { renderWithApp, resetStore } from "@/test/RenderWithApp";
 
-const found = { results: [{ kind: "landmark", id: 2, label: "Vaal city (seen 3x)", x: 1, y: 2 }] };
+const found = { results: [{ kind: "landmark", id: 2, label: "Vaal city", x: 1, y: 2 }] };
 
 describe("FindTab", () => {
 	afterEach(resetStore);
@@ -14,7 +14,7 @@ describe("FindTab", () => {
 		const { user, calls } = renderWithApp(<FindTab />, { "GET /api/types": types, "GET /api/search": found });
 		await user.type(screen.getByLabelText("Find"), "vaal");
 		expect(await screen.findByText('1 match(es) for "vaal"')).toBeInTheDocument();
-		expect(screen.getByRole("button", { name: "Vaal city (seen 3x)" })).toBeInTheDocument();
+		expect(screen.getByRole("button", { name: "Vaal city" })).toBeInTheDocument();
 		expect(calls.filter((c) => c.path === "/api/search").map((c) => c.params)).toEqual([{ q: "vaal" }]); // not per key
 	});
 
@@ -69,7 +69,7 @@ describe("FindTab", () => {
 		});
 		const box = screen.getByLabelText("Find");
 		await user.type(box, "vaal");
-		await user.click(await screen.findByRole("button", { name: "Vaal city (seen 3x)" }));
+		await user.click(await screen.findByRole("button", { name: "Vaal city" }));
 		expect(screen.queryByRole("region", { name: "Results" })).toBeNull();
 		await user.click(box);
 		expect(screen.getByRole("region", { name: "Results" })).toBeInTheDocument();
@@ -80,7 +80,7 @@ describe("FindTab", () => {
 	it("↓ in the search goes to the first result", async () => {
 		const { user } = renderWithApp(<FindTab />, { "GET /api/types": types, "GET /api/search": found });
 		await user.type(screen.getByLabelText("Find"), "vaal");
-		const first = await screen.findByRole("button", { name: "Vaal city (seen 3x)" });
+		const first = await screen.findByRole("button", { name: "Vaal city" });
 		await user.keyboard("{ArrowDown}");
 		await waitFor(() => expect(first).toHaveFocus());
 	});

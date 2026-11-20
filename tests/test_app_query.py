@@ -43,6 +43,29 @@ def test_search_finds_bookmarks_landmarks_and_map_numbers(opened):
     assert [(r["kind"], r["id"], r["label"]) for r in s.search("#3")["results"]] == [("node", 3, "Map #3")]
     assert s.search("#99999")["results"] == []  # no such map
     assert s.search("nothing like this")["results"] == []
+    assert [r["id"] for r in s.search("map 3")["results"]] == [3]  # (as "#3")
+
+
+def test_search_rows_are_named_as_the_page_names_them(opened):
+    s, _path, _pts = opened
+    farm = s.search("farm")["results"][0]
+    assert (
+        farm["label"] == "farm <here>" and farm["note"] and farm["map"] is None
+    )  # (no "[bookmark]", its group under it)
+    vaal = s.search("vaal")["results"][0]
+    assert "seen" not in vaal["label"] and vaal["icon"]  # (its place picture)
+    assert all({"icon", "map", "icons", "note", "bookmarked"} <= r.keys() for r in s.search("a")["results"])
+
+
+def test_find_score_is_loose_and_ranks():
+    from grand_project.app.query import find_score
+
+    assert find_score("abyss", "Abyss") > find_score("abyss", "Abyssal Depths") > find_score("abyss", "", "abyss")
+    assert find_score("depths abys", "Abyssal Depths") is not None  # words in any order, each a word's start
+    assert find_score("abysal", "Abyssal Depths") is not None  # a typo
+    assert find_score("abydep", "Abyssal Depths") is not None  # letters in order
+    assert find_score("tower", "Abyssal Depths") is None
+    assert find_score("ab", "Lab") is not None and find_score("xb", "Lab") is None  # (short: as typed)
 
 
 def test_type_list_and_list_of_one_type(opened):

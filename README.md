@@ -110,7 +110,8 @@ A screenshot that might be placed wrong is shown on the map, see-through and out
   - Its sections fold (click a title). **Reset styles** puts everything back.
 - **Layers** (status line): Ground, Paths, Maps, Icons, Landmarks, Bookmarks, Names, Biomes, Recent additions, Removed, 3D models, Routes (on, saved only, off) and Debug marks, with the colour legend.
 - **Find tab:**
-  - Search by icon name, City / Hall / Tower, bookmark, `#map`, or `x, y` to go to a spot.
+  - Search by icon name, City / Hall / Tower, bookmark, `#map` (or `map 12`), or `x, y` to go to a spot. The search is loose: words in any order, a typo, letters left out (`abydep` finds Abyssal Depths); the best matches come first.
+  - The results drop down under the search: each with its picture, its name, where it is (its map, a bookmark's group), its map's icons and ★ when bookmarked. The pills under the search switch each kind of result on and off.
   - Tick types to show them; click a type's name to list (and ring) every one of them.
   - *Only what 2+ screenshots show*, *only maps with a ticked icon* and *only potential city maps* narrow the view.
 - **Screenshots** (the selection's window), or right-click → *Screenshots of this spot*, lists the source screenshots for a spot.

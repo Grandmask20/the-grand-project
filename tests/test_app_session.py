@@ -112,7 +112,18 @@ def test_find_details_and_clicks(session, tmp_path):
     hits = session.search("breach")["results"]
     assert any(r["kind"] == "icon" for r in hits) and any(r["kind"] == "landmark" for r in hits)
     assert session.search("220, 400") == {"goto": [220.0, 400.0]}
-    assert session.search("#12")["results"][0] == {"kind": "node", "id": 12, "label": "Map #12", "x": 440.0, "y": 200.0}
+    assert session.search("#12")["results"][0] == {
+        "kind": "node",
+        "id": 12,
+        "label": "Map #12",
+        "x": 440.0,
+        "y": 200.0,
+        "icon": None,
+        "map": 12,
+        "icons": [],
+        "note": "",
+        "bookmarked": False,
+    }
     assert len(session.list_type("Breach stronghold")) == 2
     info = session.info("landmark", 0)
     assert info["title"] == "Vaal city" and info["city_type"] == "Vaal"  # typed by hand

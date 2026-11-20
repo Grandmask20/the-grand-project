@@ -1,8 +1,57 @@
 import { useQueryClient } from "@tanstack/react-query";
+import { BookmarkIcon, CastleIcon, SplineIcon } from "lucide-react";
 import { type KeyboardEvent, useEffect, useRef } from "react";
+import mapNodeIcon from "@/assets/map_node_icon.webp";
+import { IconPicture } from "@/components/common/IconPicture";
 import { Button } from "@/components/ui/button";
+import type { ResultRow } from "@/domain/find/SearchResult";
 import { useAppClient } from "@/hooks/app/UseAppClient";
 import { useAppStore } from "@/store/AppStore";
+
+/** A row's tooltip: its name, where it is, its map's icons by name. */
+function rowTooltip(r: ResultRow): string {
+	const icons = [...new Set((r.icons ?? []).map((ic) => ic.label))].join(", ");
+	return [r.label, r.note, icons && `map icons: ${icons}`].filter(Boolean).join(" · ");
+}
+
+/** What a result is, as a picture: an icon's or a place's own, a map's art, or a sign (user: "icon  text"). */
+function RowPicture({ row }: { row: ResultRow }) {
+	const inner = row.icon ? (
+		<IconPicture name={row.icon} size={22} />
+	) : row.kind === "node" ? (
+		<img src={mapNodeIcon} alt="" width={22} height={22} />
+	) : row.kind === "bookmark" ? (
+		<BookmarkIcon className="size-4 text-gold" />
+	) : row.kind === "landmark" ? (
+		<CastleIcon className="size-4 text-gold" />
+	) : (
+		<SplineIcon className="size-4 text-gold" />
+	);
+	return <span className="flex size-6 shrink-0 items-center justify-center">{inner}</span>;
+}
+
+/** The icons of a result's map, on its right (user: a map lists all its icons); an icon's own is its picture, not
+ * here again. Their names are in the row's tooltip. */
+function MapIcons({ row }: { row: ResultRow }) {
+	// each icon once (a map with two of one icon shows it once)
+	const seen = new Set(row.kind === "icon" && row.icon ? [row.icon] : []);
+	const icons = (row.icons ?? []).filter((ic) => !seen.has(ic.name) && seen.add(ic.name));
+	if (!icons.length) return null;
+	return (
+		<span className="flex shrink-0 items-center gap-0.5">
+			{icons.slice(0, 5).map((ic) => (
+				<span key={ic.name} title={ic.label} aria-hidden>
+					<IconPicture name={ic.name} size={18} />
+				</span>
+			))}
+			{icons.length > 5 && (
+				<span className="text-xs text-muted-foreground" aria-hidden>
+					+{icons.length - 5}
+				</span>
+			)}
+		</span>
+	);
+}
 
 /**
  * Find's results: a list that drops down under the search, as the route's "to the nearest map with…" does (user).
@@ -76,7 +125,9 @@ export function ResultList({ onPick }: { onPick?: () => void }) {
 					<li key={`${r.kind}-${r.id}`}>
 						<button
 							type="button"
-							className="flex min-h-8 w-full items-center truncate rounded-sm px-2 py-1.5 text-left text-sm outline-none hover:bg-accent focus-visible:bg-accent"
+							aria-label={r.label}
+							title={rowTooltip(r)}
+							className="flex min-h-9 w-full items-center gap-2.5 rounded-sm px-2 py-1 text-left outline-none hover:bg-accent focus-visible:bg-accent"
 							onClick={async () => {
 								onPick?.();
 								flyTo(r.x, r.y, 1);
@@ -87,7 +138,15 @@ export function ResultList({ onPick }: { onPick?: () => void }) {
 								}
 							}}
 						>
-							{r.label}
+							<RowPicture row={r} />
+							<span className="min-w-0 flex-1">
+								<span className="block truncate text-sm">
+									{r.label}
+									{r.bookmarked && <span className="ml-1 text-gold">★</span>}
+								</span>
+								{r.note && <span className="block truncate text-xs text-muted-foreground">{r.note}</span>}
+							</span>
+							<MapIcons row={r} />
 						</button>
 					</li>
 				))}
