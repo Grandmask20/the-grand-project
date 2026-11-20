@@ -87,3 +87,15 @@ def test_the_state_is_made_from_one_atlas_and_stamped_with_it(tmp_path):
         srv.shutdown()
         srv.server_close()
         s.shutdown()
+
+
+def test_letting_go_frees_every_level_and_takes_them_back():
+    # (GPT audit: a question asked while the lock was held twice let go of one level only)
+    lock = AtlasLock(lambda: 1)
+    took = []
+    with lock, lock, lock.let_go():
+        t = threading.Thread(target=lambda: (lock.acquire(), took.append(1), lock.release()))
+        t.start()
+        t.join(2)
+        assert took == [1]  # (another thread got it while let go)
+    assert not lock._is_owned()  # (both levels taken back, then both let go by the with blocks)

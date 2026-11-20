@@ -445,14 +445,9 @@ class AddingMixin:
         # the session lock is let go while the question is open (the job holds it): the page's requests that need it
         # (new tiles, the ground just pasted) waited until the answer, minutes maybe. The job's atlas stays this
         # atlas: another can't be opened while it runs (working()).
-        try:
-            self._lock.release()
-        except RuntimeError:  # not held (a job run outside the lock)
+        # (all of its levels: AtlasLock.let_go; nothing to let go when it isn't held)
+        with self._lock.let_go():
             return self.events.ask(question, preview=preview)
-        try:
-            return self.events.ask(question, preview=preview)
-        finally:
-            self._lock.acquire()
 
     # ------------------------------------------------------------------ the worker
     def _tally(self) -> dict[str, int]:
