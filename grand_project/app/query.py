@@ -130,6 +130,11 @@ class QueryMixin:
         if kind not in KINDS or not self.item_valid(kind, i):
             raise ValueError("no such item")
         V, D = self.V, self.D
+        # a landmark standing on a map is that map, one item: its own click box lay over the map's, which could
+        # hardly be clicked, and the map's own could only make it a landmark (you). A removed one, or one apart
+        # from any map (a locked stronghold), stays an item of its own.
+        if kind == "landmark" and i in D.get("landmark_node", {}):
+            kind, i = "node", D["landmark_node"][i]
         lines: list[str] = []
         out: dict = {"kind": kind, "id": i}
         if kind == "node":
@@ -137,7 +142,10 @@ class QueryMixin:
             deg = [p for p in V["paths"] if i in (p["a"], p["b"])]
             multi = sum(p.get("seen_in", p["frames"]) >= 2 or p.get("both_ends", False) for p in deg)
             icons = ", ".join(icon_name(k) for k in n.get("icons", []))
-            out["title"] = f"Map #{i}" + (f": {icons}" if icons else "")
+            marks = [k for k, v in D.get("landmark_node", {}).items() if v == i]
+            # a map carrying a landmark is shown as that landmark (its lines below the map's)
+            name = self.landmark_name(marks[0]) if marks else ""
+            out["title"] = (f"{name} (map #{i})" if name else f"Map #{i}") + (f": {icons}" if icons else "")
             lines += [
                 f"found in {n['seen']} of {n['could']} screenshot(s) that show it",
                 f"{len(deg)} path(s), {multi} confirmed (traced from both ends or in 2+ shots)",
@@ -164,9 +172,12 @@ class QueryMixin:
                 lines.append(self.near_city_text(i))
             if n.get("origin") == "from icon":
                 lines.append("map base not detected; placed under its icon")
-            marks = [k for k, v in D.get("landmark_node", {}).items() if v == i]
             for k in marks:
-                lines.append(f"{self.landmark_name(k)} here")
+                lines += (
+                    [f"{self.landmark_name(k)}:"] + [f"  {t}" for t in self._landmark_lines(k)]
+                    if k == marks[0]
+                    else [f"{self.landmark_name(k)} here"]
+                )
             if marks:
                 out["landmark"] = marks[0]
                 # what's needed to change that landmark from its map: a click on a landmark selects its map, whose
@@ -204,30 +215,12 @@ class QueryMixin:
         elif kind == "landmark":
             lm = V["landmarks"][i]
             out["title"] = self.landmark_name(i)
-            n_seen = lm.get("n", 0)  # (a landmark added by hand has no counts)
-            lines += [
-                f"found in {n_seen} of {lm.get('could', n_seen)} screenshot(s)",
-                f"confidence {lm.get('conf', 1.0):.2f}, detected by {lm.get('source', 'you')}",
-            ]
+            lines += self._landmark_lines(i)
             v = D.get("landmark_node", {}).get(i)
-            if v is not None:
+            if v is not None:  # (not reached: a landmark on a map is shown as that map, above)
                 lines.append(f"its map: #{v}")
                 out["node"] = v
             ct = D.get("city_type", {}).get(i)
-            if ct:
-                lines.append(
-                    {
-                        "set": "type set by hand",
-                        "trio": "type from its trio: the cities next to it are the other two types",
-                        "look-alike": "type guessed by look; set it by hand if wrong",
-                    }.get(ct[1], ct[1])
-                )
-            if i in D.get("locked", ()):
-                lines.append("locked (hand badge): only its ground shows, no maps yet")
-            if lm.get("beam"):
-                lines.append(f"{lm['kind']} because: {lm['beam']}")
-            if lm["status"] != "kept":
-                lines.append(lm["status"])
             out.update(
                 landmark_kind=lm["kind"],
                 removed=lm["status"].startswith("removed"),
@@ -270,6 +263,31 @@ class QueryMixin:
         return out
 
     # ------------------------------------------------------------------ clicking
+    def _landmark_lines(self, i: int) -> list[str]:
+        """Return a landmark's detail lines: how it was found, its city type's source, why it is this kind."""
+        lm, D = self.V["landmarks"][i], self.D
+        n_seen = lm.get("n", 0)  # (a landmark added by hand has no counts)
+        lines = [
+            f"found in {n_seen} of {lm.get('could', n_seen)} screenshot(s)",
+            f"confidence {lm.get('conf', 1.0):.2f}, detected by {lm.get('source', 'you')}",
+        ]
+        ct = D.get("city_type", {}).get(i)
+        if ct:
+            lines.append(
+                {
+                    "set": "type set by hand",
+                    "trio": "type from its trio: the cities next to it are the other two types",
+                    "look-alike": "type guessed by look; set it by hand if wrong",
+                }.get(ct[1], ct[1])
+            )
+        if i in D.get("locked", ()):
+            lines.append("locked (hand badge): only its ground shows, no maps yet")
+        if lm.get("beam"):
+            lines.append(f"{lm['kind']} because: {lm['beam']}")
+        if lm["status"] != "kept":
+            lines.append(lm["status"])
+        return lines
+
     def pick(self, x: float, y: float, z: float, layers: dict | None = None) -> tuple[str, int] | None:
         """Find what is under a point: bookmark, then the nearest icon or landmark, then a map (clickable even when
         hidden), then a path, then anywhere inside a city / stronghold biome circle.
