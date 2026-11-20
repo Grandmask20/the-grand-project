@@ -74,7 +74,7 @@ export function Timeline({
 				/>
 			))}
 			<div
-				className="absolute top-0.5 h-6 w-2 -translate-x-1 rounded-sm border border-black bg-gold"
+				className="absolute top-0.5 h-6 w-2 -translate-x-1 rounded-sm border border-map bg-gold"
 				style={{ left: `${(Math.min(pos, n) / n) * 100}%` }}
 			/>
 		</div>

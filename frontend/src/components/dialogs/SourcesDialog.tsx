@@ -50,7 +50,7 @@ export function SourcesDialog() {
 								</li>
 							))}
 						</ul>
-						<div className="relative flex min-w-0 flex-1 items-center justify-center overflow-hidden rounded bg-black">
+						<div className="relative flex min-w-0 flex-1 items-center justify-center overflow-hidden rounded bg-map">
 							{shot && !shot.exists && <p className="text-muted-foreground">missing file: {shot.name}</p>}
 							{shot?.exists && (
 								<div className="relative max-h-full max-w-full" style={{ aspectRatio: `${shot.w} / ${shot.h}` }}>
@@ -60,7 +60,7 @@ export function SourcesDialog() {
 										className="h-full w-full object-contain"
 									/>
 									<div
-										className="absolute size-11 -translate-x-1/2 -translate-y-1/2 rounded-full border-2 border-yellow-300"
+										className="absolute size-11 -translate-x-1/2 -translate-y-1/2 rounded-full border-2 border-highlight"
 										style={{ left: `${(shot.px / shot.w) * 100}%`, top: `${(shot.py / shot.h) * 100}%` }}
 									/>
 								</div>

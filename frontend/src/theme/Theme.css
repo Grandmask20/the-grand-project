@@ -2,45 +2,85 @@
 @import "tw-animate-css";
 @import "maplibre-gl/dist/maplibre-gl.css";
 
-/* Dark, like the game's atlas: shadcn/ui components read the tokens below. */
+/*
+ * The page's look, in one place: change a value here and the whole page follows (PO). Every colour, the corners,
+ * the spacing, the type and the fonts the components use come from these variables; the components only name them
+ * (bg-card, text-gold, rounded-md, p-3, text-sm, font-mono…).
+ *
+ * The map's own drawing (paths, maps, icons, biomes) is in the View tab's settings, not here.
+ */
 :root {
 	color-scheme: dark;
+
+	/* --- type ------------------------------------------------------------------------------------------------- */
+	--font-body: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+	--font-code: ui-monospace, "Cascadia Mono", Menlo, Consolas, monospace;
+	/* every text size (text-xs … text-2xl) is this many times its usual size */
+	--text-scale: 1;
+
+	/* --- shape and room ---------------------------------------------------------------------------------------- */
+	/* corners: rounded-sm / md / lg / xl are this, minus or plus a little; pills and rings stay round */
 	--radius: 0.375rem;
+	/* the unit of every gap, padding, margin, width and height (p-3 = 3 units, h-8 = 8 units) */
+	--space: 0.25rem;
+	/* the shadow of what floats over the page (menus, the selection's window, the layers) */
+	--float-shadow: 0 12px 32px rgb(0 0 0 / 0.55);
 
-	--gold: #c8a45c;
-	--gold-deep: #8a6d33;
-
-	--background: #121316;
-	--foreground: #e7e4dc;
-	--card: #1a1c20;
+	/* --- colours: the page ------------------------------------------------------------------------------------- */
+	--background: #121316; /* the page */
+	--foreground: #e7e4dc; /* its text */
+	--card: #1a1c20; /* panels, bars, windows */
 	--card-foreground: #e7e4dc;
-	--popover: #1d1f24;
+	--popover: #1d1f24; /* menus */
 	--popover-foreground: #e7e4dc;
-	--primary: #c8a45c;
+	--muted: #22252b; /* quiet fills */
+	--muted-foreground: #9a968c; /* quiet text */
+	--accent: #2c3038; /* a row pointed at, a tab or switch on */
+	--accent-foreground: #f2efe6;
+	--border: #33363d; /* lines and frames */
+	--input: #3a3e46; /* the frames of fields */
+	--scrim: rgb(0 0 0 / 0.5); /* behind a dialog */
+
+	/* --- colours: meaning --------------------------------------------------------------------------------------- */
+	--gold: #c8a45c; /* the accent: what is on, headings, links */
+	--gold-deep: #8a6d33;
+	--primary: var(--gold); /* the main button */
 	--primary-foreground: #17130a;
 	--secondary: #262930;
 	--secondary-foreground: #e7e4dc;
-	--muted: #22252b;
-	--muted-foreground: #9a968c;
-	--accent: #2c3038;
-	--accent-foreground: #f2efe6;
-	--destructive: #d24b3e;
-	--success: #1f3a27;
-	--success-foreground: #a8e6b4;
+	--destructive: #d24b3e; /* deleting */
+	--destructive-foreground: #ffffff;
+	--success: #1f3a27; /* done (a fill) */
+	--success-foreground: #a8e6b4; /* done (a mark: added, run) */
 	--warning: #3d321a;
 	--warning-foreground: #f0d48a;
-	--border: #33363d;
-	--input: #3a3e46;
-	--ring: #c8a45c;
+	--ok: #a3e635; /* the version pill: up to date */
+	--ok-foreground: #0b0d10;
+	--ring: var(--gold); /* the keyboard's focus */
+
+	/* --- colours: over the map ---------------------------------------------------------------------------------- */
+	--map: #000000; /* behind the map, and behind the View tab's previews */
+	--route: #7cff6b; /* a route tracked: its bar, its sign, your marker */
+	--selection: #7dd3fc; /* the ring of what is selected */
+	--highlight: #fde047; /* a spot marked on a screenshot */
+	--map-label: rgb(10 11 13 / 0.72); /* behind the map's names */
 }
 
 @theme inline {
-	--font-sans: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
-	--font-mono: ui-monospace, "Cascadia Mono", Menlo, Consolas, monospace;
+	--font-sans: var(--font-body);
+	--font-mono: var(--font-code);
+	--spacing: var(--space);
 	--radius-sm: calc(var(--radius) - 2px);
 	--radius-md: var(--radius);
 	--radius-lg: calc(var(--radius) + 2px);
 	--radius-xl: calc(var(--radius) + 4px);
+	--shadow-float: var(--float-shadow);
+	--text-xs: calc(0.75rem * var(--text-scale));
+	--text-sm: calc(0.875rem * var(--text-scale));
+	--text-base: calc(1rem * var(--text-scale));
+	--text-lg: calc(1.125rem * var(--text-scale));
+	--text-xl: calc(1.25rem * var(--text-scale));
+	--text-2xl: calc(1.5rem * var(--text-scale));
 
 	--color-gold: var(--gold);
 	--color-gold-deep: var(--gold-deep);
@@ -59,13 +99,21 @@
 	--color-accent: var(--accent);
 	--color-accent-foreground: var(--accent-foreground);
 	--color-destructive: var(--destructive);
+	--color-destructive-foreground: var(--destructive-foreground);
 	--color-success: var(--success);
 	--color-success-foreground: var(--success-foreground);
 	--color-warning: var(--warning);
 	--color-warning-foreground: var(--warning-foreground);
+	--color-ok: var(--ok);
+	--color-ok-foreground: var(--ok-foreground);
 	--color-border: var(--border);
 	--color-input: var(--input);
 	--color-ring: var(--ring);
+	--color-scrim: var(--scrim);
+	--color-map: var(--map);
+	--color-route: var(--route);
+	--color-selection: var(--selection);
+	--color-highlight: var(--highlight);
 }
 
 @layer base {
@@ -78,37 +126,17 @@
 		@apply h-full;
 	}
 	body {
-		@apply bg-background text-foreground antialiased overflow-hidden text-sm;
+		@apply bg-background font-sans text-foreground antialiased overflow-hidden text-sm;
 	}
 }
 
-/* MapLibre's controls and popups, dark */
-.maplibregl-ctrl-group {
-	background: var(--card) !important;
-	border: 1px solid var(--border);
-}
-.maplibregl-ctrl-group button + button {
-	border-top-color: var(--border) !important;
-}
-.maplibregl-ctrl button .maplibregl-ctrl-icon {
-	filter: invert(0.9);
-}
-.maplibregl-ctrl button.grand-ctrl {
-	color: var(--foreground);
-	font-weight: 700;
-	font-size: 11px;
-}
-.maplibregl-ctrl button.grand-ctrl.on {
-	color: var(--gold);
-}
-
 .player-marker {
-	width: 22px;
-	height: 22px;
+	width: calc(var(--space) * 5.5);
+	height: calc(var(--space) * 5.5);
 	border-radius: 50%;
-	background: #7cff6b;
-	border: 3px solid #0b0d10;
-	box-shadow: 0 0 0 2px #7cff6b, 0 0 14px #7cff6b;
+	background: var(--route);
+	border: 3px solid var(--map);
+	box-shadow: 0 0 0 2px var(--route), 0 0 14px var(--route);
 }
 
 .map-label {
@@ -118,10 +146,10 @@
 	overflow: hidden;
 	text-overflow: ellipsis;
 	text-align: center;
-	font-size: 11px;
+	font-size: calc(11px * var(--text-scale));
 	line-height: 16px;
 	padding: 0 4px;
-	border-radius: 3px;
-	background: rgb(10 11 13 / 0.72);
+	border-radius: calc(var(--radius) / 2);
+	background: var(--map-label);
 	text-shadow: 0 1px 1px #000;
 }

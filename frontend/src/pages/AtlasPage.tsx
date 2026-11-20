@@ -61,7 +61,7 @@ export function AtlasPage() {
 			<div className={`flex min-h-0 flex-1 ${s.settings.ui.side === "right" ? "flex-row-reverse" : ""}`}>
 				<SidePanel />
 				<main
-					className="flex min-w-0 flex-1 flex-col bg-black"
+					className="flex min-w-0 flex-1 flex-col bg-map"
 					onDragOver={(e) => {
 						e.preventDefault();
 						setDragging(true);
@@ -102,7 +102,7 @@ export function AtlasPage() {
 						)}
 						<ProgressBox text={s.progress} />
 						{dragging && (
-							<div className="pointer-events-none absolute inset-3 z-30 flex items-center justify-center rounded-lg border-2 border-dashed border-gold bg-black/40 text-gold">
+							<div className="pointer-events-none absolute inset-3 z-30 flex items-center justify-center rounded-lg border-2 border-dashed border-gold bg-scrim text-gold">
 								Drop screenshots: one is placed by hand, several are added
 							</div>
 						)}

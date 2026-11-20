@@ -16,7 +16,7 @@ export function PathPreview({ st, meta }: { st: Style; meta: Meta }) {
 	const cap = st.path_style === "dotted" ? "round" : "butt";
 	const sw = st.path_style === "dotted" ? 1.6 * w : w;
 	return (
-		<svg viewBox="0 0 240 44" className="h-11 w-full rounded border bg-black" aria-label="Path style preview">
+		<svg viewBox="0 0 240 44" className="h-11 w-full rounded border bg-map" aria-label="Path style preview">
 			<polyline
 				points="12,30 70,14 128,26"
 				fill="none"
@@ -55,7 +55,7 @@ export function MapPreview({ st, meta }: { st: Style; meta: Meta }) {
 	// a few map nodes: one with each icon colour fill (bordered shows the icon colour inside)
 	const fills = solid ? [colour, colour, colour] : ["#c84040", "#4aa0e0", meta.colours.no_icon];
 	return (
-		<svg viewBox="0 0 240 44" className="h-11 w-full rounded border bg-black" aria-label="Map style preview">
+		<svg viewBox="0 0 240 44" className="h-11 w-full rounded border bg-map" aria-label="Map style preview">
 			{fills.map((f, k) => {
 				const cx = 60 + k * 60;
 				if (st.map_style === "hidden") return null;
@@ -108,7 +108,7 @@ export function Path3DPreview({ st, meta }: { st: Style; meta: Meta }) {
 	});
 	let along = 0; // length so far, at the near scale: the dashes run on along the path
 	return (
-		<svg viewBox="0 0 240 44" className="h-11 w-full rounded border bg-black" aria-label="3D path preview">
+		<svg viewBox="0 0 240 44" className="h-11 w-full rounded border bg-map" aria-label="3D path preview">
 			<polyline
 				points="14,32 54,14 94,30 132,16"
 				fill="none"
@@ -160,7 +160,7 @@ export function IconPreview({ style, size }: { style: string; size: number }) {
 	const px = Math.round(26 * size);
 	return (
 		<div
-			className="flex w-full items-center justify-center gap-2 overflow-hidden rounded border bg-black"
+			className="flex w-full items-center justify-center gap-2 overflow-hidden rounded border bg-map"
 			style={{ height: Math.max(44, px + 12) }}
 			role="img"
 			aria-label="Icon style preview"

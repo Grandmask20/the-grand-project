@@ -79,7 +79,7 @@ export function LayersPopover() {
 				<section
 					role="dialog"
 					aria-label="Show on the map"
-					className="@container absolute right-0 bottom-full z-40 mb-2 w-80 rounded-md border bg-card p-3 font-sans shadow-lg"
+					className="@container absolute right-0 bottom-full z-40 mb-2 w-80 rounded-md border bg-card p-3 font-sans shadow-float"
 				>
 					<h3 className="mb-2 text-xs font-semibold tracking-wide text-gold uppercase">Show on the map</h3>
 					<div className="flex flex-wrap gap-1.5">
@@ -119,7 +119,7 @@ export function LayersPopover() {
 					</div>
 					<div className="mt-3 flex flex-wrap gap-x-3 gap-y-0.5 border-t pt-2">
 						{legend.map(([label, colour]) => (
-							<span key={label} className="flex items-center gap-1 text-[11px] text-muted-foreground">
+							<span key={label} className="flex items-center gap-1 text-xs text-muted-foreground">
 								<span className="size-2.5 rounded-full" style={{ background: colour }} />
 								{label}
 							</span>

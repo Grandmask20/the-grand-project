@@ -46,7 +46,7 @@ export function SelectedPopup({ map, geo }: { map: MapLibreMap; geo: Geo }) {
 		>
 			<section
 				aria-label="Selected"
-				className="pointer-events-auto relative w-[26rem] rounded-md border bg-card p-4 text-sm shadow-xl"
+				className="pointer-events-auto relative w-[26rem] rounded-md border bg-card p-4 text-sm shadow-float"
 			>
 				<div className="mb-3 flex items-center justify-between">
 					<h2 className="text-base font-semibold">Selected</h2>

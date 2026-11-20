@@ -108,7 +108,7 @@ export function RouteTab() {
 									>
 										<span
 											className={cn(
-												"flex size-5 shrink-0 items-center justify-center rounded-full text-[10px] font-semibold",
+												"flex size-5 shrink-0 items-center justify-center rounded-full text-xs font-semibold",
 												here
 													? "bg-gold text-background"
 													: run
@@ -123,7 +123,7 @@ export function RouteTab() {
 											{k === 0 && <span className="text-muted-foreground"> · start</span>}
 										</span>
 										{isNext && (
-											<span className="rounded bg-accent px-1.5 text-[10px] font-semibold text-gold">next</span>
+											<span className="rounded bg-accent px-1.5 text-xs font-semibold text-gold">next</span>
 										)}
 										{what && <span className="max-w-32 truncate text-xs text-muted-foreground">{what}</span>}
 									</button>

@@ -158,9 +158,9 @@ export function AutoAddTab() {
 										.catch(fail)
 								}
 							>
-								<CheckIcon className="size-3.5 shrink-0 text-green-400" aria-hidden />
+								<CheckIcon className="size-3.5 shrink-0 text-success-foreground" aria-hidden />
 								<span className="flex-1 truncate">{name}</span>
-								{k === 0 && <span className="text-[10px] font-semibold text-gold">NEWEST</span>}
+								{k === 0 && <span className="text-xs font-semibold text-gold">NEWEST</span>}
 							</button>
 						</li>
 					))}

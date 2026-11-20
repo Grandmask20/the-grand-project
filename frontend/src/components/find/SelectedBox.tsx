@@ -41,14 +41,14 @@ function Badge({ info }: { info: ItemInfo }) {
 			<SplineIcon className="size-5 text-gold" />
 		);
 	return (
-		<span className="flex size-11 shrink-0 items-center justify-center rounded-full border-2 border-sky-300 bg-background">
+		<span className="flex size-11 shrink-0 items-center justify-center rounded-full border-2 border-selection bg-background">
 			{inner}
 		</span>
 	);
 }
 
 /** The selected map, path, landmark, icon or bookmark (in its window over the map, SelectedPopup; PO's canvas): what
- * it is, its map icons, and what can be done with it in one line, the rarer actions under its ⋯. */
+ * it is, its map icons, and what can be done with it, the rarer actions under More. */
 export function SelectedBox() {
 	const app = useAppClient();
 	const selected = useAppStore((s) => s.selected);
@@ -104,8 +104,8 @@ export function SelectedBox() {
 					))}
 				</div>
 			)}
-			{/* one line (PO): the actions used most, then the others under ⋯ */}
-			<div className="flex items-center gap-1.5">
+			{/* the actions, words and icons, on as many lines as they need (PO); the rarer ones under More */}
+			<div className="flex flex-wrap items-center gap-1.5">
 				{node !== null && (
 					<Button size="xs" onClick={() => routes.routeTo(node)}>
 						<RouteIcon />
@@ -126,18 +126,19 @@ export function SelectedBox() {
 					</Button>
 				)}
 				<Button
-					size="icon-sm"
+					size="xs"
 					variant="outline"
-					aria-label="Screenshots"
 					title="Screenshots of this spot"
 					onClick={() => showSources([info.x, info.y])}
 				>
 					<ImageIcon />
+					Screenshots
 				</Button>
 				<DropdownMenu>
 					<DropdownMenuTrigger asChild>
-						<Button size="icon-sm" variant="ghost" aria-label="More" title="More">
+						<Button size="xs" variant="ghost" title="Go to, delete">
 							<EllipsisIcon />
+							More
 						</Button>
 					</DropdownMenuTrigger>
 					<DropdownMenuContent align="end">

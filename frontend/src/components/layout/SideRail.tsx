@@ -63,7 +63,7 @@ export function SideRail({ side }: { side: "left" | "right" }) {
 						title={title}
 						onClick={() => pick(k)}
 						className={cn(
-							"flex h-14 w-14 flex-col items-center justify-center gap-1 rounded-md text-[11px] font-medium",
+							"flex h-14 w-14 flex-col items-center justify-center gap-1 rounded-md text-xs font-medium",
 							on ? "bg-accent text-gold" : "text-muted-foreground hover:bg-accent/60 hover:text-foreground",
 						)}
 					>

@@ -367,7 +367,7 @@ export function BookmarksTab() {
 										{/* a saved route: the path symbol, to tell it from a map's bookmark (user) */}
 										{route ? (
 											<RouteIcon
-												className={cn("size-4 shrink-0", tracking ? "text-green-400" : "text-gold")}
+												className={cn("size-4 shrink-0", tracking ? "text-route" : "text-gold")}
 												aria-label="Route"
 											/>
 										) : (
@@ -403,7 +403,7 @@ export function BookmarksTab() {
 											{tracking && s.route && (
 												<span className="mt-1 block h-1 rounded bg-border">
 													<span
-														className="block h-1 rounded bg-green-400"
+														className="block h-1 rounded bg-route"
 														style={{ width: `${(100 * (s.route.at ?? 0)) / Math.max(1, s.route.path.length - 1)}%` }}
 													/>
 												</span>

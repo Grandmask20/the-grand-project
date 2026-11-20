@@ -66,7 +66,10 @@ export function UpdateButton() {
 			>
 				<span className="bg-muted px-2 py-0.5 text-foreground">{pill.label}</span>
 				<span
-					className={cn("rounded-full px-2 py-0.5 tabular-nums", pill.ok ? "bg-lime-400 text-black" : "text-red-400")}
+					className={cn(
+						"rounded-full px-2 py-0.5 tabular-nums",
+						pill.ok ? "bg-ok text-ok-foreground" : "text-destructive",
+					)}
 				>
 					{shown}
 				</span>
@@ -105,7 +108,7 @@ function UpdateBox({
 					{u.state === "checking" && <p className="text-muted-foreground">Asking GitHub for the latest release…</p>}
 					{u.state === "error" && u.error && <p className="text-destructive">{u.error}</p>}
 					{u.can && u.latest && !u.available && u.state === "idle" && (
-						<p className="text-lime-400">You have the latest release ({u.latest.name}).</p>
+						<p className="text-ok">You have the latest release ({u.latest.name}).</p>
 					)}
 					{u.available && u.latest && (
 						<>
@@ -132,7 +135,7 @@ function UpdateBox({
 						<p className="text-gold">Putting the update in place: the app restarts, and this page reloads by itself.</p>
 					)}
 					{u.just && (
-						<p className={u.just.ok ? "text-lime-400" : "text-destructive"}>
+						<p className={u.just.ok ? "text-ok" : "text-destructive"}>
 							{u.just.ok
 								? `Updated from release ${u.just.from} to ${u.just.to}.`
 								: `The update to ${u.just.to} failed, nothing changed: ${u.just.error}`}
