@@ -19,6 +19,9 @@ RF_DETR_DEVICE_ENV = "GRAND_PROJECT_RF_DETR_DEVICE"  # optional torch device ove
 # dynamic linker reads it only at process start), so it restarts at most once
 RF_DETR_CUDA_REEXEC_ENV = "GRAND_PROJECT_RF_DETR_CUDA_REEXEC"
 RF_DETR_DEFAULT_MODEL_DIR = rc_paths.ROOT / "runs" / "rf-detr-small" / "best"
+# the annotator's export (tools/detection_dataset_annotator) and the dataset loader (rf_detr.py) share these
+RF_DETR_MANIFEST_FORMAT = "the-grand-project-rf-detr-manifest"  # the manifest's "format"; other files are refused
+RF_DETR_SPLITS = ("train", "validation", "test")  # a screenshot's split (the Hugging Face split names)
 RF_DETR_SCORE_THRESHOLD = 0.35  # confidence: tuned as a safe starting point for the small fine-tuned checkpoint
 RF_DETR_MAX_TARGETS = 300  # objects/image: RF-DETR Small's default decoder query count; path dashes can exceed it
 RF_DETR_MAP_BOX_SHRINK = 0.9  # factor: user's rule, the map node box is 10% smaller per side than first set

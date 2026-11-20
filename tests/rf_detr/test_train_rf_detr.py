@@ -103,7 +103,7 @@ def _export(tmp_path: Path) -> Path:
         path = tmp_path / f"shot{index}.png"
         cv2.imwrite(str(path), shot)
         images.append({"image_id": index, "path": str(path), "width": 1920, "height": 1080, "split": split,
-                       "annotations": boxes})  # fmt: skip
+                       "reviewed": True, "annotations": boxes})  # fmt: skip
     manifest = tmp_path / "manifest.json"
     manifest.write_text(json.dumps({"format": "the-grand-project-rf-detr-manifest",
                                     "labels": LABELS, "images": images}))  # fmt: skip
@@ -149,6 +149,45 @@ def test_the_dataset_is_built_once_and_reused(tmp_path: Path, fakes) -> None:
         )
         == 0
     )
+    # an overwrite whose build fails (no validation screenshot) keeps the dataset there was
+    data = json.loads(manifest.read_text())
+    for image in data["images"]:
+        image["split"] = "train"
+    no_validation = tmp_path / "no_validation.json"
+    no_validation.write_text(json.dumps(data))
+    with pytest.raises(ValueError, match="validation"):
+        T.main(["--annotator-manifest", str(no_validation), "--output-dir", str(out), "--dataset-only",
+                "--overwrite-dataset"])  # fmt: skip
+    assert json.loads(meta.read_text())["validation_images"] == 2
+    assert not (out / "dataset.new").exists() and not (out / "dataset.previous").exists()
+
+
+def test_a_checkpoint_switch_never_loses_the_last_good_one(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """The new folder replaces the old one only once complete; a switch interrupted before (best.previous, no best)
+    keeps that one until the new one is in place; a switch that fails puts the old one back."""
+
+    def folder(name: str, text: str) -> Path:
+        path = tmp_path / name
+        path.mkdir()
+        (path / "weights").write_text(text)
+        return path
+
+    best, previous = tmp_path / "best", tmp_path / "best.previous"
+    folder("best.previous", "old")  # interrupted between the two renames: only the backup is left
+    T.swap_in(folder("best.new", "new"), best)
+    assert (best / "weights").read_text() == "new" and not previous.exists()
+
+    rename = Path.rename
+
+    def failing(self: Path, target):
+        if self.name == "best.new":
+            raise OSError("disk full")
+        return rename(self, target)
+
+    monkeypatch.setattr(Path, "rename", failing)
+    with pytest.raises(OSError, match="disk full"):
+        T.swap_in(folder("best.new", "newer"), best)
+    assert (best / "weights").read_text() == "new" and not previous.exists()  # put back
 
 
 def test_the_recipe_is_the_papers() -> None:
@@ -159,6 +198,8 @@ def test_the_recipe_is_the_papers() -> None:
         K.RF_DETR_EMA_DECAY,
     )
     assert args.patience == K.RF_DETR_PATIENCE and args.tiles_per_image == K.RF_DETR_TILES_PER_IMAGE
+    with pytest.raises(SystemExit):
+        T.parse_args(["--tiles-per-image", "0"])  # no tiles: an epoch would train on nothing
     T._validate_target_count(K.RF_DETR_MAX_TARGETS)
     with pytest.raises(ValueError, match="queries"):
         T._validate_target_count(K.RF_DETR_MAX_TARGETS + 1)
@@ -216,6 +257,17 @@ def test_gradients_accumulate_over_batches_before_each_step() -> None:
     assert loss > 0 and int(ema.n_averaged) == 3
     assert T.validation_loss(model, batches, torch.device("cpu"), amp=False) < loss  # it learned the toy target
 
+    class Misjudged(list):
+        """A loader whose length is only an estimate (the repeat-factor sampler draws fractions at random)."""
+
+        def __len__(self) -> int:
+            return 4
+
+    steps.clear()
+    T.train_epoch(model, Misjudged(batches), optimizer, torch.device("cpu"), amp=False, scaler=scaler, accumulate=2,
+                  ema=ema)  # fmt: skip
+    assert len(steps) == 3  # the fifth batch's gradients are still applied
+
 
 def test_each_epoch_draws_tiles_by_repeat_factor() -> None:
     sampler = T.RepeatFactorSampler([1.0, 2.0], per_image=2, seed=3)
@@ -244,3 +296,46 @@ def test_init_from_copies_class_rows_by_name(tmp_path: Path) -> None:
     assert torch.equal(weight[0], rows[0]) and torch.equal(weight[1], rows[0])
     assert torch.equal(weight[2], rows[1]) and torch.equal(weight[3], rows[2])
     assert torch.equal(weight[4], fresh) and bias[:4].tolist() == [10.0, 10.0, 11.0, 12.0]
+
+
+def test_init_from_starts_new_classes_fresh_when_the_class_count_is_the_same(tmp_path: Path) -> None:
+    """With as many classes as the earlier checkpoint, the loader puts its rows in place by id: a new class (at an old
+    class's id) must not start from that class's row, but from a fresh one."""
+    from safetensors.torch import save_file
+
+    old = tmp_path / "old"
+    old.mkdir()
+    (old / "labels.json").write_text(json.dumps({"0": "map_node", "1": "custom_a", "2": "icon"}))
+    rows = torch.arange(12, dtype=torch.float).reshape(3, 4)
+    save_file({"class_embed.weight": rows, "class_embed.bias": torch.tensor([10.0, 11.0, 12.0])},
+              str(old / "model.safetensors"))  # fmt: skip
+    model = FakeDetr(3)
+    with torch.no_grad():  # as loading the same-shaped checkpoint left it
+        model.class_embed.weight.copy_(rows)
+        model.class_embed.bias.copy_(torch.tensor([10.0, 11.0, 12.0]))
+    fresh = {"class_embed.weight": torch.full((3, 4), -1.0), "class_embed.bias": torch.full((3,), -4.6)}
+    assert T.remap_class_heads(model, old, {"0": "map_node", "1": "icon", "2": "custom_b"}, fresh) == 2
+    weight, bias = model.class_embed.weight.detach(), model.class_embed.bias.detach()
+    assert torch.equal(weight[0], rows[0]) and torch.equal(weight[1], rows[2])  # by name, not by id
+    assert torch.equal(weight[2], fresh["class_embed.weight"][2]) and bias.tolist() == pytest.approx([10, 12, -4.6])
+
+
+def test_the_real_loaders_load_a_saved_rf_detr(tmp_path: Path) -> None:
+    """The trainer's own loaders, not stand-ins, on a real RF-DETR saved offline: the installed Transformers knows
+    the rf_detr model type and its image processor (pyproject asks for the first release that does), the class head
+    gets one row per class, and a fresh model's class heads start from the prior bias."""
+    if not hasattr(transformers, "RfDetrConfig"):
+        pytest.fail(f"transformers {transformers.__version__} has no RF-DETR: the training extra needs >= 5.9")
+    saved = tmp_path / "rf-detr"
+    config = transformers.RfDetrConfig(num_labels=2)
+    transformers.AutoModelForObjectDetection.from_config(config).save_pretrained(saved)
+    transformers.RfDetrImageProcessor().save_pretrained(saved)
+    processor = T._processor(saved)
+    assert type(processor).__name__ == "RfDetrImageProcessor"
+    assert processor.size == {"height": K.RF_DETR_TILE, "width": K.RF_DETR_TILE}
+    model = T.load_model(saved, LABELS)
+    assert type(model).__name__ == "RfDetrForObjectDetection" and model.class_embed.out_features == len(LABELS)
+    assert model.config.id2label == {0: "map_node_grass", 1: "icon"}
+    fresh = T.fresh_class_heads(model)
+    assert fresh["class_embed.bias"].shape == (len(LABELS),)
+    assert fresh["class_embed.bias"].tolist() == pytest.approx([-4.59512] * len(LABELS), abs=1e-4)  # -log(99)

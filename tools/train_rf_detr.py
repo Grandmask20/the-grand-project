@@ -6,10 +6,17 @@ the annotator gave it (``tools/detection_dataset_annotator``). Build the dataset
 
     python -m tools.train_rf_detr --annotator-manifest DATASET/manifest.json --dataset-only
 
-Train on a GPU (``make train_rf_detr RF_DETR_ANNOTATOR_MANIFEST=...``), or go on from an earlier model:
+Train on a GPU (``make train_rf_detr RF_DETR_ANNOTATOR_MANIFEST=...``):
 
     python -m tools.train_rf_detr --annotator-manifest ... --output-dir runs/rf-detr-small
-    python -m tools.train_rf_detr --annotator-manifest ... --init-from runs/rf-detr-small/best
+
+Go on from an earlier model into a new output folder (the earlier one keeps its checkpoint and dataset), on a new
+export or on the data that model was trained on:
+
+    python -m tools.train_rf_detr --annotator-manifest NEW/manifest.json --output-dir runs/rf-detr-small-2 \
+        --init-from runs/rf-detr-small/best
+    python -m tools.train_rf_detr --reuse-dataset --dataset-dir runs/rf-detr-small/dataset \
+        --output-dir runs/rf-detr-small-2 --init-from runs/rf-detr-small/best
 
 What the model sees: native-scale tiles of the 1080p screenshots with the game HUD painted over
 (``grand_project.detect.rf_detr_tiles``): random tiles in training (scale jitter, tiles centred on rare classes,
@@ -23,7 +30,8 @@ accumulation. The best checkpoint is the EMA weights' best validation mean famil
 needs where objects are, not tight boxes); the test split is scored once, with the best checkpoint.
 
 ``--init-from`` copies each class's detector row from the earlier checkpoint by name: a class it had keeps its row, a
-class with a ``parent`` it had (a node biome class from ``map_node``) starts from that row, other classes start fresh.
+class with a ``parent`` it had (a node biome class from ``map_node``) starts from that row, other classes start fresh
+(even when the earlier checkpoint has as many classes, whose rows the loader would put in place by id).
 
 Training dependencies are optional: ``pip install -e '.[training]'``.
 """
@@ -144,26 +152,33 @@ def _loss(model, batch, device, amp: bool):
 
 
 def train_epoch(model, loader, optimizer, device, *, amp: bool, scaler, accumulate: int, ema) -> float:
-    """One training epoch: gradients accumulated over ``accumulate`` batches, clipped (``RF_DETR_GRAD_CLIP``), the
+    """One training epoch: gradients accumulated over ``accumulate`` batches (the epoch's last ones too, however many
+    the loader yields: the repeat-factor sampler's length is only its average), clipped (``RF_DETR_GRAD_CLIP``), the
     EMA updated after every optimizer step. Returns the mean loss."""
     import torch
 
+    def step() -> None:
+        scaler.unscale_(optimizer)
+        torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=K.RF_DETR_GRAD_CLIP)
+        scaler.step(optimizer)
+        scaler.update()
+        optimizer.zero_grad(set_to_none=True)
+        ema.update_parameters(model)
+
     model.train()
-    total, count = 0.0, 0
+    total, count, pending = 0.0, 0, 0
     optimizer.zero_grad(set_to_none=True)
-    batches = len(loader)
-    for step, batch in enumerate(loader, start=1):
+    for batch in loader:
         loss = _loss(model, batch, device, amp)
         scaler.scale(loss / accumulate).backward()
-        if step % accumulate == 0 or step == batches:
-            scaler.unscale_(optimizer)
-            torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=K.RF_DETR_GRAD_CLIP)
-            scaler.step(optimizer)
-            scaler.update()
-            optimizer.zero_grad(set_to_none=True)
-            ema.update_parameters(model)
+        pending += 1
+        if pending == accumulate:
+            step()
+            pending = 0
         total += float(loss.detach())
         count += 1
+    if pending:
+        step()
     return total / max(1, count)
 
 
@@ -220,8 +235,12 @@ def parameter_groups(model, *, learning_rate: float, weight_decay: float, layer_
     ]
 
 
-def remap_class_heads(model, init_dir: Path, label_map: dict[str, str]) -> int:
+def remap_class_heads(model, init_dir: Path, label_map: dict[str, str], fresh: dict[str, Any] | None = None) -> int:
     """Copy each class's rows of the earlier checkpoint's class heads into ``model`` by name (``warm_start_rows``).
+
+    A class with no row to copy takes its row from ``fresh`` (the class heads of a newly initialised model, by
+    parameter name): loading a checkpoint with as many classes fills every row by id, so a new class would otherwise
+    start from the row of whichever class had its id. Without ``fresh`` such rows are left as they are.
 
     Returns:
         How many classes took a row from the earlier checkpoint.
@@ -245,6 +264,8 @@ def remap_class_heads(model, init_dir: Path, label_map: dict[str, str]) -> int:
             for index, row in enumerate(rows):
                 if row is not None:
                     new[index].copy_(old[row].to(new.dtype))
+                elif fresh is not None and name in fresh:
+                    new[index].copy_(fresh[name][index].to(new.dtype))
     return sum(row is not None for row in rows)
 
 
@@ -286,23 +307,45 @@ def save_model(model, processor, output_dir: Path, label_map: dict[str, str]) ->
     (output_dir / "labels.json").write_text(json.dumps(label_map, indent=2) + "\n", encoding="utf-8")
 
 
-def replace_checkpoint(model, processor, best_dir: Path, label_map: dict[str, str]) -> None:
-    """Save a new best checkpoint beside the current one and switch them only once it is complete.
+def swap_in(staging: Path, target: Path) -> None:
+    """Put the complete folder ``staging`` at ``target``; the old ``target`` is kept as ``<target>.previous`` until the
+    new one is in place, so it can always be recovered.
 
-    A failed or interrupted save leaves the previous best in place; during the switch it is kept as
-    ``<best>.previous`` (deleted once the new one is in place), so it can always be recovered.
+    A ``<target>.previous`` without a ``target`` (a switch interrupted before) is the last good folder: it is kept
+    until the new one is in place. If the switch fails, the old folder is put back.
+    """
+    previous = target.with_name(f"{target.name}.previous")
+    if target.exists():
+        if previous.exists():
+            shutil.rmtree(previous)
+        target.rename(previous)
+    try:
+        staging.rename(target)
+    except BaseException:
+        if previous.exists() and not target.exists():
+            previous.rename(target)
+        raise
+    shutil.rmtree(previous, ignore_errors=True)
+
+
+def replace_checkpoint(model, processor, best_dir: Path, label_map: dict[str, str]) -> None:
+    """Save a new best checkpoint beside the current one and switch them only once it is complete (``swap_in``).
+
+    A failed or interrupted save or switch leaves the previous best in place (or as ``<best>.previous``).
     """
     staging = best_dir.with_name(f"{best_dir.name}.new")
-    previous = best_dir.with_name(f"{best_dir.name}.previous")
     if staging.exists():
         shutil.rmtree(staging)
     save_model(model, processor, staging, label_map)
-    if previous.exists():
-        shutil.rmtree(previous)
-    if best_dir.exists():
-        best_dir.rename(previous)
-    staging.rename(best_dir)
-    shutil.rmtree(previous, ignore_errors=True)
+    swap_in(staging, best_dir)
+
+
+def _positive_int(text: str) -> int:
+    """An argparse type: a whole number of at least 1."""
+    value = int(text)
+    if value < 1:
+        raise argparse.ArgumentTypeError(f"must be at least 1, not {value}")
+    return value
 
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
@@ -334,7 +377,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--layer-decay", type=float, default=K.RF_DETR_LAYER_DECAY)
     parser.add_argument("--ema-decay", type=float, default=K.RF_DETR_EMA_DECAY)
     parser.add_argument("--weight-decay", type=float, default=1e-4)
-    parser.add_argument("--tiles-per-image", type=int, default=K.RF_DETR_TILES_PER_IMAGE)
+    parser.add_argument("--tiles-per-image", type=_positive_int, default=K.RF_DETR_TILES_PER_IMAGE)
     parser.add_argument("--seed", type=int, default=1337)
     parser.add_argument("--workers", type=int, default=0)
     parser.add_argument("--device", default="auto", help="auto, cpu, cuda, or mps")
@@ -367,6 +410,28 @@ def _processor(model_name: str | Path):
     return processor
 
 
+def load_model(base: str | Path, label_map: dict[str, str]):
+    """The model to fine-tune: ``base`` (the pre-trained checkpoint or an earlier one) with a class head row for each
+    class of ``label_map`` (a head of another size starts fresh)."""
+    from transformers import AutoModelForObjectDetection
+
+    id2label = {int(index): name for index, name in label_map.items()}
+    label2id = {name: index for index, name in id2label.items()}
+    model = AutoModelForObjectDetection.from_pretrained(
+        base, id2label=id2label, label2id=label2id, num_labels=len(label_map), ignore_mismatched_sizes=True
+    )
+    model.config.id2label, model.config.label2id, model.config.num_labels = id2label, label2id, len(label_map)
+    return model
+
+
+def fresh_class_heads(model) -> dict[str, Any]:
+    """The class heads of a newly initialised model of ``model``'s configuration, by parameter name."""
+    from transformers import AutoModelForObjectDetection
+
+    fresh = AutoModelForObjectDetection.from_config(model.config)
+    return {name: param.detach().clone() for name, param in fresh.named_parameters() if "class_embed" in name}
+
+
 def _load_or_build_dataset(args: argparse.Namespace):
     """Build the Arrow dataset from the manifest or load a previously saved one, with its labels."""
     dataset_dir = args.dataset_dir or args.output_dir / "dataset"
@@ -386,7 +451,14 @@ def _load_or_build_dataset(args: argparse.Namespace):
     if args.overwrite_dataset and dataset_dir.exists():
         if dataset_dir.is_file():
             raise ValueError(f"dataset path is a file, not a directory: {dataset_dir}")
-        shutil.rmtree(dataset_dir)
+        # Built beside the old one and swapped in only when complete: a failed build (no validation screenshot, a
+        # full disk) keeps the old dataset. The returned dataset is in memory, so moving its folder is safe.
+        staging = dataset_dir.with_name(f"{dataset_dir.name}.new")
+        if staging.exists():
+            shutil.rmtree(staging)
+        dataset = build_dataset(records, label_map=label_map, output_dir=staging)
+        swap_in(staging, dataset_dir)
+        return dataset, label_map, dataset_dir
     dataset = build_dataset(records, label_map=label_map, output_dir=dataset_dir)
     return dataset, label_map, dataset_dir
 
@@ -409,14 +481,9 @@ def main(argv: list[str] | None = None) -> int:
     torch.manual_seed(args.seed)
     base = args.init_from or K.RF_DETR_MODEL_NAME
     processor = _processor(base)
-    id2label = {int(index): name for index, name in label_map.items()}
-    label2id = {name: index for index, name in id2label.items()}
-    model = AutoModelForObjectDetection.from_pretrained(
-        base, id2label=id2label, label2id=label2id, num_labels=len(label_map), ignore_mismatched_sizes=True
-    )
-    model.config.id2label, model.config.label2id, model.config.num_labels = id2label, label2id, len(label_map)
+    model = load_model(base, label_map)
     if args.init_from is not None:
-        kept = remap_class_heads(model, args.init_from, label_map)
+        kept = remap_class_heads(model, args.init_from, label_map, fresh_class_heads(model))
         print(f"--init-from {args.init_from}: {kept} of {len(label_map)} classes start from its rows")
 
     device = _device(args.device)

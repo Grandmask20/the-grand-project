@@ -9,7 +9,7 @@ import numpy as np
 import pytest
 
 from grand_project.detect import badges
-from tools.detection_dataset_annotator import ReviewStore, image_key
+from tools.detection_dataset_annotator import ReviewStore, image_key, score_nodes
 from tools.detection_dataset_annotator import constants as K
 from tools.detection_dataset_annotator.score_nodes import guess_nodes, main, report
 
@@ -84,9 +84,38 @@ def test_the_tool_reads_reviewed_screenshots(tmp_path: Path, capsys) -> None:
 
 
 def test_a_citadels_own_map_is_guessed_as_its_city(tmp_path: Path) -> None:
-    """A reviewed citadel makes its map node a city-area guess (never "sure"); no node boxes, nothing to score."""
+    """A reviewed citadel makes its map node its city's: a sure guess, as the annotator makes it for a city whose
+    type is sure (a reviewed citadel's is); no node boxes, nothing to score."""
     image = _shot(tmp_path / "a.png")
     citadel = {"label": "citadel_stone", "bbox": [360, 500, 80, 80], "source": "manual"}
     pairs = guess_nodes(image, [_node("map_node_vaal", 400, 540), citadel], 1920, 1080)
-    assert pairs == [("map_node_vaal", "map_node_vaal", False)]
+    assert pairs == [("map_node_vaal", "map_node_vaal", True)]
     assert guess_nodes(image, [citadel], 1920, 1080) == []
+
+
+def test_reviewed_landmarks_reach_the_city_rules(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Towers, halls and strongholds are landmarks for the city areas, as in the detector's result (the city rules
+    keep them out of a city's area): a tower at its map node (its box's bottom edge), the others at their middle."""
+    image = _shot(tmp_path / "a.png")
+    seen = {}
+
+    def areas(nodes, edges, icons, landmarks, city_types):
+        seen.update(landmarks=landmarks, city_types=city_types)
+        return {}
+
+    monkeypatch.setattr(score_nodes, "city_area_nodes", areas)
+    boxes = [
+        _node("map_node_vaal", 400, 540),
+        {"label": "tower", "bbox": [660, 320, 80, 220]},
+        {"label": "hall", "bbox": [900, 400, 120, 120]},
+        {"label": "breach_stronghold", "bbox": [1200, 200, 150, 150]},
+        {"label": "citadel_stone", "bbox": [360, 500, 80, 80]},
+    ]
+    guess_nodes(image, boxes, 1920, 1080)
+    assert [(lm["kind"], lm["x"], lm["y"]) for lm in seen["landmarks"]] == [
+        ("Tower", 700.0, 540.0),
+        ("Hall", 960.0, 460.0),
+        ("Breach stronghold", 1275.0, 275.0),
+        ("City", 400.0, 540.0),
+    ]
+    assert seen["city_types"] == {3: "Vaal"}

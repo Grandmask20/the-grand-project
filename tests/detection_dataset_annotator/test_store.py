@@ -3,7 +3,8 @@ one screenshot at a time and safe between sessions."""
 
 from __future__ import annotations
 
-import sqlite3
+import os
+import sys
 from pathlib import Path
 from typing import Any
 
@@ -167,6 +168,37 @@ def test_a_failed_detection_keeps_what_a_rerun_replaces(tmp_path: Path, review_s
     assert item == previous
 
 
+def test_a_late_result_of_another_run_changes_nothing(tmp_path: Path, review_store: ReviewStore) -> None:
+    """Two runs took the same new screenshot: the first result stands with the edits made since; the second one's
+    result or failure (not forced) is dropped. A forced rerun still replaces it."""
+    (shot,) = _shots(tmp_path, "a.png")
+    key = _detected(review_store, shot, _box("map_node", 10))
+    edited = [dict(_box("tower", 40), source="manual")]
+    assert review_store.save_review(key, 1, annotations=edited, reviewed=True)
+    before = review_store.item(key)
+    assert review_store.record_detection(key, _result(_box("icon", 70)), force=False) is False
+    review_store.record_failure(key, "boom", force=False)
+    assert review_store.item(key) == before
+    assert review_store.record_detection(key, _result(_box("icon", 70)), force=True) is True
+    rerun = review_store.item(key)
+    assert [box["label"] for box in rerun["annotations"]] == ["icon"] and rerun["reviewed"] is False
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="POSIX file names can hold bytes that are not UTF-8")
+def test_a_file_name_that_is_not_utf8_is_kept_as_it_is(tmp_path: Path, review_store: ReviewStore) -> None:
+    """SQLite text cannot hold such a name: the path is stored as its bytes and comes back unchanged (the detector
+    opens it); the name shown has the odd byte as an escape."""
+    odd = tmp_path / os.fsdecode(b"shot\xff.png")
+    odd.write_bytes(b"x")
+    assert review_store.add_images([odd]) == (1, 0)
+    key = image_key(odd)
+    item = review_store.item(key)
+    assert item["path"] == str(odd) and Path(item["path"]).is_file()
+    assert review_store.detection_jobs() == [(key, str(odd))]
+    assert review_store.queue()[0].source.endswith("shot\\udcff.png")
+    assert dict(review_store.items())[key]["path"] == str(odd)
+
+
 def test_detection_jobs_follow_selection_and_force(tmp_path: Path, review_store: ReviewStore) -> None:
     a, b, c = _shots(tmp_path, "a.png", "b.png", "c.png")
     review_store.add_images([a, b, c])
@@ -204,61 +236,22 @@ def test_items_stream_in_queue_order(tmp_path: Path, review_store: ReviewStore) 
     assert review_store.save_review(key_b, 1, reviewed=True)
 
 
-def test_a_store_from_a_newer_annotator_is_refused(tmp_path: Path) -> None:
-    path = tmp_path / K.ANNOTATOR_STORE_FILE
-    ReviewStore.open(path).close()
-    with sqlite3.connect(path) as connection:
-        connection.execute(f"PRAGMA user_version = {K.ANNOTATOR_STORE_SCHEMA_VERSION + 1}")
-    connection.close()
-    with pytest.raises(ValueError, match="newer annotator"):
-        ReviewStore.open(path)
-
-
-_V1_SCHEMA = (
-    "CREATE TABLE meta (name TEXT PRIMARY KEY, value TEXT NOT NULL)",
-    """CREATE TABLE images (key TEXT PRIMARY KEY, position INTEGER NOT NULL UNIQUE, path TEXT NOT NULL,
-        source TEXT NOT NULL, reviewed INTEGER NOT NULL DEFAULT 0, detected INTEGER NOT NULL DEFAULT 0, detector TEXT,
-        width INTEGER, height INTEGER, detector_width INTEGER, detector_height INTEGER, error TEXT,
-        edit_version INTEGER NOT NULL DEFAULT 0, next_annotation_id INTEGER NOT NULL DEFAULT 0,
-        extra TEXT NOT NULL DEFAULT '{}')""",
-    """CREATE TABLE annotations (image_key TEXT NOT NULL REFERENCES images(key) ON DELETE CASCADE, ord INTEGER NOT NULL,
-        id TEXT NOT NULL, label TEXT NOT NULL, x REAL, y REAL, w REAL, h REAL, area REAL,
-        iscrowd INTEGER NOT NULL DEFAULT 0, source TEXT, score REAL, PRIMARY KEY (image_key, ord),
-        UNIQUE (image_key, id)) WITHOUT ROWID""",
-    "CREATE INDEX annotations_label ON annotations(label)",
-)
-
-
-def test_a_version_1_store_is_upgraded_after_a_copy_is_saved(tmp_path: Path) -> None:
-    """The first schema's store opens upgraded: its boxes stay as they are, its guesses are counted (for the queue's
-    order), it has no splits yet, and the store as it was is kept next to it."""
-    path = tmp_path / K.ANNOTATOR_STORE_FILE
-    with sqlite3.connect(path) as db:
-        for statement in _V1_SCHEMA:
-            db.execute(statement)
-        db.execute("INSERT INTO images (key, position, path, source, detected) VALUES ('k', 0, 'a.png', 'a.png', 1)")
-        db.execute(
-            "INSERT INTO annotations VALUES ('k', 0, 'b0', 'citadel_stone', 1, 2, 80, 80, 6400, 0, 'city_guess', NULL)"
-        )
-        db.execute("PRAGMA user_version = 1")
-    db.close()
-    with ReviewStore.open(path) as store:
-        (entry,) = store.queue()
-        assert entry.guesses == 1 and store.splits() == {}
-        assert store.item("k")["annotations"][0]["label"] == "citadel_stone"
-    backup = path.with_name(f"{path.name}.v1-backup")
-    with sqlite3.connect(backup) as db:
-        assert db.execute("PRAGMA user_version").fetchone()[0] == 1
-        assert db.execute("SELECT label FROM annotations").fetchall() == [("citadel_stone",)]
-    db.close()
-    with ReviewStore.open(path) as store:  # opening it again changes nothing
-        assert store.queue()[0].guesses == 1
-
-
 def test_splits_are_kept(tmp_path: Path, review_store: ReviewStore) -> None:
     shots = _shots(tmp_path, "a.png", "b.png")
     review_store.add_images(shots)
-    review_store.set_splits({image_key(shots[0]): "test"})
+    assert review_store.claim_splits({image_key(shots[0]): "test"}) == {image_key(shots[0]): "test"}
     assert review_store.splits() == {image_key(shots[0]): "test"}
     assert review_store.item(image_key(shots[0]))["split"] == "test"
     assert review_store.item(image_key(shots[1]))["split"] is None
+
+
+def test_an_export_claims_only_splits_nobody_gave_yet(tmp_path: Path, review_store: ReviewStore) -> None:
+    """Two exports at once: the second one's draw cannot move a screenshot the first one already gave a split; it
+    gets the stored split back and uses it. A pinned screenshot (a truth screenshot: test) always takes its split."""
+    shots = _shots(tmp_path, "a.png", "b.png", "c.png")
+    review_store.add_images(shots)
+    a, b, c = (image_key(shot) for shot in shots)
+    review_store.claim_splits({a: "train", c: "train"})  # given by an export that finished first
+    claimed = review_store.claim_splits({a: "validation", b: "validation", c: "test"}, overwrite={c})
+    assert claimed == {a: "train", b: "validation", c: "test"}
+    assert review_store.splits() == claimed

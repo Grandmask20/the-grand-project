@@ -4,7 +4,7 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { test } from "node:test";
 
-import { isGuess, labelForKey } from "../../tools/detection_dataset_annotator/component/annotator.js";
+import { isGuess, labelForKey, plainKeyTarget } from "../../tools/detection_dataset_annotator/component/annotator.js";
 
 const { palette, guessSources } = JSON.parse(readFileSync(process.env.ANNOTATOR_TEST_PALETTE, "utf8"));
 
@@ -25,6 +25,18 @@ test("Shift+digits pick the citadels and the rest, by key code on any keyboard l
   assert.equal(labelForKey(palette, "Digit5", true).name, "reveal_button");
   assert.equal(labelForKey(palette, "Digit7", true).name, "path");
   assert.equal(labelForKey(palette, "Digit8", true).name, "fortress_wall");
+});
+
+test("a label's key wins over the character it types on other keyboard layouts", () => {
+  // Swiss Shift+1 types "+" (zoom), German Shift+7 types "/" (the label finder), French 6 types "-" (zoom out)
+  assert.equal(plainKeyTarget(palette, { key: "+", code: "Digit1", shiftKey: true }).label.name, "citadel_iron");
+  assert.equal(plainKeyTarget(palette, { key: "/", code: "Digit7", shiftKey: true }).label.name, "path");
+  assert.equal(plainKeyTarget(palette, { key: "-", code: "Digit6", shiftKey: false }).label.name, "map_node_ezomyte");
+  // keys that are no label's keep their shortcut
+  assert.deepEqual(plainKeyTarget(palette, { key: "+", code: "Equal", shiftKey: true }), { shortcut: "+" });
+  assert.deepEqual(plainKeyTarget(palette, { key: "/", code: "Slash", shiftKey: false }), { shortcut: "/" });
+  assert.deepEqual(plainKeyTarget(palette, { key: "J", code: "KeyJ", shiftKey: true }), { shortcut: "j" });
+  assert.deepEqual(plainKeyTarget(palette, { key: "Escape", code: "Escape", shiftKey: false }), { shortcut: "Escape" });
 });
 
 test("keys without a label pick nothing", () => {

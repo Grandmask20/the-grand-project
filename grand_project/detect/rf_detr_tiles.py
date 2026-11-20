@@ -270,7 +270,11 @@ def random_tile(
 def densest_tile(
     image: np.ndarray, boxes: Sequence[Sequence[float]], tile: int = K.RF_DETR_TILE
 ) -> tuple[np.ndarray, list[int], list[list[float]]]:
-    """The inference tile holding the most boxes whole: a fixed tile per screenshot for the validation loss."""
+    """The inference tile holding the most boxes: a fixed tile per screenshot for the validation loss.
+
+    Boxes are counted and kept as training keeps them (``crop_boxes``: at least half visible, clipped), so the loss
+    labels what a training tile would label; a half-visible object left unlabelled would count as a false find.
+    """
     height, width = image.shape[:2]
     best: tuple[int, int, list[int], list[list[float]]] = (0, 0, [], [])
     for left, top in tile_origins(width, height, tile):

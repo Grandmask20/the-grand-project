@@ -2,9 +2,9 @@
 
     python -m tools.detection_dataset_annotator.score_nodes [--output-dir DIR] [--ring 19.35 38] [--limit 50]
 
-For every reviewed screenshot, the reviewer's node boxes (their places and classes), icon
-boxes and citadel boxes are taken as they are (an icon the reviewer named no type is named as the classical detector
-names it, ``name_icons``); the biome ring (``detect.biomes.node_biomes``, ``BIOME_RING``) and the
+For every reviewed screenshot, the reviewer's node boxes (their places and classes), icon boxes and landmark boxes
+(citadels, halls, towers, strongholds) are taken as they are (an icon the reviewer named no type is named as the
+classical detector names it, ``name_icons``); the biome ring (``detect.biomes.node_biomes``, ``BIOME_RING``) and the
 city areas (``city_area_nodes``, over paths the classical tracer finds between the reviewed nodes) guess each node's
 class again, and the guesses are compared with the reviewer's classes: a confusion matrix and each class's precision
 and recall, for the sure guesses and for all. Use it to tune ``BIOME_*`` (``--ring`` tries another ring).
@@ -74,9 +74,15 @@ def guess_nodes(
             truth.append(label)
         elif L.family(label) == "icon":
             icons.append({"name": icon_type(label), "x": x, "y": y, "score": 1.0})
-        elif L.family(label) == "citadel":
-            city_types[len(landmarks)] = L.city_type(label)
-            landmarks.append({"kind": "City", "x": x, "y": y})
+        elif kind := L.landmark_kind(label):
+            # Every reviewed landmark, as the classical detector reports it: the city rules keep towers, halls,
+            # strongholds and other cities out of a city's area (cities.blocked_maps). A tower stands on its map
+            # node, the box's bottom edge.
+            if kind == "Tower":
+                y = (float(annotation["bbox"][1]) + float(annotation["bbox"][3])) * sy
+            if kind == "City":
+                city_types[len(landmarks)] = L.city_type(label)
+            landmarks.append({"kind": kind, "x": x, "y": y})
     if not nodes:
         return []
     name_icons(img, icons)
@@ -85,7 +91,10 @@ def guess_nodes(
     out = []
     for index, guess in enumerate(node_biomes(img, nodes, icons)):
         if index in areas:
-            out.append((truth[index], L.node_label(city_type=areas[index][0]), False))
+            # a city's own map is as sure as its city's type (proposals.node_classes), and a reviewed citadel's type
+            # is sure; the rest of its area is a guess
+            city, steps = areas[index]
+            out.append((truth[index], L.node_label(city_type=city), steps == 0))
         else:
             label = L.node_label(biome=guess.biome) if guess.biome else L.node_label()
             out.append((truth[index], label, guess.sure))

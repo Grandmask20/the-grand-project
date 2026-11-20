@@ -105,15 +105,18 @@ def test_a_small_crop_is_padded_to_one_tile() -> None:
     assert prepared.shape == (1080, 1920, 3) and boxes == [[50.0, 50.0, 39.0, 39.0]]
 
 
-def test_tiles_are_centred_on_rare_classes_often() -> None:
-    """With repeat factors, a rare object (a locked stronghold) is in the tile far more often than chance."""
+def test_tiles_are_centred_on_rare_classes_often(seed: int, runs) -> None:
+    """With repeat factors, a rare object (a locked stronghold) is in the tile far more often than chance: measured
+    about 95% of the tiles against 39%, so a margin of 0.3 holds at 200 draws by about 7 standard deviations."""
     image = np.zeros((1080, 1920, 3), np.uint8)
     boxes = [[1700.0, 100.0, 150.0, 150.0], [100.0, 900.0, 39.0, 39.0]]  # the rare one far in a corner
-    rng = random.Random(2)
-    with_rare = sum(0 in T.random_tile(image, boxes, [7, 0], rng, rare={7})[1] for _ in range(60))
-    rng = random.Random(2)
-    without = sum(0 in T.random_tile(image, boxes, [7, 0], rng)[1] for _ in range(60))
-    assert with_rare > without + 15
+    draws = runs(200)
+
+    def share(rare: set[int]) -> float:
+        rng = random.Random(seed)  # the same draws for both, so only the centring differs
+        return sum(0 in T.random_tile(image, boxes, [7, 0], rng, rare=rare)[1] for _ in range(draws)) / draws
+
+    assert share({7}) > share(set()) + 0.3
 
 
 def test_flips_mirror_pixels_and_boxes_together_when_turned_on(monkeypatch: pytest.MonkeyPatch) -> None:

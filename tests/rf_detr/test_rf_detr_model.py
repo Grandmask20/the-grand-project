@@ -191,6 +191,20 @@ def test_citadels_halls_and_deadly_bosses_come_back_as_the_classical_landmarks(m
     assert sorted(i["name"] for i in result["icons"]) == ["MapBossSpecial"] * 3
 
 
+def test_a_citadel_is_a_city_at_the_map_node_inside_its_box(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The City is the map node inside the citadel box (nearest its middle), wherever in the box the model put it;
+    with no map node inside, the box's middle."""
+    predictions = [
+        {"label": "citadel_stone", "family": "citadel", "box": [460.0, 460.0, 540.0, 540.0], "score": 0.8},
+        {"label": "map_node_vaal", "family": "node", "box": [492.0, 495.0, 532.0, 535.0], "score": 0.9},  # (512, 515)
+        {"label": "map_node_vaal", "family": "node", "box": [580.0, 480.0, 620.0, 520.0], "score": 0.9},  # outside
+        {"label": "citadel_iron", "family": "citadel", "box": [1160.0, 460.0, 1240.0, 540.0], "score": 0.7},
+    ]
+    result = _detect(monkeypatch, predictions)
+    cities = sorted((lm["x"], lm["y"], lm["city_type"]) for lm in result["landmarks"] if lm["kind"] == "City")
+    assert cities == [(512.0, 515.0, "Vaal"), (1200.0, 500.0, "Ezomyte")]
+
+
 def test_left_out_icon_types_are_never_reported(monkeypatch: pytest.MonkeyPatch) -> None:
     """User: Lost Tower and Checkpoint icons are no dataset labels; an icon the namer names so is dropped (the model
     never learned them)."""

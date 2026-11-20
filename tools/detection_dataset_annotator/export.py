@@ -135,19 +135,23 @@ def _publish(output_dir: Path, files: dict[str, Any]) -> None:
 def export_dataset(store: ReviewStore, output_dir: Path, *, reviewed_only: bool = True) -> ExportResult:
     """Export the (reviewed) annotations as COCO JSON and a project-native RF-DETR manifest.
 
-    Screenshots that no longer exist are left out. Classes are ``labels.dataset_classes`` of the labels in use,
-    numbered in that order. Screenshots without a split get one (``splits.assign_splits``, kept in the store); the
-    manifest carries each screenshot's split.
+    Screenshots that no longer exist are left out. Classes are ``labels.dataset_classes`` of the labels the exported
+    screenshots use, numbered in that order. Screenshots without a split get one (``splits.assign_splits``, kept in
+    the store); the manifest carries each screenshot's split.
     """
     output_dir.mkdir(parents=True, exist_ok=True)
-    labels = dataset_classes(store.used_labels())
+    # One read for the classes and the boxes: a box saved meanwhile cannot have a label the classes miss.
+    items = list(store.items(reviewed_only=reviewed_only))
+    labels = dataset_classes(
+        str(annotation.get("label", "")).strip() for _key, item in items for annotation in item.get("annotations", [])
+    )
     label_ids = {label: index for index, label in enumerate(labels)}
     image_rows: list[dict[str, Any]] = []
     annotation_rows: list[dict[str, Any]] = []
     manifest_rows: list[dict[str, Any]] = []
     skipped = 0
     roots = store.input_roots()
-    for key, item in store.items(reviewed_only=reviewed_only):
+    for key, item in items:
         reviewed = bool(item.get("reviewed", False))
         if not (reviewed or item.get("detected")):
             continue  # never processed: its empty box list is not a labelling
@@ -256,7 +260,8 @@ def _class_counts(row: dict[str, Any]) -> dict[str, int]:
 
 def _splits(store: ReviewStore, rows: list[dict[str, Any]]) -> dict[str, str]:
     """Every exported screenshot's split: kept from earlier exports, the pinned ones test, the new ones drawn by
-    ``assign_splits`` around them; the new ones are saved in the store."""
+    ``assign_splits`` around them. The new ones are claimed in the store (``claim_splits``): a screenshot another
+    export gave a split meanwhile keeps that one, and the export uses it."""
     items = {row["key"]: _class_counts(row) for row in rows}
     paths = {row["key"]: row["path"] for row in rows}
     fixed = {key: split for key, split in store.splits().items() if key in items}
@@ -264,5 +269,5 @@ def _splits(store: ReviewStore, rows: list[dict[str, Any]]) -> dict[str, str]:
     split_of = assign_splits(items, pinned=pinned, fixed=fixed)
     changed = {key: split for key, split in split_of.items() if fixed.get(key) != split}
     if changed:
-        store.set_splits(changed)
+        split_of.update(store.claim_splits(changed, overwrite=pinned))
     return split_of

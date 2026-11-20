@@ -91,6 +91,22 @@ def test_every_kind_gets_its_label_and_box(vaal_city, buttons) -> None:
     assert sum(b["label"] == "reveal_button" for b in named) == 3  # one class whatever the naming option
 
 
+def test_a_citys_own_map_is_as_sure_as_that_citys_type() -> None:
+    """Two Vaal cities, one surely Vaal and one an unsure look-alike guess: each own map takes its own city's
+    certainty, not the other city's of the same type."""
+    detection = {
+        "nodes": [{"x": 400, "y": 500}, {"x": 1400, "y": 500}],
+        "edges": [],
+        "landmarks": [{"kind": "City", "x": 400, "y": 500}, {"kind": "City", "x": 1400, "y": 500}],
+        "icons": [],
+    }
+    found = proposals.node_classes(_grass(), detection, {0: ("Vaal", True), 1: ("Vaal", False)})
+    assert found == [
+        ("map_node_vaal", K.RF_DETR_SOURCE_CLASSICAL),
+        ("map_node_vaal", K.RF_DETR_SOURCE_CITY_GUESS),
+    ]
+
+
 def test_a_hall_box_holds_its_node_and_the_whole_structure() -> None:
     """User: the hall box covers the hall structure, which stands under its orange beam; with no beam seen it goes
     where it stood on the measured halls (up-left of the node)."""

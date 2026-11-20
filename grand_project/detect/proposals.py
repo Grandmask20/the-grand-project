@@ -25,6 +25,7 @@ Boxes are ``(x, y, width, height)`` in the detector's pixels (the 1080p copy ``c
 
 from __future__ import annotations
 
+import math
 from typing import Any
 
 import cv2
@@ -103,6 +104,18 @@ def _icon_label(icon: dict[str, Any], named_icons: bool) -> str:
     return icon_class(str(icon.get("name") or "Unidentified")) if named_icons else L.GENERIC_ICON
 
 
+def _own_city_sure(
+    node: dict[str, Any], city: str, landmarks: list[dict[str, Any]], city_types: dict[int, tuple[str, bool]]
+) -> bool:
+    """Whether the type of the City whose own map ``node`` is (the nearest City of type ``city``) is sure."""
+    x, y = float(node["x"]), float(node["y"])
+    own = min(
+        (i for i, (kind, _sure) in city_types.items() if kind == city),
+        key=lambda i: math.hypot(float(landmarks[i]["x"]) - x, float(landmarks[i]["y"]) - y),
+    )
+    return city_types[own][1]
+
+
 def node_classes(
     img: np.ndarray, detection: dict[str, Any], city_types: dict[int, tuple[str, bool]]
 ) -> list[tuple[str, str]]:
@@ -119,7 +132,6 @@ def node_classes(
     nodes = detection.get("nodes", [])
     icons = detection.get("icons", [])
     landmarks = detection.get("landmarks", [])
-    sure_types = {city for city, sure in city_types.values() if sure}
     areas = city_area_nodes(
         nodes, detection.get("edges", []), icons, landmarks, {i: city for i, (city, _sure) in city_types.items()}
     )
@@ -127,8 +139,9 @@ def node_classes(
     for index, guess in enumerate(node_biomes(img, nodes, icons)):
         if index in areas:
             city, steps = areas[index]
-            if steps == 0:  # the city's own map: as sure as the city's type
-                source = K.RF_DETR_SOURCE_CLASSICAL if city in sure_types else K.RF_DETR_SOURCE_CITY_GUESS
+            if steps == 0:  # the city's own map: as sure as that city's type (not another city's of the same type)
+                sure = _own_city_sure(nodes[index], city, landmarks, city_types)
+                source = K.RF_DETR_SOURCE_CLASSICAL if sure else K.RF_DETR_SOURCE_CITY_GUESS
             else:
                 source = K.RF_DETR_SOURCE_CITY_AREA_GUESS
             out.append((L.node_label(city_type=city), source))

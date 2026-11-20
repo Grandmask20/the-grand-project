@@ -181,7 +181,7 @@ def _render_editor(store: ReviewStore, key: str, keys: list[str], settings: Sett
     except OSError:
         image_url = None
     if image_url is None:
-        st.error(f"The screenshot could not be read: `{relative_source(path)}`")
+        st.error(f"The screenshot could not be read: `{item['source']}`")
         return
 
     revision = int(item["edit_version"])  # the store gives every box an id, so the editor can refer to it
@@ -226,7 +226,7 @@ def _render_editor(store: ReviewStore, key: str, keys: list[str], settings: Sett
         on_action_change=partial(_on_action, settings.store_path, key, revision, editor_key, keys),
     )
     st.caption(
-        f"`{relative_source(path)}` · {item['width']} × {item['height']} · boxes are saved as source-image pixels; "
+        f"`{item['source']}` · {item['width']} × {item['height']} · boxes are saved as source-image pixels; "
         "the screenshot file is never changed. Dotted boxes are guesses to check first. Press **?** in the editor for "
         "shortcuts."
     )
@@ -436,7 +436,7 @@ def main() -> None:
     try:
         # One connection per script run: it belongs to this thread (the detection pool runs in it too).
         store = ReviewStore.open(settings.store_path, settings.roots)
-    except (OSError, ValueError, sqlite3.Error) as exc:  # ValueError: a store made by a newer annotator
+    except (OSError, sqlite3.Error) as exc:
         st.error(f"Could not load review state: {exc}")
         return
     with store:

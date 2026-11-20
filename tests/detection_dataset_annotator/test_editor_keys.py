@@ -7,6 +7,7 @@ The editor is plain JavaScript without a build step, so its pure parts are teste
 from __future__ import annotations
 
 import json
+import os
 import shutil
 import subprocess
 from pathlib import Path
@@ -32,7 +33,8 @@ def test_editor_keys_and_guess_styling(tmp_path: Path) -> None:
     result = subprocess.run(
         [NODE, "--test", str(test_file)],
         cwd=paths.ROOT,
-        env={"ANNOTATOR_TEST_PALETTE": str(palette), "PATH": str(Path(NODE).parent)},
+        # the whole environment: Node on Windows cannot start its random number generator without SYSTEMROOT
+        env={**os.environ, "ANNOTATOR_TEST_PALETTE": str(palette)},
         capture_output=True,
         text=True,
         timeout=120,

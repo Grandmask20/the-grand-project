@@ -48,12 +48,13 @@ def export_class(label: str) -> str | None:
 
     Returns:
         The label itself for a registry label or a reviewer's own label; ``icon`` for an icon type; None for an icon
-        type the dataset leaves out (``RF_DETR_ICON_EXCLUDED``).
+        type the dataset leaves out (``RF_DETR_ICON_EXCLUDED``). An ``icon_`` label of no known type (one the icon
+        types no longer have) stays itself, so the export reports it instead of hiding it in ``icon``.
     """
     if label in K.RF_DETR_LABEL_INFO:
         return label
-    if label.startswith(f"{GENERIC_ICON}_"):
-        return None if icon_type(label) in K.RF_DETR_ICON_EXCLUDED else GENERIC_ICON
+    if label.startswith(f"{GENERIC_ICON}_") and (name := icon_type(label)) is not None:
+        return None if name in K.RF_DETR_ICON_EXCLUDED else GENERIC_ICON
     return label
 
 

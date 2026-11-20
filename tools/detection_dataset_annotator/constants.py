@@ -5,8 +5,10 @@ from __future__ import annotations
 from grand_project import paths
 from grand_project.detect.constants import (
     RF_DETR_GUESS_SOURCES,
+    RF_DETR_MANIFEST_FORMAT,
     RF_DETR_SOURCE_CITY_GUESS,
     RF_DETR_SOURCE_CLASSICAL,
+    RF_DETR_SPLITS,
 )
 
 # ---- screenshots and output folders ----------------------------------------------------------------------------
@@ -35,12 +37,8 @@ ANNOTATOR_DEFAULT_OUTPUT_DIR = "tools/detection_dataset_annotator/detection-data
 ANNOTATOR_STORE_FILE = "review_state.sqlite3"
 """Filename of the review store (``store.py``): the editable detector results, review flags and dataset settings."""
 
-ANNOTATOR_STORE_SCHEMA_VERSION = 2
-"""``PRAGMA user_version`` of the review store; a store made by a newer annotator is refused. Version 2 added each
-screenshot's split and guess count (``store.py`` upgrades a version 1 store after saving a copy of it)."""
-
-ANNOTATOR_STORE_BACKUP = "{name}.v{version}-backup"
-"""Name of the copy of the review store saved before its schema is upgraded from ``version``."""
+ANNOTATOR_STORE_CREATED = 1
+"""``PRAGMA user_version`` the review store sets once its tables are created (a new file has 0)."""
 
 ANNOTATOR_STORE_BUSY_S = 10.0
 """Seconds a store write waits while another session (a browser tab, a detection run) writes. Writes are one
@@ -56,14 +54,14 @@ ANNOTATOR_LABELS_FILE = "labels.json"
 """Filename for the exported numeric label ids."""
 
 ANNOTATOR_SCHEMA_VERSION = 2
-"""Version of the manifest schema. Version 2 added each screenshot's split."""
+"""Version of the manifest schema."""
 
-ANNOTATOR_MANIFEST_FORMAT = "the-grand-project-rf-detr-manifest"
+ANNOTATOR_MANIFEST_FORMAT = RF_DETR_MANIFEST_FORMAT
 """The manifest's ``format`` value; ``rf_detr.load_annotator_manifest`` refuses other files."""
 
 # ---- train / validation / test splits (splits.py) -------------------------------------------------------------
 
-ANNOTATOR_SPLITS = ("train", "validation", "test")
+ANNOTATOR_SPLITS = RF_DETR_SPLITS
 """The splits a screenshot can be in (the dataset's Hugging Face split names)."""
 
 ANNOTATOR_SPLIT_FRACTIONS = (0.8, 0.1, 0.1)

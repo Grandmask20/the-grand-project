@@ -156,9 +156,6 @@ class, locked when a hand button stands within `STRONGHOLD_LOCK_REACH` or no map
    again. An export names any label left from before in a warning.
 4. Export, and train with `--init-from` the earlier model: the classes it already had keep their rows by name.
 
-The first time this annotator opens a store made before splits were kept, it upgrades the database and keeps a copy of
-it next to it (`review_state.sqlite3.v1-backup`). An annotator from before the upgrade refuses the upgraded store.
-
 ## Splits
 
 Every exported screenshot gets its split once and keeps it (`splits.py`), so a later model never trains on an earlier

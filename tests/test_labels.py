@@ -53,6 +53,8 @@ def test_every_icon_type_is_found_as_one_icon_class() -> None:
     assert L.export_class("icon_mapbossspecial") == "icon"
     assert L.export_class("icon") == "icon"
     assert L.export_class("custom") == "custom"
+    # an icon_ label of no known type (the icon types changed since) stays itself: the export reports it as unknown
+    assert L.export_class("icon_nosuchtype") == "icon_nosuchtype" and not L.known("icon_nosuchtype")
     assert L.family("icon_breachhive") == "icon" and L.family("icon_mapbossspecial") == "icon"
     assert [label for label, entry in K.RF_DETR_LABEL_INFO.items() if entry["family"] == "icon"] == ["icon"]
 

@@ -306,7 +306,11 @@ def detect_rf_detr(img: np.ndarray) -> dict:
 
     landmarks: list[dict[str, Any]] = []
     for item in by_family.get("citadel", []):
-        x, y = _centre(item["box"])
+        # the City is its map node (as the classical detector reports it): the one inside the box nearest its middle
+        cx, cy = _centre(item["box"])
+        inside = [n for n in nodes if _inside(item["box"], n["x"], n["y"])]
+        node = min(inside, key=lambda n: np.hypot(n["x"] - cx, n["y"] - cy), default=None)
+        x, y = (node["x"], node["y"]) if node else (cx, cy)
         landmark = {"kind": "City", "x": round(x, 1), "y": round(y, 1), "score": round(item["score"], 3)}
         if city := L.city_type(item["label"]):
             landmark["city_type"] = city

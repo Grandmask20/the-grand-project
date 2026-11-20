@@ -4,6 +4,7 @@ the tile transform, the saved dataset."""
 import json
 import math
 import pickle
+import random
 from pathlib import Path
 
 import pytest
@@ -36,7 +37,8 @@ def _manifest(tmp_path: Path, images: list[dict], **fields) -> Path:
 def _image(tmp_path: Path, name: str = "shot.png", split: str = "train", **fields) -> dict:
     path = tmp_path / name
     path.write_bytes(b"placeholder")
-    return {"path": str(path), "width": 1920, "height": 1080, "split": split, "annotations": [], **fields}
+    return {"path": str(path), "width": 1920, "height": 1080, "split": split, "reviewed": True, "annotations": [],
+            **fields}  # fmt: skip
 
 
 def test_category_slug_is_stable_and_safe() -> None:
@@ -87,6 +89,21 @@ def test_max_images_keeps_every_split(tmp_path: Path) -> None:
     assert sorted(r.split for r in records) == ["test", "train", "validation"]
 
 
+def test_unreviewed_screenshots_are_no_training_data(tmp_path: Path) -> None:
+    """An export with "reviewed screenshots only" off marks its unreviewed screenshots: their classical boxes are left
+    out, the reviewed ones keep their splits (before max_images picks, so a smoke test never takes one either)."""
+    shots = [
+        _image(tmp_path, "a.png", "train"),
+        _image(tmp_path, "b.png", "train", reviewed=False),
+        _image(tmp_path, "c.png", "validation", reviewed=False),
+        _image(tmp_path, "d.png", "validation"),
+    ]
+    records, _labels = load_annotator_manifest(_manifest(tmp_path, shots))
+    assert [(r.path.name, r.split) for r in records] == [("a.png", "train"), ("d.png", "validation")]
+    records, _labels = load_annotator_manifest(_manifest(tmp_path, shots), max_images=2)
+    assert [r.path.name for r in records] == ["a.png", "d.png"]
+
+
 def test_records_by_split_needs_training_and_validation() -> None:
     def record(split: str) -> Record:
         return Record(0, Path("a.png"), "a", "annotator_reviewed", "g", 1920, 1080, (), split)
@@ -129,6 +146,16 @@ def test_tile_transform_cuts_native_scale_tiles_and_pickles() -> None:
             assert x >= 0 and y >= 0 and x + w <= K.RF_DETR_TILE + 1e-6 and y + h <= K.RF_DETR_TILE + 1e-6
     densest = tile_transform(_echo_processor, train=False)(examples)
     assert len(densest["annotations"][0]["annotations"]) == 2  # the validation tile holds both boxes whole
+
+
+def test_tiles_in_a_dataloader_worker_follow_its_seed(monkeypatch: pytest.MonkeyPatch) -> None:
+    """In a DataLoader worker the tiles follow the worker's seed (new every epoch, from torch.manual_seed), so
+    epochs draw different tiles; without workers, the transform's own seed."""
+    data = pytest.importorskip("torch.utils.data")
+    monkeypatch.setattr(data, "get_worker_info", lambda: type("Worker", (), {"id": 0, "seed": 123})())
+    assert tile_transform(_echo_processor, train=True, seed=7)._random().random() == random.Random(123).random()
+    monkeypatch.setattr(data, "get_worker_info", lambda: None)
+    assert tile_transform(_echo_processor, train=True, seed=7)._random().random() == random.Random(7).random()
 
 
 def test_annotator_manifest_errors_say_what_is_wrong(tmp_path: Path) -> None:
@@ -182,3 +209,5 @@ def test_the_dataset_keeps_the_annotators_splits(tmp_path: Path) -> None:
     assert json.loads((out / "labels.json").read_text()) == labels
     with pytest.raises(FileExistsError):
         build_dataset(records, label_map=labels, output_dir=out)
+    no_test = build_dataset(records[:2], label_map=labels)  # no test screenshot yet: an empty test split
+    assert len(no_test["test"]) == 0 and no_test["test"].features == no_test["train"].features

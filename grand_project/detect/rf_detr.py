@@ -29,12 +29,6 @@ from . import constants as K
 from . import rf_detr_tiles as T
 from .icon_types import slug  # noqa: F401  (re-exported, see __all__)
 
-SPLITS = ("train", "validation", "test")
-"""The dataset's splits, as the annotator names them."""
-
-MANIFEST_FORMAT = "the-grand-project-rf-detr-manifest"
-"""The annotator manifest's ``format`` value."""
-
 
 @dataclass(frozen=True)
 class Record:
@@ -81,7 +75,8 @@ def load_annotator_manifest(manifest_path: Path, max_images: int | None = None) 
     """Load the screenshots and boxes exported by ``tools.detection_dataset_annotator``.
 
     The manifest keeps source image paths and ``xywh`` boxes, so nothing is copied. It must give every screenshot its
-    split.
+    split. Only the screenshots it marks reviewed are loaded: an export with "reviewed screenshots only" off also
+    holds unreviewed ones, whose boxes are the classical detector's guesses, never training data.
 
     Args:
         manifest_path: the annotator's ``manifest.json``.
@@ -96,7 +91,7 @@ def load_annotator_manifest(manifest_path: Path, max_images: int | None = None) 
     """
     manifest_path = Path(manifest_path)
     data = json.loads(manifest_path.read_text(encoding="utf-8"))
-    if data.get("format") != MANIFEST_FORMAT:
+    if data.get("format") != K.RF_DETR_MANIFEST_FORMAT:
         raise ValueError(f"Not an annotator RF-DETR manifest: {manifest_path}")
     labels = {str(index): str(name) for index, name in data.get("labels", {}).items()}
     if not labels:
@@ -105,13 +100,15 @@ def load_annotator_manifest(manifest_path: Path, max_images: int | None = None) 
     name_to_id = {name: index for index, name in enumerate(label_names)}
     records: list[Record] = []
     for item in data.get("images", []):
+        if not item.get("reviewed"):
+            continue  # unreviewed classical boxes would teach the classical detector's mistakes
         image_path = Path(str(item.get("path", "")))
         if not image_path.is_absolute():
             image_path = manifest_path.parent / image_path
         if not image_path.is_file():
             continue
         split = str(item.get("split") or "")
-        if split not in SPLITS:
+        if split not in K.RF_DETR_SPLITS:
             raise ValueError(f"Screenshot {image_path} has no split in {manifest_path}: export it again")
         annotations = tuple(
             _annotation(str(raw.get("label", "")), raw, name_to_id, manifest_path)
@@ -141,10 +138,10 @@ def load_annotator_manifest(manifest_path: Path, max_images: int | None = None) 
 
 def _limit(records: list[Record], count: int) -> list[Record]:
     """At most ``count`` records, taken in turn from each split, so a smoke test still has every split."""
-    by_split = {split: [r for r in records if r.split == split] for split in SPLITS}
+    by_split = {split: [r for r in records if r.split == split] for split in K.RF_DETR_SPLITS}
     out: list[Record] = []
     while len(out) < count and any(by_split.values()):
-        for split in SPLITS:
+        for split in K.RF_DETR_SPLITS:
             if by_split[split] and len(out) < count:
                 out.append(by_split[split].pop(0))
     return out
@@ -156,7 +153,7 @@ def records_by_split(records: list[Record]) -> dict[str, list[Record]]:
     Raises:
         ValueError: no training or no validation screenshot.
     """
-    out = {split: [record for record in records if record.split == split] for split in SPLITS}
+    out = {split: [record for record in records if record.split == split] for split in K.RF_DETR_SPLITS}
     if not out["train"] or not out["validation"]:
         raise ValueError(
             "Need at least one training and one validation screenshot: review more screenshots and export again "
@@ -227,8 +224,14 @@ def build_dataset(records: list[Record], *, label_map: dict[str, str], output_di
 
     splits = records_by_split(records)
     features = _features([label_map[str(index)] for index in range(len(label_map))])
+    # an empty split (no test screenshot yet) from empty columns: from_list([]) has no columns to match the features
     dataset = DatasetDict(
-        {split: Dataset.from_list(_rows(chosen), features=features) for split, chosen in splits.items()}
+        {
+            split: Dataset.from_list(_rows(chosen), features=features)
+            if chosen
+            else Dataset.from_dict({name: [] for name in features}, features=features)
+            for split, chosen in splits.items()
+        }
     )
     if output_dir is not None:
         output_dir = Path(output_dir)
@@ -272,7 +275,8 @@ class TileTransform:
         self._rng: random.Random | None = None
 
     def _random(self) -> random.Random:
-        """This worker's random source (seeded by the worker's number: workers draw different tiles)."""
+        """This worker's random source: in a DataLoader worker its seed (torch gives each worker a new one every
+        epoch, drawn from ``torch.manual_seed``: workers and epochs draw different tiles), else ``seed``."""
         if self._rng is None:
             try:
                 from torch.utils.data import get_worker_info
@@ -280,7 +284,7 @@ class TileTransform:
                 info = get_worker_info()
             except ImportError:  # pragma: no cover - the transform is only used with torch installed
                 info = None
-            self._rng = random.Random(self.seed * 1009 + (info.id if info is not None else 0))
+            self._rng = random.Random(info.seed if info is not None else self.seed)
         return self._rng
 
     def tile(self, image, objects: dict[str, Any]) -> tuple[np.ndarray, list[dict[str, Any]]]:
@@ -315,8 +319,6 @@ def tile_transform(processor, *, train: bool, seed: int = 1337, rare: frozenset[
 
 
 __all__ = [
-    "MANIFEST_FORMAT",
-    "SPLITS",
     "Record",
     "TileTransform",
     "build_dataset",

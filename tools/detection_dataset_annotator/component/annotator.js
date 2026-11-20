@@ -100,6 +100,16 @@ export function labelForKey(labels, code, shift) {
   return labels.find((label) => label.code && label.code === code && Boolean(label.shift) === Boolean(shift));
 }
 
+// What a plain key press does: a label's key picks the label before any character shortcut, since Shift+digit types
+// a shortcut's character on some layouts (Shift+1 is "+", zoom, on a Swiss keyboard; Shift+7 is "/", the label
+// finder, on a German one); any other key is the shortcut of the character it types (letters in lower case).
+// Exported for tests/detection_dataset_annotator.
+export function plainKeyTarget(labels, { key, code, shiftKey }) {
+  const label = labelForKey(labels, code, shiftKey);
+  if (label) return { label };
+  return { shortcut: key.length === 1 ? key.toLowerCase() : key };
+}
+
 // Whether a box is a guess to check first (an unsure city type, biome or city area: constants.ANNOTATOR_GUESS_SOURCES).
 export function isGuess(guessSources, box) {
   return guessSources.has(box.source);
@@ -780,7 +790,12 @@ class Annotator {
       this.nudge(key, shiftKey ? NUDGE_SHIFT_PX : NUDGE_PX, event.altKey);
       return true;
     }
-    switch (key.length === 1 ? key.toLowerCase() : key) {
+    const target = plainKeyTarget(this.labels, event);
+    if (target.label) {
+      this.useLabel(target.label.name);
+      return true;
+    }
+    switch (target.shortcut) {
       case " ":
         this.spaceDown = true;
         this.viewport.style.cursor = "grab";
@@ -846,11 +861,8 @@ class Annotator {
         this.filterEl.focus();
         this.filterEl.select();
         return true;
-      default: {
-        const label = labelForKey(this.labels, event.code, shiftKey);
-        if (label) this.useLabel(label.name);
-        return Boolean(label);
-      }
+      default:
+        return false;
     }
   }
 
@@ -1126,6 +1138,7 @@ class Annotator {
     for (const label of shown) {
       const row = el("button", "ann-label", this.legendEl);
       row.type = "button";
+      row.dataset.label = label.name;
       const what = label.title ? `${label.name} (${label.title})` : label.name;
       row.title = this.selected.size ? `Label the selected boxes ${what}` : `Draw ${what} boxes`;
       row.setAttribute("aria-pressed", String(label.name === this.currentLabel));
@@ -1136,10 +1149,17 @@ class Annotator {
       el("span", "ann-count", row).textContent = String(counts[label.name] ?? 0);
       row.addEventListener("click", (event) => {
         this.useLabel(label.name);
+        // A keyboard press (detail 0) keeps the focus on its label: the list may have been drawn anew, so the
+        // focused button is gone and the focus would fall to the page, out of the editor.
+        if (event.detail === 0 && !row.isConnected) this.focusLabel(label.name);
         this.backToCanvas(event);
       });
     }
     if (!shown.length) el("p", "ann-muted", this.legendEl).textContent = "No label matches.";
+  }
+
+  focusLabel(name) {
+    [...this.legendEl.children].find((node) => node.dataset?.label === name)?.focus({ preventScroll: true });
   }
 
   renderStatus() {

@@ -19,10 +19,9 @@ callback (about a millisecond each).
 Items come back in the shape the rest of the annotator uses: ``path``, ``source``, ``reviewed``, ``detected``,
 ``edit_version``, ``next_annotation_id``, ``split``, ``guesses``, the detector's fields, and
 ``annotations`` (``id``, ``label``, ``bbox``, ``area``, ``iscrowd``, ``source``, ``score``). The database is plain
-SQLite and can be read without this program.
-
-Schema versions (``PRAGMA user_version``): 1 the first; 2 added ``split`` and ``guesses``. An older
-store is upgraded when it is opened, after a copy of it is saved next to it (``ANNOTATOR_STORE_BACKUP``).
+SQLite and can be read without this program. A screenshot path that is not valid UTF-8 (a POSIX file name with other
+bytes, which Python keeps as surrogate escapes and SQLite text cannot hold) is stored as its file-system bytes, a
+BLOB, and read back unchanged; its ``source`` is a display name, with such characters written as escapes.
 """
 
 from __future__ import annotations
@@ -31,6 +30,7 @@ import contextlib
 import itertools
 import json
 import operator
+import os
 import sqlite3
 from collections.abc import Iterable, Iterator, Mapping
 from dataclasses import dataclass
@@ -81,17 +81,6 @@ _SCHEMA = (
     ) WITHOUT ROWID""",
     "CREATE INDEX annotations_label ON annotations(label)",
 )
-
-_UPGRADES = {
-    # version 1 -> 2: each screenshot's split and guess count
-    1: (
-        "ALTER TABLE images ADD COLUMN split TEXT",
-        "ALTER TABLE images ADD COLUMN guesses INTEGER NOT NULL DEFAULT 0",
-        "UPDATE images SET guesses = (SELECT COUNT(*) FROM annotations WHERE annotations.image_key = images.key "
-        f"AND annotations.source IN ({', '.join(repr(source) for source in sorted(K.ANNOTATOR_GUESS_SOURCES))}))",
-    ),
-}
-"""Statements that upgrade a store from the version given to the next one."""
 
 _RESULT_COLUMNS = ("detector", "width", "height", "detector_width", "detector_height", "error")
 """Detector result fields with a column of their own (besides ``detected`` and ``annotations``)."""
@@ -151,12 +140,31 @@ class QueueEntry:
     """How many of its boxes are guesses (``ANNOTATOR_GUESS_SOURCES``)."""
 
 
+def _stored_path(path: str) -> str | bytes:
+    """A screenshot path as the store keeps it: its text, or its file-system bytes when UTF-8 cannot hold it."""
+    try:
+        path.encode("utf-8")
+    except UnicodeEncodeError:
+        return os.fsencode(path)
+    return path
+
+
+def _read_path(value: str | bytes) -> str:
+    """A stored screenshot path (``_stored_path``) as the original path text."""
+    return os.fsdecode(value) if isinstance(value, bytes) else value
+
+
+def _display_name(text: str) -> str:
+    """A name to show and store as text: characters UTF-8 cannot hold written as escapes."""
+    return text.encode("utf-8", "backslashreplace").decode("utf-8")
+
+
 def _item(row: tuple[Any, ...]) -> dict[str, Any]:
     """An item without its boxes from an ``_SELECT_IMAGE`` row (the key, its first value, is left out)."""
     values = dict(zip(_IMAGE_COLUMNS, row, strict=True))
     item: dict[str, Any] = json.loads(values["extra"])
     item.update(
-        path=values["path"],
+        path=_read_path(values["path"]),
         source=values["source"],
         reviewed=bool(values["reviewed"]),
         detected=bool(values["detected"]),
@@ -237,7 +245,6 @@ class ReviewStore:
         does not exist yet.
 
         Raises:
-            ValueError: The store was made by a newer annotator.
             sqlite3.Error: The file is not a database, or is locked for longer than ``ANNOTATOR_STORE_BUSY_S``.
         """
         path.parent.mkdir(parents=True, exist_ok=True)
@@ -269,43 +276,17 @@ class ReviewStore:
         return int(self._db.execute("PRAGMA user_version").fetchone()[0])
 
     def _initialise(self, input_roots: list[str]) -> None:
-        """Create the schema when the file is new, upgrade an older store (after saving a copy of it); refuse a store
-        made by a newer annotator."""
-        version = self._version()
-        if version == K.ANNOTATOR_STORE_SCHEMA_VERSION:
-            return
-        if version > K.ANNOTATOR_STORE_SCHEMA_VERSION:
-            raise ValueError(f"Review store {self.path} was made by a newer annotator (version {version})")
-        if version:
-            self._backup(version)  # before the upgrade, outside its transaction: the copy is the store as it was
+        """Create the schema when the file is new (``PRAGMA user_version`` 0)."""
+        if self._version():
+            return  # the usual case, without taking the write lock
         with self._write():
-            version = self._version()  # again under the lock: another session may have created or upgraded it
-            if version > K.ANNOTATOR_STORE_SCHEMA_VERSION:
-                raise ValueError(f"Review store {self.path} was made by a newer annotator (version {version})")
-            if version == K.ANNOTATOR_STORE_SCHEMA_VERSION:
-                return
-            if version == 0:  # a new file
-                for statement in _SCHEMA:
-                    self._db.execute(statement)
-                self._set_meta("input_roots", input_roots)
-                self._set_meta("settings", DetectionOptions().as_settings())
-            else:
-                for step in range(version, K.ANNOTATOR_STORE_SCHEMA_VERSION):
-                    for statement in _UPGRADES[step]:
-                        self._db.execute(statement)
-            self._db.execute(f"PRAGMA user_version = {int(K.ANNOTATOR_STORE_SCHEMA_VERSION)}")
-
-    def _backup(self, version: int) -> Path:
-        """Save a copy of the store (SQLite's backup API: the WAL's pages included) before upgrading it from
-        ``version``; an existing copy is kept, it is the older one."""
-        target = self.path.with_name(K.ANNOTATOR_STORE_BACKUP.format(name=self.path.name, version=version))
-        if not target.exists():
-            copy = sqlite3.connect(str(target))
-            try:
-                self._db.backup(copy)
-            finally:
-                copy.close()
-        return target
+            if self._version():
+                return  # another session created it meanwhile
+            for statement in _SCHEMA:
+                self._db.execute(statement)
+            self._set_meta("input_roots", input_roots)
+            self._set_meta("settings", DetectionOptions().as_settings())
+            self._db.execute(f"PRAGMA user_version = {int(K.ANNOTATOR_STORE_CREATED)}")
 
     # ---- transactions --------------------------------------------------------------------------------------------
 
@@ -365,7 +346,7 @@ class ReviewStore:
             (added, existing) screenshot counts.
         """
         # Keys and names first: resolving paths reads the disk, which should not happen while holding the lock.
-        rows = [(image_key(path), str(path), relative_source(path)) for path in paths]
+        rows = [(image_key(path), _stored_path(str(path)), _display_name(relative_source(path))) for path in paths]
         added = 0
         with self._write():
             position = self._db.execute("SELECT COALESCE(MAX(position) + 1, 0) FROM images").fetchone()[0]
@@ -430,10 +411,21 @@ class ReviewStore:
         """Image key -> split, for the screenshots that have one."""
         return dict(self._db.execute("SELECT key, split FROM images WHERE split IS NOT NULL"))
 
-    def set_splits(self, splits: Mapping[str, str]) -> None:
-        """Give screenshots their split (it is kept: later exports never move a screenshot to another split)."""
+    def claim_splits(self, splits: Mapping[str, str], *, overwrite: Iterable[str] = ()) -> dict[str, str]:
+        """Give screenshots their split where they have none yet (the ``overwrite`` ones always: pinned to a split),
+        in one write, so two exports at once cannot give one screenshot two splits. A split is kept: later exports
+        never move a screenshot to another split.
+
+        Returns:
+            Image key -> split as the store now has it, for every key of ``splits`` still in the store.
+        """
+        always = set(overwrite)
         with self._write():
-            self._db.executemany("UPDATE images SET split = ? WHERE key = ?", [(s, k) for k, s in splits.items()])
+            for key, split in splits.items():
+                guard = "" if key in always else " AND split IS NULL"
+                self._db.execute(f"UPDATE images SET split = ? WHERE key = ?{guard}", (split, key))
+            stored = dict(self._db.execute("SELECT key, split FROM images WHERE split IS NOT NULL"))
+        return {key: stored[key] for key in splits if key in stored}
 
     # ---- the editor ----------------------------------------------------------------------------------------------
 
@@ -472,24 +464,32 @@ class ReviewStore:
         selected = set(keys) if keys is not None else None
         rows = self._db.execute("SELECT key, path, detected FROM images ORDER BY position")
         return [
-            (key, path)
+            (key, _read_path(path))
             for key, path, detected in rows
             if (selected is None or key in selected) and (force or not detected)
         ]
 
-    def record_detection(self, key: str, result: Mapping[str, Any], *, force: bool) -> None:
+    def record_detection(self, key: str, result: Mapping[str, Any], *, force: bool) -> bool:
         """Replace a screenshot's detector fields and boxes with a detection result.
 
         Its revision goes up, so an editor showing the old boxes is remounted and its late saves are refused. A
         forced rerun also clears the review flag. Box ids continue the screenshot's counter, so none is reused.
 
+        A result that is not forced, for a screenshot detected meanwhile (another run took the same screenshot), is
+        dropped: it must not replace that detection and the edits made since.
+
+        Returns:
+            Whether the result was saved.
+
         Raises:
             KeyError: The screenshot is not in the store.
         """
         with self._write():
-            row = self._db.execute("SELECT next_annotation_id FROM images WHERE key = ?", (key,)).fetchone()
+            row = self._db.execute("SELECT next_annotation_id, detected FROM images WHERE key = ?", (key,)).fetchone()
             if row is None:
                 raise KeyError(key)
+            if row[1] and not force:
+                return False
             annotations, counter = _numbered(result.get("annotations", []), row[0])
             self._db.execute(
                 "UPDATE images SET detected = ?, detector = ?, width = ?, height = ?, detector_width = ?, "
@@ -505,10 +505,12 @@ class ReviewStore:
                 ),
             )
             self._replace_annotations(key, annotations)
+        return True
 
     def record_failure(self, key: str, error: str, *, force: bool) -> None:
-        """Note a failed detection. A failed rerun of a detected screenshot keeps its boxes and review flag;
-        otherwise the screenshot counts as not detected (it can be retried).
+        """Note a failed detection. A failed rerun of a detected screenshot keeps its boxes and review flag; a failure
+        that is not forced, for a screenshot detected meanwhile (by another run), changes nothing; otherwise the
+        screenshot counts as not detected (it can be retried).
 
         Raises:
             KeyError: The screenshot is not in the store.
@@ -520,6 +522,8 @@ class ReviewStore:
             if force and row[0]:
                 message = f"Rerun failed; kept previous detections. {error}"
                 self._db.execute("UPDATE images SET error = ? WHERE key = ?", (message, key))
+            elif row[0]:
+                return  # another run detected it meanwhile: its result stands
             else:
                 self._db.execute("UPDATE images SET detected = 0, error = ? WHERE key = ?", (error, key))
 
