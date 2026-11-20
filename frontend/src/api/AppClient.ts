@@ -9,7 +9,7 @@ import type { AtlasCard } from "@/domain/atlas/AtlasCard";
 import type { AtlasSummary } from "@/domain/atlas/AtlasSummary";
 import type { FolderOpened } from "@/domain/atlas/FolderOpened";
 import type { FsListing } from "@/domain/atlas/FsListing";
-import type { BookmarkDraft, Bookmarks } from "@/domain/bookmarks/Bookmarks";
+import type { BookmarkDraft, Bookmarks, SavedRoute } from "@/domain/bookmarks/Bookmarks";
 import type { DebugMark, DebugMarkDraft, DebugMarks } from "@/domain/debug/DebugMarks";
 import type { ResultRow, SearchResult } from "@/domain/find/SearchResult";
 import type { SourceShot } from "@/domain/find/Sources";
@@ -43,6 +43,7 @@ export function createAppClient(http: Http) {
 		getAtlases: () => http.get<AtlasCard[]>("/api/atlases"),
 		thumbUrl: (json: string, v: number) => http.url("/api/atlases/thumb", { json, v }),
 		renameAtlas: (json: string, name: string) => http.send<Ok>("POST", "/api/atlases/rename", { json, name }),
+		showAtlasFolder: (json: string) => http.send<Ok>("POST", "/api/atlases/show-folder", { json }),
 		forgetAtlas: (json: string) => http.send<Ok>("POST", "/api/atlases/forget", { json }),
 		deleteAtlas: (json: string) => http.send<{ failed: string[] }>("POST", "/api/atlases/delete", { json }),
 		openAtlas: (path: string) => http.send<AtlasSummary>("POST", "/api/atlas/open", { path }),
@@ -109,11 +110,13 @@ export function createAppClient(http: Http) {
 		deleteBookmarks: (ids: number[]) => http.send<{ deleted: string[] }>("POST", "/api/bookmarks/delete", { ids }),
 		moveBookmarks: (ids: number[], group: string) => http.send<Ok>("POST", "/api/bookmarks/move", { ids, group }),
 		toggleBookmark: (id: number) => http.send<Ok>("POST", "/api/bookmarks/toggle", { id }),
+		setBookmarkRoute: (id: number, route: SavedRoute) => http.send<Ok>("POST", "/api/bookmarks/route", { id, route }),
 		bookmarkAll: (items: ItemRef[], group: string) =>
 			http.send<{ added: number; skipped: number }>("POST", "/api/bookmarks/all", { items, group }),
 		newGroup: (name: string) => http.send<Ok>("POST", "/api/groups", { name }),
 		renameGroup: (old: string, name: string) => http.send<Ok>("POST", "/api/groups/rename", { old, new: name }),
 		toggleGroup: (name: string) => http.send<Ok>("POST", "/api/groups/toggle", { name }),
+		foldGroups: (names: string[], folded: boolean) => http.send<Ok>("POST", "/api/groups/fold", { names, folded }),
 		deleteGroups: (names: string[]) => http.send<{ deleted: number }>("POST", "/api/groups/delete", { names }),
 
 		// debug marks

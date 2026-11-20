@@ -12,6 +12,54 @@ describe("useAppStore", () => {
 		expect(useAppStore.getState().fitAtlas).toBe(1);
 	});
 
+	it("a saved route lit up and a selection put each other out; leaving Bookmarks ends changing a route", () => {
+		const s = useAppStore.getState();
+		s.select({ kind: "node", id: 1, x: 0, y: 0 } as never);
+		s.lightRoute(5);
+		expect(useAppStore.getState()).toMatchObject({ routeLit: 5, selected: null });
+		s.select(null);
+		expect(useAppStore.getState().routeLit).toBeNull();
+		s.setTab("bookmarks");
+		s.setMode({ kind: "route-edit", id: 5 });
+		s.setTab("find");
+		expect(useAppStore.getState().mode).toEqual({ kind: "normal" });
+	});
+
+	it("a saved route deleted ends tracking it, lighting it up and adjusting it; other routes stay", () => {
+		const s = useAppStore.getState();
+		s.setRoute({ path: [1, 2], message: "", at: 0, saved: 5 });
+		s.lightRoute(5);
+		s.setMode({ kind: "route-edit", id: 5 });
+		s.bookmarksAre(new Set([5, 6]));
+		expect(useAppStore.getState()).toMatchObject({ routeLit: 5, mode: { kind: "route-edit" } });
+		s.bookmarksAre(new Set([6]));
+		expect(useAppStore.getState()).toMatchObject({ route: null, routeLit: null, mode: { kind: "normal" } });
+		s.setRoute({ path: [1, 2], message: "", at: 0 }); // (Track now: not a saved route)
+		s.bookmarksAre(new Set());
+		expect(useAppStore.getState().route).not.toBeNull();
+	});
+
+	it("lighting another route ends adjusting the first; another atlas lets go of held settings (review)", () => {
+		const s = useAppStore.getState();
+		s.setMode({ kind: "route-edit", id: 5 });
+		s.lightRoute(5);
+		expect(useAppStore.getState().mode).toEqual({ kind: "route-edit", id: 5 });
+		s.lightRoute(6);
+		expect(useAppStore.getState().mode).toEqual({ kind: "normal" });
+		s.hold("Paths");
+		s.resetAtlas();
+		expect(useAppStore.getState().editing).toEqual([]);
+	});
+
+	it("tracking another route ends adjusting one; tracking the same one doesn't (CodeRabbit)", () => {
+		const s = useAppStore.getState();
+		s.setMode({ kind: "route-edit", id: 5 });
+		s.setRoute({ path: [1, 2], message: "", at: 0, saved: 5 });
+		expect(useAppStore.getState().mode).toEqual({ kind: "route-edit", id: 5 });
+		s.setRoute({ path: [3, 4], message: "", at: 0, saved: 6 });
+		expect(useAppStore.getState().mode).toEqual({ kind: "normal" });
+	});
+
 	it("patches the replay only while one is open", () => {
 		const s = useAppStore.getState();
 		s.patchReplay({ pos: 3 });

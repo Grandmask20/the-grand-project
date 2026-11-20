@@ -5,7 +5,7 @@ import type { ReactNode } from "react";
 import { createAppClient } from "@/api/AppClient";
 import { AppQueryKeys } from "@/api/AppQueryKeys";
 import { AppClientProvider } from "@/providers/AppClientProvider";
-import { useAppStore } from "@/store/AppStore";
+import { releaseHolds, useAppStore } from "@/store/AppStore";
 import { fakeHttp } from "./FakeHttp";
 import { meta, state } from "./Fixtures";
 
@@ -13,6 +13,7 @@ const initial = useAppStore.getState();
 
 /** Puts the page store back as it starts (after each test). */
 export function resetStore() {
+	releaseHolds(); // (held settings are kept outside the store: CodeRabbit)
 	useAppStore.setState(initial, true);
 }
 

@@ -16,6 +16,7 @@ export const LAYER_ORDER = [
 	"recent",
 	"paths",
 	"removed",
+	"saved-routes", // routes saved with the bookmarks: under the one tracked
 	"route-casing",
 	"route",
 	"icons",
@@ -28,6 +29,7 @@ export const LAYER_ORDER = [
 	"hits-edge",
 	"hits",
 	"route-nodes",
+	"route-here", // the map you are on, on a route tracked
 	"fog-picture", // the timelapse's fog: over the map's own layers, so it hides what isn't revealed yet
 	"outline", // the screenshots coming in, over the fog
 	"ground-fade-gl", // the 3D view: the ground fading out far off, over the flat layers and under the 3D ones
@@ -38,6 +40,8 @@ export const LAYER_ORDER = [
 	"marks-line",
 	"marks-dashed",
 	"marks-point",
+	"route-lit", // a saved route clicked in Bookmarks: lit up as a selection
+	"route-lit-maps",
 	"selected-path",
 	"ghost-picture", // the screenshot placed by hand and a question's: under the selection ring
 	"preview",

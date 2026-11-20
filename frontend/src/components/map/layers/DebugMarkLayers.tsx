@@ -1,7 +1,7 @@
 import { useMemo } from "react";
 import { Source } from "react-map-gl/maplibre";
 import { useAppState } from "@/hooks/app/UseAppState";
-import { useSettings } from "@/hooks/app/UseSettings";
+import { useShownSettings } from "@/hooks/app/UseShownSettings";
 import { useDebugMarks } from "@/hooks/debug/UseDebugMarks";
 import { useMapView } from "@/hooks/map/UseMapView";
 import { layerOn } from "@/logic/map/AtlasLayers";
@@ -14,7 +14,7 @@ export function DebugMarkLayers() {
 	const { geo } = useMapView();
 	const debug = !!useAppState().data?.debug;
 	const marks = useDebugMarks(debug).data;
-	const settings = useSettings();
+	const settings = useShownSettings(); // (with the layers you're working on: user)
 	const on = !settings || layerOn(settings, "Debug marks");
 
 	const data = useMemo(() => {

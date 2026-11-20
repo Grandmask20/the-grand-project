@@ -454,6 +454,12 @@ class Handler(BaseHTTPRequestHandler):
         self.S.rename_atlas(b["json"], b["name"])
         self._json({"ok": True})
 
+    @route("POST", "/api/atlases/show-folder")
+    def post_show_folder(self, q) -> None:
+        """Open a known atlas's folder in the system's file browser."""
+        self.S.show_atlas_folder(self._body()["json"])
+        self._json({"ok": True})
+
     @route("POST", "/api/atlases/forget")
     def post_forget(self, q) -> None:
         """Stop tracking an atlas."""
@@ -763,7 +769,7 @@ class Handler(BaseHTTPRequestHandler):
         """Add a bookmark."""
         b = self._body()
         i = self.S.add_bookmark(float(b["x"]), float(b["y"]), b.get("name", ""), b.get("group", "Other"),
-                                b.get("note", ""), gen=self._req_gen)  # fmt: skip
+                                b.get("note", ""), gen=self._req_gen, route=b.get("route"))  # fmt: skip
         if i < 0:
             raise ApiError("there is already a bookmark on that spot", 409)
         self._json({"id": i})
@@ -773,6 +779,15 @@ class Handler(BaseHTTPRequestHandler):
         """Edit a bookmark."""
         b = self._body()
         self.S.edit_bookmark(int(i), b.get("name", ""), b.get("group", "Other"), b.get("note", ""))
+        self._json({"ok": True})
+
+    @route("POST", "/api/bookmarks/route")
+    def post_bookmark_route(self, q) -> None:
+        """Change a saved route's maps."""
+        b = self._body()
+        if not isinstance(b.get("route"), dict):
+            raise ApiError("a route is needed", 400)
+        self.S.set_bookmark_route(int(b["id"]), b["route"], gen=self._req_gen)
         self._json({"ok": True})
 
     @route("POST", "/api/bookmarks/delete")
@@ -821,6 +836,16 @@ class Handler(BaseHTTPRequestHandler):
         if not isinstance(names, list):
             raise ValueError("names must be a list")
         self._json({"deleted": self.S.delete_groups([n for n in names if isinstance(n, str)])})
+
+    @route("POST", "/api/groups/fold")
+    def post_fold_groups(self, q) -> None:
+        """Fold groups shut, or open them."""
+        b = self._body()
+        names = b.get("names")
+        if not isinstance(names, list) or not all(isinstance(n, str) for n in names):
+            raise ApiError("names: a list of group names", 400)
+        self.S.fold_groups(names, bool(b.get("folded")))
+        self._json({"ok": True})
 
     @route("POST", "/api/groups/toggle")
     def post_toggle_group(self, q) -> None:

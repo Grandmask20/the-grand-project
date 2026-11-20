@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { RouteGraph } from "@/logic/Routes";
+import { RouteGraph, ringedMaps, routeMarks } from "@/logic/Routes";
 
 // 0 - 1 - 2 - 3, and a long way round 0 - 4 - 5 - 6 - 3; 7 alone; map 5 has a Breach
 const graph = new RouteGraph({
@@ -83,5 +83,17 @@ describe("RouteGraph", () => {
 			],
 		});
 		expect(g.shortest(0, (u) => u === 2)).toEqual([0, 1, 2]);
+	});
+});
+
+describe("ringedMaps", () => {
+	it("rings a route's first map alone while its last is picked, then every map but the first", () => {
+		expect(ringedMaps([4])).toEqual([4]);
+		expect(ringedMaps([4, 5, 6])).toEqual([5, 6]);
+	});
+
+	it("while tracked: the map you are on marked, only the maps not run yet ringed (a branch's way back too)", () => {
+		expect(routeMarks([1, 2, 3, 4, 3, 5], 3)).toEqual({ rings: [5], here: 4 });
+		expect(routeMarks([1, 2, 3])).toEqual({ rings: [2, 3], here: null });
 	});
 });

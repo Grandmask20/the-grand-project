@@ -34,4 +34,14 @@ describe("MapCamera", () => {
 		act(() => useAppStore.getState().requestFit());
 		expect(fm.map.fitBounds).toHaveBeenCalledWith(mapInfo.bounds, { padding: 30 });
 	});
+
+	it("fits a saved route asked for while the map loaded, once it's there, and only once (CodeRabbit)", () => {
+		useAppStore.getState().fitArea([0, 0, 100, 100]); // (clicked before the map was made)
+		const { fm, unmount } = renderOnMap(<MapCamera />);
+		expect(fm.map.fitBounds).toHaveBeenCalledTimes(1);
+		expect(useAppStore.getState().fitTo).toBeNull(); // carried out
+		unmount();
+		const again = renderOnMap(<MapCamera />); // (the map made again: not fitted again)
+		expect(again.fm.map.fitBounds).not.toHaveBeenCalled();
+	});
 });

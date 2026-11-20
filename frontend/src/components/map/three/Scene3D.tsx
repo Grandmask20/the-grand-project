@@ -1,7 +1,7 @@
 import { useCallback, useEffect } from "react";
 import { scenePick, selection3d } from "@/domain/map/Scene3D";
 import { useAppClient } from "@/hooks/app/UseAppClient";
-import { useSettings } from "@/hooks/app/UseSettings";
+import { useShownSettings } from "@/hooks/app/UseShownSettings";
 import { useCustomLayer } from "@/hooks/map/UseCustomLayer";
 import { useMapLibre } from "@/hooks/map/UseMapLibre";
 import { useMapView } from "@/hooks/map/UseMapView";
@@ -30,7 +30,7 @@ export function Scene3D() {
 	const app = useAppClient();
 	const map = useMapLibre();
 	const { geo, info, meta } = useMapView();
-	const settings = useSettings();
+	const settings = useShownSettings(); // (with the layers you're working on: user)
 	const tilted = useAppStore((s) => (s.camera?.pitch ?? map.getPitch()) > 1);
 	const replayPos = useAppStore((s) => (s.replay ? s.replay.pos : null));
 	const selected = useAppStore((s) => s.selected);

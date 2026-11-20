@@ -23,6 +23,8 @@ const MODES: Record<MapMode["kind"], string> = {
 	player: "I'm here (click your map)",
 	ghost: "Placing a screenshot by hand",
 	"debug-link": "Debug: missing path (click the second map)",
+	route: "Route (click two maps)",
+	"route-edit": "Adjust route",
 };
 
 /** What you did on the page between two store states, as log lines anyone can read ("Opened the Bookmarks tab",
@@ -43,8 +45,22 @@ export function pageChanges(s: AppStoreState, before: AppStoreState): string[] {
 	if (s.prompt && !before.prompt) out.push(`${s.prompt.title}: dialog opened`);
 	if (s.filePick && !before.filePick) out.push(`${s.filePick.title}: dialog opened`);
 	if (s.confirm && !before.confirm) out.push(`Asked: ${s.confirm.text}`);
+	out.push(...routeChanges(s.route, before.route));
 	if (s.error && s.error !== before.error) out.push(`Error shown: ${s.error}`);
 	return out;
+}
+
+/** A route's changes in words (user: Route here left no line in the log): tracked, on to the next map, stopped, or
+ * why there is none. */
+function routeChanges(r: AppStoreState["route"], was: AppStoreState["route"]): string[] {
+	if (r === was) return [];
+	if (!r) return was?.at !== undefined ? ["Stopped tracking the route"] : [];
+	if (r.at === undefined) return r.message ? [`Route: ${r.message}`] : [];
+	const same = was && was.path.length === r.path.length && was.path.every((m, i) => m === r.path[i]);
+	if (same && was.at !== r.at) return [`Next map: on map #${r.path[r.at]}, ${r.message}`];
+	if (same) return [];
+	const what = r.saved !== undefined ? "a saved route" : "a route";
+	return [`Tracking ${what}: map #${r.path[0]} to map #${r.path[r.path.length - 1]}, ${r.message}`];
 }
 
 /** Tell the app what you do on the page, for the Log tab and the log file (user: "every user made change should be

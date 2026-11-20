@@ -1,11 +1,25 @@
-import { ChevronDownIcon, ChevronRightIcon, EyeIcon, EyeOffIcon, PencilIcon, Trash2Icon } from "lucide-react";
+import { useQueryClient } from "@tanstack/react-query";
+import {
+	ChevronDownIcon,
+	ChevronRightIcon,
+	EyeIcon,
+	EyeOffIcon,
+	PencilIcon,
+	RouteIcon,
+	Trash2Icon,
+} from "lucide-react";
 import { useState } from "react";
+import { AppQueryKeys } from "@/api/AppQueryKeys";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
+import type { Bookmark, Bookmarks, SavedRoute } from "@/domain/bookmarks/Bookmarks";
 import { useAppClient } from "@/hooks/app/UseAppClient";
 import { useBookmarks } from "@/hooks/bookmarks/UseBookmarks";
+import { routeBox, routeTitle } from "@/hooks/map/UseRoutes";
 import { useAppStoreCalm } from "@/store/AppStore";
+import { cn } from "@/utils/Cn";
 import { plural } from "@/utils/Format";
+import { SavedRouteMenu } from "./SavedRouteMenu";
 
 /** Bookmarks by group: show / hide on the map, go to, edit, move, delete; groups made, renamed, hidden. */
 export function BookmarksTab() {
@@ -16,6 +30,11 @@ export function BookmarksTab() {
 	// an empty group)
 	const [pickedGroups, setPickedGroups] = useState<Set<string>>(new Set());
 	const s = useAppStoreCalm();
+	const [routeMenu, setRouteMenu] = useState<{
+		x: number;
+		y: number;
+		bookmark: Bookmark & { route: SavedRoute };
+	} | null>(null);
 	const groups = bookmarks.data?.groups ?? [];
 	const fail = (e: unknown) => s.showError(e);
 	// only bookmarks still in the list: a picked one deleted meanwhile (by another step, or a group delete that failed
@@ -50,6 +69,20 @@ export function BookmarksTab() {
 		allIds.every((id) => picked.has(id)) &&
 		groups.every((g) => g.items.length || pickedGroups.has(g.name));
 	const emptyPicked = groups.filter((g) => !g.items.length && pickedGroups.has(g.name)).map((g) => g.name);
+
+	// folding: kept per atlas by the app (user: Fold all was forgotten after a reload), shown at once
+	const queryClient = useQueryClient();
+	const fold = (names: string[], folded: boolean) => {
+		queryClient.setQueryData<Bookmarks>(
+			AppQueryKeys.bookmarks,
+			(d) => d && { groups: d.groups.map((g) => (names.includes(g.name) ? { ...g, folded } : g)) },
+		);
+		// failed: the groups as the app keeps them (shown folded, they opened again on a reload: CodeRabbit)
+		void app.foldGroups(names, folded).catch((e) => {
+			fail(e);
+			void queryClient.invalidateQueries({ queryKey: AppQueryKeys.bookmarks });
+		});
+	};
 
 	const adding = s.mode.kind === "bookmark";
 	const remove = (ids: number[], name?: string, emptyGroups: string[] = []) =>
@@ -158,25 +191,31 @@ export function BookmarksTab() {
 					<Button
 						size="xs"
 						variant="ghost"
-						onClick={() => {
-							for (const g of groups) s.foldGroup(g.name, false);
-						}}
+						onClick={() =>
+							fold(
+								groups.map((g) => g.name),
+								false,
+							)
+						}
 					>
 						Open all
 					</Button>
 					<Button
 						size="xs"
 						variant="ghost"
-						onClick={() => {
-							for (const g of groups) s.foldGroup(g.name, true);
-						}}
+						onClick={() =>
+							fold(
+								groups.map((g) => g.name),
+								true,
+							)
+						}
 					>
 						Fold all
 					</Button>
 				</div>
 			)}
 			{groups.map((g) => {
-				const folded = s.foldedGroups.includes(g.name);
+				const folded = !!g.folded;
 				return (
 					<div key={g.name} className="flex flex-col">
 						<div className="flex items-center gap-1.5 border-b py-1">
@@ -189,10 +228,16 @@ export function BookmarksTab() {
 								type="button"
 								aria-label={folded ? `Open ${g.name}` : `Fold ${g.name}`}
 								aria-expanded={!folded}
-								onClick={() => s.foldGroup(g.name, !folded)}
+								onClick={() => fold([g.name], !folded)}
 							>
 								{folded ? <ChevronRightIcon className="size-4" /> : <ChevronDownIcon className="size-4" />}
 							</button>
+							{/* a group holding routes: the path symbol before its eye too (user); the others keep the room */}
+							{g.items.some((b) => b.route) ? (
+								<RouteIcon className="size-4 shrink-0 text-gold" aria-label="Routes" />
+							) : (
+								<span className="size-4 shrink-0" />
+							)}
 							<button
 								type="button"
 								aria-label={g.hidden ? `Show ${g.name}` : `Hide ${g.name}`}
@@ -205,7 +250,7 @@ export function BookmarksTab() {
 								className={
 									g.hidden ? "flex-1 text-left font-semibold text-muted-foreground" : "flex-1 text-left font-semibold"
 								}
-								onClick={() => s.foldGroup(g.name, !folded)}
+								onClick={() => fold([g.name], !folded)}
 							>
 								{g.name} <span className="font-normal text-muted-foreground">({g.items.length})</span>
 							</button>
@@ -241,6 +286,13 @@ export function BookmarksTab() {
 										onCheckedChange={(v) => toggle(b.id, v === true)}
 										aria-label={`Pick ${b.name}`}
 									/>
+									{/* a saved route: a path symbol before its eye, to tell it from a map's bookmark (user); the
+									    others keep the room, so the eyes line up */}
+									{b.route ? (
+										<RouteIcon className="size-3.5 shrink-0 text-gold" aria-label="Route" />
+									) : (
+										<span className="size-3.5 shrink-0" />
+									)}
 									<button
 										type="button"
 										aria-label={b.hidden ? `Show ${b.name}` : `Hide ${b.name}`}
@@ -254,9 +306,24 @@ export function BookmarksTab() {
 									</button>
 									<button
 										type="button"
-										className="flex-1 truncate text-left hover:text-gold"
-										title={b.note || b.name}
+										className={cn(
+											"flex-1 truncate text-left hover:text-gold",
+											b.route && s.routeLit === b.id && "text-gold",
+										)}
+										title={b.note || (b.route ? routeTitle(b.name, b.route) : b.name)}
+										onContextMenu={(e) => {
+											// a route's menu: track it, add maps, remove maps (user)
+											const route = b.route;
+											if (!route) return;
+											e.preventDefault();
+											setRouteMenu({ x: e.clientX, y: e.clientY, bookmark: { ...b, route } });
+										}}
 										onClick={async () => {
+											// a route: lit up as a selected bookmark is, the whole of it in view with room round it (user)
+											if (b.route) {
+												s.lightRoute(b.id);
+												return s.fitArea(routeBox(b.route));
+											}
 											s.flyTo(b.x, b.y, 1);
 											try {
 												await s.selectLoaded(app.getInfo("bookmark", b.id));
@@ -265,7 +332,7 @@ export function BookmarksTab() {
 											}
 										}}
 									>
-										{b.name}
+										{b.route ? routeTitle(b.name, b.route) : b.name}
 									</button>
 									<button
 										type="button"
@@ -285,6 +352,14 @@ export function BookmarksTab() {
 					</div>
 				);
 			})}
+			{routeMenu && (
+				<SavedRouteMenu
+					x={routeMenu.x}
+					y={routeMenu.y}
+					bookmark={routeMenu.bookmark}
+					onClose={() => setRouteMenu(null)}
+				/>
+			)}
 		</div>
 	);
 }

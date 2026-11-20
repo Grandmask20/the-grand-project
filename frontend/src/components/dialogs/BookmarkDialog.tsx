@@ -37,7 +37,7 @@ export function BookmarkDialog() {
 		if (!name.trim()) return setError("A bookmark needs a name.");
 		try {
 			const mine = edit;
-			if (edit.id === null) await app.addBookmark({ x: edit.x, y: edit.y, name, group, note });
+			if (edit.id === null) await app.addBookmark({ x: edit.x, y: edit.y, name, group, note, route: edit.route });
 			else await app.editBookmark(edit.id, { name, group, note });
 			// closed only if this is still the bookmark being edited (cancelled and another opened meanwhile: kept)
 			if (useAppStore.getState().bookmarkEdit === mine) close(null);
@@ -51,7 +51,7 @@ export function BookmarkDialog() {
 		<Dialog open onOpenChange={(open) => !open && close(null)}>
 			<DialogContent className="sm:max-w-md">
 				<DialogHeader>
-					<DialogTitle>{edit.id === null ? "Add bookmark" : "Edit bookmark"}</DialogTitle>
+					<DialogTitle>{edit.route ? "Save route" : edit.id === null ? "Add bookmark" : "Edit bookmark"}</DialogTitle>
 				</DialogHeader>
 				<form
 					className="flex flex-col gap-3"

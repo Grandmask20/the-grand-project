@@ -52,7 +52,7 @@ export const gotoLayer = (): Spec => ({
 });
 
 /** The route: a green line edged in black (`route`) and its maps ringed (`route-nodes`). */
-export function routeLayers(geo: Geo, on: boolean): { line: Spec[]; nodes: Spec } {
+export function routeLayers(geo: Geo, on: boolean): { line: Spec[]; nodes: Spec; here: Spec } {
 	const layout = { visibility: visibility(on), "line-cap": "round" as const, "line-join": "round" as const };
 	return {
 		line: [
@@ -71,6 +71,20 @@ export function routeLayers(geo: Geo, on: boolean): { line: Spec[]; nodes: Spec 
 			source: "route-nodes",
 			layout: { visibility: visibility(on) },
 			paint: { "circle-radius": ringRadius(geo, 1), ...hollow("#7cff6b", 3) },
+		},
+		// the map you are on, on a route tracked: filled, so it stands out from the rings still to run
+		here: {
+			id: "route-here",
+			type: "circle",
+			source: "route-here",
+			layout: { visibility: visibility(on) },
+			paint: {
+				"circle-radius": ringRadius(geo, 1),
+				"circle-color": "#7cff6b",
+				"circle-opacity": 0.55,
+				"circle-stroke-color": "#000000",
+				"circle-stroke-width": 2,
+			},
 		},
 	};
 }
@@ -102,6 +116,51 @@ export const bookmarkLayer = (geo: Geo, meta: Meta, on: boolean): Spec => ({
 		"circle-translate": [0, -10],
 	},
 });
+
+/** The saved routes shown (Bookmarks: a route's eye): their lines, dashed in the bookmarks' colour, a branch (a map
+ * added off a route's side) in its own colour (user's sketch: the branch apart from the main path), under the route
+ * being tracked. */
+export const savedRouteLayer = (meta: Meta, on: boolean): Spec => ({
+	id: "saved-routes",
+	type: "line",
+	source: "saved-routes",
+	layout: { visibility: visibility(on), "line-cap": "round", "line-join": "round" },
+	paint: {
+		"line-color": ["case", ["get", "branch"], ROUTE_BRANCH, meta.colours.bookmark],
+		"line-width": 3,
+		"line-opacity": 0.85,
+		"line-dasharray": [2, 1.5],
+	},
+});
+
+/** A saved route's branches on the map. */
+export const ROUTE_BRANCH = "#4dff6a"; // green, as in the user's sketch (a light blue was lost among the paths)
+
+/** The saved route lit up (clicked in Bookmarks, or its maps being changed): its lines in the selection's colour and
+ * its maps ringed, as a selection is, whatever the switches and its eye say. */
+export function litRouteLayers(geo: Geo, meta: Meta): Spec[] {
+	return [
+		{
+			id: "route-lit",
+			type: "line",
+			source: "route-lit",
+			filter: ["==", ["geometry-type"], "LineString"],
+			layout: { "line-cap": "round", "line-join": "round" },
+			paint: {
+				"line-color": ["case", ["get", "branch"], ROUTE_BRANCH, meta.colours.select],
+				"line-width": 4,
+				"line-opacity": 0.95,
+			},
+		},
+		{
+			id: "route-lit-maps",
+			type: "circle",
+			source: "route-lit",
+			filter: ["==", ["geometry-type"], "Point"],
+			paint: { "circle-radius": ringRadius(geo, 7), ...hollow(meta.colours.select, 2) },
+		},
+	];
+}
 
 /** The debug marks: lines between two maps (dashed for a missing path) and rings on the spot. */
 export function markLayers(on: boolean): Spec[] {

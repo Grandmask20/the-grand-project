@@ -40,7 +40,9 @@ describe("createEventHandler", () => {
 	});
 
 	it("opens the tab the app asks for", () => {
+		// (Auto-add is a page of the Atlases tab now: the app's "auto" opens it there)
 		createEventHandler(new QueryClient())("show_tab", "auto");
-		expect(useAppStore.getState().tab).toBe("auto");
+		expect(useAppStore.getState().tab).toBe("atlases");
+		expect(useAppStore.getState().pages.atlases).toBe("auto");
 	});
 });

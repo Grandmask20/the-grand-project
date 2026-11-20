@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import os
+import time
 
 import numpy as np
 import pytest
@@ -173,3 +174,33 @@ def test_the_best_atlas_of_a_folder_comes_first(session, tmp_path):
     frames.mkdir(exist_ok=True)
     (frames / "a.json").write_text("{}")
     assert session.atlases_for_folder(tmp_path / "one")[0] == path  # more cached screenshots, newer
+
+
+def test_an_atlas_folder_opens_in_the_file_browser_only_for_a_listed_atlas(session, tmp_path, monkeypatch):
+    path, _pts, _img = make_atlas(tmp_path)
+    session.open_atlas(path)
+    opened = []
+    monkeypatch.setattr(library.sys, "platform", "linux")
+    monkeypatch.setattr(library.subprocess, "Popen", lambda args: opened.append(args))
+    session.show_atlas_folder(str(path))
+    assert opened == [["xdg-open", str(path.parent)]]
+    with pytest.raises(ValueError):
+        session.show_atlas_folder(str(tmp_path / "elsewhere" / "atlas.json"))  # (no other folder: not in the list)
+    assert len(opened) == 1
+
+
+def test_on_windows_the_folder_opens_in_front_in_the_background(session, tmp_path, monkeypatch):
+    # (Explorer opened behind the browser, or stayed on the other monitor: user) app.winfront does it, off the request
+    from grand_project.app import winfront
+
+    path, _pts, _img = make_atlas(tmp_path)
+    session.open_atlas(path)
+    opened = []
+    monkeypatch.setattr(library.sys, "platform", "win32")
+    monkeypatch.setattr(winfront, "open_folder_in_front", lambda f: opened.append(f))
+    session.show_atlas_folder(str(path))
+    for _ in range(50):
+        if opened:
+            break
+        time.sleep(0.02)
+    assert opened == [path.parent]
