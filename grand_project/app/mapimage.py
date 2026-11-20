@@ -194,7 +194,9 @@ class MapImageMixin:
         except Exception:
             LOG.debug("map image cache not usable, rebuilding", exc_info=True)
         atlas, scope = opened.atlas, opened.scope  # (the record taken in the claim above)
-        self.events.set_progress("building the map image (first time for this atlas)…", scope, owner="map")
+        # each build its own line: an older one ending (a newer build took over) cleared the newer one's (CodeRabbit)
+        owner = f"map{job}"
+        self.events.set_progress("building the map image (first time for this atlas)…", scope, owner=owner)
 
         def failed(e: Exception) -> None:
             """Report the map image as failed (its log line always; the part only for the build still current: an
@@ -235,7 +237,7 @@ class MapImageMixin:
                     h, w = canvas.shape[:2]
                     self.events.log(f"map image built in {time.monotonic() - t0:.1f} s ({w} x {h} px)", scope)
             finally:
-                self.events.set_progress(None, owner="map")
+                self.events.set_progress(None, owner=owner)
 
         if background:
             threading.Thread(target=work, daemon=True).start()
@@ -633,13 +635,24 @@ class MapImageMixin:
             if still and not yes:
                 self._seams_waiting = None
                 self.events.log("Fix seams: cancelled (adding didn't finish)")
-            elif still:
-                self._seams_trouble = []  # (yes covers what was asked; it starts below, or after adding that began)
-            newer = w is not None and not still and not self.working()  # (a newer request waited for this answer)
+            # yes covers what was asked; failures that came in while it was open stay, and are asked about before
+            # it starts (cleared, a Yes started it without showing them: CodeRabbit). Adding again: the worker
+            # starts it (or asks) once that is done.
+            busy = self.working()
+            again = still and yes and not busy and bool(self._seams_trouble)
+            if again:
+                again, self._seams_trouble = self._seams_trouble, []
+                self._seams_asking = True
+            newer = w is not None and not still and not busy  # (a newer request waited for this answer)
         if not still or not yes:  # (stopped, another atlas, or closing meanwhile)
             self.events.publish("seams", self.seams_running())
             if newer:
                 self._start_waiting_seams()
+            return
+        if again:
+            threading.Thread(target=self._ask_seams_anyway, args=(token, again), daemon=True).start()
+            return
+        if busy:
             return
         self.events.log("Fix seams: starting anyway")
         self._start_queued_seams(token)

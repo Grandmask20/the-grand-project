@@ -103,7 +103,7 @@ class Events:
             text: What is being done, or None when done.
             scope: The atlas log its line goes in (a background job's own, captured when it started), else the open
                 one's.
-            owner: Whose line: "job" (the worker: adding, Re-check, Undo...), "map" (the map image build),
+            owner: Whose line: "job" (the worker: adding, Re-check, Undo...), "map<n>" (map image build n),
                 "seams" (Fix seams).
         """
         with self._progress_lock:

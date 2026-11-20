@@ -437,3 +437,18 @@ def test_two_landmarks_on_one_map_each_act_as_themselves(session, tmp_path):
     assert set(ks) == {"Hall", "City"}
     for kind, k in ks.items():
         assert session.info("landmark", k)["on_landmark"]["landmark_kind"] == kind
+
+
+def test_a_city_you_set_by_hand_still_takes_the_biome_s_type(session, tmp_path):
+    # (CodeRabbit: the guard for your own edit skipped the type too)
+    path, _at = biome_atlas(tmp_path)
+    session.open_atlas(path)
+    poly = [[1400, 1000], [1800, 1000], [1800, 1300], [1400, 1300]]
+    n = session.V["nodes"][session.lasso_nodes(poly)[0]]
+    session.set_landmark(n["x"], n["y"], "City", on="map")  # (yours, no type set)
+    session.set_biome(poly, "Vaal city")
+    assert any(
+        c.get("by") == "biome" and c["type"] == "Vaal" and abs(c["x"] - n["x"]) < 30 and abs(c["y"] - n["y"]) < 30
+        for c in session.atlas.city_types
+    )
+    assert [e["kind"] for e in session.atlas.landmark_edits if abs(e["x"] - n["x"]) < 1] == ["City"]

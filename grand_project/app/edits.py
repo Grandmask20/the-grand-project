@@ -164,9 +164,11 @@ class EditsMixin:
                         for e in self.atlas.landmark_edits
                         if math.hypot(e["x"] - lm["x"], e["y"] - lm["y"]) < EDIT_SPOT
                     ]
-                    if any(not e.get("by") for e in near):
-                        # one you set by hand stays as you set it (it was deleted, and clearing the biome then
-                        # couldn't bring it back: CodeRabbit); a landmark takes one edit, so none is added over it
+                    # one you set by hand stays as you set it (it was deleted, and clearing the biome then couldn't
+                    # bring it back: CodeRabbit); a landmark takes one edit, so none is added over it. A City you
+                    # set still takes the biome's type below (unless you set one); anything else you set, none.
+                    mine = any(not e.get("by") for e in near)
+                    if mine and lm["kind"] != "City":
                         continue
                     if lm["kind"] != "City":
                         self.atlas.landmark_edits = [e for e in self.atlas.landmark_edits if e not in near]
@@ -213,6 +215,9 @@ class EditsMixin:
             self._lock_job = True
             job = self.opened  # (one record: its atlas, generation and log together)
             atlas, gen, scope = job.atlas, job.gen, job.scope
+            # the screenshots it searches, as they are now: an Undo meanwhile puts others back (its result would
+            # have put back the strongholds of the screenshots Undo took away: CodeRabbit)
+            rev = getattr(self, "_lock_rev", 0)
 
         def work():
             """Find the hand badges, keep them in the atlas and rebuild the model (background thread)."""
@@ -225,7 +230,7 @@ class EditsMixin:
             with self._lock:
                 try:
                     # another atlas opened meanwhile: its file is not this one's (user, CodeRabbit)
-                    stale = not self.owns(gen)
+                    stale = not self.owns(gen) or rev != getattr(self, "_lock_rev", 0)
                     if found is not None and not stale:
                         atlas.locks = atlas_cities.merge_locks(atlas.locks, found)
                         atlas.lock_scanned = sorted(set(atlas.lock_scanned) | {f["name"] for f in todo})
@@ -236,7 +241,7 @@ class EditsMixin:
                     # screenshots from the old searched list (CodeRabbit)
                     self._lock_job = False
             if stale:
-                self.scan_locks()  # the one open now (its own search was skipped while this one ran)
+                self.scan_locks()  # the screenshots as they are now (its own search was skipped while this one ran)
                 return
             if found is None:
                 return

@@ -677,3 +677,95 @@ def test_another_atlas_never_inherits_a_queued_fix_seams(session, two):
     assert session._seams_waiting["gen"] == session.generation
     session._jobs.get()
     session._jobs.task_done()
+
+
+def test_a_page_log_line_made_for_the_atlas_before_is_refused(session, two):
+    # (CodeRabbit: checked first and written later, a switch in between put the line in the next atlas's log)
+    a, b = two
+    session.open_atlas(a)
+    old = session.generation
+    session.open_atlas(b)
+    srv = AppServer(session, port=0)
+    threading.Thread(target=srv.serve_forever, daemon=True).start()
+    try:
+        status, _h, _b = call(srv, "/api/log", "POST", {"lines": ["clicked a map of A"]}, {"X-Atlas-Gen": str(old)})
+        assert status == 409
+        assert not any("clicked a map of A" in line for line in session.events.log_lines)
+        status, _h, _b = call(srv, "/api/log", "POST", {"lines": ["clicked a map of B"]},
+                              {"X-Atlas-Gen": str(session.generation)})  # fmt: skip
+        assert status == 200 and any("clicked a map of B" in line for line in session.events.log_lines)
+    finally:
+        srv.stopping = True
+        srv.shutdown()
+        srv.server_close()
+
+
+def test_a_quick_atlas_action_waits_for_a_switch_going_on(session, two):
+    # (the switch lock: a check and its change can't be split by opening another atlas)
+    a, _b = two
+    session.open_atlas(a)
+    order = []
+    with session._lock.switching():  # (a switch going on)
+        t = threading.Thread(target=lambda: (session.set_watch(False), order.append("watch off")))
+        t.start()
+        time.sleep(0.2)
+        order.append("switch done")
+    t.join(5)
+    assert order == ["switch done", "watch off"]
+
+
+def test_failures_while_the_box_is_open_are_asked_before_fix_seams_starts(session, two, fake_seams, monkeypatch):
+    # (CodeRabbit: a Yes started it without showing the failures that came in while the box was open)
+    a, _b = two
+    session.open_atlas(a)
+    asked = []
+
+    def ask(q, **kw):
+        asked.append(q)
+        if len(asked) == 1:
+            session._note_seams_trouble("b.png could not be read: damaged")  # (another add fails meanwhile)
+        return True
+
+    monkeypatch.setattr(session.events, "ask", ask)
+    session._jobs.put(([], "recheck_all", session.generation))
+    session.fix_seams(after_adding=True)
+    session._note_seams_trouble("a.png could not be read: damaged")
+    session._jobs.get()
+    session._jobs.task_done()
+    session._start_waiting_seams()
+    assert wait_until(session.seams_running)
+    assert len(asked) == 2 and "a.png" in asked[0] and "b.png" in asked[1] and "a.png" not in asked[1]
+    fake_seams.release.set()
+    assert wait_until(lambda: session._seams_proc is None)
+
+
+def test_an_undo_during_the_stronghold_search_drops_its_result(session, two, monkeypatch):
+    # (CodeRabbit: the search's result put back the strongholds of the screenshots Undo took away)
+    a, _b = two
+    if getattr(session, "_lock_thread", None):
+        session._lock_thread.join(10)
+    session.open_atlas(a)
+    if getattr(session, "_lock_thread", None):
+        session._lock_thread.join(10)
+    release, started, calls = threading.Event(), threading.Event(), []
+
+    def find_locks(atlas, todo):
+        calls.append([f["name"] for f in todo])
+        if len(calls) == 1:
+            started.set()
+            release.wait(10)
+            return [(500.0, 500.0)]  # (a hand icon in a screenshot Undo takes away)
+        return []
+
+    monkeypatch.setattr(cities, "find_locks", find_locks)
+    with session._lock:
+        session.atlas.lock_scanned = []
+    session.scan_locks()
+    assert started.wait(5)
+    with session._lock:  # (what Undo does: the atlas as before, the search out of date)
+        session._lock_rev = getattr(session, "_lock_rev", 0) + 1
+    release.set()
+    assert wait_until(lambda: len(calls) >= 2)  # (searched again, the screenshots as they are now)
+    if getattr(session, "_lock_thread", None):
+        session._lock_thread.join(10)
+    assert not any(abs(k["x"] - 500.0) < 1 for k in session.atlas.locks)

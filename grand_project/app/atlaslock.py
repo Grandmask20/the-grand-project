@@ -28,6 +28,10 @@ class AtlasLock:
         self._lock = threading.RLock()
         self._generation = generation
         self._request = threading.local()
+        # held while the open atlas changes (opening, making, closing one) and by quick atlas actions (auto-add on /
+        # off, its folder, a log line): their check and their change can't be split by a switch, and they never wait
+        # for a job, which holds only _lock (a switch is refused while one runs). Always taken before _lock.
+        self._switch = threading.RLock()
 
     @contextlib.contextmanager
     def expect(self, gen: int) -> Iterator[None]:
@@ -54,6 +58,25 @@ class AtlasLock:
         gen = self.expected()
         if gen is not None and gen != self._generation():
             raise StaleAtlas()
+
+    @contextlib.contextmanager
+    def switching(self) -> Iterator[None]:
+        """While the open atlas changes: quick atlas actions wait for it (see `steady`)."""
+        with self._switch:
+            yield
+
+    @contextlib.contextmanager
+    def steady(self) -> Iterator[None]:
+        """Run a quick atlas action with no switch possible meanwhile, refused when its page request was made for
+        another atlas: the check and the action in one step (checked alone, then acted on, a switch between applied
+        it to the next atlas: CodeRabbit). Doesn't wait for a job (only for a switch going on).
+
+        Raises:
+            StaleAtlas: The request was made for another atlas.
+        """
+        with self._switch:
+            self.refuse_stale()
+            yield
 
     def acquire(self, blocking: bool = True, timeout: float = -1) -> bool:
         """Take the lock; on a page change's thread, refuse it when its atlas is no longer the open one.
@@ -100,6 +123,18 @@ class AtlasLock:
 
     def __exit__(self, *exc) -> None:
         self.release()
+
+
+def atlas_switch(fn: Callable) -> Callable:
+    """Mark a session method that changes the open atlas (open, new): it holds the switch lock throughout, so quick
+    atlas actions (AtlasLock.steady) never act halfway through it."""
+
+    @functools.wraps(fn)
+    def run(self, *args, **kwargs):
+        with self._lock.switching():
+            return fn(self, *args, **kwargs)
+
+    return run
 
 
 def atlas_edit(fn: Callable) -> Callable:

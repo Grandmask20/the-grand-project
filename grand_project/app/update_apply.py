@@ -147,11 +147,14 @@ def freeze(python: str) -> dict[str, str] | None:
         if not line or line.startswith("#"):
             continue
         if line.startswith("-e "):
-            name = line.rpartition("#egg=")[2] if "#egg=" in line else ""
+            # "#egg=name&subdirectory=src": the name alone (the rest went into it: CodeRabbit)
+            frag = line.partition("#")[2]
+            name = next((v for k, _, v in (f.partition("=") for f in frag.split("&")) if k == "egg"), "")
         else:
             name = re.split(r"\s*(?:==|@|===)\s*", line, maxsplit=1)[0]
         if name:
-            out[name.strip().lower().replace("_", "-")] = line
+            # one key per distribution whatever its spelling (PEP 503: "demo.pkg" is "demo_pkg": CodeRabbit)
+            out[re.sub(r"[-_.]+", "-", name.strip()).lower()] = line
     return out
 
 

@@ -772,6 +772,7 @@ class AddingMixin:
         with self._lock:
             old = core.Atlas.load(entry["file"])  # (raises: the entry stays, Undo can be tried again: CodeRabbit)
             self._undo.pop()
+            self._lock_rev = getattr(self, "_lock_rev", 0) + 1  # (a stronghold search running now is out of date)
             for attr in core.Atlas.SAVED:
                 if attr not in core.Atlas.HAND_EDITS:
                     setattr(self.atlas, attr, getattr(old, attr))

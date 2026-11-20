@@ -189,3 +189,13 @@ def test_a_package_from_a_file_or_url_is_known_and_put_back_as_it_was(tmp_path, 
     put_back = [a for a in ran if "install" in a and "-r" not in a]
     assert put_back[-1][-1] == "mylib @ file:///C:/wheels/mylib-1.0-py3-none-any.whl"  # (as it was installed)
     assert not any("uninstall" in a for a in ran)  # (nothing new: nothing taken away)
+
+
+def test_package_names_are_read_whole_and_spelt_one_way(monkeypatch):
+    # (CodeRabbit: "#egg=name&subdirectory=src" went into the name; "demo.pkg" and "demo_pkg" were two packages)
+    lines = "".join(
+        f"{line}{chr(10)}"
+        for line in ("-e git+https://x/y.git#egg=dev_tool&subdirectory=src", "Demo.Pkg==1.0", "other__lib==2.0")
+    )
+    monkeypatch.setattr(ua.subprocess, "run", lambda *a, **k: subprocess.CompletedProcess(a, 0, lines, ""))
+    assert set(ua.freeze("python")) == {"dev-tool", "demo-pkg", "other-lib"}

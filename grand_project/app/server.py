@@ -439,13 +439,17 @@ class Handler(BaseHTTPRequestHandler):
     @route("POST", "/api/log")
     def post_log(self, q) -> None:
         """What was done on the page (tabs, modes, selections, dialogs, errors shown): into the log file."""
-        self.S._lock.refuse_stale()  # (a line about another atlas never goes in the open one's log)
         lines = self._body().get("lines", [])
         if not isinstance(lines, list):
             raise ValueError("lines must be a list")
-        for line in lines[:50]:
-            # one line each (a line break in a name made two), not too long
-            self.S.events.log(" ".join(str(line).split())[:500])  # (the Log tab and the log file: user)
+        # into the log of the atlas the request was made for, checked with no switch possible meanwhile (checked
+        # first and written later, a switch while the body was read put the lines in the next atlas's log:
+        # CodeRabbit); a request for another atlas is refused
+        with self.S._lock.steady():
+            scope = self.S.opened.scope
+            for line in lines[:50]:
+                # one line each (a line break in a name made two), not too long
+                self.S.events.log(" ".join(str(line).split())[:500], scope)  # (the Log tab and the log file: user)
         self._json({"ok": True})
 
     # ------------------------------------------------------------------ the in-app update (app/updater.py)

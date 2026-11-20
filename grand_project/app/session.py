@@ -25,7 +25,7 @@ from grand_project import finalize as atlas_finalize
 from grand_project import logs as atlas_log
 
 from .adding import AddingMixin
-from .atlaslock import AtlasLock
+from .atlaslock import AtlasLock, atlas_switch
 from .bookmarks import BookmarksMixin
 from .constants import (
     LANDMARK_NODE_REACH,
@@ -177,6 +177,7 @@ class AtlasSession(
         return self.ui_settings()
 
     # ------------------------------------------------------------------ open / new / save / close
+    @atlas_switch
     def open_atlas(self, p, expect_gen: int | None = None) -> None:
         """Open an atlas file and show it.
 
@@ -250,6 +251,7 @@ class AtlasSession(
         if self.settings.get("watch_on"):
             self.start_watch()  # auto-add follows the atlas: its own folder, or the one picked for it
 
+    @atlas_switch
     def new_atlas(self, p) -> None:
         """Create an empty atlas at a path and open it.
 
@@ -303,11 +305,13 @@ class AtlasSession(
         # a queued Fix seams was for the atlas before: retired with it, here where every switch passes (one left
         # behind made a new request for the next atlas report "queued" without being recorded: CodeRabbit)
         self._seams_waiting, self._seams_trouble = None, []
-        self.opened = Opened(atlas, p, self.opened.gen + 1, scope)
-        self.parts.reset(self.opened.gen)
+        # what was the atlas before's goes first, then the new record: a state read without the lock that sees the
+        # new generation never counts the old atlas's maps (the record first, it could: CodeRabbit)
         self.V = {"nodes": [], "paths": [], "icons": [], "landmarks": [], "final": None}
         self.D = {}
         self.model_version += 1
+        self.opened = Opened(atlas, p, self.opened.gen + 1, scope)
+        self.parts.reset(self.opened.gen)
         self.events.set_scope(scope)
         return self.opened
 
@@ -361,17 +365,19 @@ class AtlasSession(
         """
         if self.working():
             raise ValueError("wait until the screenshots being added are done")
-        self._lock.refuse_stale()  # (a close made for another atlas never stops / closes the one open now)
-        self.stop_watch()
-        self.stop_seams()
-        self.save()
-        with self._lock:  # (checked again here, under the lock: refused when another atlas opened meanwhile)
-            self._forget_session()
-            before = self.opened
-            self._switch(None, None)
-            self._reset_mapimage()
-            if before.scope:
-                self.events.log("closed the atlas", before.scope)
+        # a close made for another atlas never stops or closes the one open now: checked, and closed, with no
+        # switch possible in between (checked alone first, a switch after it got its auto-add stopped: CodeRabbit)
+        with self._lock.steady():
+            self.stop_watch()
+            self.stop_seams()
+            self.save()
+            with self._lock:
+                self._forget_session()
+                before = self.opened
+                self._switch(None, None)
+                self._reset_mapimage()
+                if before.scope:
+                    self.events.log("closed the atlas", before.scope)
         self.events.publish("atlas", self.atlas_summary())
         self.events.publish("model", self.model_version)
 
