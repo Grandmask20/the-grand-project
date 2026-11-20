@@ -68,8 +68,10 @@ export function ResultList({ onPick }: { onPick?: () => void }) {
 	const showError = useAppStore((s) => s.showError);
 	const selectLoaded = useAppStore((s) => s.selectLoaded);
 	const kinds = useAppStore((s) => s.findKinds);
-	// the kinds Find's pills show (a path, which has no pill, always)
-	const rows = results.filter((r) => r.kind === "path" || kinds.includes(r.kind));
+	// the kinds Find's pills show (a path, which has no pill, always); a type's list (a type clicked) as asked: its
+	// icons with Icons off too
+	const listed = useAppStore((s) => s.listed && !s.query.trim());
+	const rows = results.filter((r) => listed || r.kind === "path" || kinds.includes(r.kind));
 	const items = rows.filter((r) => r.kind !== "bookmark");
 
 	// a new list (a type clicked far below, a search): the panel scrolls up to show it (user)

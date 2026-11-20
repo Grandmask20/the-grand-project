@@ -19,7 +19,7 @@ const setup = () => {
 		...renderWithApp(<SelectedPopup map={fm.map as never} geo={geo} />, { "GET /api/info": nodeInfo }),
 	};
 };
-const box = () => screen.getByRole("region", { name: "Selected" }).parentElement as HTMLElement;
+const box = () => screen.getByRole("region", { name: "Selected" });
 // where the window's point is, across the map
 const pointAt = () =>
 	Number.parseFloat(box().style.left) + Number.parseFloat(screen.getByTestId("selected-point").style.left);
@@ -51,15 +51,6 @@ describe("SelectedPopup", () => {
 		expect(screen.queryByRole("region", { name: "Selected" })).toBeNull();
 	});
 
-	it("another selection starts at the window's top", async () => {
-		setup();
-		act(() => useAppStore.getState().select(nodeInfo));
-		const body = screen.getByTestId("selected-body");
-		body.scrollTop = 50;
-		act(() => useAppStore.getState().select({ ...nodeInfo, id: 13 }));
-		expect(body.scrollTop).toBe(0);
-	});
-
 	it("its close button lets go of the selection", async () => {
 		const { user } = setup();
 		act(() => useAppStore.getState().select(nodeInfo));
@@ -69,8 +60,8 @@ describe("SelectedPopup", () => {
 });
 
 describe("placeWindow", () => {
-	it("centred over the spot when there is room, above it", () => {
-		expect(placeWindow(500, 400, 1000, 800, 400, 200)).toEqual({ left: 300, point: 200, below: false, maxHeight: 376 });
+	it("above the spot when it fits, centred, its point under it", () => {
+		expect(placeWindow(500, 400, 1000, 800, 400, 200)).toEqual({ left: 300, top: 184, side: "bottom", point: 200 });
 	});
 
 	it("moved in from the map's edge, its point still on the spot", () => {
@@ -81,11 +72,14 @@ describe("placeWindow", () => {
 	});
 
 	it("below the spot when it does not fit above", () => {
-		expect(placeWindow(500, 100, 1000, 800, 400, 200)).toMatchObject({ below: true, maxHeight: 676 });
+		expect(placeWindow(500, 100, 1000, 800, 400, 200)).toMatchObject({ top: 116, side: "top" });
 	});
 
-	it("too tall for either side: where there is more room, as tall as that room", () => {
-		expect(placeWindow(500, 300, 1000, 800, 400, 900)).toEqual({ left: 300, point: 200, below: true, maxHeight: 476 });
-		expect(placeWindow(500, 600, 1000, 800, 400, 900)).toMatchObject({ below: false, maxHeight: 576 });
+	it("too tall for above and below: beside the spot, all of it in view, never scrolling (user)", () => {
+		const p = placeWindow(300, 400, 1000, 800, 400, 600);
+		expect(p).toMatchObject({ left: 316, side: "left" });
+		expect(p.top).toBe(100); // (centred on the spot)
+		expect(p.top + p.point).toBe(400);
+		expect(placeWindow(800, 100, 1000, 800, 400, 750)).toMatchObject({ left: 384, top: 8, side: "right" });
 	});
 });

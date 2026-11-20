@@ -54,6 +54,7 @@ describe("ResultList", () => {
 			{ name: "Abyss", label: "Abyss" },
 			{ name: "Ritual", label: "Ritual" },
 		];
+		useAppStore.getState().toggleFindKind("icon"); // (off at first)
 		useAppStore.getState().setResults([{ ...icon, icons: mapIcons, bookmarked: true }] as ResultRow[], "found");
 		renderWithApp(<ResultList />);
 		const row = screen.getByRole("button", { name: "Abyss" });
@@ -64,6 +65,13 @@ describe("ResultList", () => {
 			expect.stringContaining("Abyss"),
 			expect.stringContaining("Ritual"),
 		]);
+	});
+
+	it("a type's list shows all of it, whatever the pills (Icons is off at first)", () => {
+		useAppStore.setState({ listed: { label: "Abyss", icon: "Abyss" }, query: "" });
+		useAppStore.getState().setResults([{ kind: "icon", id: 7, label: "Abyss", x: 1, y: 1 }] as ResultRow[], "1 Abyss");
+		renderWithApp(<ResultList />);
+		expect(screen.getByRole("button", { name: "Abyss" })).toBeInTheDocument();
 	});
 
 	it("drops down as a list over the panel, named Results", () => {

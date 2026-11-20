@@ -111,6 +111,9 @@ def test_find_details_and_clicks(session, tmp_path):
     assert "Vaal city" in sections["Places"] and "Breach" in sections["Map icons"]
     hits = session.search("breach")["results"]
     assert any(r["kind"] == "icon" for r in hits) and any(r["kind"] == "landmark" for r in hits)
+    maps = [r for r in hits if r["kind"] == "node"]  # its maps too, by their icons (user: Maps found nothing)
+    assert maps and all("Breach" in [ic["label"] for ic in r["icons"]] for r in maps)
+    assert len({(r["kind"], r["id"]) for r in hits}) == len(hits)  # each once
     assert session.search("220, 400") == {"goto": [220.0, 400.0]}
     assert session.search("#12")["results"][0] == {
         "kind": "node",

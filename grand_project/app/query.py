@@ -424,8 +424,8 @@ class QueryMixin:
 
     def search(self, q: str) -> dict:
         """Search the atlas: "x, y" goes there; else bookmarks (name, group, note), landmarks, icons (name or alias),
-        potential city / stronghold maps, and "#<n>" for map n. Loosely: words in any order, a typo, letters left
-        out (find_score); the best matches first.
+        maps by their icons, potential city / stronghold maps, and "#<n>" for map n. Loosely: words in any order, a
+        typo, letters left out (find_score); the best matches first.
 
         Args:
             q: The search text.
@@ -443,11 +443,11 @@ class QueryMixin:
         if m:
             n = int(m.group(1) or m.group(2))
             return {"results": self._hit_rows([("node", n)]) if n < len(self.V["nodes"]) else []}
-        found: list[tuple[float, int, tuple[str, int], str]] = []  # (score, order, hit, note)
+        found: dict[tuple[str, int], tuple[float, int, str]] = {}  # hit: (score, order, note), each hit once
 
         def add(score: float | None, hit: tuple[str, int], note: str = "") -> None:
-            if score is not None:
-                found.append((score, len(found), hit, note))
+            if score is not None and (hit not in found or score > found[hit][0]):
+                found[hit] = (score, found[hit][1] if hit in found else len(found), note)
 
         for i, b in self.bookmarks_by_id():
             add(find_score(q, b["name"], f"{bm_group(b)} {b.get('note', '')}"), ("bookmark", i))
@@ -456,11 +456,19 @@ class QueryMixin:
                 add(find_score(q, self.landmark_name(i)), ("landmark", i))
         for i, ic in enumerate(self.V["icons"]):
             add(find_score(q, icon_label(ic), icon_aliases(ic["name"])), ("icon", i))
-        for v, (lab, st) in self.D.get("potential", {}).items():
+        # a map by its icons (user: "abyss" with Maps on found nothing: only the icons were searched)
+        potential = self.D.get("potential", {})
+        for v, n in enumerate(self.V["nodes"]):
+            if n["status"] == "removed":
+                continue
+            note = self.potential_text(v) if potential.get(v, ("", 0))[1] else ""
+            for raw in n.get("icons", []):
+                add(find_score(q, icon_name(raw), icon_aliases(raw)), ("node", v), note)
+        for v, (lab, st) in potential.items():
             if st:
                 add(find_score(q, _pkind(lab)) if len(q) >= 4 else None, ("node", v), self.potential_text(v))
-        found.sort(key=lambda f: (-f[0], f[1]))
-        return {"results": self._hit_rows([f[2] for f in found], [f[3] for f in found])}
+        best = sorted(found.items(), key=lambda f: (-f[1][0], f[1][1]))
+        return {"results": self._hit_rows([h for h, _f in best], [f[2] for _h, f in best])}
 
     def list_type(self, label: str) -> list[dict]:
         """List every map / place of one type (a type row clicked in Find).

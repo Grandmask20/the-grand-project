@@ -15,22 +15,46 @@ const GAP = 16;
 /** The point stays this far in from the window's corners, px. */
 const POINT_IN = 20;
 
-/** Where the window goes for a spot on the map: its left, above or below, the most height it has, and where its point
- * sits on it. Exported for its test.
+/** The side of the window its point is on: under it (the window above the spot), over it, or at its left / right. */
+export type PointSide = "bottom" | "top" | "left" | "right";
+
+/** Where the window goes for a spot on the map, all of it in view and never scrolling (user): above the spot, else
+ * below it, else beside it (as high as the map lets it, its point still on the spot); across, centred on the spot and
+ * moved in from an edge it would cross (CodeRabbit: its Close button went off). Exported for its test.
  *
- * Args: the spot (x, y), the map's size (w, h) and the window's size (cw: its width; ch: the height its content wants).
+ * Args: the spot (x, y), the map's size (w, h) and the window's (cw, ch).
+ *
+ * Returns: its top left, the side its point is on, and where along that side.
  */
 export function placeWindow(x: number, y: number, w: number, h: number, cw: number, ch: number) {
-	// across: centred on the spot, moved in from an edge it would cross (CodeRabbit: its Close button went off)
-	const left = Math.max(EDGE, Math.min(x - cw / 2, w - cw - EDGE));
-	const point = Math.max(POINT_IN, Math.min(x - left, cw - POINT_IN));
-	// up or down: above when it fits there, else below when it fits there, else where there is more room, the window
-	// then as tall as that room with its content scrolling (CodeRabbit: a tall window went over the top)
-	const above = y - GAP - EDGE;
-	const under = h - y - GAP - EDGE;
-	const below = !(ch <= above) && (ch <= under || under > above);
-	return { left, point, below, maxHeight: Math.max(120, below ? under : above) };
+	const clamp = (v: number, lo: number, hi: number) => Math.max(lo, Math.min(v, hi));
+	if (ch + GAP + EDGE <= y || ch + GAP + EDGE <= h - y) {
+		const above = ch + GAP + EDGE <= y;
+		const left = clamp(x - cw / 2, EDGE, w - cw - EDGE);
+		return {
+			left,
+			top: above ? y - GAP - ch : y + GAP,
+			side: (above ? "bottom" : "top") as PointSide,
+			point: clamp(x - left, POINT_IN, cw - POINT_IN),
+		};
+	}
+	const right = x + GAP + cw + EDGE <= w || x < w / 2;
+	const top = clamp(y - ch / 2, EDGE, h - ch - EDGE);
+	return {
+		left: right ? x + GAP : Math.max(EDGE, x - GAP - cw),
+		top: Math.max(EDGE, top),
+		side: (right ? "left" : "right") as PointSide,
+		point: clamp(y - Math.max(EDGE, top), POINT_IN, ch - POINT_IN),
+	};
 }
+
+/** The point's corner of a turned square, by the side it sits on. */
+const POINT: Record<PointSide, string> = {
+	bottom: "-bottom-1.5 -translate-x-1/2 border-t-0 border-l-0",
+	top: "-top-1.5 -translate-x-1/2 border-r-0 border-b-0",
+	left: "-left-1.5 -translate-y-1/2 border-t-0 border-r-0",
+	right: "-right-1.5 -translate-y-1/2 border-b-0 border-l-0",
+};
 
 /**
  * What is selected, in a window over the map where it was clicked (PO: an info window there, not a panel at the
@@ -43,7 +67,6 @@ export function SelectedPopup({ map, geo }: { map: MapLibreMap; geo: Geo }) {
 	const [at, setAt] = useState<{ x: number; y: number; w: number; h: number } | null>(null);
 	const [size, setSize] = useState({ w: WIDTH, h: 0 });
 	const card = useRef<HTMLElement>(null);
-	const body = useRef<HTMLDivElement>(null);
 	const x = selected?.x;
 	const y = selected?.y;
 
@@ -61,75 +84,53 @@ export function SelectedPopup({ map, geo }: { map: MapLibreMap; geo: Geo }) {
 		};
 	}, [map, geo, x, y]);
 
-	// the window's size: its width, and the height its content wants (also while it scrolls), measured again as its
-	// content changes (the map icons come later)
+	// the window's size, measured again as its content changes (the map icons come later)
 	const shown = !!selected && !!at;
 	useLayoutEffect(() => {
 		const c = card.current;
-		const b = body.current;
-		if (!shown || !c || !b) return;
+		if (!shown || !c) return;
 		const measure = () => {
 			const w = c.offsetWidth || WIDTH;
-			const h = c.offsetHeight - b.clientHeight + b.scrollHeight;
+			const h = c.offsetHeight;
 			setSize((s) => (s.w === w && s.h === h ? s : { w, h }));
 		};
 		measure();
 		const ro = new ResizeObserver(measure);
 		ro.observe(c);
-		if (b.firstElementChild) ro.observe(b.firstElementChild);
 		return () => ro.disconnect();
 	}, [shown]);
-
-	// another selection starts at its top (CodeRabbit: the last one's scroll hid the new title); the same one's
-	// data refreshing keeps its scroll
-	const who = selected ? `${selected.kind}:${selected.id}` : null;
-	useEffect(() => {
-		if (who && body.current) body.current.scrollTop = 0;
-	}, [who]);
 
 	if (!selected || !at) return null;
 	const out = at.x < 0 || at.y < 0 || (at.w > 0 && at.x > at.w) || (at.h > 0 && at.y > at.h);
 	if (out) return null;
-	const { left, point, below, maxHeight } = placeWindow(at.x, at.y, at.w || Infinity, at.h || Infinity, size.w, size.h);
+	const { left, top, side, point } = placeWindow(at.x, at.y, at.w || Infinity, at.h || Infinity, size.w, size.h);
 	return (
-		<div
-			className={cn("pointer-events-none absolute z-20", below ? "pt-4" : "-translate-y-full pb-4")}
-			style={{ left, top: at.y }}
+		<section
+			ref={card}
+			aria-label="Selected"
+			className="absolute z-20 w-[26rem] rounded-md border bg-card p-4 text-sm shadow-float"
+			style={{ left, top }}
 		>
-			<section
-				ref={card}
-				aria-label="Selected"
-				className="pointer-events-auto relative flex w-[26rem] flex-col rounded-md border bg-card text-sm shadow-float"
-				style={{ maxHeight }}
-			>
-				<div className="flex items-center justify-between px-4 pt-4 pb-3">
-					<h2 className="text-base font-semibold">Selected</h2>
-					<button
-						type="button"
-						aria-label="Close"
-						title="Close"
-						onClick={() => select(null)}
-						className="rounded p-1 text-muted-foreground hover:bg-accent hover:text-foreground"
-					>
-						<XIcon className="size-4" />
-					</button>
-				</div>
-				<div ref={body} data-testid="selected-body" className="min-h-0 overflow-y-auto px-4 pb-4">
-					<div>
-						<SelectedBox />
-					</div>
-				</div>
-				{/* the window's point, on the spot */}
-				<span
-					aria-hidden
-					data-testid="selected-point"
-					className={cn(
-						"absolute size-3 -translate-x-1/2 rotate-45 border bg-card",
-						below ? "-top-1.5 border-r-0 border-b-0" : "-bottom-1.5 border-t-0 border-l-0",
-					)}
-					style={{ left: point }}
-				/>
-			</section>
-		</div>
+			<div className="mb-3 flex items-center justify-between">
+				<h2 className="text-base font-semibold">Selected</h2>
+				<button
+					type="button"
+					aria-label="Close"
+					title="Close"
+					onClick={() => select(null)}
+					className="rounded p-1 text-muted-foreground hover:bg-accent hover:text-foreground"
+				>
+					<XIcon className="size-4" />
+				</button>
+			</div>
+			<SelectedBox />
+			{/* the window's point, on the spot */}
+			<span
+				aria-hidden
+				data-testid="selected-point"
+				className={cn("absolute size-3 rotate-45 border bg-card", POINT[side])}
+				style={side === "top" || side === "bottom" ? { left: point } : { top: point }}
+			/>
+		</section>
 	);
 }

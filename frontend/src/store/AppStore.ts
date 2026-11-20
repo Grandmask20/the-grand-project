@@ -291,7 +291,8 @@ export const useAppStore = create<AppStoreState>()((set) => ({
 	setFindText: (findText) => set({ findText }),
 	query: "",
 	setQuery: (query) => set(query.trim() ? { query, highlight: null, goto: null } : { query }),
-	findKinds: ["node", "icon", "landmark", "bookmark"],
+	// icons off at first: a map lists its icons, so a search for one finds its maps (user), each icon again was twice
+	findKinds: ["node", "landmark", "bookmark"],
 	toggleFindKind: (kind) =>
 		set((st) => ({
 			findKinds: st.findKinds.includes(kind) ? st.findKinds.filter((k) => k !== kind) : [...st.findKinds, kind],

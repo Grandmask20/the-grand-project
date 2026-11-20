@@ -39,8 +39,9 @@ describe("FindTab", () => {
 		expect(box).toHaveValue("");
 	});
 
-	it("the kinds' pills switch the results' kinds on and off", async () => {
+	it("the kinds' pills switch the results' kinds on and off; Icons is off at first (a map lists its icons)", async () => {
 		const { user } = renderWithApp(<FindTab />, { "GET /api/types": types });
+		expect(screen.getByRole("button", { name: "Icons" })).toHaveAttribute("aria-pressed", "false");
 		const places = screen.getByRole("button", { name: "Places" });
 		expect(places).toHaveAttribute("aria-pressed", "true");
 		await user.click(places);
