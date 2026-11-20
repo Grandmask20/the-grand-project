@@ -86,7 +86,8 @@ def test_biomes_ground_icons_and_models(session, tmp_path):
     path, at = biome_atlas(tmp_path)
     session.open_atlas(path)
     kinds = {p["kind"] for _g, _pts, p, _id in features(session, "biomes")}
-    assert {"Vaal", "Faridun", "Breach", "Forest", "Desert"} <= kinds, kinds
+    assert {"Vaal", "Faridun", "Breach"} <= kinds, kinds
+    assert not kinds & {"Forest", "Desert"}  # no icon makes a biome (user: Influence icons drew areas)
     assert all(g == 3 for g, *_ in features(session, "land"))
     icons = points(session, "icons")
     assert sorted(p["name"] for *_xy, p in icons.values()) == sorted(ic["name"] for ic in at.final["icons"])
@@ -141,7 +142,7 @@ def test_bookmarks(session, tmp_path):
     session.toggle_bookmark(0)  # shows the group again with only this one
     assert drawn() == ["farm <here>"]
     assert session.filter_version == fv and not points(session, "bookmarks")  # the tiles weren't made again
-    assert session.delete_bookmarks([0, 1]) == ["big boss", "farm <here>"]
+    assert sorted(session.delete_bookmarks([0, 1])) == ["big boss", "farm <here>"]
     assert core.Atlas.load(path).bookmarks == []  # saved
 
 
@@ -156,6 +157,11 @@ def test_hand_edits(session, tmp_path):
     poly = [[1700, 1300], [2100, 1300], [2100, 1500], [1700, 1500]]
     assert session.lasso_nodes(poly) and session.set_biome(poly, "Vaal city") == len(session.lasso_nodes(poly))
     assert session.D["potential"][session.lasso_nodes(poly)[0]] == ("Vaal city", 0)
+    # a map the filters hide (doubtful, the Doubtful layer off) is still inside: its biome area is drawn all the same
+    inside = session.lasso_nodes(poly)
+    session.V["nodes"][inside[0]]["status"] = "doubtful"
+    session.set_ui_settings({"layers": {"Doubtful": False}, "multi_only": True})
+    assert session.lasso_nodes(poly) == inside
     with pytest.raises(ValueError):
         session.set_biome([[9000, 9000], [9100, 9000], [9100, 9100]], "Vaal city")  # no maps inside
     saved = core.Atlas.load(path)
@@ -244,3 +250,55 @@ def test_new_atlas_and_close(session, tmp_path):
         session.new_atlas(tmp_path / "fresh" / "atlas.json")  # exists
     session.close()
     assert session.atlas is None and session.map_info() is None
+
+
+def test_a_settings_change_is_one_log_line():
+    from grand_project.app.session import settings_change_text
+
+    text = settings_change_text(
+        {
+            "style": {"path_freq": 0.35},
+            "hidden_types": ["Breach", "Ritual"],
+            "near_only": True,
+            "layers": {"Paths": False},
+        },
+        {"Ritual", "Abyss"},
+    )
+    assert text == (
+        "paths drawn by at least 35%, types shown: Abyss, types hidden: Breach, "
+        "Find: only potential city maps on, Paths layer off"
+    )
+
+
+def test_drawn_by_at_least_makes_no_tile_again_and_paths_carry_their_share(session, tmp_path):
+    path, _pts, _img = make_atlas(tmp_path)
+    session.open_atlas(path)
+    v = session.filter_version
+    session.set_ui_settings({"style": {"path_freq": 0.5}})  # (user: each step remade every tile and the 3D scene)
+    assert session.filter_version == v
+    shares = [p["share"] for _g, _pts2, p, _id in features(session, "paths")]
+    assert shares and all(0 <= s <= 1 for s in shares)
+    assert "Changed: paths drawn by at least 50%" in session.events.log_lines[-1]
+
+
+def test_your_position_reads_in_words_in_the_log():
+    from grand_project.app.session import settings_change_text
+
+    assert settings_change_text({"ui": {"player": {"x": 1, "y": 2, "node": 12}}}, set()) == "your position map #12"
+    assert settings_change_text({"ui": {"player": None}}, set()) == "your position forgotten"
+
+
+def test_doubtful_saved_on_goes_off_now_that_it_has_no_button(session):
+    session.settings["layers"] = {"Doubtful": True}
+    assert session.ui_settings()["layers"]["Doubtful"] is False
+
+
+def test_a_hidden_map_style_saved_before_becomes_the_maps_switch_off():
+    from grand_project.app.session import AtlasSession
+
+    s = AtlasSession(settings={"style": {"map_style": "hidden"}}, worker=False)
+    try:
+        ui = s.ui_settings()
+        assert ui["style"]["map_style"] == "circles" and ui["layers"]["Nodes"] is False
+    finally:
+        s.shutdown()

@@ -1,8 +1,8 @@
-# The Grand Project — v1.19
+# The Grand Project — v1.22
 
 Builds one big map of your Path of Exile 2 atlas from your screenshots. Named after the in-game tablet, *The Grand Project*. It finds maps, paths, icons, towers and cities, and lets you search, bookmark and route through them.
 
-The app runs in your web browser: starting it opens a page served by the program on this computer (`http://127.0.0.1:8765`). Nothing leaves your computer.
+The app runs in your web browser: starting it opens a page served by the program on this computer (`http://127.0.0.1:8765`). Your atlases, screenshots and settings stay on your computer. The app goes online only for updates: it asks GitHub for the latest release once a day when it starts (to say an update is out; this can be turned off) and when you press **Check now** in the update box (click the version), and **Update now** downloads that release from GitHub (and, when it needs other Python packages, installs them from PyPI with pip). These requests send nothing of yours: GitHub sees the request, the app's name and version, and your network address, as with any website; PyPI gets pip's usual request (pip's version, Python's and your system's).
 
 ## Run it
 
@@ -40,7 +40,9 @@ On first start the app opens the empty atlas **`atlases/default`**.
 
 ### Updating
 
-First quit the app (**File ▾ → Quit the app**). Then download the new release and unzip it: it holds one folder (`the-grand-project-<version>`). Open that folder and copy everything in it into your current program folder, replacing the files. The release has no `atlases` or `user_data` folder, so yours are never replaced (never delete or replace those two folders yourself): your atlases (`atlases/`) and settings (`user_data/`) stay. Then run the install file again (**`Install (run once).bat`** or **`./install.sh`**): a new version can need new packages. (From 1.18 the Windows start file is `Start The Grand Project.bat`: an old `Start Atlas Viewer.bat` left in the folder can be deleted.)
+**From 1.3 on, in the app:** the version at the top right says **Up to date** (green) or **Check update** / **Update to 1.x** (red). Click it to open the update box, and **Check now** (or **Check again**) asks GitHub for the latest release and shows what's new (at most once a minute: GitHub limits how often it answers). **Update now** downloads it, checks every file, and the app restarts on it (the page reloads by itself). Only the program's own files change: your atlases (`atlases/`) and settings (`user_data/`) stay, a file that fails to go in puts the old ones back, and the Python packages are installed again when the new release needs others. The app checks once a day when it starts (the box has the switch to turn that off).
+
+**By hand** (an older release, or a copy the app can't update): first quit the app (**File ▾ → Quit the app**). Then download the new release and unzip it: it holds one folder (`the-grand-project-<version>`). Open that folder and copy everything in it into your current program folder, replacing the files. The release has no `atlases` or `user_data` folder, so yours are never replaced (never delete or replace those two folders yourself): your atlases (`atlases/`) and settings (`user_data/`) stay. Then run the install file again (**`Install (run once).bat`** or **`./install.sh`**): a new version can need new packages. (From 1.18 the Windows start file is `Start The Grand Project.bat`: an old `Start Atlas Viewer.bat` left in the folder can be deleted.)
 
 ### If it doesn't start
 
@@ -86,7 +88,7 @@ Screenshots then land straight in the atlas folder as `2694490_<date>_1.png`, an
 
 ## 1. Start an atlas
 
-1. In the app, go to the **Auto-add tab** and turn on *Add new screenshots automatically*. The app watches the open atlas's own folder, which is where Steam is now saving.
+1. In the app, go to the **Atlases tab → Auto-add** page and turn on *Add new screenshots automatically*. The app watches the open atlas's own folder, which is where Steam is now saving.
 2. In game, open the atlas centred on the **fortress** (the giant walled structure in the middle) and press F12. The HUD can stay on screen; it is masked out.
 3. Pan a little (keep about half the screen overlapping) and press F12 again. Repeat outward from the fortress in any direction. Each screenshot is added while you play.
 
@@ -100,12 +102,12 @@ The fortress itself places poorly, because its walls cut the paths. Start right 
 
 Any of these adds screenshots. Screenshots already in the atlas are skipped.
 
-- **Auto-add tab → Add new screenshots automatically.** Each new screenshot that Steam saves into the atlas folder is added while you play. When the app starts (or you start watching), screenshots already in that folder that the atlas doesn't have yet are added too. **Watch another folder…** watches a different folder instead, and **Atlas folder** switches back.
+- **Atlases tab → Auto-add → Add new screenshots automatically.** Each new screenshot that Steam saves into the atlas folder is added while you play. When the app starts (or you start watching), screenshots already in that folder that the atlas doesn't have yet are added too. **Watch another folder…** watches a different folder instead, and **Atlas folder** switches back.
 - **Drag and drop** screenshot files onto the map: one is placed by hand where you drag it, several are added. (They are copied into the atlas folder.)
 - **File ▾ → Add screenshots…** (File ▾ is the first button on the toolbar)
 - **Atlas ▾ → (atlas) → Add new screenshots from its folder.**
 
-A screenshot that overlaps nothing yet goes to **Waiting** (Auto-add tab). Waiting screenshots are retried whenever another one is added, and you can also click **Retry** or **Retry all**.
+A screenshot that overlaps nothing yet goes to **Waiting** (Atlases tab → Auto-add). Waiting screenshots are retried whenever another one is added, and you can also click **Retry** or **Retry all**.
 
 A screenshot that might be placed wrong is shown on the map, see-through and outlined, while the app asks whether to add it.
 
@@ -117,31 +119,33 @@ A screenshot that might be placed wrong is shown on the map, see-through and out
 - **Mouse:** wheel to zoom at the cursor, drag to pan, right-drag (or Ctrl-drag) to tilt and turn, click a map or a path to select it (its details show in the Find tab). Zoomed in, the ground is built sharp from your screenshots themselves.
 - **Keys:** `+` / `-` zoom, `0` fit, arrows pan, Esc cancels what you were doing.
 - **Map buttons** (top right): zoom, compass, **⤢** fit the whole atlas, **3D** (tilted view with models of maps, towers, citadels, halls and strongholds), full screen.
+- **The side panel** has five tabs: Find, View, Bookmarks (with Route), Atlases (with Auto-add) and Log. A narrow panel shows their icons only.
 - **View tab:**
   - **Background:** *Picture* (the stitched screenshots), *Vector* (flat land with the city / stronghold / ground biomes as areas) or *Off*.
-  - **Show on the map:** Ground, Paths, Maps, Icons, Landmarks, Bookmarks, Names, Biomes, Recent additions, Doubtful, Removed, 3D models, Route and Debug marks.
+  - **Show on the map:** Ground, Paths, Maps, Icons, Landmarks, Bookmarks, Names, Biomes, Recent additions, Removed, 3D models, Routes (on, saved only, off) and Debug marks.
   - **Paths:** colour (click the square), width, style (solid / dashed / dotted), and *drawn by at least N%* of the screenshots that show both maps.
   - **Maps:** colour, size and style (circles / squares / hidden).
   - **City biomes and landmarks:** their colours.
   - **Colour by:** each screenshot's area by session, oldest to newest, or *times seen* (a heatmap), in a colour spread you pick.
-  - **Pictures on the map** (zoomed in): the tower picture.
   - **Reset styles** puts everything back.
 - **Find tab:**
   - Search by icon name, City / Hall / Tower, bookmark, `#map`, or `x, y` to go to a spot.
   - Tick types to show them; click a type's name to list (and ring) every one of them.
   - *Only what 2+ screenshots show*, *only maps with a ticked icon* and *only potential city maps* narrow the view.
 - **Screenshots** (Find tab), or right-click → *Screenshots of this spot*, lists the source screenshots for a spot.
-- **Route tab:** set where you are (or right-click a map → *I'm here*), then right-click a map → *Route here*, or route to the nearest map with an icon. Routes take the fewest maps.
+- **Route** (Bookmarks tab → Route): set where you are (or right-click a map → *I'm here*; *I'm not here* / *Forget my position* takes it back), then right-click a map → *Route here*, or route to the nearest map with an icon. Routes take the fewest maps.
+- **Route** (top bar): click the map it starts from, then the one it goes to; then *Track now* (the Route page counts the maps left, *Next map* moves you on) or *Save route…* (a bookmark: a click lights it up and fits it in view). Right-click a saved route: *Start tracking now*, or *Adjust route*: click a map to add it (past an end the route goes on; off its side it gets a branch, run where it splits off), right-click one to take it off (the bigger piece of the route stays: a map at an end goes alone). Every route (Route here, the nearest map, Route in the top bar, a saved route) is tracked the same way. *End* on the note over the map, or Esc, ends a map mode. Tracking marks the map you are on; your position stays as it is. The **Routes** layer button goes on → saved only → off.
 - **Replay** (top bar): the atlas being made as a timelapse, by time or swept out from where you started (spiral / distance / scan lines), with a camera that follows. **Record video** saves it as a `.webm` file.
 
 ## 4. Manage the atlas
 
 - **Bookmarks:**
   - To add one: **Add bookmark** (top bar), then click the map. You can also right-click → *Add bookmark here…*, or use *Bookmark all results…* for a search.
-  - The **Bookmarks tab** has groups, notes, edit, move to group and delete. Click a bookmark to go to it; the eye column hides or shows a bookmark or group.
+  - The **Bookmarks tab** has groups, notes, edit, move to group and delete. Click a bookmark to go to it; the eye column hides or shows a bookmark or group. Tick a group to pick all of it (an empty group ticked is deleted with *Delete*), or *Select all*.
+  - On a bookmarked map, right-click or the Selected box has *Edit bookmark* and *Remove bookmark*.
 - **Fix landmarks:** right-click a map → *This map is a…* (City / Hall / Tower / …), or right-click a landmark → *Delete* / *Restore landmark*. Edits are kept when the atlas is rebuilt.
 - **City type:** right-click a City → *City type* (Vaal / Faridun / Ezomyte / … or Automatic).
-- **City biomes:** click **City biome** (top bar), circle the maps with the mouse, and pick the city type. Halls, Deadly maps and Cities inside the circle become that city.
+- **Biomes:** click **Biome select** (top bar), circle the maps with the mouse, and pick a city type, a Breach stronghold, or *Not a biome*. Halls, Deadly maps and Cities inside the circle become that city.
 - **Several atlases:** with the **Atlas ▾** button you can:
   - switch atlas
   - add a new atlas (choose its screenshot folder)
@@ -149,7 +153,7 @@ A screenshot that might be placed wrong is shown on the map, see-through and out
   - remove an atlas from the list
   - add new screenshots from an atlas's folder
 
-  The **Atlases tab** shows every atlas as a card with a thumbnail of its map and its numbers of maps, icons and screenshots. Click a card to open it; the pencil renames it. The bin asks whether to *stop tracking* the atlas (its files stay) or *delete the whole atlas and its data* (its `atlas.json`, `atlas_frames/` and `atlas_files/`; your screenshots are never deleted).
+  The **Atlases tab** (its *Saved atlases* page) shows every atlas as a card with a thumbnail of its map and its numbers of maps, icons and screenshots. Click a card to open it; the pencil renames it; right-click it to *Open atlas folder*. The bin asks whether to *stop tracking* the atlas (its files stay) or *delete the whole atlas and its data* (its `atlas.json`, `atlas_frames/` and `atlas_files/`; your screenshots are never deleted).
 
   Each atlas lives in its own folder: `atlas.json`, plus `atlas_frames/` (detections) and `atlas_files/` (map image, exports, undo). The screenshots can sit in that same folder; the atlas never takes its own files for screenshots. Keep new ones in `atlases/`.
 - **File menu:**
@@ -161,7 +165,7 @@ A screenshot that might be placed wrong is shown on the map, see-through and out
 
 ## 5. Other things
 
-- **Log tab:** what the program did and any problems (*Save log*); the *Frame log* records how long the map takes to draw and saves it as CSV. The full log is `user_data/atlas_debug.log`.
+- **Log tab** (with a *Debug* page in the internal copy): what you did (settings changed, Biome select, bookmarks, tabs, selections) and what the program did and is doing (progress, done / stopped / failed), in plain words, with any problems (*Save log*); the *Frame log* records how long the map takes to draw and saves it as CSV. The full log is `user_data/atlas_debug.log`.
 - **Settings** (last atlas, layers, styles, watched folders) are in `user_data/viewer_settings.json`. Delete that file to start fresh.
 - **Port:** the app uses port 8765, or the next free one. `python -m grand_project --port N` picks another; `--no-browser` doesn't open the browser.
 - **Detector database:** `references/atlas_references.sqlite3`. It holds only the trained detector models and the icon (badge) reference pictures, with no data from anyone's atlas. Another one can be used by setting `DATABASE` in `local_paths.json`. The models are stored as skops archives, and the program only trusts the scikit-learn / numpy classes a trained model is made of. Still, only use detector databases from people you trust.
@@ -193,7 +197,7 @@ The tests look for the data in `ATLAS_TEST_DATA` (environment variable) if set, 
 
 **Setup.** `pip install -e ".[dev]"` (or `make install`) installs the program as the `grand_project` package with pytest and ruff; `grand-project` then starts the app. Without installing, run everything from this folder with `python -m ...`.
 
-**The page** (`frontend/`: React, TypeScript, Vite, Tailwind, shadcn/ui, MapLibre, TanStack Query, Zustand) needs Node.js 20+. In `frontend/`: `npm install` once, then `npm run build` builds it into `frontend/dist`, which the app serves. While working on it, run `python -m grand_project --no-browser` and `npm run dev` (http://localhost:5173, the API is passed to the app). `npm run lint` (Biome), `npm run typecheck` and `npm run coverage` (Vitest under coverage) are what CI runs. `make e2e` builds the page and runs the browser tests (Playwright, `frontend/e2e/`): the real app on a hand-made atlas, driven through the page; the first time, `cd frontend && npx playwright install chromium`. Releases ship the built page, so players don't need Node.js.
+**The page** (`frontend/`: React, TypeScript, Vite, Tailwind, shadcn/ui, MapLibre through react-map-gl, Terra Draw, TanStack Query, Zustand) needs Node.js 20+. In `frontend/`: `npm install` once, then `npm run build` builds it into `frontend/dist`, which the app serves. While working on it, run `python -m grand_project --no-browser` and `npm run dev` (http://localhost:5173, the API is passed to the app). `npm run lint` (Biome), `npm run typecheck` and `npm run coverage` (Vitest under coverage) are what CI runs. `make e2e` builds the page and runs the browser tests (Playwright, `frontend/e2e/`): the real app on a hand-made atlas, driven through the page; the first time, `cd frontend && npx playwright install chromium`. Releases ship the built page, so players don't need Node.js.
 
 Run these from this folder:
 
@@ -209,7 +213,7 @@ Run these from this folder:
 - `python -m tools.split_icon_type OLD NEW ...` splits an icon type into several (e.g. `ArcaneOrProsperous` into `ArcaneHordes` and `ProsperousPopulous`): every stored picture, badges-model picture and hand label of OLD takes the new type whose art it matches best; `--dry-run` writes only the review sheet.
 - `python -m tools.make_hud_mask SCREENSHOT` rebuilds `references/hud_mask_full.png` from a 1920×1080 atlas screenshot taken over black unexplored fog (everything not black is interface).
 - Tests: `pytest` (or `make test`, `tests/Run all tests.bat`, `tests/run_all_tests.sh`); one file with `pytest tests/test_atlas_builder.py`. `pytest -m slow` adds the long one; see `tests/conftest.py`. The app's tests (`test_app_session.py`, `test_app_server.py`, the tile tests) use hand-made atlases and need no test data.
-- Coverage: `make coverage` (Python: a table, and the report in `htmlcov/index.html`) and `make page_coverage` (the page: `frontend/coverage/index.html`). CI runs the tests on Windows, macOS and Linux and measures coverage on the Ubuntu jobs (offline, test data, browser tests, the page); the `tests` run's page shows the Python and page tables, and pull requests get a Python coverage comment.
+- Coverage: `make coverage` (Python: a table, and the report in `htmlcov/index.html`) and `make page_coverage` (the page: `frontend/coverage/index.html`). CI runs the tests on Windows, macOS and Linux and measures coverage on the Ubuntu jobs (offline, test data, browser tests, the page); the `tests` run's page shows the Python and page tables, and pull requests get a Python coverage comment. The run's last job, **tests passed**, is the one check merging needs: every test passed on at least one system and none failed anywhere, so a macOS job cancelled while waiting for a runner doesn't block.
 - Lint: `make lint` (ruff check + format); CI runs the same on every push and pull request.
 
 **Code layout** (`grand_project/`):
@@ -232,5 +236,7 @@ Each larger part keeps its tunable numbers in its own `constants.py`.
 ## License and credits
 
 The code is released under the MIT License (see `LICENSE`).
+
+The in-app update (the version at the top right: check for an update, Update now) is modelled on the update system of [Path of Building Community](https://github.com/PathOfBuildingCommunity/PathOfBuilding) ([PoE 2 version](https://github.com/PathOfBuildingCommunity/PathOfBuilding-PoE2)): a release's list of its files with their hashes, compared with the newest release's; the files that differ checked against it and staged; and put in place when the program restarts, by a step of its own. Thanks to its contributors.
 
 Path of Exile 2 is made by Grinding Gear Games. The badge icons, tower templates and badge crops in `references/` come from the game and remain the property of Grinding Gear Games. This is an unofficial fan tool, not affiliated with or endorsed by them.

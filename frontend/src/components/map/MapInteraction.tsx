@@ -1,28 +1,39 @@
 import { useQueryClient } from "@tanstack/react-query";
-import type { MapLayerMouseEvent, Map as MapLibreMap, MapMouseEvent } from "maplibre-gl";
+import type { MapLayerMouseEvent, MapMouseEvent } from "maplibre-gl";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { AppQueryKeys } from "@/api/AppQueryKeys";
-import type { Meta } from "@/domain/app/Meta";
+import { sameAtlas } from "@/api/Http";
 import type { ItemInfo } from "@/domain/map/ItemInfo";
 import { useAppClient } from "@/hooks/app/UseAppClient";
 import { useAppState } from "@/hooks/app/UseAppState";
 import { usePlayer, useSettings, useUpdateSettings } from "@/hooks/app/UseSettings";
-import { useRouteGraph } from "@/hooks/map/UseGraph";
-import type { Geo, Point } from "@/logic/Geo";
+import { useBookmarks } from "@/hooks/bookmarks/UseBookmarks";
+import { useAdjustRoute } from "@/hooks/map/UseAdjustRoute";
+import { useLoadRouteGraph, useRouteGraph } from "@/hooks/map/UseGraph";
+import { useMapLibre } from "@/hooks/map/UseMapLibre";
+import { useMapView } from "@/hooks/map/UseMapView";
+import { savedRoute, useRoutes } from "@/hooks/map/UseRoutes";
+import { bookmarkOf, newBookmark } from "@/logic/BookmarkOf";
+import type { Point } from "@/logic/Geo";
 import type { IconLayer3D } from "@/logic/IconLayer3D";
-import { EMPTY, setData } from "@/logic/MapStyle";
+import { modeCursor } from "@/logic/ModeHint";
 import type { ModelLayer3D } from "@/logic/ModelLayer3D";
+import { wasDrag } from "@/logic/map/PanGuard";
 import type { PathLayer3D } from "@/logic/PathLayer3D";
 import { pickItem } from "@/logic/Pick";
-import { useAppStore } from "@/store/AppStore";
+import { type MapMode, useAppStore } from "@/store/AppStore";
 import { BiomeMenu } from "./BiomeMenu";
+import { LassoDraw } from "./draw/LassoDraw";
 import { MapMenu } from "./MapMenu";
+import { RouteMenu } from "./RouteMenu";
 
 const HOVER = ["maps", "landmarks", "bookmarks", "icons", "paths"];
 
 /** Clicks, drags and keys on the map, by mode: select, draw a city biome, add a bookmark, place a screenshot by
  * hand, set your position, link two maps for a debug mark; and the right-click menu. */
-export function MapInteraction({ map, geo, meta }: { map: MapLibreMap; geo: Geo; meta: Meta }) {
+export function MapInteraction() {
+	const map = useMapLibre();
+	const { geo, meta } = useMapView();
 	const app = useAppClient();
 	const queryClient = useQueryClient();
 	const mode = useAppStore((s) => s.mode);
@@ -30,16 +41,23 @@ export function MapInteraction({ map, geo, meta }: { map: MapLibreMap; geo: Geo;
 	const select = useAppStore((s) => s.select);
 	const setTab = useAppStore((s) => s.setTab);
 	const editBookmark = useAppStore((s) => s.editBookmark);
+	const setRouteDraft = useAppStore((s) => s.setRouteDraft);
+	const bookmarks = useBookmarks();
 	const showError = useAppStore((s) => s.showError);
 	const settings = useSettings();
 	const update = useUpdateSettings();
 	const atlasFile = usePlayer().atlas; // your position is kept with the atlas it was set in
 	const debug = !!useAppState().data?.debug;
-	const graph = useRouteGraph(mode.kind === "player");
+	// (loaded as these modes start; a click that comes first waits for it)
+	useRouteGraph(mode.kind === "player" || mode.kind === "route" || mode.kind === "route-edit");
+	const loadGraph = useLoadRouteGraph();
+
+	const routes = useRoutes();
 	const [menu, setMenu] = useState<{ x: number; y: number; at: Point; hit: ItemInfo | null } | null>(null);
 	const lassoSeq = useRef(0);
 	const [lasso, setLasso] = useState<{ polygon: Point[]; x: number; y: number; maps: number } | null>(null);
-	const drawing = useRef<Point[] | null>(null);
+	// a route found between the two maps clicked (Route), waiting for Track now or Save route
+	const [routeMenu, setRouteMenu] = useState<{ path: number[]; x: number; y: number } | null>(null);
 	const drag = useRef<{ start: Point; centre: Point } | null>(null);
 
 	const atlasAt = useCallback((e: MapMouseEvent): Point => geo.toAtlas(e.lngLat.lng, e.lngLat.lat), [geo]);
@@ -72,10 +90,31 @@ export function MapInteraction({ map, geo, meta }: { map: MapLibreMap; geo: Geo;
 		[map, app, pick, clickAt],
 	);
 
+	// Adjust route: its edits run per route in click order (useAdjustRoute)
+	const adjust = useAdjustRoute(pick);
+	const adjustRoute = useCallback(
+		(at: Point, add: boolean, started: MapMode) =>
+			adjust(at, add, started, ROUTE_EDIT_REACH_PX / geo.pxPerUnit(map.getZoom())),
+		[adjust, geo, map],
+	);
+
 	// --- clicks
 	useEffect(() => {
 		const onClick = async (e: MapMouseEvent) => {
+			if (wasDrag()) return; // a pan, not a click
 			const at = mode.kind === "normal" ? clickAt(e) : atlasAt(e);
+			// what was clicked, for a mode still on once the answer comes: left meanwhile (Esc, another tab, another
+			// mode), the click is dropped (it opened the bookmark dialog after Add bookmark had ended: CodeRabbit)
+			const pickHere = async () => {
+				const hit = await pick(at);
+				return useAppStore.getState().mode === mode ? { hit } : null;
+			};
+			// what was clicked and the map's paths, for a mode still on once both are in (Esc while the paths loaded
+			// still set your position: CodeRabbit)
+			const pickWithPaths = async () => {
+				const [hit, graph] = await Promise.all([pick(at), loadGraph()]);
+				return useAppStore.getState().mode === mode ? { hit, graph } : null;
+			};
 			try {
 				switch (mode.kind) {
 					case "normal": {
@@ -85,29 +124,55 @@ export function MapInteraction({ map, geo, meta }: { map: MapLibreMap; geo: Geo;
 						break;
 					}
 					case "bookmark": {
-						const hit = await pick(at);
-						const spot = hit && hit.kind !== "path" ? ([hit.x, hit.y] as Point) : at;
-						editBookmark({
-							id: null,
-							x: spot[0],
-							y: spot[1],
-							name: hit?.suggest?.name ?? "",
-							group: hit?.suggest?.group ?? "Other",
-							note: "",
-						});
+						// a map that has a bookmark opens that one (before: a second bookmark on the same map)
+						const still = await pickHere();
+						if (!still) break;
+						const { hit } = still;
 						setMode({ kind: "normal" });
+						editBookmark(bookmarkOf(hit) ?? newBookmark(hit, at));
 						break;
 					}
 					case "player": {
-						const hit = await pick(at);
-						const node = hit?.kind === "node" ? hit.id : (hit?.node ?? graph?.nearest(at[0], at[1]) ?? null);
-						const p = node !== null ? graph?.at(node) : undefined;
+						const still = await pickWithPaths();
+						if (!still) break;
+						const { hit, graph } = still;
+						const node = hit?.kind === "node" ? hit.id : (hit?.node ?? graph.nearest(at[0], at[1]));
+						const p = node !== null ? graph.at(node) : undefined;
 						if (node !== null && p) update.mutate({ ui: { player: { x: p[0], y: p[1], node, atlas: atlasFile } } });
 						setMode({ kind: "normal" });
 						break;
 					}
+					case "route": {
+						// the first map, then the last: the route between them, fewest maps (user)
+						const still = await pickWithPaths();
+						if (!still) break;
+						const { hit, graph } = still;
+						const node = hit?.kind === "node" ? hit.id : (hit?.node ?? graph.nearest(at[0], at[1]));
+						if (node === null) break;
+						if (mode.from === null) {
+							setMode({ kind: "route", from: node });
+							// ringed at once (user: nothing showed until the second map)
+							setRouteDraft([node]);
+							break;
+						}
+						setMode({ kind: "normal" });
+						const path = node === mode.from ? null : graph.shortest(mode.from, (u) => u === node);
+						if (!path) {
+							setRouteDraft(null);
+							showError(`No known path from map #${mode.from} to map #${node}.`, true);
+							break;
+						}
+						setRouteDraft(path);
+						setRouteMenu({ path, x: e.point.x, y: e.point.y });
+						break;
+					}
+					case "route-edit":
+						await adjustRoute(at, true, mode); // a left click adds a map (user)
+						break;
 					case "debug-link": {
-						const hit = await pick(at);
+						const still = await pickHere();
+						if (!still) break;
+						const { hit } = still;
 						const other = hit?.kind === "node" ? hit.id : (hit?.node ?? null);
 						if (other !== null && other !== mode.from) {
 							await app.addDebugMark({
@@ -139,15 +204,47 @@ export function MapInteraction({ map, geo, meta }: { map: MapLibreMap; geo: Geo;
 		select,
 		setTab,
 		editBookmark,
+		setRouteDraft,
 		setMode,
-		graph,
+		loadGraph,
 		update,
 		app,
 		showError,
 		clickAt,
 		pick3d,
 		atlasFile,
+		adjustRoute,
 	]);
+
+	// a mode ended, however (Esc, End, its button, another mode, the timelapse): what it left goes. Route's picked maps
+	// (a route tracked stays), a lasso drawn and its count still coming, a ghost drag (it moved the next ghost:
+	// CodeRabbit)
+	useEffect(() => {
+		if (mode.kind !== "route" && !routeMenu) setRouteDraft(null);
+		if (mode.kind !== "lasso") {
+			lassoSeq.current++;
+			setLasso(null);
+		}
+		if (mode.kind !== "ghost") drag.current = null;
+	}, [mode, routeMenu, setRouteDraft]);
+
+	// the timelapse opened: Route's menu goes (no route is made in it)
+	const replaying = useAppStore((s) => s.replay !== null);
+	useEffect(() => {
+		if (replaying) setRouteMenu(null);
+	}, [replaying]);
+
+	// Biome select's menu up: its note would still say to draw (MapNotes)
+	useEffect(() => {
+		useAppStore.setState({ lassoAsked: lasso !== null });
+	}, [lasso]);
+
+	// a saved route deleted (its row, its group, Delete with it ticked): what was going on with it ends: tracking it,
+	// lighting it up, adjusting it (user: deleting a route while adjusting it left the mode on, and a click went to it)
+	useEffect(() => {
+		const groups = bookmarks.data?.groups;
+		if (groups) useAppStore.getState().bookmarksAre(new Set(groups.flatMap((g) => g.items.map((b) => b.id))));
+	}, [bookmarks.data]);
 
 	// --- double click: place the ghost, else zoom in
 	useEffect(() => {
@@ -174,62 +271,54 @@ export function MapInteraction({ map, geo, meta }: { map: MapLibreMap; geo: Geo;
 		};
 	}, [map, mode, app, setMode, showError]);
 
-	// --- drags: the lasso, the ghost
-	useEffect(() => {
-		const dragging = mode.kind === "lasso" || mode.kind === "ghost";
-		void dragging; // panning is AtlasMap's own drag (it stays off in these modes)
-		map.getCanvas().style.cursor =
-			mode.kind === "lasso" ? "crosshair" : mode.kind === "ghost" ? "move" : mode.kind === "normal" ? "" : "copy";
-
-		const down = (e: MapMouseEvent) => {
-			if (e.originalEvent.button !== 0) return;
-			if (mode.kind === "lasso") {
-				drawing.current = [atlasAt(e)];
-				setLasso(null);
-			} else if (mode.kind === "ghost") drag.current = { start: atlasAt(e), centre: mode.centre };
-		};
-		const move = (e: MapMouseEvent) => {
-			if (mode.kind === "lasso" && drawing.current) {
-				drawing.current.push(atlasAt(e));
-				const ring = geo.ring(drawing.current);
-				setData(map, "lasso", {
-					type: "Feature",
-					geometry: { type: "Polygon", coordinates: [ring.length > 3 ? ring : [...ring, ...ring]] },
-					properties: {},
-				});
-			} else if (mode.kind === "ghost" && drag.current) {
-				const [x, y] = atlasAt(e);
-				const { start, centre } = drag.current;
-				setMode({ ...mode, centre: [centre[0] + x - start[0], centre[1] + y - start[1]] });
-			}
-		};
-		const up = async (e: MapMouseEvent) => {
-			if (mode.kind === "ghost") {
-				drag.current = null;
-				return;
-			}
-			if (mode.kind !== "lasso" || !drawing.current) return;
-			const polygon = drawing.current;
-			drawing.current = null;
+	// --- the lasso (drawn by LassoDraw): how many maps it holds, then their biome is picked
+	const lassoDrawn = useCallback(
+		async (polygon: Point[], at: { x: number; y: number }) => {
 			if (polygon.length < 3) {
-				setData(map, "lasso", EMPTY);
 				setMode({ kind: "normal" });
 				return;
 			}
 			const mine = ++lassoSeq.current;
+			// another lasso drawn meanwhile, or another atlas opened (its answer can be accepted before the switch
+			// shows: CodeRabbit)
+			const still = sameAtlas();
+			const current = () => mine === lassoSeq.current && still();
 			try {
 				const { maps } = await app.lassoCount(polygon);
-				if (mine !== lassoSeq.current) return; // another lasso was drawn meanwhile (CodeRabbit)
+				if (!current()) return;
 				if (!maps) {
-					showError("No maps inside the lasso.");
-					setData(map, "lasso", EMPTY);
+					showError("No maps inside the lasso.", true); // (closes on the next click)
 					setMode({ kind: "normal" });
 					return;
 				}
-				setLasso({ polygon, x: e.point.x, y: e.point.y, maps });
+				setLasso({ polygon, x: at.x, y: at.y, maps });
 			} catch (err) {
-				showError(err);
+				if (current()) showError(err);
 			}
+		},
+		[app, setMode, showError],
+	);
+	const lassoStarted = useCallback(() => {
+		lassoSeq.current++; // the one before's count, still coming, is dropped
+		setLasso(null);
+	}, []);
+
+	// --- drags: the ghost (panning is MapPan's, off in these modes)
+	useEffect(() => {
+		map.getCanvas().style.cursor = modeCursor(mode);
+		if (mode.kind !== "ghost") return;
+
+		const down = (e: MapMouseEvent) => {
+			if (e.originalEvent.button === 0) drag.current = { start: atlasAt(e), centre: mode.centre };
+		};
+		const move = (e: MapMouseEvent) => {
+			if (!drag.current) return;
+			const [x, y] = atlasAt(e);
+			const { start, centre } = drag.current;
+			setMode({ ...mode, centre: [centre[0] + x - start[0], centre[1] + y - start[1]] });
+		};
+		const up = () => {
+			drag.current = null;
 		};
 		map.on("mousedown", down);
 		map.on("mousemove", move);
@@ -239,7 +328,7 @@ export function MapInteraction({ map, geo, meta }: { map: MapLibreMap; geo: Geo;
 			map.off("mousemove", move);
 			map.off("mouseup", up);
 		};
-	}, [map, geo, mode, atlasAt, setMode, app, showError]);
+	}, [map, mode, atlasAt, setMode]);
 
 	// --- keys: Esc cancels, Enter places the ghost
 	useEffect(() => {
@@ -247,12 +336,7 @@ export function MapInteraction({ map, geo, meta }: { map: MapLibreMap; geo: Geo;
 			const t = e.target as HTMLElement | null;
 			if (t && (t.tagName === "INPUT" || t.tagName === "TEXTAREA" || t.isContentEditable)) return;
 			if (e.key === "Escape" && mode.kind !== "normal") {
-				drawing.current = null;
-				drag.current = null; // a ghost drag ends too (it moved the next ghost: CodeRabbit)
-				lassoSeq.current++;
-				setData(map, "lasso", EMPTY);
-				setLasso(null);
-				setMode({ kind: "normal" });
+				setMode({ kind: "normal" }); // (what the mode left behind goes: the effect below)
 			} else if (e.key === "Escape") {
 				// with nothing to cancel, Esc empties Find and takes its rings off the map (user: it only worked in the box)
 				useAppStore.getState().clearFind();
@@ -267,11 +351,20 @@ export function MapInteraction({ map, geo, meta }: { map: MapLibreMap; geo: Geo;
 		};
 		window.addEventListener("keydown", onKey);
 		return () => window.removeEventListener("keydown", onKey);
-	}, [map, mode, setMode, app, showError]);
+	}, [mode, setMode, app, showError]);
 
 	// --- right click
 	useEffect(() => {
 		const onMenu = async (e: MapMouseEvent) => {
+			if (mode.kind === "route-edit") {
+				// a right click takes a map off the route being adjusted (user)
+				try {
+					await adjustRoute(atlasAt(e), false, mode);
+				} catch (err) {
+					showError(err);
+				}
+				return;
+			}
 			if (mode.kind !== "normal") return;
 			const at = clickAt(e);
 			let hit: ItemInfo | null = null;
@@ -287,7 +380,7 @@ export function MapInteraction({ map, geo, meta }: { map: MapLibreMap; geo: Geo;
 		return () => {
 			map.off("contextmenu", onMenu);
 		};
-	}, [map, mode, select, clickAt, pick3d]);
+	}, [map, mode, select, clickAt, pick3d, adjustRoute, atlasAt, showError]);
 
 	// --- pointer over things that can be clicked
 	useEffect(() => {
@@ -310,11 +403,36 @@ export function MapInteraction({ map, geo, meta }: { map: MapLibreMap; geo: Geo;
 		};
 	}, [map]);
 
+	const chooseRoute = async (what: "track" | "save" | null) => {
+		const r = routeMenu;
+		setRouteMenu(null);
+		setRouteDraft(null); // tracked, saved or cancelled: the route tracked before stays unless it's Track now
+		if (!r) return;
+		if (what === "track") routes.trackRoute(r.path);
+		else if (what === "save") {
+			const still = sameAtlas(); // (the route is this atlas's: another opened meanwhile, it isn't saved there)
+			const graph = await loadGraph();
+			if (!still()) return;
+			const start = graph.at(r.path[0]) ?? [0, 0];
+			// numbered after the routes saved so far: route1, route2, ...
+			const saved = (bookmarks.data?.groups ?? []).flatMap((g) => g.items).filter((b) => b.route).length;
+			editBookmark({
+				id: null,
+				x: start[0],
+				y: start[1],
+				name: `route${saved + 1}`,
+				group: "Routes",
+				note: "",
+				route: savedRoute(graph, r.path),
+			});
+		}
+	};
+
 	const chooseBiome = async (biome: string | null) => {
 		const l = lasso;
 		setLasso(null);
-		setData(map, "lasso", EMPTY);
 		setMode({ kind: "normal" });
+		if (l && biome === null) app.log(["Biome select: cancelled, nothing changed"]).catch(() => {});
 		if (!l || biome === null) return;
 		try {
 			await app.setBiome(l.polygon, biome);
@@ -325,6 +443,7 @@ export function MapInteraction({ map, geo, meta }: { map: MapLibreMap; geo: Geo;
 
 	return (
 		<>
+			{mode.kind === "lasso" && <LassoDraw onStart={lassoStarted} onDrawn={lassoDrawn} />}
 			{menu && (
 				<MapMenu
 					x={menu.x}
@@ -340,6 +459,18 @@ export function MapInteraction({ map, geo, meta }: { map: MapLibreMap; geo: Geo;
 				/>
 			)}
 			{lasso && <BiomeMenu x={lasso.x} y={lasso.y} maps={lasso.maps} meta={meta} onChoose={chooseBiome} />}
+			{routeMenu && (
+				<RouteMenu
+					x={routeMenu.x}
+					y={routeMenu.y}
+					from={routeMenu.path[0]}
+					to={routeMenu.path[routeMenu.path.length - 1]}
+					maps={routeMenu.path.length - 1}
+					onChoose={chooseRoute}
+				/>
+			)}
 		</>
 	);
 }
+
+const ROUTE_EDIT_REACH_PX = 24; // Remove maps: a click this near (screen px) to a map of the route takes that map

@@ -1171,19 +1171,19 @@ def biomes(atlas, V: dict, ground=None) -> dict:
     blocked = blocked_maps(V["nodes"], V["icons"], live, icon_node)
     potential = potential_maps(V["nodes"], V["paths"], src, ground=ground, blocked=blocked) if src else {}
     edits = getattr(atlas, "biome_edits", []) or []
-    if edits and V["nodes"]:  # the hand-drawn biomes win: each stored map position -> the map node within 20 units
+    if edits and V["nodes"]:  # the hand-drawn biomes win: each stored map position -> every map node within 20 units
         from scipy.spatial import cKDTree
 
         tree = cKDTree(np.array([[n["x"], n["y"]] for n in V["nodes"]], float))
         for e in edits:
             for q in e["maps"]:
-                d, i = tree.query(q)
-                if d > 20:
-                    continue
-                if e["biome"]:
-                    potential[int(i)] = (e["biome"], 0)
-                else:
-                    potential.pop(int(i), None)
+                # all of them: of two map nodes on one spot (a map seen twice) only one took the edit, and the other
+                # kept its biome (user: painting "no biome" didn't stick on some maps)
+                for i in tree.query_ball_point(q, 20.0):
+                    if e["biome"]:
+                        potential[int(i)] = (e["biome"], 0)
+                    else:
+                        potential.pop(int(i), None)
     near = near_city(V["nodes"], V["paths"], potential, blocked)
     return {
         "potential": potential,

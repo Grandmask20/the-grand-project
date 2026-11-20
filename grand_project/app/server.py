@@ -69,6 +69,7 @@ GEN_FREE = (
     "/api/quit",
     "/api/questions/",
     "/api/replay/close",
+    "/api/update",
 )
 
 
@@ -146,7 +147,16 @@ class Handler(BaseHTTPRequestHandler):
         return self.server.session  # type: ignore[attr-defined]
 
     def log_message(self, fmt, *args) -> None:
-        """Log requests at debug level only (tiles are many)."""
+        """Log requests at debug level; a map tile only when it failed (thousands a session: 6000 of a session's
+        lines were tiles, hiding what happened, user)."""
+        served = str(args[1]) if len(args) > 1 else ""
+        # (204: no ground there; the page's own log lines are in the log already)
+        if (
+            args
+            and (" /api/tiles/" in str(args[0]) or " /api/log " in str(args[0]))
+            and served in ("200", "204", "304")
+        ):
+            return
         LOG.debug("http: " + fmt, *args)
 
     def _host_ok(self) -> bool:
@@ -409,6 +419,45 @@ class Handler(BaseHTTPRequestHandler):
         """Change the page's settings."""
         self._json(self.S.set_ui_settings(self._body()))
 
+    @route("POST", "/api/log")
+    def post_log(self, q) -> None:
+        """What was done on the page (tabs, modes, selections, dialogs, errors shown): into the log file."""
+        lines = self._body().get("lines", [])
+        if not isinstance(lines, list):
+            raise ValueError("lines must be a list")
+        for line in lines[:50]:
+            # one line each (a line break in a name made two), not too long
+            self.S.events.log(" ".join(str(line).split())[:500])  # (the Log tab and the log file: user)
+        self._json({"ok": True})
+
+    # ------------------------------------------------------------------ the in-app update (app/updater.py)
+    @route("GET", "/api/update")
+    def get_update(self, q) -> None:
+        """The update's state: this copy's release, the latest one, a download going on."""
+        self._json(self.S.update_status())
+
+    @route("POST", "/api/update/check")
+    def post_update_check(self, q) -> None:
+        """Ask GitHub for the latest release (the answer comes as an "update" event)."""
+        self.S.check_update()
+        self._json(self.S.update_status())
+
+    @route("POST", "/api/update/install")
+    def post_update_install(self, q) -> None:
+        """Download the latest release and hand over to the helper that puts it in place (the app restarts)."""
+        try:
+            port = str(self.server.server_address[1])  # (the restart comes back on it: the page reconnects)
+            self.S.install_update(quit_app=self.server.quit, restart_args=["--port", port])  # type: ignore[attr-defined]
+        except ValueError as e:
+            raise ApiError(str(e), 409) from e
+        self._json(self.S.update_status())
+
+    @route("POST", "/api/update/auto")
+    def post_update_auto(self, q) -> None:
+        """Check at start (once a day), or only when asked."""
+        self.S.set_update_auto(bool(self._body().get("on")))
+        self._json(self.S.update_status())
+
     @route("POST", "/api/quit")
     def post_quit(self, q) -> None:
         """Save everything and stop the app."""
@@ -432,6 +481,12 @@ class Handler(BaseHTTPRequestHandler):
         """Rename a known atlas."""
         b = self._body()
         self.S.rename_atlas(b["json"], b["name"])
+        self._json({"ok": True})
+
+    @route("POST", "/api/atlases/show-folder")
+    def post_show_folder(self, q) -> None:
+        """Open a known atlas's folder in the system's file browser."""
+        self.S.show_atlas_folder(self._body()["json"])
         self._json({"ok": True})
 
     @route("POST", "/api/atlases/forget")
@@ -665,7 +720,14 @@ class Handler(BaseHTTPRequestHandler):
         """What is under a point."""
         b = self._body()
         hit = self.S.pick(float(b["x"]), float(b["y"]), float(b["z"]), b.get("layers"))
-        self._json(None if hit is None else self.S.info(*hit))
+        info = None if hit is None else self.S.info(*hit)
+        LOG.info(
+            "click at (%.0f, %.0f): %s",
+            float(b["x"]),
+            float(b["y"]),
+            f"{hit[0]} {hit[1]}: {info['title']}" if info else "nothing",
+        )
+        self._json(info)
 
     @route("GET", "/api/info")
     def get_info(self, q) -> None:
@@ -715,7 +777,9 @@ class Handler(BaseHTTPRequestHandler):
     @route("POST", "/api/lasso")
     def post_lasso(self, q) -> None:
         """How many maps a lasso holds."""
-        self._json({"maps": len(self.S.lasso_nodes(self._body()["polygon"]))})
+        n = len(self.S.lasso_nodes(self._body()["polygon"]))
+        self.S.events.log(f"Biome select: {n} map{'' if n == 1 else 's'} inside the lasso")
+        self._json({"maps": n})
 
     @route("POST", "/api/biome")
     def post_biome(self, q) -> None:
@@ -734,7 +798,7 @@ class Handler(BaseHTTPRequestHandler):
         """Add a bookmark."""
         b = self._body()
         i = self.S.add_bookmark(float(b["x"]), float(b["y"]), b.get("name", ""), b.get("group", "Other"),
-                                b.get("note", ""), gen=self._req_gen)  # fmt: skip
+                                b.get("note", ""), gen=self._req_gen, route=b.get("route"))  # fmt: skip
         if i < 0:
             raise ApiError("there is already a bookmark on that spot", 409)
         self._json({"id": i})
@@ -744,6 +808,15 @@ class Handler(BaseHTTPRequestHandler):
         """Edit a bookmark."""
         b = self._body()
         self.S.edit_bookmark(int(i), b.get("name", ""), b.get("group", "Other"), b.get("note", ""))
+        self._json({"ok": True})
+
+    @route("POST", "/api/bookmarks/route")
+    def post_bookmark_route(self, q) -> None:
+        """Change a saved route's maps."""
+        b = self._body()
+        if not isinstance(b.get("route"), dict):
+            raise ApiError("a route is needed", 400)
+        self.S.set_bookmark_route(int(b["id"]), b["route"], gen=self._req_gen)
         self._json({"ok": True})
 
     @route("POST", "/api/bookmarks/delete")
@@ -783,6 +856,24 @@ class Handler(BaseHTTPRequestHandler):
         """Rename a group."""
         b = self._body()
         self.S.rename_group(b["old"], b["new"])
+        self._json({"ok": True})
+
+    @route("POST", "/api/groups/delete")
+    def post_delete_groups(self, q) -> None:
+        """Delete empty groups."""
+        names = self._body().get("names", [])
+        if not isinstance(names, list):
+            raise ValueError("names must be a list")
+        self._json({"deleted": self.S.delete_groups([n for n in names if isinstance(n, str)])})
+
+    @route("POST", "/api/groups/fold")
+    def post_fold_groups(self, q) -> None:
+        """Fold groups shut, or open them."""
+        b = self._body()
+        names = b.get("names")
+        if not isinstance(names, list) or not all(isinstance(n, str) for n in names):
+            raise ApiError("names: a list of group names", 400)
+        self.S.fold_groups(names, bool(b.get("folded")))
         self._json({"ok": True})
 
     @route("POST", "/api/groups/toggle")
@@ -1287,6 +1378,7 @@ def main(argv: list[str] | None = None) -> int:
             _say("Another copy of the app is starting or closing and doesn't answer: start it again in a moment.")
             return 1
     session = AtlasSession()
+    session.after_update()  # (an update just put in place: said in the log)
     try:
         server = AppServer(session, port=args.port)
     except OSError as e:
@@ -1315,6 +1407,7 @@ def main(argv: list[str] | None = None) -> int:
             session.events.publish("atlas", session.atlas_summary())
 
     threading.Thread(target=first_atlas, daemon=True).start()
+    session.check_update_at_start()  # (the player release, once a day, on a thread of its own)
     try:
         server.serve_forever(poll_interval=0.25)
     except KeyboardInterrupt:

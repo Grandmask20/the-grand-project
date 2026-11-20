@@ -32,7 +32,7 @@ describe("DebugTab", () => {
 	it("lists the marks and goes to one", async () => {
 		const { user } = renderWithApp(<DebugTab />, { "GET /api/debug": marks });
 		expect(await screen.findByText(/2 mark\(s\) in atlas_debug\.json/)).toBeInTheDocument();
-		await user.click(screen.getByRole("button", { name: "D1 map: missing - behind the tower (12, -4)" }));
+		await user.click(screen.getByRole("button", { name: "map: missing - behind the tower" }));
 		expect(useAppStore.getState().fly).toMatchObject({ x: 12.4, y: -3.6, px: 1 });
 	});
 
@@ -41,8 +41,8 @@ describe("DebugTab", () => {
 			"GET /api/debug": marks,
 			"DELETE /api/debug/2": { ok: true },
 		});
-		await screen.findByText(/D2 path: wrong/);
-		await user.click(screen.getAllByRole("button", { name: "Delete" })[1]);
+		await screen.findByText("D2");
+		await user.click(screen.getByRole("button", { name: "Delete D2" }));
 		await waitFor(() => expect(calls.some((c) => c.method === "DELETE" && c.path === "/api/debug/2")).toBe(true));
 	});
 

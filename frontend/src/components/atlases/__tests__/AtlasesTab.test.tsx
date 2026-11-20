@@ -1,4 +1,4 @@
-import { screen, waitFor } from "@testing-library/react";
+import { fireEvent, screen, waitFor } from "@testing-library/react";
 import { describe, expect, it } from "vitest";
 import { AtlasesTab } from "@/components/atlases/AtlasesTab";
 import { useAppStore } from "@/store/AppStore";
@@ -28,5 +28,19 @@ describe("AtlasesTab", () => {
 		const { user } = renderWithApp(<AtlasesTab />, { "GET /api/atlases": atlases });
 		await user.click(await screen.findByRole("button", { name: "Delete second" }));
 		expect(useAppStore.getState().deleteAtlas).toBe("/atlases/two/atlas.json");
+	});
+
+	it("right-click a card: open its folder (user: right click to open the atlas folder)", async () => {
+		const { user, calls } = renderWithApp(<AtlasesTab />, {
+			"GET /api/atlases": atlases,
+			"POST /api/atlases/show-folder": { ok: true },
+		});
+		fireEvent.contextMenu(await screen.findByText("second"));
+		await user.click(await screen.findByRole("menuitem", { name: "Open atlas folder" }));
+		await waitFor(() =>
+			expect(calls.find((c) => c.path === "/api/atlases/show-folder")?.body).toEqual({
+				json: "/atlases/two/atlas.json",
+			}),
+		);
 	});
 });

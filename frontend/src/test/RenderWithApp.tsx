@@ -5,7 +5,7 @@ import type { ReactNode } from "react";
 import { createAppClient } from "@/api/AppClient";
 import { AppQueryKeys } from "@/api/AppQueryKeys";
 import { AppClientProvider } from "@/providers/AppClientProvider";
-import { useAppStore } from "@/store/AppStore";
+import { releaseHolds, useAppStore } from "@/store/AppStore";
 import { fakeHttp } from "./FakeHttp";
 import { meta, state } from "./Fixtures";
 
@@ -13,6 +13,7 @@ const initial = useAppStore.getState();
 
 /** Puts the page store back as it starts (after each test). */
 export function resetStore() {
+	releaseHolds(); // (held settings are kept outside the store: CodeRabbit)
 	useAppStore.setState(initial, true);
 }
 
@@ -30,10 +31,12 @@ export function renderWithApp(ui: ReactNode, routes: Record<string, unknown> = {
 	queryClient.setQueryData(AppQueryKeys.state, structuredClone(start("GET /api/state", state)));
 	queryClient.setQueryData(AppQueryKeys.meta, structuredClone(start("GET /api/meta", meta)));
 	const user = userEvent.setup();
-	const view = render(
+	const wrap = (node: ReactNode) => (
 		<QueryClientProvider client={queryClient}>
-			<AppClientProvider client={client}>{ui}</AppClientProvider>
-		</QueryClientProvider>,
+			<AppClientProvider client={client}>{node}</AppClientProvider>
+		</QueryClientProvider>
 	);
-	return { user, calls, queryClient, ...view };
+	const view = render(wrap(ui));
+	// (rendered again inside the same app: the query cache and the fake app stay)
+	return { user, calls, queryClient, ...view, rerender: (node: ReactNode) => view.rerender(wrap(node)) };
 }

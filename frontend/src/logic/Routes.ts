@@ -1,6 +1,20 @@
 import type { Graph } from "@/domain/map/Graph";
 import type { Point } from "./Geo";
 
+/** The maps of a route shown that get a ring: every map but the first (your position's marker is there), or the first
+ * alone while the route's last map is being picked (user: nothing showed until the second map). */
+export function ringedMaps(path: number[]): number[] {
+	return path.length === 1 ? path : path.slice(1);
+}
+
+/** A route's marks on the map: its maps ringed, and while it is tracked (`at`) the map you are on marked instead, and
+ * only the maps not run yet ringed. */
+export function routeMarks(path: number[], at?: number): { rings: number[]; here: number | null } {
+	if (at === undefined) return { rings: ringedMaps(path), here: null };
+	const run = new Set(path.slice(0, at + 1));
+	return { rings: [...new Set(path.slice(at + 1).filter((m) => !run.has(m)))], here: path[at] ?? null };
+}
+
 /** The maps and paths routes are found on: every map run costs 1 (fewest maps), the length only breaks ties. */
 export class RouteGraph {
 	private readonly adj = new Map<number, number[]>();
@@ -48,22 +62,28 @@ export class RouteGraph {
 		return best;
 	}
 
-	/** The route from `from` to the first map `done` accepts (fewest maps), or null. */
-	shortest(from: number, done: (id: number) => boolean): number[] | null {
-		if (!this.adj.has(from)) return null;
-		const cost = new Map<number, number>([[from, 0]]);
+	/** The route from `from` (one map, or the nearest of several) to the first map `done` accepts (fewest maps), or
+	 * null; never through the maps in `avoid`. */
+	shortest(from: number | number[], done: (id: number) => boolean, avoid?: Set<number>): number[] | null {
+		const starts = new Set((Array.isArray(from) ? from : [from]).filter((s) => this.adj.has(s)));
+		if (!starts.size) return null;
+		const cost = new Map<number, number>();
 		const prev = new Map<number, number>();
 		const heap = new MinHeap();
-		heap.push(0, from);
+		for (const s of starts) {
+			cost.set(s, 0);
+			heap.push(0, s);
+		}
 		while (heap.size) {
 			const [c, u] = heap.pop();
 			if (c > (cost.get(u) ?? Number.POSITIVE_INFINITY)) continue;
-			if (u !== from && done(u)) {
+			if (!starts.has(u) && done(u)) {
 				const path = [u];
 				for (let v = prev.get(u); v !== undefined; v = prev.get(v)) path.push(v);
 				return path.reverse();
 			}
 			for (const v of this.adj.get(u) ?? []) {
+				if (avoid?.has(v)) continue;
 				// a map run outweighs any distance (1e-6 x distance could pass a whole map on a big atlas: CodeRabbit)
 				const nc = c + ROUTE_HOP + this.dist(u, v);
 				if (nc < (cost.get(v) ?? Number.POSITIVE_INFINITY)) {

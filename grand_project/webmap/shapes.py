@@ -1,9 +1,10 @@
 """webmap.shapes: the vector ground of the web map (land and biome areas as polygons) and the icon pictures.
 
 Land is where the screenshots show ground (the map image's non-black part). Biome areas come from the app's own
-data: the maps a City or Breach stronghold biome may cover (grand_project.cities.biomes), and the
-maps whose map content tells their ground (an "<X>Influence" icon). Each such map is a disc; discs of one biome close
-to each other are joined, and the outline is traced into polygons.
+data: the maps a City or Breach stronghold biome covers (grand_project.cities.biomes); no icon makes a biome (user:
+"<X>Influence" icons drew Grass / Water areas). Each such map is a disc; discs of one biome close to each other are
+joined, the area is cut back to the ground nearer its own maps than any other map (rounded off), and the outline is
+traced into polygons.
 """
 
 from __future__ import annotations
@@ -19,10 +20,11 @@ from grand_project.app.constants import ICON_INFO
 from .constants import (
     WEBMAP_BIOME_COLOUR,
     WEBMAP_BIOME_JOIN,
+    WEBMAP_BIOME_KEEP,
     WEBMAP_BIOME_R,
+    WEBMAP_BIOME_SMOOTH,
     WEBMAP_ICON_RING,
     WEBMAP_ICON_SPRITE,
-    WEBMAP_INFLUENCE,
     WEBMAP_LAND_JOIN,
     WEBMAP_SHAPE_CELL,
 )
@@ -104,27 +106,49 @@ def biome_kind(label: str) -> str:
     return first.replace(" city", "").replace(" stronghold", "") if first != "City" else "City"
 
 
-def biome_polygons(nodes: list[dict], potential: dict, icons_of) -> list[tuple[str, list]]:
+def _inside(polys: list, x: float, y: float) -> bool:
+    """Whether a point lies in any of the polygons (inside an outer ring and none of its holes).
+
+    Args:
+        polys: Polygons, each [outer ring, hole, ...] of (x, y).
+        x: The point's x.
+        y: The point's y.
+
+    Returns:
+        True when inside.
+    """
+
+    def within(ring) -> bool:
+        return cv2.pointPolygonTest(np.array(ring, np.float32).reshape(-1, 1, 2), (float(x), float(y)), False) >= 0
+
+    return any(within(p[0]) and not any(within(h) for h in p[1:]) for p in polys)
+
+
+def biome_polygons(nodes: list[dict], potential: dict) -> list[tuple[str, list]]:
     """Return the biome areas as polygons, one set per biome kind.
+
+    An area never reaches over a map outside it: it keeps the ground nearer its own maps than any other map, rounded
+    off, with a small hole kept around every other map (WEBMAP_BIOME_KEEP). Discs around its maps covered close
+    neighbours that were not in the biome, and joining the discs bridged over them (user: maps painted "no biome"
+    stayed under the area, 161 of 939 on the crawl atlas).
 
     Args:
         nodes: The map nodes (app.model.view_model order; "x", "y", "status").
         potential: Map node index -> (biome label, steps) from grand_project.cities.biomes.
-        icons_of: Function map node index -> its icon names (for "<X>Influence" icons).
 
     Returns:
         [(kind, polygons)], kind a WEBMAP_BIOME_COLOUR key.
     """
+    from scipy.spatial import cKDTree
+
     groups: dict[str, list[int]] = {}
     for i, (label, _steps) in potential.items():
         if nodes[i]["status"] != "removed":
             groups.setdefault(biome_kind(label), []).append(i)
-    for i, nd in enumerate(nodes):
-        if nd["status"] == "removed":
-            continue
-        for name in icons_of(i):
-            if name in WEBMAP_INFLUENCE:
-                groups.setdefault(WEBMAP_INFLUENCE[name], []).append(i)
+    if not groups:
+        return []
+    alive = np.array([i for i, nd in enumerate(nodes) if nd["status"] != "removed"])
+    tree = cKDTree(np.array([[nodes[i]["x"], nodes[i]["y"]] for i in alive], float))
     out = []
     C, R = WEBMAP_SHAPE_CELL, WEBMAP_BIOME_R
     for kind, idx in groups.items():
@@ -137,7 +161,43 @@ def biome_polygons(nodes: list[dict], potential: dict, icons_of) -> list[tuple[s
         k = max(1, round(WEBMAP_BIOME_JOIN / C / 2))
         mask = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (2 * k + 1,) * 2))
         mask = (mask > 127).astype(np.uint8) * 255
+        # a spot stays only when its nearest map is one of this biome's (a map in another biome or in none keeps the
+        # ground around it); the cut is then rounded off, and a small hole stays around every map outside the biome so
+        # rounding never covers one (at most half the way to the nearest map of this biome: map nodes ~30 apart)
+        rr, cc = np.nonzero(mask)
+        _d, near = tree.query(np.column_stack([ox + cc * C, oy + rr * C]))
+        own_cell = np.isin(alive[near], np.array(idx))
+        mine = np.zeros(mask.shape, np.float32)
+        mine[rr[own_cell], cc[own_cell]] = 1.0
+        sm = max(1, round(WEBMAP_BIOME_SMOOTH / C))
+        mask = (cv2.GaussianBlur(mine, (2 * sm + 1,) * 2, 0) > 0.5).astype(np.uint8) * 255
+        own = set(idx)
+        lo, hi = np.array([ox, oy]), np.array([ox + w * C, oy + h * C])
+        near_box = tree.query_ball_point((lo + hi) / 2, float(np.hypot(*(hi - lo))) / 2 + WEBMAP_BIOME_KEEP)
+        others = [int(alive[j]) for j in near_box if int(alive[j]) not in own]
+        xy = np.array([[nodes[i]["x"], nodes[i]["y"]] for i in others], float).reshape(-1, 2)
+        # each of its own maps keeps a disc, at most halfway to the nearest map outside (rounding off took away a
+        # small biome boxed in by close maps: one map's cut was 2 x 2 cells, under the blur's threshold, CodeRabbit);
+        # the other maps' holes, at most halfway too, are cut after, so neither ever covers the other's map
+        reach, _ = cKDTree(xy).query(pts) if len(xy) else (np.full(len(pts), np.inf), None)
+        for (x, y), d in zip(pts, np.atleast_1d(reach), strict=True):
+            r = min(WEBMAP_BIOME_KEEP, d / 2)
+            cv2.circle(mask, (round((x - ox) / C), round((y - oy) / C)), max(1, round(r / C)), 255, -1, cv2.LINE_AA)
+        if others:
+            gap, _ = cKDTree(pts).query(xy)  # (all at once: one lookup per map was most of the time)
+            for (x, y), d in zip(xy, gap, strict=True):
+                r = min(WEBMAP_BIOME_KEEP, d / 2)
+                cv2.circle(mask, (round((x - ox) / C), round((y - oy) / C)), max(1, round(r / C)), 0, -1, cv2.LINE_AA)
+        mask = (mask > 127).astype(np.uint8) * 255
         polys = _trace(mask, lambda c, r, ox=ox, oy=oy: (ox + c * C, oy + r * C), 1.0)
+        # a map of its own still outside every polygon (its disc was under a cell or two, too small to trace when
+        # other maps stand ~30 units away, finer than the grid): an exact circle of its own, at most halfway too
+        for (x, y), d in zip(pts, np.atleast_1d(reach), strict=True):
+            if not _inside(polys, x, y):
+                r = min(WEBMAP_BIOME_KEEP, d / 2)
+                polys.append(
+                    [[(x + r * np.cos(a), y + r * np.sin(a)) for a in np.linspace(0, 2 * np.pi, 16, endpoint=False)]]
+                )
         if polys and kind in WEBMAP_BIOME_COLOUR:
             out.append((kind, polys))
     return out

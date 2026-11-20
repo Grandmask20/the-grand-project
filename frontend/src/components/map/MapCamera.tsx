@@ -1,13 +1,15 @@
-import type { Map as MapLibreMap } from "maplibre-gl";
 import { useEffect, useRef } from "react";
-import type { MapInfo } from "@/domain/map/MapInfo";
-import type { Geo } from "@/logic/Geo";
+import { useMapLibre } from "@/hooks/map/UseMapLibre";
+import { useMapView } from "@/hooks/map/UseMapView";
 import { useAppStore } from "@/store/AppStore";
 
 /** Moves the map when asked (Find, lists, Fit) and remembers where it is (kept when the map is made again). */
-export function MapCamera({ map, geo, info }: { map: MapLibreMap; geo: Geo; info: MapInfo }) {
+export function MapCamera() {
+	const map = useMapLibre();
+	const { geo, info } = useMapView();
 	const fly = useAppStore((s) => s.fly);
 	const fit = useAppStore((s) => s.fitAtlas);
+	const fitTo = useAppStore((s) => s.fitTo);
 	const setCamera = useAppStore((s) => s.setCamera);
 
 	useEffect(() => {
@@ -37,6 +39,31 @@ export function MapCamera({ map, geo, info }: { map: MapLibreMap; geo: Geo; info
 		const zoom = Math.max(map.getZoom(), geo.zoomFor(fly.px ?? 1));
 		map.flyTo({ center: geo.toLngLat(fly.x, fly.y), zoom: Math.min(zoom, info.maxzoom), speed: 1.6 });
 	}, [map, geo, info, fly]);
+
+	// an area (a saved route): its corners in the view; the room round it is in the box already (routeBox). Carried
+	// out once, then cleared: one asked for while the map loaded is still to do when it's here (it was taken as done:
+	// CodeRabbit); another atlas clears it (resetAtlas)
+	const fittedArea = useRef(0);
+	useEffect(() => {
+		if (!fitTo) {
+			fittedArea.current = 0;
+			return;
+		}
+		if (fitTo.n === fittedArea.current) return;
+		fittedArea.current = fitTo.n;
+		useAppStore.setState({ fitTo: null });
+		const [x0, y0, x1, y1] = fitTo.box;
+		const corners = [geo.toLngLat(x0, y0), geo.toLngLat(x1, y1)];
+		const lngs = corners.map((c) => c[0]);
+		const lats = corners.map((c) => c[1]);
+		map.fitBounds(
+			[
+				[Math.min(...lngs), Math.min(...lats)],
+				[Math.max(...lngs), Math.max(...lats)],
+			],
+			{ padding: 20, maxZoom: info.maxzoom },
+		);
+	}, [map, geo, info, fitTo]);
 
 	useEffect(() => {
 		if (fit === fitted.current) return;

@@ -1,8 +1,16 @@
 """app.bookmarks: part of AtlasSession (a mixin; see app/session.py): bookmarks and their groups.
 
-Bookmarks are kept in the atlas file ({name, group, note, x, y, created, hidden?}). Groups hidden on the map are kept
-per atlas in the settings (settings["hidden_groups"][atlas path]). Empty groups made with New group last until the
-app closes, unless a bookmark is put in them.
+Bookmarks are kept in the atlas file ({uid, name, group, note, x, y, created, hidden?, route?}). A saved route is a
+bookmark with a "route" ({from, to, maps, legs}: its first and last map's numbers, how many maps it runs, and its legs:
+the main one, then a branch for each map added off its side, each {maps, line}: its maps' spots and the line along its
+paths, in atlas units, kept so it draws, fits and is tracked after the atlas is rebuilt; a branch starts on a map of
+the route). Routes saved before branches held one "line" and no maps. A route has no pin on the map and doesn't hold
+its spot. A bookmark's id is its uid,
+which stays when others are deleted (it was its place in the list: a page still holding an old number deleted or
+edited the bookmark that moved into that place, CodeRabbit); atlases from before get uids when first read.
+Groups hidden on the map, and groups folded shut in the Bookmarks tab, are kept per atlas in the settings
+(settings["hidden_groups" / "folded_groups"][atlas path]; renamed and deleted with their group). Empty groups
+made with New group last until the app closes, unless a bookmark is put in them.
 """
 
 from __future__ import annotations
@@ -12,7 +20,7 @@ import time
 
 from grand_project import logs as atlas_log
 
-from .constants import CATEGORIES, SAME_SPOT
+from .constants import BOOKMARK_GROUP_SETS, CATEGORIES, ROUTE_LEGS_MAX, ROUTE_POINTS_MAX, SAME_SPOT
 from .events import StaleAtlas
 from .icons import icon_label, icon_name
 
@@ -31,6 +39,33 @@ def bm_group(b: dict) -> str:
     return b.get("group") or b.get("category") or "Other"
 
 
+def _points(pts, least: int, what: str) -> list[list[float]]:
+    if not isinstance(pts, list) or len(pts) < least:
+        raise ValueError(f"a route's {what} needs {least} points or more")
+    return [[round(float(p[0]), 1), round(float(p[1]), 1)] for p in pts]
+
+
+def clean_route(route: dict) -> dict:
+    """Check a route sent to be saved and keep only what a saved route holds.
+
+    Args:
+        route: {"from", "to", "maps", "legs": [{"maps": [[x, y], ...], "line": [[x, y], ...]}, ...]} from the page.
+
+    Returns:
+        The route, with plain numbers.
+
+    Raises:
+        ValueError: When it isn't a route (no legs, a leg without two maps or its line, or too long).
+    """
+    legs = route.get("legs")
+    if not isinstance(legs, list) or not 1 <= len(legs) <= ROUTE_LEGS_MAX:
+        raise ValueError(f"a route needs 1 to {ROUTE_LEGS_MAX} legs")
+    if sum(len(g.get("line") or []) + len(g.get("maps") or []) for g in legs if isinstance(g, dict)) > ROUTE_POINTS_MAX:
+        raise ValueError("that route is too long to save")
+    out = [{"maps": _points(g.get("maps"), 2, "leg"), "line": _points(g.get("line"), 2, "line")} for g in legs]
+    return {"from": int(route["from"]), "to": int(route["to"]), "maps": int(route.get("maps", 0)), "legs": out}
+
+
 class BookmarksMixin:
     """AtlasSession mixin: bookmarks (see the module docstring)."""
 
@@ -41,21 +76,40 @@ class BookmarksMixin:
                 self.atlas.save(self.path)
         self.events.publish("bookmarks", None)
 
-    def _bookmark(self, i: int) -> dict:
+    def bookmarks_by_id(self) -> list[tuple[int, dict]]:
+        """Return the open atlas's bookmarks with their ids (uids, given to the ones without).
+
+        Returns:
+            [(uid, bookmark dict)], in the list's order.
+        """
+        if not self.atlas:
+            return []
+        at = self.atlas
+        with self._lock:
+            # the next id is past every id read (an atlas from before keeps none), so no deletion lowers it
+            at.bookmark_next_uid = max([at.bookmark_next_uid] + [int(b["uid"]) + 1 for b in at.bookmarks if "uid" in b])
+            for b in at.bookmarks:
+                if "uid" not in b:
+                    b["uid"] = at.bookmark_next_uid
+                    at.bookmark_next_uid += 1
+            return [(int(b["uid"]), b) for b in at.bookmarks]
+
+    def _bookmark(self, uid: int) -> dict:
         """Return a bookmark.
 
         Args:
-            i: Index in atlas.bookmarks.
+            uid: Its id.
 
         Returns:
             The bookmark dict.
 
         Raises:
-            ValueError: With no atlas open or a bad index.
+            ValueError: With no atlas open or no bookmark with that id (deleted meanwhile).
         """
-        if not self.atlas or not 0 <= i < len(self.atlas.bookmarks):
-            raise ValueError("no such bookmark")
-        return self.atlas.bookmarks[i]
+        for u, b in self.bookmarks_by_id():
+            if u == uid:
+                return b
+        raise ValueError("no such bookmark (deleted meanwhile?)")
 
     def groups(self) -> list[str]:
         """List every bookmark group (used ones and empty ones made with New group).
@@ -66,14 +120,32 @@ class BookmarksMixin:
         g = {bm_group(b) for b in (self.atlas.bookmarks if self.atlas else [])} | self._extra_groups
         return sorted(g, key=str.lower)
 
+    def _group_set(self, kind: str) -> set[str]:
+        """A set of groups kept per atlas in the settings, for the open atlas.
+
+        Args:
+            kind: One of BOOKMARK_GROUP_SETS: "hidden_groups" (hidden on the map) or "folded_groups" (folded
+                in the Bookmarks tab).
+
+        Returns:
+            The group names.
+        """
+        key = str(self.path) if self.path else ""
+        return set(self.settings.get(kind, {}).get(key, []))
+
+    def _put_group_set(self, kind: str, names: set[str]) -> None:
+        """Keep a set of groups for the open atlas (see _group_set), saved at once."""
+        key = str(self.path) if self.path else ""
+        self.settings.setdefault(kind, {})[key] = sorted(names)
+        self.save_settings()
+
     def hidden_groups(self) -> set[str]:
         """Return the groups hidden on the map for the open atlas.
 
         Returns:
             The group names.
         """
-        key = str(self.path) if self.path else ""
-        return set(self.settings.get("hidden_groups", {}).get(key, []))
+        return self._group_set("hidden_groups")
 
     def bookmark_shown(self, b: dict) -> bool:
         """Tell whether a bookmark is drawn on the map (neither its group nor itself hidden).
@@ -90,11 +162,13 @@ class BookmarksMixin:
         """Return the bookmarks and groups for the Bookmarks tab.
 
         Returns:
-            {"groups": [{"name", "hidden", "items": [{"id", "name", "note", "x", "y", "created", "hidden", "shown"}]}]}.
+            {"groups": [{"name", "hidden", "folded", "items": [{"id", "name", "note", "x", "y", "created", "hidden",
+            "shown", "route"?}]}]}.
         """
         hidden = self.hidden_groups()
+        folded = self._group_set("folded_groups")
         by_group: dict[str, list] = {g: [] for g in self.groups()}
-        for i, b in enumerate(self.atlas.bookmarks if self.atlas else []):
+        for i, b in self.bookmarks_by_id():
             by_group.setdefault(bm_group(b), []).append(
                 {
                     "id": i,
@@ -105,11 +179,17 @@ class BookmarksMixin:
                     "created": b.get("created", ""),
                     "hidden": bool(b.get("hidden")),
                     "shown": self.bookmark_shown(b),
+                    **({"route": b["route"]} if b.get("route") else {}),
                 }
             )
         return {
             "groups": [
-                {"name": g, "hidden": g in hidden, "items": sorted(items, key=lambda t: t["name"].lower())}
+                {
+                    "name": g,
+                    "hidden": g in hidden,
+                    "folded": g in folded,
+                    "items": sorted(items, key=lambda t: t["name"].lower()),
+                }
                 for g, items in sorted(by_group.items(), key=lambda t: t[0].lower())
             ]
         }
@@ -122,10 +202,12 @@ class BookmarksMixin:
             y: Atlas y.
 
         Returns:
-            Its index, or None.
+            Its id, or None.
         """
         best, bd = None, SAME_SPOT
-        for i, b in enumerate(self.atlas.bookmarks if self.atlas else []):
+        for i, b in self.bookmarks_by_id():
+            if b.get("route"):  # (a saved route is no pin on its first map)
+                continue
             d = math.hypot(b["x"] - x, b["y"] - y)
             if d < bd:
                 best, bd = i, d
@@ -153,7 +235,15 @@ class BookmarksMixin:
         return name, cat
 
     def add_bookmark(
-        self, x: float, y: float, name: str, group: str = "Other", note: str = "", quiet=False, gen: int | None = None
+        self,
+        x: float,
+        y: float,
+        name: str,
+        group: str = "Other",
+        note: str = "",
+        quiet=False,
+        gen: int | None = None,
+        route: dict | None = None,
     ) -> int:
         """Add a bookmark unless one already sits on that spot.
 
@@ -166,7 +256,7 @@ class BookmarksMixin:
             quiet: Only add it (the caller saves once after many).
 
         Returns:
-            Its index (-1 when a bookmark was already there).
+            Its id (-1 when a bookmark was already there).
 
         Raises:
             ValueError: With no atlas open or no name.
@@ -178,19 +268,25 @@ class BookmarksMixin:
         with self._lock:  # the spot check and the append together (CodeRabbit)
             if gen is not None and not self.owns(gen):  # made for an atlas no longer open (CodeRabbit)
                 raise StaleAtlas()
-            if self.bookmark_at(x, y) is not None:
+            route = clean_route(route) if route else None
+            if route is None and self.bookmark_at(x, y) is not None:
                 return -1
+            # one past every id this atlas has had, kept in the atlas (a deleted one's id is never given again)
+            self.bookmarks_by_id()
+            i = self.atlas.bookmark_next_uid
+            self.atlas.bookmark_next_uid += 1
             self.atlas.bookmarks.append(
                 {
+                    "uid": i,
                     "name": name.strip(),
                     "group": group.strip() or "Other",
                     "note": note,
                     "x": float(x),
                     "y": float(y),
                     "created": time.strftime("%Y-%m-%d %H:%M"),
+                    **({"route": route} if route else {}),
                 }
             )
-            i = len(self.atlas.bookmarks) - 1
         if not quiet:
             self._bookmarks_changed()
             self.events.log(f"bookmarked {name}")
@@ -226,13 +322,13 @@ class BookmarksMixin:
         """Change a bookmark's name, group and note.
 
         Args:
-            i: Its index.
+            i: Its id.
             name: New name.
             group: New group.
             note: New note.
 
         Raises:
-            ValueError: With a bad index or no name.
+            ValueError: With no such bookmark or no name.
         """
         b = self._bookmark(i)
         if not name.strip():
@@ -241,21 +337,49 @@ class BookmarksMixin:
         b.pop("category", None)
         self._bookmarks_changed()
 
+    def set_bookmark_route(self, i: int, route: dict, gen: int | None = None) -> None:
+        """Change a saved route's maps (Adjust route on it in Bookmarks).
+
+        Args:
+            i: The route bookmark's id.
+            route: The route as it is now (see clean_route).
+            gen: The atlas generation the page made it in (checked under the lock: another atlas opened meanwhile
+                would get it on its bookmark with that id, CodeRabbit).
+
+        Raises:
+            ValueError: With no such bookmark, one that isn't a route, or no route.
+            StaleAtlas: When it was made for an atlas no longer open.
+        """
+        route = clean_route(route)
+        with self._lock:
+            if gen is not None and not self.owns(gen):
+                raise StaleAtlas()
+            b = self._bookmark(i)
+            if "route" not in b:
+                raise ValueError(f"{b['name']} isn't a route")
+            b["route"] = route
+        self._bookmarks_changed()
+        branches = len(route["legs"]) - 1
+        self.events.log(
+            f"Route {b['name']} changed: map #{route['from']} to map #{route['to']}, {route['maps']} maps"
+            + (f", {branches} branch{'es' if branches != 1 else ''}" if branches else "")
+        )
+
     def delete_bookmarks(self, ids: list[int]) -> list[str]:
         """Delete bookmarks.
 
         Args:
-            ids: Their indices.
+            ids: Their ids (ones no longer there are skipped).
 
         Returns:
             Their names.
         """
         if not self.atlas:
             return []
-        ids = sorted({i for i in ids if 0 <= i < len(self.atlas.bookmarks)}, reverse=True)
-        names = [self.atlas.bookmarks[i]["name"] for i in ids]
-        for i in ids:
-            self.atlas.bookmarks.pop(i)
+        gone = set(ids)
+        names = [b["name"] for u, b in self.bookmarks_by_id() if u in gone]
+        with self._lock:
+            self.atlas.bookmarks[:] = [b for u, b in self.bookmarks_by_id() if u not in gone]
         if names:
             LOG.info(f"deleted bookmark(s): {names}")
             self._bookmarks_changed()
@@ -265,7 +389,7 @@ class BookmarksMixin:
         """Move bookmarks to a group.
 
         Args:
-            ids: Their indices.
+            ids: Their ids.
             group: The group.
         """
         for i in ids:
@@ -280,6 +404,7 @@ class BookmarksMixin:
         """
         if name.strip():
             self._extra_groups.add(name.strip())
+            self.events.log(f"new bookmark group {name.strip()!r}")
             self.events.publish("bookmarks", None)
 
     def rename_group(self, old: str, new: str) -> None:
@@ -298,7 +423,52 @@ class BookmarksMixin:
         if old in self._extra_groups:
             self._extra_groups.discard(old)
             self._extra_groups.add(new)
+        # a hidden group stays hidden under its new name (user: renaming showed it again), a folded one folded
+        for kind in BOOKMARK_GROUP_SETS:
+            names = self._group_set(kind)
+            if old in names:
+                self._put_group_set(kind, (names - {old}) | {new})
+        self.events.log(f"bookmark group {old!r} renamed to {new!r}")
         self._bookmarks_changed()
+
+    def delete_groups(self, names: list[str]) -> int:
+        """Delete empty groups (a group with bookmarks goes when its last bookmark does).
+
+        Args:
+            names: The group names.
+
+        Returns:
+            How many were deleted.
+        """
+        if not self.atlas:
+            return 0
+        used = {bm_group(b) for b in self.atlas.bookmarks}
+        gone = [n for n in names if n in self._extra_groups and n not in used]
+        for n in gone:
+            self._extra_groups.discard(n)
+        if gone:
+            for kind in BOOKMARK_GROUP_SETS:
+                names = self._group_set(kind)
+                if names & set(gone):
+                    self._put_group_set(kind, names - set(gone))
+            self.events.log(f"deleted empty bookmark group(s): {', '.join(gone)}")
+            self.events.publish("bookmarks", None)
+        return len(gone)
+
+    def fold_groups(self, names: list[str], folded: bool) -> None:
+        """Fold groups shut in the Bookmarks tab, or open them (kept per atlas: user: Fold all was forgotten).
+
+        Args:
+            names: The group names.
+            folded: Fold (True) or open.
+        """
+        cur = self._group_set("folded_groups")
+        new = cur | set(names) if folded else cur - set(names)
+        if new == cur:
+            return
+        self._put_group_set("folded_groups", new)
+        self.events.log(f"{'Folded' if folded else 'Opened'} bookmark group(s): {', '.join(sorted(set(names)))}")
+        self.events.publish("bookmarks", None)
 
     def toggle_group(self, g: str) -> None:
         """Hide a group on the map, or show it again (kept per atlas in the settings).
@@ -312,6 +482,7 @@ class BookmarksMixin:
         cur.symmetric_difference_update({g})
         hg[key] = sorted(cur)
         self.save_settings()
+        self.events.log(f"bookmark group {g!r} {'hidden' if g in cur else 'shown'} on the map")
         self.events.publish("bookmarks", None)  # (drawn by the page: no tiles made again, user: it was slow)
 
     def toggle_bookmark(self, i: int) -> None:
@@ -319,7 +490,7 @@ class BookmarksMixin:
         bookmark of it.
 
         Args:
-            i: Its index.
+            i: Its id.
         """
         b = self._bookmark(i)
         g = bm_group(b)
@@ -328,9 +499,9 @@ class BookmarksMixin:
             hg = self.settings.setdefault("hidden_groups", {})
             hg[key] = sorted(set(hg.get(key, [])) - {g})
             self.save_settings()
-            for k, o in enumerate(self.atlas.bookmarks):
+            for o in self.atlas.bookmarks:
                 if bm_group(o) == g:
-                    o["hidden"] = k != i
+                    o["hidden"] = o is not b  # (the bookmark itself: a list place isn't its id, CodeRabbit)
         else:
             b["hidden"] = not b.get("hidden")
         self._bookmarks_changed()

@@ -40,8 +40,7 @@ class EditsMixin:
         Args:
             msg: What changed (log line).
         """
-        LOG.info(msg)
-        self.events.log(msg)
+        self.events.log(msg)  # (into the log file too: written here as well, each edit was in it twice)
         if self.path:
             with self._lock:
                 self.atlas.save(self.path)
@@ -92,7 +91,10 @@ class EditsMixin:
         self._edited(f"city type at ({lm['x']:.0f}, {lm['y']:.0f}) set to {typ or 'automatic'}")
 
     def lasso_nodes(self, polygon: list) -> list[int]:
-        """Return the shown map nodes inside a lasso.
+        """Return the map nodes inside a lasso: every one not removed, whatever the filters show.
+
+        A biome area is drawn around every such map, so the lasso takes them all: with only the shown ones, a map the
+        filters hid (doubtful, or seen once) kept its biome and its area stayed (user: painting didn't stick).
 
         Args:
             polygon: [[x, y], ...] in atlas units.
@@ -103,11 +105,10 @@ class EditsMixin:
         if len(polygon) < 3 or not len(self.D.get("node_pts", [])):
             return []
         P = np.array(polygon, np.float32).reshape(-1, 1, 2)
-        fl = self._flags()
         return [
             i
             for i, n in enumerate(self.V["nodes"])
-            if self.node_shown(n, fl) and cv2.pointPolygonTest(P, (float(n["x"]), float(n["y"])), False) >= 0
+            if n["status"] != "removed" and cv2.pointPolygonTest(P, (float(n["x"]), float(n["y"])), False) >= 0
         ]
 
     def set_biome(self, polygon: list, biome: str) -> int:
@@ -161,7 +162,11 @@ class EditsMixin:
                         )
                         self.events.log(f"{lm['kind']} at ({lm['x']:.0f}, {lm['y']:.0f}) is now a {typ} city")
                     atlas_cities.set_type(self.atlas, lm["x"], lm["y"], typ)
-        self._edited(f"{len(ids)} maps " + (f"are now {biome}" if biome else "are no longer in a biome"))
+        n = f"{len(ids)} map" if len(ids) == 1 else f"{len(ids)} maps"
+        verb = "is" if len(ids) == 1 else "are"
+        self._edited(
+            f"Biome select: {n} {verb} now {biome}" if biome else f"Biome select: {n} {verb} no longer in a biome"
+        )
         return len(ids)
 
     def scan_locks(self) -> None:

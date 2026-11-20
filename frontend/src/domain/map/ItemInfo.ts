@@ -19,6 +19,8 @@ export interface ItemInfo {
 	name?: string;
 	group?: string;
 	note?: string;
+	/** The id of the bookmark on this spot (a map, icon or landmark), and the bookmark itself. */
 	bookmark?: number | null;
+	bookmark_of?: { id: number; name: string; group: string; note: string } | null;
 	suggest?: { name: string; group: string } | null;
 }

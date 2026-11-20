@@ -1,5 +1,4 @@
 import { type DragEvent, useState } from "react";
-import { ErrorBanner } from "@/components/common/ErrorBanner";
 import { ProgressBox } from "@/components/common/ProgressBox";
 import { BookmarkDialog } from "@/components/dialogs/BookmarkDialog";
 import { ConfirmDialog } from "@/components/dialogs/ConfirmDialog";
@@ -13,16 +12,19 @@ import { SidePanel } from "@/components/layout/SidePanel";
 import { StatusBar } from "@/components/layout/StatusBar";
 import { TopBar } from "@/components/layout/TopBar";
 import { AtlasMap } from "@/components/map/AtlasMap";
+import { MapNotes } from "@/components/map/MapNotes";
 import { ReplayPanel } from "@/components/replay/ReplayPanel";
 import { Button } from "@/components/ui/button";
 import { useAppState } from "@/hooks/app/UseAppState";
 import { useEventStream } from "@/hooks/app/UseEventStream";
 import { useMeta } from "@/hooks/app/UseMeta";
+import { usePageLog } from "@/hooks/app/UsePageLog";
 import { useAtlasActions } from "@/hooks/atlas/UseAtlasActions";
 
 /** The app's one page: top bar, side panel, the map, the status line, and the dialogs. */
 export function AtlasPage() {
 	const connected = useEventStream();
+	usePageLog();
 	const state = useAppState();
 	const meta = useMeta();
 	const actions = useAtlasActions();
@@ -95,7 +97,7 @@ export function AtlasPage() {
 							</div>
 						)}
 						<ProgressBox text={s.progress} />
-						<ErrorBanner />
+						<MapNotes />
 						{dragging && (
 							<div className="pointer-events-none absolute inset-3 z-30 flex items-center justify-center rounded-lg border-2 border-dashed border-gold bg-black/40 text-gold">
 								Drop screenshots: one is placed by hand, several are added

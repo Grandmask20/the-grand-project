@@ -25,6 +25,14 @@ describe("PromptDialog", () => {
 		expect(useAppStore.getState().prompt).toBeNull();
 	});
 
+	it("an empty answer is handed back too (an optional note: OK did nothing without one, user)", async () => {
+		const onOk = vi.fn();
+		useAppStore.getState().ask({ title: "Debug mark", label: "Note (optional)", value: "", onOk });
+		render(<PromptDialog />);
+		await userEvent.click(screen.getByRole("button", { name: "OK" }));
+		expect(onOk).toHaveBeenCalledWith("");
+	});
+
 	it("offers the given choices", () => {
 		useAppStore.getState().ask({ title: "Move", label: "Group", value: "", options: ["Boss", "Farm"], onOk: vi.fn() });
 		const { baseElement } = render(<PromptDialog />);

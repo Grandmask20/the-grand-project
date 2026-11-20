@@ -122,6 +122,8 @@ test("auto-add picks up screenshots saved while it watches", async ({ page }) =>
 	const watched = join(RUN, "watched");
 	expect((await post(page, "/api/watch/folder", { folder: watched })).status).toBe(200);
 	expect((await post(page, "/api/watch", { on: true })).status).toBe(200);
+	// (Auto-add is a page of the Atlases tab)
+	await page.getByRole("tab", { name: "Atlases" }).click();
 	await page.getByRole("tab", { name: "Auto-add" }).click();
 	const files = shots("watch");
 	for (const f of files) copyFileSync(f, join(watched, name(f)));

@@ -3,19 +3,32 @@ import { create } from "zustand";
 import { useShallow } from "zustand/shallow";
 import { isStale } from "@/api/Http";
 import type { Ghost } from "@/domain/adding/Ghost";
+import type { SavedRoute } from "@/domain/bookmarks/Bookmarks";
 import type { ResultRow } from "@/domain/find/SearchResult";
 import type { ItemInfo } from "@/domain/map/ItemInfo";
 import type { ReplayPlan } from "@/domain/replay/ReplayPlan";
 import type { Point } from "@/logic/Geo";
 
 /** What a click on the map does. */
+/** The tabs that became pages of another (user's side panel: Find, View, Bookmarks, Atlases, Log): id -> [tab, page].
+ * The app still asks for "auto" (screenshots waiting for a place) and the page's own code for the others. */
+export const PAGE_OF: Record<string, [string, string]> = {
+	auto: ["atlases", "auto"],
+	route: ["bookmarks", "route"],
+	debug: ["log", "debug"],
+};
+
 export type MapMode =
 	| { kind: "normal" }
 	| { kind: "lasso" }
 	| { kind: "bookmark" }
 	| { kind: "player" }
 	| { kind: "ghost"; ghost: Ghost; centre: Point }
-	| { kind: "debug-link"; from: number; note: string };
+	| { kind: "debug-link"; from: number; note: string }
+	// Route (top bar): the first map picked, then the last
+	| { kind: "route"; from: number | null }
+	// Adjust route on a saved route (Bookmarks, right-click): a map clicked goes on it, a map right-clicked comes off
+	| { kind: "route-edit"; id: number };
 
 export type FilePick = {
 	title: string;
@@ -31,6 +44,8 @@ export type Prompt = {
 	label: string;
 	value: string;
 	options?: string[];
+	/** Pick one of these (a dropdown) instead of typing. */
+	choices?: string[];
 	onOk: (value: string) => void;
 };
 
@@ -42,7 +57,16 @@ export type Confirm = {
 	onYes: () => void;
 };
 
-export type BookmarkEdit = { id: number | null; x: number; y: number; name: string; group: string; note: string };
+export type BookmarkEdit = {
+	id: number | null;
+	x: number;
+	y: number;
+	name: string;
+	group: string;
+	note: string;
+	/** Saving a route (Save route): it goes in as a route bookmark. */
+	route?: SavedRoute;
+};
 
 export type Camera = { x: number; y: number; px: number; bearing: number; pitch: number };
 
@@ -59,9 +83,26 @@ export interface AppStoreState {
 	camera: Camera | null;
 	setCamera: (c: Camera | null) => void;
 	tab: string;
+	/** Open a tab, or a page of one by its own id ("auto", "route", "debug": they were tabs of their own). */
 	setTab: (tab: string) => void;
+	/** The page each tab with pages shows (Atlases: atlases / auto; Bookmarks: bookmarks / route; Log: log / debug). */
+	pages: Record<string, string>;
+	setPage: (tab: string, page: string) => void;
+	/** Layers shown because you changed one of their View settings (cleared when you leave the tab). */
+	/** The layers shown because a View setting of theirs is in use (RevealWhileUsed), and notices (VIEW_NOTICE). */
+	editing: string[];
+	/** A layer's setting is in use: it shows until the returned release (user: only while a slider is held or a
+	 * dropdown open; no timer). */
+	hold: (layer: string) => () => void;
 	selected: ItemInfo | null;
 	select: (info: ItemInfo | null) => void;
+	/** The saved route lit up on the map (its bookmark id): clicked in Bookmarks, or being changed (user: it didn't
+	 * light up as a bookmark does). Selecting anything else puts it out. */
+	routeLit: number | null;
+	lightRoute: (id: number | null) => void;
+	/** The bookmarks there are now: a saved route deleted ends what was going on with it (tracking it, lit up,
+	 * adjusting it). */
+	bookmarksAre: (ids: Set<number>) => void;
 	/** Select what a click loads, unless something else was selected (or clicked) meanwhile (CodeRabbit). */
 	selectLoaded: (load: Promise<ItemInfo>) => Promise<void>;
 	results: ResultRow[];
@@ -81,15 +122,28 @@ export interface AppStoreState {
 	highlight: string | null;
 	setHighlight: (type: string | null) => void;
 	mode: MapMode;
+	/** A map mode starts or ends; none starts while the timelapse is open (user: Route, then the timelapse, and a
+	 * click in it took a map). */
 	setMode: (mode: MapMode) => void;
+	/** Biome select's menu is up (its note would still say to draw). */
+	lassoAsked: boolean;
 	fly: { x: number; y: number; px?: number; n: number } | null;
 	flyTo: (x: number, y: number, px?: number) => void;
 	fitAtlas: number;
 	requestFit: () => void;
+	/** Fit an area of the atlas in the view (a saved route: its whole line, with room round it). */
+	fitTo: { box: [number, number, number, number]; n: number } | null;
+	fitArea: (box: [number, number, number, number]) => void;
 	goto: Point | null;
 	setGoto: (p: Point | null) => void;
-	route: { path: number[]; message: string } | null;
-	setRoute: (r: { path: number[]; message: string } | null) => void;
+	/** The route shown; `at` while tracking it (Track now): the place in it of the map you are on. */
+	route: RouteShown | null;
+	setRoute: (r: RouteShown | null) => void;
+	/** Route (top bar) while its maps are picked: the first map, then the route found, until Track now / Save route /
+	 * Cancel. Apart from `route`, so a route tracked meanwhile stays (user: the first click replaced it, Esc threw
+	 * it away). */
+	routeDraft: number[] | null;
+	setRouteDraft: (path: number[] | null) => void;
 	replay: ReplayUi | null;
 	setReplay: (r: ReplayUi | null) => void;
 	patchReplay: (r: Partial<ReplayUi>) => void;
@@ -106,14 +160,32 @@ export interface AppStoreState {
 	deleteAtlas: string | null;
 	askDeleteAtlas: (json: string | null) => void;
 	error: string | null;
-	showError: (e: unknown) => void;
+	/** The error is a brief note about the last click (no maps inside a lasso): it closes on the next click. */
+	errorBrief: boolean;
+	showError: (e: unknown, brief?: boolean) => void;
 	frameLog: boolean;
 	setFrameLog: (on: boolean) => void;
-	/** Bookmark groups folded shut in the Bookmarks tab (user: as in the old window). */
-	foldedGroups: string[];
-	foldGroup: (name: string, folded: boolean) => void;
 	/** Forget what belonged to the atlas open before (another atlas was opened, made or closed). */
 	resetAtlas: () => void;
+}
+
+/** The route on the map. While it is tracked (Track now, Start tracking now): `at`, the place in it of the map you are
+ * on (its own marker: tracking leaves your position as it is, user: deleting a tracked route left a stray "I'm
+ * here"), and `saved`, the saved route's bookmark when it is one (deleting it ends the tracking). */
+export type RouteShown = { path: number[]; message: string; at?: number; saved?: number };
+
+/** The View settings in use, per layer (AppStoreState.hold). */
+const holds = new Map<string, number>();
+let holdEra = 0;
+/** Let go of every View setting held (another atlas; a test's end: the registry is outside the store). */
+export function releaseHolds(): void {
+	useAppStore.setState(letGoAll());
+}
+
+function letGoAll(): { editing: string[] } {
+	holds.clear();
+	holdEra++;
+	return { editing: [] };
 }
 
 /** Counts selections: a click's answer that comes back after a newer selection is dropped. */
@@ -125,16 +197,62 @@ export const useAppStore = create<AppStoreState>()((set) => ({
 	camera: null,
 	setCamera: (camera) => set({ camera }),
 	tab: "find",
-	setTab: (tab) => set({ tab }),
+	// leaving the Bookmarks tab ends "Add bookmark" (user: it stayed on, and a later click on the map added one)
+	setTab: (asked) =>
+		set((st) => {
+			const [tab, page] = PAGE_OF[asked] ?? [asked, null];
+			return {
+				tab,
+				// leaving the View tab: the layers its settings showed go back to their switches
+				...(tab !== st.tab && st.editing.length ? letGoAll() : {}),
+				...(page ? { pages: { ...st.pages, [tab]: page } } : {}),
+				...((st.mode.kind === "bookmark" || st.mode.kind === "route-edit") && tab !== "bookmarks"
+					? { mode: { kind: "normal" } as MapMode }
+					: {}),
+			};
+		}),
+	pages: {},
+	setPage: (tab, page) => set((st) => ({ pages: { ...st.pages, [tab]: page } })),
+	editing: [],
+	hold: (layer) => {
+		const era = holdEra;
+		holds.set(layer, (holds.get(layer) ?? 0) + 1);
+		set({ editing: [...holds.keys()] });
+		let done = false;
+		return () => {
+			if (done || era !== holdEra) return; // (let go twice, or all let go meanwhile: the tab changed)
+			done = true;
+			const n = (holds.get(layer) ?? 1) - 1;
+			if (n > 0) holds.set(layer, n);
+			else holds.delete(layer);
+			useAppStore.setState({ editing: [...holds.keys()] });
+		};
+	},
 	selected: null,
 	select: (selected) => {
 		selectSeq++;
-		set({ selected });
+		set({ selected, routeLit: null });
 	},
 	selectLoaded: async (load) => {
 		const mine = ++selectSeq;
 		const info = await load;
-		if (mine === selectSeq) set({ selected: info });
+		if (mine === selectSeq) set({ selected: info, routeLit: null });
+	},
+	routeLit: null,
+	bookmarksAre: (ids) =>
+		set((st) => ({
+			...(st.route?.saved !== undefined && !ids.has(st.route.saved) ? { route: null } : {}),
+			...(st.routeLit !== null && !ids.has(st.routeLit) ? { routeLit: null } : {}),
+			...(st.mode.kind === "route-edit" && !ids.has(st.mode.id) ? { mode: { kind: "normal" } as MapMode } : {}),
+		})),
+	// another route lit up while one is adjusted: the adjusting ends (it stayed on the first: review)
+	lightRoute: (routeLit) => {
+		selectSeq++;
+		set((st) => ({
+			routeLit,
+			...(routeLit !== null ? { selected: null } : {}),
+			...(st.mode.kind === "route-edit" && st.mode.id !== routeLit ? { mode: { kind: "normal" } as MapMode } : {}),
+		}));
 	},
 	results: [],
 	resultsTitle: "",
@@ -150,17 +268,40 @@ export const useAppStore = create<AppStoreState>()((set) => ({
 	highlight: null,
 	setHighlight: (highlight) => set({ highlight }),
 	mode: { kind: "normal" },
-	setMode: (mode) => set({ mode }),
+	// refused while the timelapse is open, and said so (user: it was dropped without a word, not even in the log)
+	setMode: (mode) =>
+		set((st) =>
+			st.replay && mode.kind !== "normal"
+				? { error: "That doesn't work while the timelapse is open: close it first.", errorBrief: true }
+				: { mode },
+		),
+	lassoAsked: false,
 	fly: null,
 	flyTo: (x, y, px) => set((s) => ({ fly: { x, y, px, n: (s.fly?.n ?? 0) + 1 } })),
 	fitAtlas: 0,
 	requestFit: () => set((s) => ({ fitAtlas: s.fitAtlas + 1 })),
+	fitTo: null,
+	fitArea: (box) => set((s) => ({ fitTo: { box, n: (s.fitTo?.n ?? 0) + 1 } })),
 	goto: null,
 	setGoto: (goto) => set({ goto }),
 	route: null,
-	setRoute: (route) => set({ route }),
+	// tracking another route while adjusting one ends the adjusting (map clicks went on changing it: CodeRabbit)
+	setRoute: (route) =>
+		set((st) => ({
+			route,
+			...(st.mode.kind === "route-edit" && route?.at !== undefined && route.saved !== st.mode.id
+				? { mode: { kind: "normal" } as MapMode }
+				: {}),
+		})),
+	routeDraft: null,
+	setRouteDraft: (routeDraft) => set({ routeDraft }),
 	replay: null,
-	setReplay: (replay) => set({ replay }),
+	// opening the timelapse ends a map mode and Route's picked maps: it takes the map (user)
+	setReplay: (replay) =>
+		set((st) => ({
+			replay,
+			...(replay && !st.replay ? { mode: { kind: "normal" } as MapMode, routeDraft: null } : {}),
+		})),
 	patchReplay: (r) => set((s) => (s.replay ? { replay: { ...s.replay, ...r } } : {})),
 	filePick: null,
 	pickFiles: (filePick) => set({ filePick }),
@@ -175,26 +316,24 @@ export const useAppStore = create<AppStoreState>()((set) => ({
 	deleteAtlas: null,
 	askDeleteAtlas: (deleteAtlas) => set({ deleteAtlas }),
 	error: null,
+	errorBrief: false,
 	// an answer for the atlas open before isn't an error: the page just draws the new one
-	showError: (e) => {
+	showError: (e, brief = false) => {
 		if (isStale(e)) return;
-		set({ error: e == null ? null : e instanceof Error ? e.message : String(e) });
+		set({ error: e == null ? null : e instanceof Error ? e.message : String(e), errorBrief: e != null && brief });
 	},
 	frameLog: false,
 	setFrameLog: (frameLog) => set({ frameLog }),
-	foldedGroups: [],
-	foldGroup: (name, folded) =>
-		set((s) => ({
-			foldedGroups: folded ? [...new Set([...s.foldedGroups, name])] : s.foldedGroups.filter((g) => g !== name),
-		})),
 	// the selection, search, highlight, route, replay, a placement or lasso waiting for a click, dialogs about one of
 	// its items and the camera all belonged to the atlas open before (user: they showed or acted on the new one; the
 	// new map opened at the old atlas's spot). Kept: the tab, the file picker and the atlas dialogs (not one atlas's).
 	resetAtlas: () => {
 		selectSeq++; // a click's selection still loading belongs to the atlas before (CodeRabbit)
 		set({
+			...letGoAll(), // (View settings held belonged to the map before: review)
 			camera: null,
 			selected: null,
+			routeLit: null,
 			results: [],
 			resultsTitle: "",
 			query: "",
@@ -203,8 +342,10 @@ export const useAppStore = create<AppStoreState>()((set) => ({
 			highlight: null,
 			mode: { kind: "normal" },
 			fly: null,
+			fitTo: null,
 			goto: null,
 			route: null,
+			routeDraft: null,
 			replay: null,
 			prompt: null,
 			confirm: null,

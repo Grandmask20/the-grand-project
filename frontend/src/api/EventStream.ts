@@ -1,6 +1,7 @@
 import type { QueryClient } from "@tanstack/react-query";
 import type { AppState } from "@/domain/app/AppState";
 import type { Question } from "@/domain/app/Question";
+import type { UpdateStatus } from "@/domain/app/Update";
 import { useAppStore } from "@/store/AppStore";
 import { AppQueryKeys } from "./AppQueryKeys";
 
@@ -23,11 +24,25 @@ export const EVENT_KINDS = [
 	"bookmarks",
 	"debug",
 	"show_tab",
+	"update",
 ] as const;
 
 export type EventKind = (typeof EVENT_KINDS)[number];
 
 const LOG_KEEP = 2000;
+
+/** The newer of two update statuses, by (run, seq): the app's run (when it started) first, its number for each
+ * change within the run next (a button's answer could land after the event of what followed it; a restarted app's
+ * numbers start again at 0: CodeRabbit). */
+export function newerUpdate(old: UpdateStatus | undefined, r: UpdateStatus): UpdateStatus {
+	if (!old || r.run > old.run || (r.run === old.run && r.seq >= old.seq)) return r;
+	return old;
+}
+
+/** Keep an update status unless the page has a newer one (newerUpdate). */
+export function keepUpdate(queryClient: QueryClient, r: UpdateStatus): void {
+	queryClient.setQueryData<UpdateStatus>(AppQueryKeys.update, (old) => newerUpdate(old, r));
+}
 
 /** Applies one event: small ones patch the cached state, the rest refetch what they change (batched). */
 export function createEventHandler(queryClient: QueryClient) {
@@ -101,6 +116,11 @@ export function createEventHandler(queryClient: QueryClient) {
 				break;
 			case "atlases":
 				refresh("atlases");
+				break;
+			case "update":
+				// the newest kept; a status request under way isn't cancelled (after a reconnect it is the one with the
+				// restarted app's status): its answer goes through the same comparison (useUpdateStatus)
+				keepUpdate(queryClient, data as UpdateStatus);
 				break;
 			case "lists":
 				refresh("state", "recent");

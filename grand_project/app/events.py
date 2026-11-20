@@ -10,6 +10,7 @@ from __future__ import annotations
 import itertools
 import json
 import queue
+import re
 import threading
 import time
 from collections import deque
@@ -38,6 +39,10 @@ class Events:
         self._logs: dict[str, deque] = {"": deque(maxlen=LOG_KEEP)}
         self.history: deque = deque(maxlen=EVENT_HISTORY)  # recent events, for a page that reconnects
         self.progress: str | None = None
+        # progress steps already written to the log: (atlas log, step with its numbers left out) -> its tenth; per step,
+        # so two jobs reporting at once (adding and Fix seams) don't each write every line, and per atlas, so the same
+        # step in another atlas's job still reaches that atlas's log (CodeRabbit)
+        self._progress_logged: dict[tuple[str, str], int | None] = {}
         self.status = ""
         self._questions: dict[int, dict] = {}
 
@@ -82,14 +87,44 @@ class Events:
         self._logs.setdefault(scope, deque(maxlen=LOG_KEEP)).append(line)
         self.publish("log", {"scope": scope, "line": line})
 
-    def set_progress(self, text: str | None) -> None:
+    def set_progress(self, text: str | None, scope: str | None = None) -> None:
         """Show (or clear, with None) the progress box.
 
         Args:
             text: What is being done, or None when done.
+            scope: The atlas log its line goes in (a background job's own, captured when it started), else the open
+                one's.
         """
         self.progress = text
         self.publish("progress", text)
+        self._log_progress(text, scope)
+
+    def _log_progress(self, text: str | None, scope: str | None) -> None:
+        """Write a progress line to the log when a new step starts, and every 10% of a counted one ("fixing seams
+        120 / 500"): what runs is in the log, not only in the progress box (user: "it should list ongoing processes").
+
+        Args:
+            text: The progress text, or None when it ended (how it ended its caller logs: done, stopped, failed).
+            scope: The atlas log to write in (see set_progress).
+        """
+        if text is None:
+            with self._lock:
+                self._progress_logged.clear()
+            return
+        task = re.sub(r"\S*\d\S*", "#", text)  # the step without its numbers (and file names, which have digits)
+        m = re.search(r"(\d+)\s*/\s*(\d+)", text)
+        tenth = min(10, 10 * int(m[1]) // max(1, int(m[2]))) if m else None
+        with self._lock:  # (set from several threads: the worker, Fix seams, the map image build)
+            # the atlas log looked up once, for the "already written" record and the line: looked up again by log(),
+            # an atlas switch between wrote the line into the other atlas's log (CodeRabbit)
+            scope = self.scope if scope is None else scope
+            key = (scope, task)
+            if key in self._progress_logged and self._progress_logged[key] == tenth:
+                return
+            if len(self._progress_logged) > 200:  # steps with names in them (one per screenshot)
+                self._progress_logged.clear()
+            self._progress_logged[key] = tenth
+        self.log(text, scope)
 
     def set_status(self, text: str) -> None:
         """Set the status bar text.

@@ -1,5 +1,5 @@
 import { useQueryClient } from "@tanstack/react-query";
-import { ClapperboardIcon, LassoIcon, MenuIcon, Undo2Icon } from "lucide-react";
+import { ClapperboardIcon, LassoIcon, MenuIcon, RouteIcon, Undo2Icon, XIcon } from "lucide-react";
 import { AppQueryKeys } from "@/api/AppQueryKeys";
 import tablet from "@/assets/tablet.png";
 import { Button } from "@/components/ui/button";
@@ -18,6 +18,7 @@ import { useAppState } from "@/hooks/app/UseAppState";
 import { useAtlasActions } from "@/hooks/atlas/UseAtlasActions";
 import { useAtlases } from "@/hooks/atlas/UseAtlases";
 import { useAppStoreCalm } from "@/store/AppStore";
+import { UpdateButton } from "./UpdateButton";
 
 /** The File and Atlas menus, and the buttons used most (undo, city biome lasso, replay). */
 export function TopBar() {
@@ -166,15 +167,17 @@ export function TopBar() {
 				<Undo2Icon />
 				Undo
 			</Button>
+			{/* on: the button ends it (user: only Esc did, nothing on screen said so); none while the timelapse is open */}
 			<Button
 				size="sm"
 				variant={s.mode.kind === "lasso" ? "default" : "ghost"}
-				disabled={!open}
+				disabled={!open || !!s.replay}
 				onClick={() => s.setMode(s.mode.kind === "lasso" ? { kind: "normal" } : { kind: "lasso" })}
-				title="Draw a city biome: draw around its maps"
+				title="Set the biome of maps (a city type, a Breach stronghold, or none): draw around them"
 			>
-				<LassoIcon />
-				City biome
+				{s.mode.kind === "lasso" ? <XIcon /> : <LassoIcon />}
+				{/* (not "City biome": strongholds aren't cities, user) */}
+				{s.mode.kind === "lasso" ? "End biome select" : "Biome select"}
 			</Button>
 			<Button
 				size="sm"
@@ -186,6 +189,17 @@ export function TopBar() {
 				<ClapperboardIcon />
 				Replay
 			</Button>
+			{/* a route between two maps you click: track it, or save it with the bookmarks (user) */}
+			<Button
+				size="sm"
+				variant={s.mode.kind === "route" ? "default" : "ghost"}
+				disabled={!state?.atlas || !!s.replay}
+				onClick={() => s.setMode(s.mode.kind === "route" ? { kind: "normal" } : { kind: "route", from: null })}
+				title="Route: click the map it starts from, then the one it goes to"
+			>
+				{s.mode.kind === "route" ? <XIcon /> : <RouteIcon />}
+				{s.mode.kind === "route" ? "End route" : "Route"}
+			</Button>
 			<span className="flex-1" />
 			{state?.atlas && (
 				<span className="truncate text-xs text-muted-foreground" title={state.atlas.path}>
@@ -193,7 +207,8 @@ export function TopBar() {
 					screenshots
 				</span>
 			)}
-			<span className="text-xs text-muted-foreground">v{state?.version}</span>
+			{/* the version, and whether it is the latest (user's mockup: as Path of Building's update corner) */}
+			<UpdateButton />
 		</header>
 	);
 }

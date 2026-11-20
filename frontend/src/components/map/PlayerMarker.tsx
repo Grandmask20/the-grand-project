@@ -1,32 +1,16 @@
-import { type Map as MapLibreMap, Marker } from "maplibre-gl";
-import { useEffect, useRef } from "react";
+import { Marker } from "react-map-gl/maplibre";
 import { usePlayer } from "@/hooks/app/UseSettings";
-import type { Geo } from "@/logic/Geo";
+import { useMapView } from "@/hooks/map/UseMapView";
 
 /** "You are here": the map the player set for routes. */
-export function PlayerMarker({ map, geo }: { map: MapLibreMap; geo: Geo }) {
+export function PlayerMarker() {
+	const { geo } = useMapView();
 	const { player } = usePlayer();
-	const marker = useRef<Marker | null>(null);
-
-	useEffect(() => {
-		if (!player) {
-			marker.current?.remove();
-			return;
-		}
-		if (!marker.current) {
-			const el = document.createElement("div");
-			el.className = "player-marker";
-			el.title = "You are here";
-			marker.current = new Marker({ element: el });
-		}
-		marker.current.setLngLat(geo.toLngLat(player.x, player.y)).addTo(map);
-	}, [map, geo, player]);
-
-	useEffect(
-		() => () => {
-			marker.current?.remove();
-		},
-		[],
+	if (!player) return null;
+	const [longitude, latitude] = geo.toLngLat(player.x, player.y);
+	return (
+		<Marker longitude={longitude} latitude={latitude}>
+			<div className="player-marker" title="You are here" />
+		</Marker>
 	);
-	return null;
 }

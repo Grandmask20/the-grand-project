@@ -3,16 +3,19 @@ import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { useAppStore } from "@/store/AppStore";
 
-/** Asks for one line of text (a group, a name, a note). */
+/** Asks for one line of text (a group, a name, a note), or one of a list of choices (a dropdown). */
 export function PromptDialog() {
 	const prompt = useAppStore((s) => s.prompt);
 	const close = useAppStore((s) => s.ask);
 	const [value, setValue] = useState("");
 
-	useEffect(() => setValue(prompt?.value ?? ""), [prompt]);
+	useEffect(() => setValue(prompt?.value || prompt?.choices?.[0] || ""), [prompt]);
 	if (!prompt) return null;
+	// an empty answer is an answer (a debug mark's note is optional: OK did nothing without one, user); a dropdown
+	// always has a choice, and an empty group or atlas name is refused by the app
 	const ok = () => {
 		close(null);
 		prompt.onOk(value.trim());
@@ -32,13 +35,28 @@ export function PromptDialog() {
 					}}
 				>
 					<Label htmlFor="prompt-value">{prompt.label}</Label>
-					<Input
-						id="prompt-value"
-						value={value}
-						onChange={(e) => setValue(e.target.value)}
-						list="prompt-options"
-						autoFocus
-					/>
+					{prompt.choices ? (
+						<Select value={value} onValueChange={setValue}>
+							<SelectTrigger id="prompt-value" className="w-full" autoFocus>
+								<SelectValue />
+							</SelectTrigger>
+							<SelectContent>
+								{prompt.choices.map((c) => (
+									<SelectItem key={c} value={c}>
+										{c}
+									</SelectItem>
+								))}
+							</SelectContent>
+						</Select>
+					) : (
+						<Input
+							id="prompt-value"
+							value={value}
+							onChange={(e) => setValue(e.target.value)}
+							list="prompt-options"
+							autoFocus
+						/>
+					)}
 					{prompt.options && (
 						<datalist id="prompt-options">
 							{prompt.options.map((o) => (

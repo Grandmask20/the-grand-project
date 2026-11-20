@@ -9,7 +9,8 @@ export interface Call {
 	params?: Record<string, unknown>;
 }
 
-/** An Http that answers from a table ("GET /api/state": value or function); every call is recorded. */
+/** An Http that answers from a table ("GET /api/state": value, or function giving a value or a promise of one);
+ * every call is recorded. */
 export function fakeHttp(routes: Record<string, Handler>) {
 	const calls: Call[] = [];
 	const answer = async (method: string, path: string, body?: unknown, params?: Record<string, unknown>) => {
@@ -17,8 +18,10 @@ export function fakeHttp(routes: Record<string, Handler>) {
 		const key = `${method} ${path}`;
 		if (!(key in routes)) throw new ApiError(`no route for ${key}`, 404);
 		const h = routes[key];
-		const value =
-			typeof h === "function" ? (h as (b: unknown, p?: Record<string, unknown>) => unknown)(body, params) : h;
+		// a function may answer later (a promise): a test then decides when each answer comes
+		const value = await (typeof h === "function"
+			? (h as (b: unknown, p?: Record<string, unknown>) => unknown)(body, params)
+			: h);
 		if (value instanceof Error) throw value;
 		return structuredClone(value);
 	};
