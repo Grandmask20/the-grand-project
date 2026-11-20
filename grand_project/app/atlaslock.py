@@ -39,6 +39,22 @@ class AtlasLock:
         finally:
             self._request.gen = before
 
+    def expected(self) -> int | None:
+        """The atlas generation this thread's page request is for (None: not a page request)."""
+        return getattr(self._request, "gen", None)
+
+    def refuse_stale(self) -> None:
+        """Refuse a page request for an atlas no longer open, without waiting for the lock (a job may hold it for
+        long: turning auto-add off, adding more screenshots must not wait for it). For work that is checked again
+        where it lands (a queued job carries the request's atlas: _queue_job), or that only reads.
+
+        Raises:
+            StaleAtlas: The request was made for another atlas.
+        """
+        gen = self.expected()
+        if gen is not None and gen != self._generation():
+            raise StaleAtlas()
+
     def acquire(self, blocking: bool = True, timeout: float = -1) -> bool:
         """Take the lock; on a page change's thread, refuse it when its atlas is no longer the open one.
 

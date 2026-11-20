@@ -159,12 +159,17 @@ class EditsMixin:
                 for lm in inside:
                     if lm["status"].startswith("removed") or lm["kind"] not in ("Hall", "Deadly boss map", "City"):
                         continue
+                    near = [
+                        e
+                        for e in self.atlas.landmark_edits
+                        if math.hypot(e["x"] - lm["x"], e["y"] - lm["y"]) < EDIT_SPOT
+                    ]
+                    if any(not e.get("by") for e in near):
+                        # one you set by hand stays as you set it (it was deleted, and clearing the biome then
+                        # couldn't bring it back: CodeRabbit); a landmark takes one edit, so none is added over it
+                        continue
                     if lm["kind"] != "City":
-                        self.atlas.landmark_edits = [
-                            e
-                            for e in self.atlas.landmark_edits
-                            if math.hypot(e["x"] - lm["x"], e["y"] - lm["y"]) >= EDIT_SPOT
-                        ]
+                        self.atlas.landmark_edits = [e for e in self.atlas.landmark_edits if e not in near]
                         self.atlas.landmark_edits.append(
                             {"x": round(lm["x"], 1), "y": round(lm["y"], 1), "kind": "City", "on": "landmark",
                              "by": "biome"}

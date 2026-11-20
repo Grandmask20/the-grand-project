@@ -40,6 +40,9 @@ class Events:
         self.history: deque = deque(maxlen=EVENT_HISTORY)  # recent events, for a page that reconnects
         self.progress: str | None = None
         self._progress_by: dict[str, str] = {}  # each job's own progress (set_progress's owner)
+        # one progress change at a time, published in the order made (two jobs ending together could publish the
+        # older box last: CodeRabbit); a lock of its own, publish takes _lock
+        self._progress_lock = threading.Lock()
         # progress steps already written to the log: (job, atlas log, step with its numbers left out) -> its tenth; per
         # step, so two jobs reporting at once (adding and Fix seams) don't each write every line, per atlas, so the
         # same step in another atlas's job still reaches that atlas's log (CodeRabbit), and per job, so one ending
@@ -103,14 +106,15 @@ class Events:
             owner: Whose line: "job" (the worker: adding, Re-check, Undo...), "map" (the map image build),
                 "seams" (Fix seams).
         """
-        with self._lock:
-            if text is None:
-                self._progress_by.pop(owner, None)
-            else:
-                self._progress_by[owner] = text
-            shown = " · ".join(self._progress_by.values()) or None
-            self.progress = shown
-        self.publish("progress", shown)
+        with self._progress_lock:
+            with self._lock:
+                if text is None:
+                    self._progress_by.pop(owner, None)
+                else:
+                    self._progress_by[owner] = text
+                shown = " · ".join(self._progress_by.values()) or None
+                self.progress = shown
+            self.publish("progress", shown)
         self._log_progress(text, scope, owner)
 
     def _log_progress(self, text: str | None, scope: str | None, owner: str = "job") -> None:
@@ -223,12 +227,12 @@ class Events:
         Returns:
             False when no such question is open.
         """
-        with self._lock:
+        with self._lock:  # (with the closing check: a Yes coming in as the app closes never undoes its No: CodeRabbit)
             box = self._questions.get(qid)
-        if box is None:
-            return False
-        box["answer"] = bool(yes)
-        box["event"].set()
+            if box is None or self.closing:
+                return False
+            box["answer"] = bool(yes)
+            box["event"].set()
         return True
 
     def end_questions(self) -> int:
@@ -239,12 +243,12 @@ class Events:
         Returns:
             How many were open.
         """
-        with self._lock:
+        with self._lock:  # (answered in the same step as closing: see answer)
             self.closing = True
             boxes = list(self._questions.values())
-        for box in boxes:
-            box["answer"] = False
-            box["event"].set()
+            for box in boxes:
+                box["answer"] = False
+                box["event"].set()
         return len(boxes)
 
     def open_questions(self) -> list[dict]:

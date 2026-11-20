@@ -39,3 +39,16 @@ def test_a_screenshot_is_hashed_once_until_it_changes(tmp_path, monkeypatch):
     f.write_bytes(b"two!")
     os.utime(f, ns=(f.stat().st_atime_ns, f.stat().st_mtime_ns + 10**9))
     assert builder.file_digest(f) != d1
+
+
+def test_a_replaced_screenshot_is_hashed_again(tmp_path):
+    # (CodeRabbit: a replacement keeping the size and the time got the old hash)
+    f = tmp_path / "a.png"
+    f.write_bytes(b"one!")
+    d1 = builder.file_digest(f)
+    st = f.stat()
+    new = tmp_path / "new.png"
+    new.write_bytes(b"two!")  # (the same size)
+    os.replace(new, f)
+    os.utime(f, ns=(st.st_atime_ns, st.st_mtime_ns))  # (and the same time)
+    assert builder.file_digest(f) != d1

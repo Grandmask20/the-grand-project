@@ -146,6 +146,9 @@ class AddingMixin:
         if self._closing:
             self.events.log(f"closing: {len(paths) or 'a'} job(s) not started")
             return
+        if gen is None:  # the page request's atlas when it is one, else the open one: a request made just before a
+            # switch is skipped by the worker, never run on the atlas opened after it (CodeRabbit)
+            gen = self._lock.expected()
         self._jobs.put((list(paths), mode, self.generation if gen is None else gen))
         self.events.publish("busy", True)
 
@@ -194,6 +197,7 @@ class AddingMixin:
         Raises:
             ValueError: With no atlas open, or the detector database missing.
         """
+        self._lock.refuse_stale()  # (made for another atlas: refused at once, see _queue_job)
         if not self.atlas or not self.path:
             raise ValueError("open or create an atlas first")
         self.detector_ready()
@@ -214,6 +218,7 @@ class AddingMixin:
         Raises:
             ValueError: With no atlas open, or the detector database missing.
         """
+        self._lock.refuse_stale()  # (made for another atlas: refused at once, see _queue_job)
         if not self.atlas or not self.path:
             raise ValueError("open or create an atlas first")
         self.detector_ready()
@@ -225,6 +230,7 @@ class AddingMixin:
         Raises:
             ValueError: With no screenshots.
         """
+        self._lock.refuse_stale()  # (made for another atlas: refused at once, see _queue_job)
         if not self.atlas or not self.atlas.frames:
             raise ValueError("no screenshots to re-check")
         self._queue_job([], "recheck_all")

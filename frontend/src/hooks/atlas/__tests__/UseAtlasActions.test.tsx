@@ -1,6 +1,6 @@
 import { waitFor } from "@testing-library/react";
 import { describe, expect, it } from "vitest";
-import { ApiError } from "@/api/Http";
+import { ApiError, setAtlasGen } from "@/api/Http";
 import { useAtlasActions } from "@/hooks/atlas/UseAtlasActions";
 import { useAppStore } from "@/store/AppStore";
 import { renderWithApp } from "@/test/RenderWithApp";
@@ -42,5 +42,22 @@ describe("useAtlasActions: dropped screenshots", () => {
 		});
 		await actions.dropFiles([shot("a.png"), shot("bad.png")]);
 		expect(useAppStore.getState().error).toContain("The other 1 could not be added: no atlas open");
+	});
+
+	it("stops when another atlas opens during the drop: nothing more is sent or added", async () => {
+		// (CodeRabbit: later files went to the new atlas, and the paths were added there)
+		setAtlasGen(1);
+		let n = 0;
+		const { calls } = renderWithApp(<Probe />, {
+			"POST /api/upload": () => {
+				n += 1;
+				if (n === 1) setAtlasGen(2); // (another atlas opens while the first file goes out)
+				return { path: `C:/up/${n}.png` };
+			},
+			"POST /api/screenshots": { queued: 1 },
+		});
+		await actions.dropFiles([shot("a.png"), shot("b.png"), shot("c.png")]);
+		expect(calls.filter((c) => c.path === "/api/upload")).toHaveLength(1);
+		expect(calls.find((c) => c.path === "/api/screenshots")).toBeUndefined();
 	});
 });

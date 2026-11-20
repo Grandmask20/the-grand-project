@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import collections
 import contextlib
+import itertools
 import math
 import os
 import pickle
@@ -122,7 +123,10 @@ class MapImageMixin:
         self._seams_proc = None
         self._seams_starting = False  # Fix seams claimed, its process not registered yet
         self._seams_stopped = False
-        self._seams_waiting = None  # the atlas generation a Fix seams waits for adding to finish in (fix_seams)
+        # a Fix seams waiting for adding to finish: {"gen": its atlas, "token": its own id} (fix_seams); kept until its
+        # start is claimed (cleared before, a Stop in between was lost: CodeRabbit)
+        self._seams_waiting: dict | None = None
+        self._seams_tokens = itertools.count(1)
         self._seams_trouble: list[str] = []  # why adding didn't finish while one waited (_start_waiting_seams asks)
         self._seams_asking = False  # that question is open
         self._cache_writes: dict[str, int] = {}  # per atlas file: cache writes asked for, the newest written
@@ -281,10 +285,16 @@ class MapImageMixin:
             self._vector = None
             self._scene3d = None
             self.parts.done("map_image", self.generation)
-        if save and self.path:
-            key, path = self.atlas.terrain_key(), self.path
-            with self._lock:  # (per atlas file: another atlas's newer image skipped this one's write: self review)
+            # the cache's identity (atlas file, key) and its turn taken with the image shown, in one locked step:
+            # taken after, two images shown one after the other could take their turns the other way round, or an
+            # atlas switch between paired this image with the next atlas (CodeRabbit). Turns per atlas file.
+            cache = None
+            if save and self.path:
+                path = self.path
                 mine = self._cache_writes[str(path)] = self._cache_writes.get(str(path), 0) + 1
+                cache = (self.atlas.terrain_key(), path, mine)
+        if cache is not None:
+            key, path, mine = cache
 
             def write():
                 """Write the map image cache files and the atlas card picture (background thread). One write at a
@@ -450,7 +460,7 @@ class MapImageMixin:
         return mask
 
     # ------------------------------------------------------------------ Fix seams
-    def fix_seams(self, after_adding: bool = False) -> str:
+    def fix_seams(self, after_adding: bool = False, claim: int | None = None) -> str:
         """Build the clean map (core.seams) in a separate process: map nodes and icons whole, seams where the
         ground matches. Progress lines become the progress box; the clean map replaces the map image when ready.
 
@@ -461,9 +471,13 @@ class MapImageMixin:
 
         Args:
             after_adding: When adding runs: wait for it to finish, then start.
+            claim: The queued request's id, when that one starts (_start_queued_seams): it starts only if it is still
+                the one queued, for the atlas open, in the same locked step (Stop, a switch or closing in between
+                leave it off).
 
         Returns:
-            "started"; "adding" (adding runs, not started: the page asks); "queued" (starts once adding is done).
+            "started"; "adding" (adding runs, not started: the page asks); "queued" (starts once adding is done);
+            "dropped" (claim: no longer queued).
 
         Raises:
             ValueError: With no screenshots, or when it is already running.
@@ -476,13 +490,21 @@ class MapImageMixin:
         with self._lock:
             # the check and the claim in one step: two quick clicks both passed the check and started two
             # processes, the first one then out of stop_seams' reach (CodeRabbit)
+            w = self._seams_waiting
+            if claim is not None and (
+                w is None or w["token"] != claim or not self.owns(w["gen"]) or getattr(self, "_closing", False)
+            ):
+                return "dropped"
             if self.seams_running():
                 raise ValueError("Fix seams is already running")
             if self.working():
+                if claim is not None:  # adding again: it stays queued, with its id
+                    return "queued"
                 if not after_adding:
                     return "adding"
-                if self._seams_waiting is None:
-                    self._seams_waiting, self._seams_trouble = self.opened.gen, []
+                if w is None or not self.owns(w["gen"]):
+                    self._seams_waiting = {"gen": self.opened.gen, "token": next(self._seams_tokens)}
+                    self._seams_trouble = []
                     self.events.log("Fix seams: queued, starts once adding is done")
                     self.events.publish("seams", True)
                 return "queued"
@@ -575,25 +597,22 @@ class MapImageMixin:
         finished: after a failure it asks first, why and whether to start anyway (you). Not for another atlas than
         the one it was queued in, nor while closing."""
         with self._lock:
-            gen = self._seams_waiting
-            if gen is None or self._seams_asking:  # (asked already: the answer decides)
+            w = self._seams_waiting
+            if w is None or self._seams_asking:  # (asked already: the answer decides)
                 return
-            if not self.owns(gen) or self._closing:
+            if not self.owns(w["gen"]) or self._closing:
                 self._seams_waiting = None
                 self.events.publish("seams", self.seams_running())
                 return
             trouble, self._seams_trouble = self._seams_trouble, []
-            if trouble:
-                self._seams_asking = True
-            else:
-                self._seams_waiting = None
+            self._seams_asking = bool(trouble)
         if trouble:  # (asked on a thread of its own: the worker goes on with what is added meanwhile)
-            threading.Thread(target=self._ask_seams_anyway, args=(gen, trouble), daemon=True).start()
+            threading.Thread(target=self._ask_seams_anyway, args=(w["token"], trouble), daemon=True).start()
             return
         self.events.log("Fix seams: adding is done, starting")
-        self._start_queued_seams()
+        self._start_queued_seams(w["token"])
 
-    def _ask_seams_anyway(self, gen: int, trouble: list[str]) -> None:
+    def _ask_seams_anyway(self, token: int, trouble: list[str]) -> None:
         """Ask whether to start a queued Fix seams although adding didn't finish (background thread)."""
         shown = trouble[:5] + ([f"... and {len(trouble) - 5} more"] if len(trouble) > 5 else [])
         self.events.log("Fix seams: adding didn't finish, asking whether to start it anyway")
@@ -608,26 +627,33 @@ class MapImageMixin:
             yes = False
         with self._lock:
             self._seams_asking = False
-            still = self._seams_waiting == gen and self.owns(gen) and not self._closing
+            w = self._seams_waiting
+            # this question's own request: an answer to one Stop took off never acts on a newer one (CodeRabbit)
+            still = w is not None and w["token"] == token and self.owns(w["gen"]) and not self._closing
             if still and not yes:
                 self._seams_waiting = None
                 self.events.log("Fix seams: cancelled (adding didn't finish)")
-            elif still and self.working():  # adding again meanwhile: starts once that finishes (yes covers the asked)
-                self._seams_trouble = []
-                return
             elif still:
-                self._seams_waiting, self._seams_trouble = None, []
+                self._seams_trouble = []  # (yes covers what was asked; it starts below, or after adding that began)
+            newer = w is not None and not still and not self.working()  # (a newer request waited for this answer)
         if not still or not yes:  # (stopped, another atlas, or closing meanwhile)
             self.events.publish("seams", self.seams_running())
-        else:
-            self.events.log("Fix seams: starting anyway")
-            self._start_queued_seams()
+            if newer:
+                self._start_waiting_seams()
+            return
+        self.events.log("Fix seams: starting anyway")
+        self._start_queued_seams(token)
 
-    def _start_queued_seams(self) -> None:
-        """Start the queued Fix seams now (its queue already cleared)."""
+    def _start_queued_seams(self, token: int) -> None:
+        """Start the queued Fix seams `token`: claimed in fix_seams' locked step, so a Stop, a switch or closing
+        just before leave it off; while adding runs again it stays queued."""
         try:
-            self.fix_seams(after_adding=True)  # (a job queued just now: it waits again)
+            if self.fix_seams(after_adding=True, claim=token) == "dropped":
+                self.events.publish("seams", self.seams_running())
         except Exception as e:  # (no screenshots left after an Undo...)
+            with self._lock:
+                if self._seams_waiting is not None and self._seams_waiting["token"] == token:
+                    self._seams_waiting = None
             self.events.log(f"Fix seams could not start: {e}")
             self.events.publish("seams", self.seams_running())
 

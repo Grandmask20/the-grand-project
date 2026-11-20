@@ -133,8 +133,9 @@ class QueryMixin:
         # a landmark standing on a map is that map, one item: its own click box lay over the map's, which could
         # hardly be clicked, and the map's own could only make it a landmark (you). A removed one, or one apart
         # from any map (a locked stronghold), stays an item of its own.
+        wanted = None  # (a landmark asked for: the one its map's actions act on, of two on one map: CodeRabbit)
         if kind == "landmark" and i in D.get("landmark_node", {}):
-            kind, i = "node", D["landmark_node"][i]
+            kind, i, wanted = "node", D["landmark_node"][i], i
         lines: list[str] = []
         out: dict = {"kind": kind, "id": i}
         if kind == "node":
@@ -142,7 +143,7 @@ class QueryMixin:
             deg = [p for p in V["paths"] if i in (p["a"], p["b"])]
             multi = sum(p.get("seen_in", p["frames"]) >= 2 or p.get("both_ends", False) for p in deg)
             icons = ", ".join(icon_name(k) for k in n.get("icons", []))
-            marks = [k for k, v in D.get("landmark_node", {}).items() if v == i]
+            marks = sorted((k for k, v in D.get("landmark_node", {}).items() if v == i), key=lambda k: k != wanted)
             # a map carrying a landmark is shown as that landmark (its lines below the map's)
             name = self.landmark_name(marks[0]) if marks else ""
             out["title"] = (f"{name} (map #{i})" if name else f"Map #{i}") + (f": {icons}" if icons else "")

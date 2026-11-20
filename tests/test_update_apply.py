@@ -103,7 +103,7 @@ def test_packages_a_failed_install_changed_are_put_back_at_their_versions(tmp_pa
     # (a half-done install left the old files on changed packages: CodeRabbit)
     root, plan = program(tmp_path)
     plan["pip"] = True
-    frozen = iter([{"numpy": "1.0", "scipy": "1.5"}, {"numpy": "2.0", "scipy": "1.5"}])
+    frozen = iter([{"numpy": "numpy==1.0", "scipy": "scipy==1.5"}, {"numpy": "numpy==2.0", "scipy": "scipy==1.5"}])
     monkeypatch.setattr(ua, "freeze", lambda python: next(frozen))
     ran = []
 
@@ -144,7 +144,7 @@ def test_packages_a_failed_install_added_are_removed(tmp_path, monkeypatch):
     # (GPT audit: only changed ones were put back, new ones stayed)
     root, plan = program(tmp_path)
     plan["pip"] = True
-    frozen = iter([{"numpy": "1.0"}, {"numpy": "1.0", "newpkg": "0.1"}])
+    frozen = iter([{"numpy": "numpy==1.0"}, {"numpy": "numpy==1.0", "newpkg": "newpkg==0.1"}])
     monkeypatch.setattr(ua, "freeze", lambda python: next(frozen))
     ran = []
 
@@ -156,3 +156,36 @@ def test_packages_a_failed_install_added_are_removed(tmp_path, monkeypatch):
     assert not ua.apply(plan)["ok"]
     assert ran[-1][-3:] == ["uninstall", "-y", "newpkg"]
     assert not any("install" in a and "numpy==1.0" in a for a in ran)  # (unchanged: not installed again)
+
+
+def test_a_package_from_a_file_or_url_is_known_and_put_back_as_it_was(tmp_path, monkeypatch):
+    # (CodeRabbit: only "==" lines were read, so one installed from a URL looked new and was uninstalled)
+    lines = "".join(
+        f"{line}{chr(10)}"
+        for line in (
+            "numpy==1.0",
+            "mylib @ file:///C:/wheels/mylib-1.0-py3-none-any.whl",
+            "-e git+https://x/y.git#egg=dev_tool",
+        )
+    )
+    monkeypatch.setattr(ua.subprocess, "run", lambda *a, **k: subprocess.CompletedProcess(a, 0, lines, ""))
+    got = ua.freeze("python")
+    assert got == {"numpy": "numpy==1.0", "mylib": "mylib @ file:///C:/wheels/mylib-1.0-py3-none-any.whl",
+                   "dev-tool": "-e git+https://x/y.git#egg=dev_tool"}  # fmt: skip
+    root, plan = program(tmp_path)
+    plan["pip"] = True
+    before = dict(got)
+    after = dict(got, mylib="mylib==2.0")  # (the failed install put an index one in its place)
+    frozen = iter([before, after])
+    monkeypatch.setattr(ua, "freeze", lambda python: next(frozen))
+    ran = []
+
+    def fake_run(args, **kw):
+        ran.append(args)
+        return subprocess.CompletedProcess(args, 1 if "-r" in args else 0, "", "")
+
+    monkeypatch.setattr(ua.subprocess, "run", fake_run)
+    assert not ua.apply(plan)["ok"]
+    put_back = [a for a in ran if "install" in a and "-r" not in a]
+    assert put_back[-1][-1] == "mylib @ file:///C:/wheels/mylib-1.0-py3-none-any.whl"  # (as it was installed)
+    assert not any("uninstall" in a for a in ran)  # (nothing new: nothing taken away)

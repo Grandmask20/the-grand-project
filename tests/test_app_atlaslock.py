@@ -99,3 +99,31 @@ def test_letting_go_frees_every_level_and_takes_them_back():
         t.join(2)
         assert took == [1]  # (another thread got it while let go)
     assert not lock._is_owned()  # (both levels taken back, then both let go by the with blocks)
+
+
+def test_the_state_is_refused_when_another_atlas_opens_during_every_try(tmp_path):
+    # (CodeRabbit: after the last try the mixed state was sent anyway)
+    from grand_project.app.server import AppServer
+    from tests.test_app_server import call
+
+    path, _pts, _img = make_atlas(tmp_path)
+    s = AtlasSession(settings={}, worker=False)
+    s.open_atlas(path)
+    srv = AppServer(s, port=0)
+    threading.Thread(target=srv.serve_forever, daemon=True).start()
+    try:
+        real, n = s.map_info, [0]
+
+        def map_info_switching():
+            n[0] += 1
+            s.new_atlas(tmp_path / f"other{n[0]}" / "atlas.json")  # (another one opens during each try)
+            return real()
+
+        s.map_info = map_info_switching
+        status, _headers, body = call(srv, "/api/state")
+        assert status == 409 and json.loads(body)["stale"] is True
+    finally:
+        srv.stopping = True
+        srv.shutdown()
+        srv.server_close()
+        s.shutdown()

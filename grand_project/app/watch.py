@@ -74,6 +74,9 @@ class WatchMixin:
         Raises:
             ValueError: With no atlas open, or when the folder does not exist.
         """
+        # (a request made for another atlas: refused, not turned on / off or pointed at a folder for the one open
+        # now; checked without waiting for the lock, which a job may hold for long)
+        self._lock.refuse_stale()
         if not self.path:
             raise ValueError("open or create an atlas first")
         folders = self.settings.setdefault("watch_folders", {})
@@ -97,6 +100,9 @@ class WatchMixin:
         Raises:
             ValueError: Turning it on with no atlas open.
         """
+        # (a request made for another atlas: refused, not turned on / off or pointed at a folder for the one open
+        # now; checked without waiting for the lock, which a job may hold for long)
+        self._lock.refuse_stale()
         if on:
             self.start_watch()
         else:

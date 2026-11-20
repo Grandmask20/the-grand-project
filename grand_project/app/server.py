@@ -374,6 +374,8 @@ class Handler(BaseHTTPRequestHandler):
             st["map"] = self.S.map_info()
             if self.S.generation == gen:
                 break
+        else:  # another atlas opened during every try: refused (the page asks again), never a mix (CodeRabbit)
+            raise StaleAtlas()
         self._resp_gen = gen
         self._json(st)
 
@@ -437,6 +439,7 @@ class Handler(BaseHTTPRequestHandler):
     @route("POST", "/api/log")
     def post_log(self, q) -> None:
         """What was done on the page (tabs, modes, selections, dialogs, errors shown): into the log file."""
+        self.S._lock.refuse_stale()  # (a line about another atlas never goes in the open one's log)
         lines = self._body().get("lines", [])
         if not isinstance(lines, list):
             raise ValueError("lines must be a list")

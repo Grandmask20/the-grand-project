@@ -21,6 +21,7 @@ from grand_project import cities, core
 from grand_project.app import adding as adding_mod
 from grand_project.app import mapimage, replay_data
 from grand_project.app import server as S
+from grand_project.app.events import StaleAtlas
 from grand_project.app.server import AppServer
 from grand_project.app.session import AtlasSession
 from tests.test_app_server import call
@@ -587,3 +588,88 @@ def test_a_stop_while_it_asks_leaves_fix_seams_off(session, two, fake_seams, mon
     answer.set()  # then "Fix seams anyway"
     assert wait_until(lambda: not session._seams_asking)
     assert not session.seams_running() and not session.state()["seams"]
+
+
+def test_page_requests_made_for_the_atlas_before_are_refused(session, two):
+    # (CodeRabbit: adding, placing, Re-check, auto-add and close didn't check the request's atlas)
+    a, b = two
+    session.open_atlas(a)
+    old = session.generation
+    shot = session.atlas.frames[0]["path"]
+    session.open_atlas(b)
+    watching = session._watch_on
+    for act in (
+        lambda: session.add_screenshots([shot]),
+        lambda: session.place_by_hand(shot, 1.0, 2.0),
+        lambda: session.recheck_all(),
+        lambda: session.set_watch(not watching),
+        lambda: session.set_watch_folder(None),
+        lambda: session.close(),
+    ):
+        with session._lock.expect(old), pytest.raises(StaleAtlas):
+            act()
+    assert session._jobs.unfinished_tasks == 0 and session._watch_on == watching and session.path is not None
+
+
+def test_a_job_queued_by_a_request_carries_the_request_s_atlas(session, two):
+    # (the safety net: a switch right after the check still never runs it on the next atlas)
+    a, _b = two
+    session.open_atlas(a)
+    gen = session.generation
+    with session._lock.expect(gen):
+        session._queue_job([], "recheck_all")
+    assert session._jobs.queue[-1][2] == gen
+    session._queue_job([], "recheck_all")  # (the app's own work: the open atlas)
+    assert session._jobs.queue[-1][2] == session.generation
+
+
+def test_a_stop_just_before_the_queued_start_is_kept(session, two, fake_seams):
+    # (CodeRabbit: the queue was cleared before the start was claimed; a Stop in between was lost)
+    a, _b = two
+    session.open_atlas(a)
+    session._jobs.put(([], "recheck_all", session.generation))
+    session.fix_seams(after_adding=True)
+    token = session._seams_waiting["token"]
+    session._jobs.get()
+    session._jobs.task_done()
+    session.stop_seams()  # (between adding ending and the start being claimed)
+    session._start_queued_seams(token)
+    assert not session.seams_running() and not session.state()["seams"]
+
+
+def test_an_old_answer_never_cancels_a_newer_queued_fix_seams(session, two, fake_seams, monkeypatch):
+    # (CodeRabbit: Cancel on the box of a request Stop took off removed the one queued after it)
+    a, _b = two
+    session.open_atlas(a)
+    answer = threading.Event()
+    monkeypatch.setattr(session.events, "ask", lambda q, **kw: (answer.wait(5), False)[1])  # (Cancel)
+    session._jobs.put(([], "recheck_all", session.generation))
+    session.fix_seams(after_adding=True)
+    session._note_seams_trouble("adding failed: x")
+    session._jobs.get()
+    session._jobs.task_done()
+    session._start_waiting_seams()
+    assert wait_until(lambda: session._seams_asking)
+    session.stop_seams()  # the first request taken off...
+    session._jobs.put(([], "recheck_all", session.generation))
+    assert session.fix_seams(after_adding=True) == "queued"  # ...and a second one queued
+    second = session._seams_waiting["token"]
+    answer.set()  # then Cancel on the first one's box
+    assert wait_until(lambda: not session._seams_asking)
+    assert session._seams_waiting is not None and session._seams_waiting["token"] == second
+    session._jobs.get()
+    session._jobs.task_done()
+
+
+def test_another_atlas_never_inherits_a_queued_fix_seams(session, two):
+    # (CodeRabbit: one left from the atlas before made a request for this one report "queued", unrecorded)
+    a, b = two
+    session.open_atlas(a)
+    session._seams_waiting = {"gen": session.generation, "token": 99}  # (as if left behind)
+    session.open_atlas(b)
+    assert session._seams_waiting is None and not session.state()["seams"]
+    session._jobs.put(([], "recheck_all", session.generation))
+    assert session.fix_seams(after_adding=True) == "queued"
+    assert session._seams_waiting["gen"] == session.generation
+    session._jobs.get()
+    session._jobs.task_done()

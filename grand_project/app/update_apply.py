@@ -20,6 +20,7 @@ from __future__ import annotations
 import contextlib
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -131,7 +132,9 @@ def apply(plan: dict) -> dict:
 
 
 def freeze(python: str) -> dict[str, str] | None:
-    """The installed packages and their versions ({name: version}), or None when pip can't say."""
+    """The installed packages, each as pip freeze writes it ({name: "name==1.2" / "name @ url" / "-e ..."}), or None
+    when pip can't say. Every form counts: with only "==" lines a package installed from a file or URL was missing
+    from the list before an update, and the rollback took it for new and uninstalled it (CodeRabbit)."""
     try:
         r = subprocess.run([python, "-m", "pip", "freeze"], capture_output=True, text=True, timeout=PIP_WAIT)
     except (OSError, subprocess.SubprocessError):
@@ -140,9 +143,15 @@ def freeze(python: str) -> dict[str, str] | None:
         return None
     out = {}
     for line in r.stdout.splitlines():
-        name, sep, ver = line.partition("==")
-        if sep:
-            out[name.strip().lower()] = ver.strip()
+        line = line.strip()
+        if not line or line.startswith("#"):
+            continue
+        if line.startswith("-e "):
+            name = line.rpartition("#egg=")[2] if "#egg=" in line else ""
+        else:
+            name = re.split(r"\s*(?:==|@|===)\s*", line, maxsplit=1)[0]
+        if name:
+            out[name.strip().lower().replace("_", "-")] = line
     return out
 
 
@@ -150,9 +159,11 @@ def put_back_packages(python: str, before: dict[str, str], log: Path) -> None:
     """Put the packages back as they were before a failed install: the ones it changed installed again at their
     versions before, the ones it added removed (they stayed: GPT audit). Its log gets the outcome."""
     after = freeze(python)
-    changed = [f"{n}=={v}" for n, v in before.items() if (after or {}).get(n) != v]
+    # each one put back in the form it was installed in (an index install never replaces a file / URL one)
+    changed = [line for n, line in before.items() if (after or {}).get(n) != line]
+    args = [a for line in changed for a in (line.split(None, 1) if line.startswith("-e ") else [line])]
     added = sorted(set(after) - set(before)) if after is not None else []  # (unknown when pip can't say)
-    steps = [("put back", ["install", *changed], changed), ("removed", ["uninstall", "-y", *added], added)]
+    steps = [("put back", ["install", *args], changed), ("removed", ["uninstall", "-y", *added], added)]
     note = ""
     for what, args, names in steps:
         if not names:

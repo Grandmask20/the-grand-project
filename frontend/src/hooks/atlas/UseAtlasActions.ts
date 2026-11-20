@@ -1,6 +1,7 @@
 import { useQueryClient } from "@tanstack/react-query";
 import { useCallback, useMemo } from "react";
 import { AppQueryKeys } from "@/api/AppQueryKeys";
+import { isStale, sameAtlas } from "@/api/Http";
 import type { AppState } from "@/domain/app/AppState";
 import { useAppClient } from "@/hooks/app/UseAppClient";
 import { useAppState } from "@/hooks/app/UseAppState";
@@ -159,15 +160,21 @@ export function useAtlasActions() {
 			if (!shots.length) return fail("Drop screenshot image files (.png, .jpg).");
 			// each file on its own: the ones sent are placed, the others named (one failing upload dropped them all,
 			// the ones already sent left unused: GPT audit)
+			// all of it for the atlas open when it was dropped: another opened meanwhile, the rest stops (each call reads
+			// the atlas open when it is made: later files went to the new atlas, and its paths were added there: CodeRabbit)
+			const same = sameAtlas();
 			const paths: string[] = [];
 			const failed: string[] = [];
 			for (const f of shots) {
+				if (!same()) return;
 				try {
 					paths.push((await app.upload(f)).path);
 				} catch (e) {
+					if (isStale(e)) return;
 					failed.push(`${f.name} (${e instanceof Error ? e.message : String(e)})`);
 				}
 			}
+			if (!same()) return;
 			if (paths.length === 1 && shots.length === 1) return startGhost(paths[0]);
 			// added here, not through addScreenshots (which shows its own error): one message says both what wasn't
 			// sent and whether the rest went in (the add's error was hidden by the upload one: self review)
@@ -177,8 +184,10 @@ export function useAtlasActions() {
 					await app.addScreenshots(paths);
 					void queryClient.invalidateQueries({ queryKey: AppQueryKeys.state });
 				} catch (e) {
+					if (isStale(e)) return; // (another atlas opened while it was sent: nothing of it is for that one)
 					addError = e instanceof Error ? e.message : String(e);
 				}
+			if (!same()) return;
 			if (!failed.length) {
 				if (addError) fail(addError);
 				return;

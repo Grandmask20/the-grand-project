@@ -77,7 +77,7 @@ def detector_stamp() -> str:
     return _STAMP[0]
 
 
-_DIGESTS: dict[tuple[str, int, int], str] = {}
+_DIGESTS: dict[tuple, str] = {}
 
 
 def file_digest(path: Path) -> str:
@@ -93,7 +93,9 @@ def file_digest(path: Path) -> str:
     from grand_project.detect.constants import DETECT_DIGEST_MEMO
 
     st = path.stat()
-    key = (str(path.resolve()), st.st_size, st.st_mtime_ns)
+    # the file itself too (device, inode, change time): a replacement keeping the size and time got the old hash
+    # (CodeRabbit)
+    key = (str(path.resolve()), st.st_size, st.st_mtime_ns, st.st_ctime_ns, st.st_dev, st.st_ino)
     if key not in _DIGESTS:
         if len(_DIGESTS) > DETECT_DIGEST_MEMO:  # (a long session over many atlases)
             _DIGESTS.clear()

@@ -317,9 +317,13 @@ def test_clearing_a_city_biome_takes_back_the_cities_it_made_not_your_own_edits(
     # (GPT audit: clearing the biome left the Hall a City)
     path, _at = biome_atlas(tmp_path)
     session.open_atlas(path)
-    city = session.V["landmarks"][1]
-    session.set_landmark(city["x"], city["y"], "Hall")  # (a Hall there)
     poly = [[1400, 1000], [1800, 1000], [1800, 1300], [1400, 1300]]
+    n = session.V["nodes"][session.lasso_nodes(poly)[0]]
+    with session._lock:  # (a Hall the detection found there)
+        session.atlas.final["landmarks"].append(
+            {"kind": "Hall", "x": n["x"], "y": n["y"], "status": "kept", "n": 3, "could": 3, "conf": 0.9}
+        )
+    session.rebuild_model()
     session.set_biome(poly, "Vaal city")
     made = [e for e in session.atlas.landmark_edits if e.get("by") == "biome"]
     assert made and made[0]["kind"] == "City"
@@ -402,3 +406,34 @@ def test_one_job_ending_forgets_only_its_own_logged_steps(session):
     before = len(ev.log_lines)
     ev.set_progress("detecting 5 / 10")  # (the same step and tenth: not written again)
     assert len(ev.log_lines) == before
+
+
+def test_a_city_biome_leaves_a_landmark_you_set_by_hand_alone(session, tmp_path):
+    # (CodeRabbit: painting a city biome deleted your own edit there, and clearing it couldn't bring it back)
+    path, _at = biome_atlas(tmp_path)
+    session.open_atlas(path)
+    poly = [[1400, 1000], [1800, 1000], [1800, 1300], [1400, 1300]]
+    n = session.V["nodes"][session.lasso_nodes(poly)[0]]
+    session.set_landmark(n["x"], n["y"], "Hall", on="map")  # (yours)
+    session.set_biome(poly, "Vaal city")
+    mine = [e for e in session.atlas.landmark_edits if abs(e["x"] - n["x"]) < 1 and abs(e["y"] - n["y"]) < 1]
+    assert [e["kind"] for e in mine] == ["Hall"] and not mine[0].get("by")
+    session.set_biome(poly, "")
+    assert any(e["kind"] == "Hall" and not e.get("by") for e in session.atlas.landmark_edits)
+
+
+def test_two_landmarks_on_one_map_each_act_as_themselves(session, tmp_path):
+    # (CodeRabbit: the City's map selection gave the Hall's actions when both stood on one map)
+    path, _pts, _img = make_atlas(tmp_path)
+    session.open_atlas(path)
+    node = session.V["nodes"][3]
+    with session._lock:
+        for kind, dx in (("Hall", -20), ("City", 20)):
+            session.atlas.final["landmarks"].append(
+                {"kind": kind, "x": node["x"] + dx, "y": node["y"], "status": "kept", "n": 3, "could": 3, "conf": 0.9}
+            )
+    session.rebuild_model()
+    ks = {session.V["landmarks"][k]["kind"]: k for k, v in session.D["landmark_node"].items() if v == 3}
+    assert set(ks) == {"Hall", "City"}
+    for kind, k in ks.items():
+        assert session.info("landmark", k)["on_landmark"]["landmark_kind"] == kind

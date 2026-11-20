@@ -300,6 +300,9 @@ class AtlasSession(
             The new record.
         """
         scope = str(p.resolve()) if p is not None else ""
+        # a queued Fix seams was for the atlas before: retired with it, here where every switch passes (one left
+        # behind made a new request for the next atlas report "queued" without being recorded: CodeRabbit)
+        self._seams_waiting, self._seams_trouble = None, []
         self.opened = Opened(atlas, p, self.opened.gen + 1, scope)
         self.parts.reset(self.opened.gen)
         self.V = {"nodes": [], "paths": [], "icons": [], "landmarks": [], "final": None}
@@ -358,10 +361,11 @@ class AtlasSession(
         """
         if self.working():
             raise ValueError("wait until the screenshots being added are done")
+        self._lock.refuse_stale()  # (a close made for another atlas never stops / closes the one open now)
         self.stop_watch()
         self.stop_seams()
         self.save()
-        with self._lock:
+        with self._lock:  # (checked again here, under the lock: refused when another atlas opened meanwhile)
             self._forget_session()
             before = self.opened
             self._switch(None, None)
