@@ -3,6 +3,7 @@ one screenshot at a time and safe between sessions."""
 
 from __future__ import annotations
 
+import errno
 import os
 import sys
 from pathlib import Path
@@ -189,7 +190,13 @@ def test_a_file_name_that_is_not_utf8_is_kept_as_it_is(tmp_path: Path, review_st
     """SQLite text cannot hold such a name: the path is stored as its bytes and comes back unchanged (the detector
     opens it); the name shown has the odd byte as an escape."""
     odd = tmp_path / os.fsdecode(b"shot\xff.png")
-    odd.write_bytes(b"x")
+    try:
+        odd.write_bytes(b"x")
+    except OSError as error:
+        if error.errno != errno.EILSEQ:
+            raise
+        # macOS (APFS, HFS+) refuses a file name that is not UTF-8, so no screenshot there has one (CI)
+        pytest.skip("this file system takes only UTF-8 file names")
     assert review_store.add_images([odd]) == (1, 0)
     key = image_key(odd)
     item = review_store.item(key)
