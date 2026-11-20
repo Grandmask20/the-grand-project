@@ -36,6 +36,18 @@ export function useAdjustRoute(pick: (at: Point) => Promise<ItemInfo | null>) {
 	const showError = useAppStore((s) => s.showError);
 	const setMode = useAppStore((s) => s.setMode);
 
+	// the route as the app holds it now (the edits before this one are saved by then): asked for anew, a read already
+	// under way is dropped first (it could have started before the last save, and fetchQuery would hand it back:
+	// CodeRabbit), as the event stream does for the state
+	const heldNow = useCallback(async () => {
+		await queryClient.cancelQueries({ queryKey: AppQueryKeys.bookmarks });
+		return queryClient.fetchQuery({
+			queryKey: AppQueryKeys.bookmarks,
+			queryFn: () => app.getBookmarks(),
+			staleTime: 0,
+		});
+	}, [app, queryClient]);
+
 	return useCallback(
 		(at: Point, add: boolean, started: MapMode, reach: number) => {
 			if (started.kind !== "route-edit") return Promise.resolve();
@@ -50,12 +62,7 @@ export function useAdjustRoute(pick: (at: Point) => Promise<ItemInfo | null>) {
 			const job = mine.chain.then(async () => {
 				const current = () => mine.still() && useAppStore.getState().mode === started;
 				if (!current()) return; // (left meanwhile: Esc, End, another atlas)
-				const [hit, graph, listed] = await Promise.all([
-					pick(at),
-					loadGraph(),
-					// the route as the app holds it now (the edits before this one are saved by now)
-					queryClient.fetchQuery({ queryKey: AppQueryKeys.bookmarks, queryFn: () => app.getBookmarks(), staleTime: 0 }),
-				]);
+				const [hit, graph, listed] = await Promise.all([pick(at), loadGraph(), heldNow()]);
 				if (!current()) return;
 				const before = listedRoute(listed, id);
 				if (!before) return setMode({ kind: "normal" }); // (deleted meanwhile)
@@ -80,7 +87,7 @@ export function useAdjustRoute(pick: (at: Point) => Promise<ItemInfo | null>) {
 				if (mine.pending === 0 && edits.get(id) === mine) edits.delete(id);
 			});
 		},
-		[app, queryClient, loadGraph, pick, showError, setMode],
+		[app, heldNow, loadGraph, pick, showError, setMode],
 	);
 }
 

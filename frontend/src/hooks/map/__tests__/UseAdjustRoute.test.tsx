@@ -128,7 +128,13 @@ describe("useAdjustRoute", () => {
 			fail = false;
 			await adjust([100, 0], false, mode, 1); // from [1,2,3,4]: [2,3,4]
 		});
-		const last = sent[sent.length - 1] as { legs: { maps: [number, number][] }[] };
-		expect(last.legs[0].maps).toEqual(spots([2, 3, 4]));
+		const lastSent = () => (sent[sent.length - 1] as { legs: { maps: [number, number][] }[] }).legs[0].maps;
+		expect(lastSent()).toEqual(spots([2, 3, 4]));
+		// another tab puts it back to [1,2,3]: the next edit builds on that (a copy kept here gave [2,3,4] again)
+		held = structuredClone(saved);
+		await act(async () => {
+			await adjust([100, 0], false, mode, 1);
+		});
+		expect(lastSent()).toEqual(spots([2, 3]));
 	});
 });
