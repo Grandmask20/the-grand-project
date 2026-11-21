@@ -133,7 +133,7 @@ A screenshot that might be placed wrong is shown on the map, see-through and out
   - remove an atlas from the list
   - add new screenshots from an atlas's folder
 
-  The **Atlases tab** (its *Saved atlases* page) shows every atlas as a card with a thumbnail of its map and its numbers of maps, icons and screenshots. Click a card to open it; the pencil renames it; right-click it to *Open atlas folder*. The bin asks whether to *stop tracking* the atlas (its files stay) or *delete the whole atlas and its data* (its `atlas.json`, `atlas_frames/` and `atlas_files/`; your screenshots are never deleted).
+  The **Atlases tab** (its *Saved atlases* page) shows every atlas as a card with a thumbnail of its map and its numbers of maps, icons and screenshots. Click a card to open it; the pencil renames it; the circular arrows re-check it (it asks first, and opens it first when another atlas is open); right-click it to *Open atlas folder*. The bin asks whether to *stop tracking* the atlas (its files stay) or *delete the whole atlas and its data* (its `atlas.json`, `atlas_frames/` and `atlas_files/`; your screenshots are never deleted).
 
   Each atlas lives in its own folder: `atlas.json`, plus `atlas_frames/` (detections) and `atlas_files/` (map image, exports, undo). The screenshots can sit in that same folder; the atlas never takes its own files for screenshots. Keep new ones in `atlases/`.
 - **File menu:**

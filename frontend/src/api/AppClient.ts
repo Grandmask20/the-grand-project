@@ -53,6 +53,8 @@ export function createAppClient(http: Http) {
 		forgetAtlas: (json: string) => http.send<Ok>("POST", "/api/atlases/forget", { json }),
 		deleteAtlas: (json: string) => http.send<{ failed: string[] }>("POST", "/api/atlases/delete", { json }),
 		openAtlas: (path: string) => http.send<AtlasSummary>("POST", "/api/atlas/open", { path }),
+		/** Re-check an atlas (opened first when another one is open). */
+		recheckAtlas: (path: string) => http.send<Ok>("POST", "/api/atlas/recheck-file", { path }),
 		newAtlas: (path: string) => http.send<AtlasSummary>("POST", "/api/atlas/new", { path }),
 		openFolder: (folder: string) => http.send<FolderOpened>("POST", "/api/atlas/folder", { folder }),
 		createFromFolder: (folder: string) => http.send<{ adding: number }>("POST", "/api/atlas/folder/create", { folder }),

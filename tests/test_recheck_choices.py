@@ -311,3 +311,34 @@ def test_no_box_when_nothing_changed(rechecked, monkeypatch):
     s.picks = []
     s._run_recheck()
     assert not s.asked and s.events.status.endswith("nothing changed")
+
+
+# ------------------------------------------------------------------ Re-check from an atlas's card
+def test_recheck_from_a_card_opens_that_atlas_and_queues_its_recheck(tmp_path, monkeypatch):
+    monkeypatch.setattr(cities, "find_locks", lambda atlas, todo: [])
+    (tmp_path / "a").mkdir()
+    (tmp_path / "b").mkdir()
+    a, _at = biome_atlas(tmp_path / "a")
+    b, _at = biome_atlas(tmp_path / "b")
+    s = AtlasSession(settings={}, worker=False)
+    try:
+        s.open_atlas(a)
+        s.wait_idle(30)
+        while not s._jobs.empty():  # (auto-add's catch-up, if any)
+            s._jobs.get_nowait()
+            s._jobs.task_done()
+        s.recheck_atlas(b)  # (its route belongs to no atlas, like Open: GEN_FREE)
+        assert s.path == b
+        paths, mode, gen = s._jobs.get_nowait()
+        assert mode == "recheck_all" and gen == s.generation  # (for B, not the A the page saw: not skipped)
+        s._jobs.task_done()
+        s.recheck_atlas(b)  # the open one: no switch
+        assert s._jobs.get_nowait()[2] == s.generation
+        s._jobs.task_done()
+        s._jobs.put(([], "recheck_all", s.generation))  # work running: another atlas isn't opened
+        with pytest.raises(ValueError):
+            s.recheck_atlas(a)
+        assert s.path == b
+    finally:
+        s._jobs = type(s._jobs)()
+        s.shutdown()

@@ -64,6 +64,7 @@ GEN_HEADER = "X-Atlas-Gen"  # the open atlas's generation: on every answer, and 
 GEN_FREE = (
     "/api/atlas/open",
     "/api/atlas/new",
+    "/api/atlas/recheck-file",
     "/api/atlas/folder",
     "/api/atlases",
     "/api/settings",
@@ -586,6 +587,12 @@ class Handler(BaseHTTPRequestHandler):
     def post_recheck(self, q) -> None:
         """Re-check the whole atlas."""
         self.S.recheck_all()
+        self._json({"ok": True})
+
+    @route("POST", "/api/atlas/recheck-file")
+    def post_recheck_file(self, q) -> None:
+        """Re-check an atlas from the Atlases tab ({"path"}: opened first when another one is open)."""
+        self.S.recheck_atlas(self._body()["path"])
         self._json({"ok": True})
 
     @route("POST", "/api/seams")

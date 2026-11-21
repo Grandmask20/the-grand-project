@@ -29,7 +29,7 @@ from grand_project.core.geometry import apply as apply_affine
 from grand_project.core.register import mutual_pairs
 
 from . import recheck_choices
-from .atlaslock import atlas_edit
+from .atlaslock import atlas_edit, atlas_switch
 from .constants import (
     DETECT_LOG_EVERY,
     PICTURE_SIDE,
@@ -250,6 +250,25 @@ class AddingMixin:
         if not self.atlas or not self.atlas.frames:
             raise ValueError("no screenshots to re-check")
         self._queue_job([], "recheck_all")
+
+    @atlas_switch
+    def recheck_atlas(self, p) -> None:
+        """Re-check an atlas from its card in the Atlases tab: opened first when another one is open, and its Re-check
+        queued in the same step (the switch lock held throughout: another tab's switch can't come between, and the job
+        is tagged with the atlas opened here, not the one the page saw).
+
+        Args:
+            p: Its atlas .json file.
+
+        Raises:
+            ValueError: When it can't be opened (work running, unreadable) or has no screenshots.
+        """
+        p = Path(p)
+        if self.path is None or p.resolve() != self.path.resolve():
+            self.open_atlas(p)
+        if not self.atlas or not self.atlas.frames:
+            raise ValueError("no screenshots to re-check")
+        self._queue_job([], "recheck_all", gen=self.generation)
 
     @atlas_edit
     def undo_last(self) -> list[str]:
