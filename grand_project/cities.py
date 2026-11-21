@@ -988,7 +988,7 @@ def near_city(
     return out
 
 
-def biomes(atlas, V: dict, ground=None) -> dict:
+def biomes(atlas, V: dict, ground=None, kept: bool = True) -> dict:
     """Work out the city / stronghold biomes of an atlas (the app's model and map use it).
 
     In order (as the old window did: add_locks, rebuild_cities, apply_biome_edits): locked Breach
@@ -999,6 +999,7 @@ def biomes(atlas, V: dict, ground=None) -> dict:
         atlas: The atlas.
         V: Its view model (app.model.view_model); not changed.
         ground: ground_sampler of the map image, or None (biomes then ignore the look of the ground).
+        kept: Apply the biomes a Re-check left as they were (atlas.biome_kept); False: as a Re-check works them out.
 
     Returns:
         {"potential": map node index -> (biome label, steps), "landmarks": the landmarks with a stronghold added for
@@ -1056,10 +1057,21 @@ def biomes(atlas, V: dict, ground=None) -> dict:
     blocked = blocked_maps(V["nodes"], V["icons"], live, icon_node)
     potential = potential_maps(V["nodes"], V["paths"], src, ground=ground, blocked=blocked) if src else {}
     edits = getattr(atlas, "biome_edits", []) or []
-    if edits and V["nodes"]:  # the hand-drawn biomes win: each stored map position -> every map node within 20 units
+    # biomes a Re-check left as they were (you unticked Biomes: app.recheck_choices), each on its map's spot; the
+    # hand-drawn ones go on top
+    held = (getattr(atlas, "biome_kept", []) or []) if kept else []
+    if (edits or held) and V["nodes"]:  # each stored map position -> every map node within 20 units
         from scipy.spatial import cKDTree
 
         tree = cKDTree(np.array([[n["x"], n["y"]] for n in V["nodes"]], float))
+        for k in held:
+            for i in tree.query_ball_point([k["x"], k["y"]], 20.0):
+                if V["nodes"][int(i)].get("status") == "removed":
+                    continue
+                if k["biome"]:
+                    potential[int(i)] = (k["biome"], 0)
+                else:
+                    potential.pop(int(i), None)
         for e in edits:
             for q in e["maps"]:
                 # all of them: of two map nodes on one spot (a map seen twice) only one took the edit, and the other

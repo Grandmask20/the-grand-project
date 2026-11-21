@@ -390,3 +390,21 @@ PICTURES_KEPT = 8  # ghost / preview pictures kept for the page to fetch (the ne
 # node 75-86 away; a Breach stronghold's map node is about 38 units below it (at most 86)
 LANDMARK_NODE_REACH = 45.0
 LANDMARK_NODE_REACH_STRONGHOLD = 90.0
+
+# ------------------------------------------------------------------ Re-check choices (app.recheck_choices)
+RECHECK_GROUPS = ("maps", "paths", "landmarks", "towers", "biomes", "icons")  # the box's groups, in its order
+RECHECK_GROUP_NAMES = {
+    "maps": "Maps",
+    "paths": "Paths",
+    "landmarks": "Landmarks",
+    "towers": "Towers",
+    "biomes": "Biomes",
+    "icons": "Icons",
+}
+RECHECK_MATCH = 20.0  # atlas units: an old and a new map this close are the same map
+RECHECK_MOVED = 5.0  # a map that moved further than this is listed as moved
+RECHECK_LANDMARK_MATCH = 60.0  # an old and a new landmark (or tower) this close are the same one
+RECHECK_LANDMARK_ON_MAP = 60.0  # a landmark this close to a map moves with it
+RECHECK_ICON_MATCH = 20.0  # an old and a new icon of one name this close are the same icon
+RECHECK_ICON_ON_MAP = 40.0  # an icon's base this close to a map belongs to it
+RECHECK_ITEMS_SHOWN = 400  # changes listed per group (the count says how many there are)

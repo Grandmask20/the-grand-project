@@ -217,12 +217,51 @@ class Events:
         self.publish("answered", {"id": qid})
         return bool(box["answer"])
 
-    def answer(self, qid: int, yes: bool) -> bool:
+    def ask_choices(self, question: str, choices: dict, labels: dict | None = None) -> list[str] | None:
+        """Ask the browser to tick some of a list of choices and wait (from a background thread). Unlike ask, it
+        waits for a page when none is open: the question is shown by the next one (open_questions).
+
+        Args:
+            question: The text above the choices.
+            choices: {"groups": [{"id", "name", "count", "items", "ticked"}], ...} as the page shows them.
+            labels: {"title", "yes"}: the box's title and its button.
+
+        Returns:
+            The ids ticked, or None when the app closes first (end_questions).
+        """
+        qid = next(self._ids)
+        allowed = {g["id"] for g in choices.get("groups", [])}
+        box = {
+            "id": qid,
+            "question": question,
+            "preview": None,
+            "labels": labels,
+            "choices": choices,
+            "allowed": allowed,
+            "event": threading.Event(),
+            "answer": False,
+            "picked": None,
+        }
+        with self._lock:  # (registered in the closing check's step: see ask)
+            if self.closing:
+                return None
+            self._questions[qid] = box
+        self.publish(
+            "question", {"id": qid, "question": question, "preview": None, "labels": labels, "choices": choices}
+        )
+        box["event"].wait()
+        with self._lock:
+            self._questions.pop(qid, None)
+        self.publish("answered", {"id": qid})
+        return box["picked"] if box["answer"] else None
+
+    def answer(self, qid: int, yes: bool, picked: list | None = None) -> bool:
         """Answer an open question.
 
         Args:
             qid: The question's id.
             yes: The answer.
+            picked: For a question with choices (ask_choices), the ids ticked (others are left out).
 
         Returns:
             False when no such question is open.
@@ -231,6 +270,10 @@ class Events:
             box = self._questions.get(qid)
             if box is None or self.closing:
                 return False
+            if "choices" in box:
+                if not yes or not isinstance(picked, list):
+                    return False  # (answered only by its button, with the ticks: no plain No)
+                box["picked"] = [g for g in picked if isinstance(g, str) and g in box["allowed"]]
             box["answer"] = bool(yes)
             box["event"].set()
         return True
@@ -255,11 +298,17 @@ class Events:
         """Return the questions waiting for an answer (a page opened while one is waiting shows it).
 
         Returns:
-            [{"id", "question", "preview", "labels"}].
+            [{"id", "question", "preview", "labels"[, "choices"]}].
         """
         with self._lock:
             return [
-                {"id": b["id"], "question": b["question"], "preview": b["preview"], "labels": b["labels"]}
+                {
+                    "id": b["id"],
+                    "question": b["question"],
+                    "preview": b["preview"],
+                    "labels": b["labels"],
+                    **({"choices": b["choices"]} if "choices" in b else {}),
+                }
                 for b in self._questions.values()
             ]
 

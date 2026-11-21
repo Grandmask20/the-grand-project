@@ -1,5 +1,6 @@
 import { useQueryClient } from "@tanstack/react-query";
 import { AppQueryKeys } from "@/api/AppQueryKeys";
+import { ChoicesDialog } from "@/components/dialogs/ChoicesDialog";
 import { Button } from "@/components/ui/button";
 import {
 	Dialog,
@@ -22,17 +23,18 @@ export function QuestionDialog() {
 	const q = useAppState().data?.questions[0] ?? null;
 	const showError = useAppStore((s) => s.showError);
 
-	const answer = (yes: boolean) => {
+	const answer = (yes: boolean, picked?: string[]) => {
 		if (!q) return;
 		queryClient.setQueryData<AppState>(AppQueryKeys.state, (s) =>
 			s ? { ...s, questions: s.questions.filter((x) => x.id !== q.id) } : s,
 		);
-		void app.answer(q.id, yes).catch((e) => {
+		void app.answer(q.id, yes, picked).catch((e) => {
 			showError(e);
 			void queryClient.invalidateQueries({ queryKey: AppQueryKeys.state }); // still open: shown again
 		});
 	};
 
+	if (q?.choices) return <ChoicesDialog key={q.id} q={q} onAnswer={(picked) => answer(true, picked)} />;
 	return (
 		<Dialog open={!!q} onOpenChange={(open) => !open && answer(false)}>
 			<DialogContent overlay={false} showCloseButton={false} className="top-4 translate-y-0 sm:max-w-xl">

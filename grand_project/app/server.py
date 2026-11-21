@@ -407,8 +407,9 @@ class Handler(BaseHTTPRequestHandler):
 
     @route("POST", r"/api/questions/(?P<qid>\d+)")
     def post_answer(self, q, qid) -> None:
-        """Answer a question."""
-        ok = self.S.events.answer(int(qid), bool(self._body().get("yes")))
+        """Answer a question ({"yes"}, and "picked" for one with ticks)."""
+        body = self._body()
+        ok = self.S.events.answer(int(qid), bool(body.get("yes")), picked=body.get("picked"))
         self._json({"ok": ok})
 
     @route("GET", "/api/parts")

@@ -127,8 +127,9 @@ export interface AppStoreState {
 	setMode: (mode: MapMode) => void;
 	/** Biome select's menu is up (its note would still say to draw). */
 	lassoAsked: boolean;
-	fly: { x: number; y: number; px?: number; n: number } | null;
-	flyTo: (x: number, y: number, px?: number) => void;
+	/** A spot to show; clearTop: the window's y above which it would be hidden (a box over the map's top). */
+	fly: { x: number; y: number; px?: number; clearTop?: number; n: number } | null;
+	flyTo: (x: number, y: number, px?: number, clearTop?: number) => void;
 	fitAtlas: number;
 	requestFit: () => void;
 	/** Fit an area of the atlas in the view (a saved route: its whole line, with room round it). */
@@ -277,7 +278,7 @@ export const useAppStore = create<AppStoreState>()((set) => ({
 		),
 	lassoAsked: false,
 	fly: null,
-	flyTo: (x, y, px) => set((s) => ({ fly: { x, y, px, n: (s.fly?.n ?? 0) + 1 } })),
+	flyTo: (x, y, px, clearTop) => set((s) => ({ fly: { x, y, px, clearTop, n: (s.fly?.n ?? 0) + 1 } })),
 	fitAtlas: 0,
 	requestFit: () => set((s) => ({ fitAtlas: s.fitAtlas + 1 })),
 	fitTo: null,

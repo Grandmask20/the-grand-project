@@ -31,6 +31,7 @@ from .constants import (
     LANDMARK_NODE_REACH,
     LANDMARK_NODE_REACH_STRONGHOLD,
     POTENTIAL_TYPES,
+    RECHECK_GROUPS,
     SHUTDOWN_WAIT,
     STYLE_DEFAULT,
     VERSION,
@@ -131,7 +132,8 @@ class AtlasSession(
         """Return the settings the page shows and changes: layers, filters, style, hidden types, replay.
 
         Returns:
-            {"layers", "multi_only", "only_icon_maps", "near_only", "hidden_types", "style", "replay", "ui"}.
+            {"layers", "multi_only", "only_icon_maps", "near_only", "hidden_types", "style", "replay", "ui",
+            "recheck_update"}: "recheck_update" {group: ticked} is what the Re-check box ticks (for every atlas).
         """
         s = self.settings  # (read only: older settings are brought up to date once, as they load: migrate_settings)
         return {
@@ -143,6 +145,7 @@ class AtlasSession(
             "style": _style(s),
             "replay": s.get("replay", {}),
             "ui": s.get("ui", {}),
+            "recheck_update": {g: bool(_recheck_ticks(s).get(g, True)) for g in RECHECK_GROUPS},
         }
 
     def set_ui_settings(self, changes: dict) -> dict:
@@ -166,6 +169,9 @@ class AtlasSession(
                 s[k] = bool(changes[k])
         if "hidden_types" in changes:
             s["icon_hidden"] = sorted(set(changes["hidden_types"]))
+        if isinstance(changes.get("recheck_update"), dict):
+            got = {g: bool(v) for g, v in changes["recheck_update"].items() if g in RECHECK_GROUPS}
+            s["recheck_update"] = {**_recheck_ticks(s), **got}
         if "style" in changes and changes["style"].get("reset"):
             s["style"] = {}
         migrate_settings(s)  # (a tab still on an older page can send a retired setting: self review)
@@ -562,6 +568,7 @@ _WORDS = {
     "multi_only": "Find: only what 2+ screenshots show",
     "only_icon_maps": "Find: only maps with a ticked icon",
     "near_only": "Find: only potential city maps",
+    "recheck_update": "Re-check updates",
     "path_freq": "paths drawn by at least",
     "path_width": "path width",
     "path_style": "path style",
@@ -675,6 +682,12 @@ def dist(a, b) -> float:
 
 
 __all__ = ["AtlasSession", "Opened", "potential_kind", "dist"]
+
+
+def _recheck_ticks(s: dict) -> dict:
+    """The Re-check box's saved ticks ({group: ticked}; {} when none are saved, or the file holds something else)."""
+    t = s.get("recheck_update")
+    return t if isinstance(t, dict) else {}
 
 
 def migrate_settings(s: dict) -> dict:
