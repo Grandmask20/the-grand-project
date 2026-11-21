@@ -87,6 +87,8 @@ Any of these adds screenshots. Screenshots already in the atlas are skipped.
 - **File ▾ → Add screenshots…** (File ▾ is the first button on the toolbar)
 - **Atlas ▾ → (atlas) → Add new screenshots from its folder.**
 
+**Maps you have run since:** newer screenshots of a spot win over older ones. A map's icon is removed when the newest screenshots of it show the map without it (a map that turns green always loses its icon; a blue map can lose one; an attempted deadly boss map keeps only its Deadly Map Boss icon). Screenshots taken less than 30 seconds apart count as one moment, and where the detector missed an icon the app looks at the icon row again before calling it gone. Icons that never appear on a map (Corruption, the blue hideout, Abyss, Abyssal Depths, Expedition, Unique Map, the merchant), or Cleansed where there was no Corruption, are dropped when an earlier screenshot clearly showed the map without them. So keep screenshotting as you play: the atlas follows.
+
 A screenshot that overlaps nothing yet goes to **Waiting** (Atlases tab → Auto-add). Waiting screenshots are retried whenever another one is added, and you can also click **Retry** or **Retry all**.
 
 A screenshot that might be placed wrong is shown on the map, see-through and outlined, while the app asks whether to add it.
