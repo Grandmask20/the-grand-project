@@ -357,6 +357,7 @@ export const useAppStore = create<AppStoreState>()((set) => ({
 			confirm: null,
 			bookmarkEdit: null,
 			sources: null,
+			recheckAtlas: null, // (asked about the atlas open before: another one opened meanwhile, self review)
 		});
 	},
 }));

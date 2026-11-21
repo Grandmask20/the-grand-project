@@ -207,7 +207,8 @@ def icons_over_time(
     for i, nd in enumerate(nodes):
         if not alive[i] or nd.get("tower") or not nd["icons"]:
             continue
-        views = [n for n in nd["frames"] if n in by_name]
+        # (a screenshot with no known time can't be put before or after the others: left out - self review)
+        views = [n for n in nd["frames"] if n in by_name and when[n] is not None]
         if len(views) < 2:
             continue
         groups = moments([when[n] for n in views])

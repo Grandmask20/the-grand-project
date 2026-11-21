@@ -9,7 +9,6 @@ go to the page through Events.ask, with a picture of the screenshot where it wou
 from __future__ import annotations
 
 import contextlib
-import copy
 import itertools
 import queue
 import threading
@@ -695,11 +694,18 @@ class AddingMixin:
 
     def _run_recheck(self) -> None:
         """Detect again screenshots detected by an older detector, re-check the whole atlas, then ask which of the
-        changes to take: the groups you leave unticked stay as they were (app.recheck_choices)."""
+        changes to take: the groups you leave unticked stay as they were (app.recheck_choices).
+
+        The open atlas's record is taken once: the box's wait lets the session lock go, and the result is applied
+        only while that atlas is still the open one (owns; another can't be opened while the job runs, but the job
+        doesn't lean on that alone: AGENTS.md)."""
+        rec = self.opened
+        atlas, path = rec.atlas, rec.path
         stale = [
             Path(f["path"])
-            for f in self.atlas.frames
-            if Path(f["path"]).exists() and not builder.is_cached(Path(f["path"]), self._cache_dir())
+            for f in atlas.frames
+            if Path(f["path"]).exists()
+            and not builder.is_cached(Path(f["path"]), path.with_name(path.stem + "_frames"))
         ]
         t0 = time.monotonic()
         if stale:
@@ -710,23 +716,31 @@ class AddingMixin:
         t1 = time.monotonic()
         self.events.set_progress("re-checking the whole atlas")
         with self._lock:
-            old = copy.deepcopy(self.atlas.final) if self.atlas.final else None
-            self.atlas.rebuild_icons(builder.cached_frames(self.path, self.atlas.frames))
-            atlas_finalize.finalize(self.atlas, log=self.events.log)
-            new = self.atlas.final
-            self._note_timing(len(stale), t1 - t0, len(self.atlas.frames), time.monotonic() - t1)
+            if not self.owns(rec):
+                self._done("Re-check stopped: another atlas was opened")
+                return
+            # (the clean-up makes a new atlas-wide result and never changes the old one: no copy needed)
+            old = atlas.final
+            atlas.rebuild_icons(builder.cached_frames(path, atlas.frames))
+            atlas_finalize.finalize(atlas, log=self.events.log)
+            new = atlas.final
+            self._note_timing(len(stale), t1 - t0, len(atlas.frames), time.monotonic() - t1)
             listed = None
             if old is not None:
                 self.events.set_progress("listing what the re-check changed")
                 listed = recheck_choices.changes(
-                    old, new, self._biomes_of(old, kept=True), self._biomes_of(new, kept=False), icon_label
+                    old,
+                    new,
+                    self._biomes_of(atlas, old, kept=True),
+                    self._biomes_of(atlas, new, kept=False),
+                    icon_label,
                 )
                 # the map shows the atlas as it was while you choose (and hand edits made meanwhile apply to it)
-                self.atlas.final = old
+                atlas.final = old
             if listed is None or not any(g["count"] for g in listed.values()):
-                self.atlas.final = new  # (nothing to choose from: only its numbers can differ)
-                self.atlas.last_check = self._check_record()
-                self.atlas.save(self.path)
+                atlas.final = new  # (nothing to choose from: only its numbers can differ)
+                atlas.last_check = self._check_record()
+                atlas.save(path)
                 done = "whole atlas re-checked" + (": nothing changed" if listed is not None else "")
         if listed is None or not any(g["count"] for g in listed.values()):
             self.rebuild_model()
@@ -738,21 +752,24 @@ class AddingMixin:
             return
         self.events.set_progress("updating what you ticked")
         with self._lock:
-            cur = self.atlas.final  # (as it is now: the one you saw while choosing)
+            if not self.owns(rec):  # (the result is for the atlas the box was about)
+                self._done("Re-check not applied: another atlas was opened")
+                return
+            cur = atlas.final  # (as it is now: the one you saw while choosing)
             merged = recheck_choices.merge(cur, new, set(picked))
             if "biomes" in picked:
-                self.atlas.biome_kept = []  # (the biomes as the re-check works them out)
+                atlas.biome_kept = []  # (the biomes as the re-check works them out)
             else:
-                self.atlas.biome_kept = recheck_choices.kept_biomes(
+                atlas.biome_kept = recheck_choices.kept_biomes(
                     merged,
                     cur,
-                    self._biomes_of(merged, kept=True),
-                    self._biomes_of(cur, kept=True),
-                    self.atlas.biome_kept,
+                    self._biomes_of(atlas, merged, kept=True),
+                    self._biomes_of(atlas, cur, kept=True),
+                    atlas.biome_kept,
                 )
-            self.atlas.final = merged
-            self.atlas.last_check = self._check_record()
-            self.atlas.save(self.path)
+            atlas.final = merged
+            atlas.last_check = self._check_record()
+            atlas.save(path)
         self.rebuild_model()
         took = [recheck_choices.GROUP_NAMES[g].lower() for g in recheck_choices.GROUPS if g in picked]
         left = [
@@ -778,8 +795,7 @@ class AddingMixin:
         if shots >= RECHECK_TIMING_MIN:
             t["clean_s"] = round(clean_s / shots, 3)
         if t:
-            self.settings["recheck_timing"] = t
-            self.save_settings()
+            self.set_setting("recheck_timing", t)
 
     def recheck_info(self, p=None) -> dict:
         """What the Re-check prompt says about an atlas: when it was last re-checked, when and on which version its
@@ -795,13 +811,13 @@ class AddingMixin:
         Raises:
             ValueError: When the file can't be read.
         """
-        if p is None or (self.path is not None and Path(p).resolve() == self.path.resolve()):
-            with self._lock:  # (a copy of what is needed: the job may change the atlas meanwhile)
-                atlas, path = self.atlas, self.path
-                if atlas is None:
-                    raise ValueError("no atlas open")
-                frames = [dict(f) for f in atlas.frames]
-                last = atlas.last_check
+        rec = self.opened  # (one record: never the session lock, a job holds it for minutes - self review)
+        if p is None or (rec.path is not None and Path(p).resolve() == rec.path.resolve()):
+            atlas, path = rec.atlas, rec.path
+            if atlas is None:
+                raise ValueError("no atlas open")
+            frames = list(atlas.frames)  # (a copy of the list: placing screenshots appends to it meanwhile)
+            last = atlas.last_check
         else:
             path = Path(p)
             try:
@@ -842,22 +858,23 @@ class AddingMixin:
             "groups": sorted(groups.values(), key=lambda g: -g["newest"]),
         }
 
-    def _biomes_of(self, final: dict, kept: bool) -> dict:
+    def _biomes_of(self, atlas, final: dict, kept: bool) -> dict:
         """Each map's biome in an atlas-wide result (held under the session lock).
 
         Args:
+            atlas: The atlas (the record the job took).
             final: An atlas-wide result (atlas.final is set to it while they are worked out, then put back).
             kept: Apply the biomes a Re-check left as they were (cities.biomes).
 
         Returns:
             {map node index: biome}.
         """
-        saved = self.atlas.final
-        self.atlas.final = final
+        saved = atlas.final
+        atlas.final = final
         try:
-            found = atlas_cities.biomes(self.atlas, view_model(self.atlas), ground=self.ground(), kept=kept)
+            found = atlas_cities.biomes(atlas, view_model(atlas), ground=self.ground(), kept=kept)
         finally:
-            self.atlas.final = saved
+            atlas.final = saved
         return recheck_choices.biome_labels(found["potential"])
 
     def _ask_recheck(self, listed: dict) -> list[str] | None:
@@ -896,8 +913,7 @@ class AddingMixin:
             )
         if picked is not None:
             changed = {g["id"]: g["id"] in picked for g in groups if g["count"]}
-            self.settings["recheck_update"] = {**ticks, **changed}
-            self.save_settings()
+            self.set_setting("recheck_update", {**ticks, **changed})
         return picked
 
     def _done(self, msg: str) -> None:

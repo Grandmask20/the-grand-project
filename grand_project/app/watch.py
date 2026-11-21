@@ -107,7 +107,7 @@ class WatchMixin:
                 self.start_watch()
             else:
                 self.stop_watch()
-                self.settings["watch_on"] = False
+                self.set_setting("watch_on", False, save=False)
                 self.events.set_status("auto-add off")
             self.save_settings()
 
@@ -174,7 +174,7 @@ class WatchMixin:
         if not self.atlas or not self.path:
             raise ValueError("open or create an atlas first")
         self.stop_watch()
-        self.settings["watch_on"] = True
+        self.set_setting("watch_on", True, save=False)
         folder = self.watch_dir()
         files = self._watch_files()
         self._watch_seen = {k: -1 for k in files}

@@ -51,6 +51,13 @@ describe("useAppStore", () => {
 		expect(useAppStore.getState().editing).toEqual([]);
 	});
 
+	it("another atlas closes the Re-check prompt asked about the one before (self review)", () => {
+		const s = useAppStore.getState();
+		s.askRecheck("/atlases/a/atlas.json");
+		s.resetAtlas();
+		expect(useAppStore.getState().recheckAtlas).toBeNull();
+	});
+
 	it("tracking another route ends adjusting one; tracking the same one doesn't (CodeRabbit)", () => {
 		const s = useAppStore.getState();
 		s.setMode({ kind: "route-edit", id: 5 });

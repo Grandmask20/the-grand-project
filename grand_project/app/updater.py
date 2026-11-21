@@ -238,8 +238,7 @@ class UpdatesMixin:
 
     def set_update_auto(self, on: bool) -> None:
         """Check for an update when the app starts (once a day), or only when asked."""
-        self.settings["update_auto"] = bool(on)
-        self.save_settings()
+        self.set_setting("update_auto", bool(on))
         self.events.log(f"Update check at start {'on' if on else 'off'}")
         self._publish_update()
 
@@ -265,8 +264,7 @@ class UpdatesMixin:
             try:
                 latest = latest_release(fetch)
                 u.update(state="idle", latest=latest)
-                self.settings["update_checked"] = time.time()
-                self.save_settings()
+                self.set_setting("update_checked", time.time())
                 st = self.update_status()
                 self.events.log(
                     f"Update check: {latest['name']} is out (you have {st['release']})"

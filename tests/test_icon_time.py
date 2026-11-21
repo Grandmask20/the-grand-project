@@ -138,3 +138,11 @@ def test_a_floating_icon_with_copies_far_apart_is_a_towers_and_left_alone(world)
     run, looks = world
     looks[(NEW, "Corruption")] = looks[(NEW2, "Corruption")] = False
     assert run([dict(icon("Corruption", OLD), spread=65.0)])["gone"] == set()  # (user: a tower's icons)
+
+
+def test_a_screenshot_with_no_known_time_decides_nothing(world, monkeypatch):
+    run, looks = world
+    times = {OLD: 1000.0, NEW: None, NEW2: None}  # (the newer ones' times unknown: they can't come after OLD)
+    monkeypatch.setattr(it.core, "capture_time", lambda f: times[f["name"]])
+    looks[(NEW, "MapBoss")] = looks[(NEW2, "MapBoss")] = False
+    assert run([icon("MapBoss", OLD)])["gone"] == set()

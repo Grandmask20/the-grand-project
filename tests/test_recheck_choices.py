@@ -415,3 +415,17 @@ def test_new_detections_say_their_version_and_time(tmp_path):
     _cache(tmp_path, "ab" * 32, builder.detector_stamp(), "1.23", 5000.0)
     assert builder.cache_head(tmp_path, "ab" * 32) == {"fresh": True, "version": "1.23", "time": 5000.0}
     assert builder.cache_head(tmp_path, "cd" * 32) is None
+
+
+def test_the_recheck_is_not_applied_once_another_atlas_is_open(rechecked, monkeypatch):
+    s, path = rechecked
+    before = copy.deepcopy(core.Atlas.load(path).final)
+
+    def answer_after_a_switch(question, choices, labels=None):
+        s.opened = type(s.opened)(core.Atlas(), path.with_name("other.json"), s.opened.gen + 1, "")
+        return list(rc.GROUPS)
+
+    monkeypatch.setattr(s.events, "ask_choices", answer_after_a_switch)
+    s._run_recheck()
+    assert same(core.Atlas.load(path).final, before)  # (nothing written into the file of the atlas asked about)
+    assert "another atlas was opened" in s.events.status

@@ -597,7 +597,10 @@ class Handler(BaseHTTPRequestHandler):
     @route("POST", "/api/atlas/recheck-file")
     def post_recheck_file(self, q) -> None:
         """Re-check an atlas from the Atlases tab ({"path"}: opened first when another one is open)."""
-        self.S.recheck_atlas(self._body()["path"])
+        path = self._body().get("path")
+        if not path:
+            raise ApiError("no atlas given")
+        self.S.recheck_atlas(path)
         self._json({"ok": True})
 
     @route("POST", "/api/seams")
