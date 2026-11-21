@@ -14,7 +14,9 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import re
 import sys
+import time
 import types
 from concurrent.futures import as_completed
 from pathlib import Path
@@ -154,6 +156,9 @@ def extract_frame(image_path: Path, cache_dir: Path) -> core.Frame:
         "sha256": digest,
         "detector": atlas_detect.DETECTOR_ID,
         "models": detector_stamp(),
+        # which program version detected it, and when (the Re-check prompt groups screenshots by them: user)
+        "version": _program_version(),
+        "detected_at": round(time.time(), 1),
         "width": img.shape[1],
         "height": img.shape[0],
         "nodes": [
@@ -205,6 +210,45 @@ def extract_frame(image_path: Path, cache_dir: Path) -> core.Frame:
 
 
 DETECT_WORKERS = atlas_io.workers(4)  # new screenshots detected at once (each ~8 s alone; v1.01)
+
+
+def _program_version() -> str:
+    from grand_project import __version__
+
+    return __version__
+
+
+_HEAD = re.compile(r'"(models|version|detected_at)":\s*("([^"]*)"|[0-9.]+)')
+
+
+def cache_head(cache_dir: Path, sha: str) -> dict | None:
+    """Say which detector, program version and time a screenshot's saved detection came from, read from the start of
+    its file only (the Re-check prompt asks this of every screenshot of an atlas; the rest of a detection is large).
+
+    Args:
+        cache_dir: Folder of the cached detections.
+        sha: The screenshot's sha256 (as the atlas keeps it).
+
+    Returns:
+        {"fresh" (from the current detector), "version" (None: before versions were kept), "time" (detected then;
+        the file's time when it doesn't say)}, or None when it has no saved detection.
+    """
+    from grand_project import detect as atlas_detect
+    from grand_project.detect.constants import CACHE_HEAD_BYTES
+
+    cache = cache_dir / f"{sha[:16]}_{atlas_detect.DETECTOR_ID}.json"
+    try:
+        with open(cache, encoding="utf-8", errors="replace") as fh:
+            head = fh.read(CACHE_HEAD_BYTES)
+        mtime = cache.stat().st_mtime
+    except OSError:
+        return None
+    got = {m.group(1): (m.group(3) if m.group(3) is not None else m.group(2)) for m in _HEAD.finditer(head)}
+    try:
+        when = float(got["detected_at"]) if "detected_at" in got else mtime
+    except ValueError:
+        when = mtime
+    return {"fresh": got.get("models") == detector_stamp(), "version": got.get("version"), "time": when}
 
 
 def is_cached(image_path: Path, cache_dir: Path) -> bool:

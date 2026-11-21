@@ -1,4 +1,4 @@
-import { PencilIcon, Trash2Icon } from "lucide-react";
+import { PencilIcon, RefreshCwIcon, Trash2Icon } from "lucide-react";
 import { useState } from "react";
 import { Button } from "@/components/ui/button";
 import {
@@ -92,6 +92,16 @@ export function AtlasesTab() {
 							onClick={() => rename(a.json, a.name)}
 						>
 							<PencilIcon />
+						</Button>
+						<Button
+							size="icon-sm"
+							variant="ghost"
+							aria-label={`Re-check ${a.name}`}
+							title={a.open ? "Re-check this atlas" : "Open and re-check this atlas"}
+							disabled={state?.busy || a.numbers?.shots === 0}
+							onClick={() => s.askRecheck(a.json)}
+						>
+							<RefreshCwIcon />
 						</Button>
 						<Button
 							size="icon-sm"

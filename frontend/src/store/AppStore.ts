@@ -127,8 +127,9 @@ export interface AppStoreState {
 	setMode: (mode: MapMode) => void;
 	/** Biome select's menu is up (its note would still say to draw). */
 	lassoAsked: boolean;
-	fly: { x: number; y: number; px?: number; n: number } | null;
-	flyTo: (x: number, y: number, px?: number) => void;
+	/** A spot to show; clearTop: the window's y above which it would be hidden (a box over the map's top). */
+	fly: { x: number; y: number; px?: number; clearTop?: number; n: number } | null;
+	flyTo: (x: number, y: number, px?: number, clearTop?: number) => void;
 	fitAtlas: number;
 	requestFit: () => void;
 	/** Fit an area of the atlas in the view (a saved route: its whole line, with room round it). */
@@ -159,6 +160,9 @@ export interface AppStoreState {
 	showSources: (p: Point | null) => void;
 	deleteAtlas: string | null;
 	askDeleteAtlas: (json: string | null) => void;
+	/** The atlas (its .json file) the Re-check prompt asks about. */
+	recheckAtlas: string | null;
+	askRecheck: (json: string | null) => void;
 	error: string | null;
 	/** The error is a brief note about the last click (no maps inside a lasso): it closes on the next click. */
 	errorBrief: boolean;
@@ -277,7 +281,7 @@ export const useAppStore = create<AppStoreState>()((set) => ({
 		),
 	lassoAsked: false,
 	fly: null,
-	flyTo: (x, y, px) => set((s) => ({ fly: { x, y, px, n: (s.fly?.n ?? 0) + 1 } })),
+	flyTo: (x, y, px, clearTop) => set((s) => ({ fly: { x, y, px, clearTop, n: (s.fly?.n ?? 0) + 1 } })),
 	fitAtlas: 0,
 	requestFit: () => set((s) => ({ fitAtlas: s.fitAtlas + 1 })),
 	fitTo: null,
@@ -315,6 +319,8 @@ export const useAppStore = create<AppStoreState>()((set) => ({
 	showSources: (sources) => set({ sources }),
 	deleteAtlas: null,
 	askDeleteAtlas: (deleteAtlas) => set({ deleteAtlas }),
+	recheckAtlas: null,
+	askRecheck: (recheckAtlas) => set({ recheckAtlas }),
 	error: null,
 	errorBrief: false,
 	// an answer for the atlas open before isn't an error: the page just draws the new one

@@ -4,6 +4,7 @@ import type { WatchState } from "@/domain/adding/WatchState";
 import type { AppState } from "@/domain/app/AppState";
 import type { Meta, ReplaySettings } from "@/domain/app/Meta";
 import type { Parts } from "@/domain/app/Parts";
+import type { RecheckInfo } from "@/domain/app/RecheckInfo";
 import type { SettingsChange, UiSettings } from "@/domain/app/UiSettings";
 import type { UpdateStatus } from "@/domain/app/Update";
 import type { AtlasCard } from "@/domain/atlas/AtlasCard";
@@ -39,7 +40,8 @@ export function createAppClient(http: Http) {
 		setUpdateAuto: (on: boolean) => http.send<UpdateStatus>("POST", "/api/update/auto", { on }),
 		getSettings: () => http.get<UiSettings>("/api/settings"),
 		updateSettings: (change: SettingsChange) => http.send<UiSettings>("PATCH", "/api/settings", change),
-		answer: (id: number, yes: boolean) => http.send<Ok>("POST", `/api/questions/${id}`, { yes }),
+		answer: (id: number, yes: boolean, picked?: string[]) =>
+			http.send<Ok>("POST", `/api/questions/${id}`, picked ? { yes, picked } : { yes }),
 		quit: () => http.send<Ok>("POST", "/api/quit"),
 		log: (lines: string[]) => http.send<Ok>("POST", "/api/log", { lines }),
 		eventsUrl: () => http.url("/api/events"),
@@ -52,6 +54,10 @@ export function createAppClient(http: Http) {
 		forgetAtlas: (json: string) => http.send<Ok>("POST", "/api/atlases/forget", { json }),
 		deleteAtlas: (json: string) => http.send<{ failed: string[] }>("POST", "/api/atlases/delete", { json }),
 		openAtlas: (path: string) => http.send<AtlasSummary>("POST", "/api/atlas/open", { path }),
+		/** Re-check an atlas (opened first when another one is open). */
+		recheckAtlas: (path: string) => http.send<Ok>("POST", "/api/atlas/recheck-file", { path }),
+		/** What the Re-check prompt says about an atlas (read, not opened). */
+		recheckInfo: (path: string) => http.get<RecheckInfo>("/api/atlas/recheck-info", { path }),
 		newAtlas: (path: string) => http.send<AtlasSummary>("POST", "/api/atlas/new", { path }),
 		openFolder: (folder: string) => http.send<FolderOpened>("POST", "/api/atlas/folder", { folder }),
 		createFromFolder: (folder: string) => http.send<{ adding: number }>("POST", "/api/atlas/folder/create", { folder }),

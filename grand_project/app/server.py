@@ -64,6 +64,7 @@ GEN_HEADER = "X-Atlas-Gen"  # the open atlas's generation: on every answer, and 
 GEN_FREE = (
     "/api/atlas/open",
     "/api/atlas/new",
+    "/api/atlas/recheck-file",
     "/api/atlas/folder",
     "/api/atlases",
     "/api/settings",
@@ -407,8 +408,9 @@ class Handler(BaseHTTPRequestHandler):
 
     @route("POST", r"/api/questions/(?P<qid>\d+)")
     def post_answer(self, q, qid) -> None:
-        """Answer a question."""
-        ok = self.S.events.answer(int(qid), bool(self._body().get("yes")))
+        """Answer a question ({"yes"}, and "picked" for one with ticks)."""
+        body = self._body()
+        ok = self.S.events.answer(int(qid), bool(body.get("yes")), picked=body.get("picked"))
         self._json({"ok": ok})
 
     @route("GET", "/api/parts")
@@ -585,6 +587,17 @@ class Handler(BaseHTTPRequestHandler):
     def post_recheck(self, q) -> None:
         """Re-check the whole atlas."""
         self.S.recheck_all()
+        self._json({"ok": True})
+
+    @route("GET", "/api/atlas/recheck-info")
+    def get_recheck_info(self, q) -> None:
+        """What the Re-check prompt says about an atlas (?path=: another one than the open one, read, not opened)."""
+        self._json(self.S.recheck_info(q.get("path", [None])[0] or None))
+
+    @route("POST", "/api/atlas/recheck-file")
+    def post_recheck_file(self, q) -> None:
+        """Re-check an atlas from the Atlases tab ({"path"}: opened first when another one is open)."""
+        self.S.recheck_atlas(self._body()["path"])
         self._json({"ok": True})
 
     @route("POST", "/api/seams")

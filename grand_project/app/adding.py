@@ -9,6 +9,7 @@ go to the page through Events.ask, with a picture of the screenshot where it wou
 from __future__ import annotations
 
 import contextlib
+import copy
 import itertools
 import queue
 import threading
@@ -19,6 +20,7 @@ import cv2
 import numpy as np
 
 from grand_project import builder, core
+from grand_project import cities as atlas_cities
 from grand_project import finalize as atlas_finalize
 from grand_project import logs as atlas_log
 from grand_project import paths as rc_paths
@@ -26,7 +28,8 @@ from grand_project.core import islands
 from grand_project.core.geometry import apply as apply_affine
 from grand_project.core.register import mutual_pairs
 
-from .atlaslock import atlas_edit
+from . import recheck_choices
+from .atlaslock import atlas_edit, atlas_switch
 from .constants import (
     DETECT_LOG_EVERY,
     PICTURE_SIDE,
@@ -35,11 +38,17 @@ from .constants import (
     PREVIEW_NEAR,
     RECENT_FADE,
     RECENT_KEEP,
+    RECHECK_CLEAN_S,
+    RECHECK_DETECT_S,
+    RECHECK_TIMING_MIN,
     UNDO_KEEP,
+    VERSION,
     WATCH_BATCH,
     WEAK_INLIERS,
     WEAK_NCC,
 )
+from .icons import icon_label
+from .model import view_model
 
 LOG = atlas_log.get("app")
 
@@ -245,6 +254,25 @@ class AddingMixin:
         if not self.atlas or not self.atlas.frames:
             raise ValueError("no screenshots to re-check")
         self._queue_job([], "recheck_all")
+
+    @atlas_switch
+    def recheck_atlas(self, p) -> None:
+        """Re-check an atlas from its card in the Atlases tab: opened first when another one is open, and its Re-check
+        queued in the same step (the switch lock held throughout: another tab's switch can't come between, and the job
+        is tagged with the atlas opened here, not the one the page saw).
+
+        Args:
+            p: Its atlas .json file.
+
+        Raises:
+            ValueError: When it can't be opened (work running, unreadable) or has no screenshots.
+        """
+        p = Path(p)
+        if self.path is None or p.resolve() != self.path.resolve():
+            self.open_atlas(p)
+        if not self.atlas or not self.atlas.frames:
+            raise ValueError("no screenshots to re-check")
+        self._queue_job([], "recheck_all", gen=self.generation)
 
     @atlas_edit
     def undo_last(self) -> list[str]:
@@ -666,24 +694,211 @@ class AddingMixin:
         self._after_placed(mode, added, refused)
 
     def _run_recheck(self) -> None:
-        """Detect again screenshots detected by an older detector, then re-check the whole atlas."""
+        """Detect again screenshots detected by an older detector, re-check the whole atlas, then ask which of the
+        changes to take: the groups you leave unticked stay as they were (app.recheck_choices)."""
         stale = [
             Path(f["path"])
             for f in self.atlas.frames
             if Path(f["path"]).exists() and not builder.is_cached(Path(f["path"]), self._cache_dir())
         ]
+        t0 = time.monotonic()
         if stale:
             self.events.log(
                 f"Re-check: {len(stale)} screenshot(s) were detected by an older detector: detecting them again"
             )
             self._detect(stale, "detecting again")
+        t1 = time.monotonic()
         self.events.set_progress("re-checking the whole atlas")
         with self._lock:
+            old = copy.deepcopy(self.atlas.final) if self.atlas.final else None
             self.atlas.rebuild_icons(builder.cached_frames(self.path, self.atlas.frames))
             atlas_finalize.finalize(self.atlas, log=self.events.log)
+            new = self.atlas.final
+            self._note_timing(len(stale), t1 - t0, len(self.atlas.frames), time.monotonic() - t1)
+            listed = None
+            if old is not None:
+                self.events.set_progress("listing what the re-check changed")
+                listed = recheck_choices.changes(
+                    old, new, self._biomes_of(old, kept=True), self._biomes_of(new, kept=False), icon_label
+                )
+                # the map shows the atlas as it was while you choose (and hand edits made meanwhile apply to it)
+                self.atlas.final = old
+            if listed is None or not any(g["count"] for g in listed.values()):
+                self.atlas.final = new  # (nothing to choose from: only its numbers can differ)
+                self.atlas.last_check = self._check_record()
+                self.atlas.save(self.path)
+                done = "whole atlas re-checked" + (": nothing changed" if listed is not None else "")
+        if listed is None or not any(g["count"] for g in listed.values()):
+            self.rebuild_model()
+            self._done(done)
+            return
+        picked = self._ask_recheck(listed)
+        if picked is None:  # (the app is closing: nothing is changed)
+            self._done("Re-check not applied: the app closed before you chose what to update")
+            return
+        self.events.set_progress("updating what you ticked")
+        with self._lock:
+            cur = self.atlas.final  # (as it is now: the one you saw while choosing)
+            merged = recheck_choices.merge(cur, new, set(picked))
+            if "biomes" in picked:
+                self.atlas.biome_kept = []  # (the biomes as the re-check works them out)
+            else:
+                self.atlas.biome_kept = recheck_choices.kept_biomes(
+                    merged,
+                    cur,
+                    self._biomes_of(merged, kept=True),
+                    self._biomes_of(cur, kept=True),
+                    self.atlas.biome_kept,
+                )
+            self.atlas.final = merged
+            self.atlas.last_check = self._check_record()
             self.atlas.save(self.path)
         self.rebuild_model()
-        self._done("whole atlas re-checked")
+        took = [recheck_choices.GROUP_NAMES[g].lower() for g in recheck_choices.GROUPS if g in picked]
+        left = [
+            recheck_choices.GROUP_NAMES[g].lower()
+            for g in recheck_choices.GROUPS
+            if g not in picked and listed[g]["count"]
+        ]
+        msg = "whole atlas re-checked: " + (f"updated {', '.join(took)}" if took else "nothing updated")
+        if left:
+            msg += f"; kept as before: {', '.join(left)}"
+        self._done(msg)
+
+    @staticmethod
+    def _check_record() -> dict:
+        """When and on which version the whole atlas was re-checked (atlas.last_check: the Re-check prompt says)."""
+        return {"time": round(time.time(), 1), "version": VERSION}
+
+    def _note_timing(self, detected: int, detect_s: float, shots: int, clean_s: float) -> None:
+        """Keep how long a Re-check's steps took per screenshot on this computer (the next prompt's estimate)."""
+        t = dict(self.settings.get("recheck_timing") or {})
+        if detected >= RECHECK_TIMING_MIN:
+            t["detect_s"] = round(detect_s / detected, 2)
+        if shots >= RECHECK_TIMING_MIN:
+            t["clean_s"] = round(clean_s / shots, 3)
+        if t:
+            self.settings["recheck_timing"] = t
+            self.save_settings()
+
+    def recheck_info(self, p=None) -> dict:
+        """What the Re-check prompt says about an atlas: when it was last re-checked, when and on which version its
+        screenshots were detected (in groups), how many will be detected again and about how long it takes.
+
+        Args:
+            p: Its atlas .json file (None: the open one). Another atlas is read from its file, not opened.
+
+        Returns:
+            {"last_check": {"time", "version"} or None, "shots", "detect", "missing", "estimate_s", "groups":
+            [{"version" (None: before 1.23), "fresh", "count", "newest", "oldest"}] (newest first)}.
+
+        Raises:
+            ValueError: When the file can't be read.
+        """
+        if p is None or (self.path is not None and Path(p).resolve() == self.path.resolve()):
+            with self._lock:  # (a copy of what is needed: the job may change the atlas meanwhile)
+                atlas, path = self.atlas, self.path
+                if atlas is None:
+                    raise ValueError("no atlas open")
+                frames = [dict(f) for f in atlas.frames]
+                last = atlas.last_check
+        else:
+            path = Path(p)
+            try:
+                atlas = core.Atlas.load(path)
+            except Exception as e:
+                raise ValueError(f"could not read {path}: {e}") from e
+            frames, last = atlas.frames, atlas.last_check
+        cache_dir = path.with_name(path.stem + "_frames")
+        groups: dict[tuple, dict] = {}
+        detect = missing = 0
+        for f in frames:
+            here = Path(f["path"]).exists()
+            head = builder.cache_head(cache_dir, f["sha"]) if f.get("sha") else None
+            if head is None or not head["fresh"]:
+                if here:
+                    detect += 1  # (a detection gone or from an older detector: detected again)
+                else:
+                    missing += 1  # (its screenshot is gone: its old detection is used as it is)
+            if head is None:
+                continue
+            g = groups.setdefault(
+                (head["version"], head["fresh"]),
+                {"version": head["version"], "fresh": head["fresh"], "count": 0, "newest": 0.0, "oldest": 1e18},
+            )
+            g["count"] += 1
+            g["newest"] = max(g["newest"], head["time"])
+            g["oldest"] = min(g["oldest"], head["time"])
+        t = self.settings.get("recheck_timing") or {}
+        estimate = detect * float(t.get("detect_s", RECHECK_DETECT_S)) + len(frames) * float(
+            t.get("clean_s", RECHECK_CLEAN_S)
+        )
+        return {
+            "last_check": last,
+            "shots": len(frames),
+            "detect": detect,
+            "missing": missing,
+            "estimate_s": round(estimate),
+            "groups": sorted(groups.values(), key=lambda g: -g["newest"]),
+        }
+
+    def _biomes_of(self, final: dict, kept: bool) -> dict:
+        """Each map's biome in an atlas-wide result (held under the session lock).
+
+        Args:
+            final: An atlas-wide result (atlas.final is set to it while they are worked out, then put back).
+            kept: Apply the biomes a Re-check left as they were (cities.biomes).
+
+        Returns:
+            {map node index: biome}.
+        """
+        saved = self.atlas.final
+        self.atlas.final = final
+        try:
+            found = atlas_cities.biomes(self.atlas, view_model(self.atlas), ground=self.ground(), kept=kept)
+        finally:
+            self.atlas.final = saved
+        return recheck_choices.biome_labels(found["potential"])
+
+    def _ask_recheck(self, listed: dict) -> list[str] | None:
+        """Ask the page which of the re-check's changes to take, and remember your ticks (for every atlas).
+
+        Args:
+            listed: recheck_choices.changes.
+
+        Returns:
+            The groups ticked, or None when the app closes first.
+        """
+        ticks = self.ui_settings()["recheck_update"]
+        groups = [
+            {
+                "id": g,
+                "name": recheck_choices.GROUP_NAMES[g],
+                "count": listed[g]["count"],
+                "added": listed[g]["added"],
+                "removed": listed[g]["removed"],
+                "changed": listed[g]["changed"],
+                "items": listed[g]["items"],
+                "ticked": bool(ticks.get(g, True)) and listed[g]["count"] > 0,
+            }
+            for g in recheck_choices.GROUPS
+        ]
+        for g in groups:
+            if g["count"]:
+                self.events.log(f"Re-check: {g['name'].lower()}: {g['count']} change(s)")
+        self.events.set_progress("Re-check: choose what to update")
+        with self._lock.let_go():  # (as _ask: the page's requests go on while the box is open)
+            picked = self.events.ask_choices(
+                "Here are the map changes. Choose which to keep: a group left unticked stays as it was before, on "
+                "the maps it was on.",
+                {"groups": groups},
+                labels={"title": "Re-check atlas has finished", "yes": "Apply"},
+            )
+        if picked is not None:
+            changed = {g["id"]: g["id"] in picked for g in groups if g["count"]}
+            self.settings["recheck_update"] = {**ticks, **changed}
+            self.save_settings()
+        return picked
 
     def _done(self, msg: str) -> None:
         """Tell the page a job finished.
