@@ -589,6 +589,11 @@ class Handler(BaseHTTPRequestHandler):
         self.S.recheck_all()
         self._json({"ok": True})
 
+    @route("GET", "/api/atlas/recheck-info")
+    def get_recheck_info(self, q) -> None:
+        """What the Re-check prompt says about an atlas (?path=: another one than the open one, read, not opened)."""
+        self._json(self.S.recheck_info(q.get("path", [None])[0] or None))
+
     @route("POST", "/api/atlas/recheck-file")
     def post_recheck_file(self, q) -> None:
         """Re-check an atlas from the Atlases tab ({"path"}: opened first when another one is open)."""

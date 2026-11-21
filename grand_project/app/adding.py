@@ -38,7 +38,11 @@ from .constants import (
     PREVIEW_NEAR,
     RECENT_FADE,
     RECENT_KEEP,
+    RECHECK_CLEAN_S,
+    RECHECK_DETECT_S,
+    RECHECK_TIMING_MIN,
     UNDO_KEEP,
+    VERSION,
     WATCH_BATCH,
     WEAK_INLIERS,
     WEAK_NCC,
@@ -697,17 +701,20 @@ class AddingMixin:
             for f in self.atlas.frames
             if Path(f["path"]).exists() and not builder.is_cached(Path(f["path"]), self._cache_dir())
         ]
+        t0 = time.monotonic()
         if stale:
             self.events.log(
                 f"Re-check: {len(stale)} screenshot(s) were detected by an older detector: detecting them again"
             )
             self._detect(stale, "detecting again")
+        t1 = time.monotonic()
         self.events.set_progress("re-checking the whole atlas")
         with self._lock:
             old = copy.deepcopy(self.atlas.final) if self.atlas.final else None
             self.atlas.rebuild_icons(builder.cached_frames(self.path, self.atlas.frames))
             atlas_finalize.finalize(self.atlas, log=self.events.log)
             new = self.atlas.final
+            self._note_timing(len(stale), t1 - t0, len(self.atlas.frames), time.monotonic() - t1)
             listed = None
             if old is not None:
                 self.events.set_progress("listing what the re-check changed")
@@ -718,6 +725,7 @@ class AddingMixin:
                 self.atlas.final = old
             if listed is None or not any(g["count"] for g in listed.values()):
                 self.atlas.final = new  # (nothing to choose from: only its numbers can differ)
+                self.atlas.last_check = self._check_record()
                 self.atlas.save(self.path)
                 done = "whole atlas re-checked" + (": nothing changed" if listed is not None else "")
         if listed is None or not any(g["count"] for g in listed.values()):
@@ -743,6 +751,7 @@ class AddingMixin:
                     self.atlas.biome_kept,
                 )
             self.atlas.final = merged
+            self.atlas.last_check = self._check_record()
             self.atlas.save(self.path)
         self.rebuild_model()
         took = [recheck_choices.GROUP_NAMES[g].lower() for g in recheck_choices.GROUPS if g in picked]
@@ -755,6 +764,83 @@ class AddingMixin:
         if left:
             msg += f"; kept as before: {', '.join(left)}"
         self._done(msg)
+
+    @staticmethod
+    def _check_record() -> dict:
+        """When and on which version the whole atlas was re-checked (atlas.last_check: the Re-check prompt says)."""
+        return {"time": round(time.time(), 1), "version": VERSION}
+
+    def _note_timing(self, detected: int, detect_s: float, shots: int, clean_s: float) -> None:
+        """Keep how long a Re-check's steps took per screenshot on this computer (the next prompt's estimate)."""
+        t = dict(self.settings.get("recheck_timing") or {})
+        if detected >= RECHECK_TIMING_MIN:
+            t["detect_s"] = round(detect_s / detected, 2)
+        if shots >= RECHECK_TIMING_MIN:
+            t["clean_s"] = round(clean_s / shots, 3)
+        if t:
+            self.settings["recheck_timing"] = t
+            self.save_settings()
+
+    def recheck_info(self, p=None) -> dict:
+        """What the Re-check prompt says about an atlas: when it was last re-checked, when and on which version its
+        screenshots were detected (in groups), how many will be detected again and about how long it takes.
+
+        Args:
+            p: Its atlas .json file (None: the open one). Another atlas is read from its file, not opened.
+
+        Returns:
+            {"last_check": {"time", "version"} or None, "shots", "detect", "missing", "estimate_s", "groups":
+            [{"version" (None: before 1.23), "fresh", "count", "newest", "oldest"}] (newest first)}.
+
+        Raises:
+            ValueError: When the file can't be read.
+        """
+        if p is None or (self.path is not None and Path(p).resolve() == self.path.resolve()):
+            with self._lock:  # (a copy of what is needed: the job may change the atlas meanwhile)
+                atlas, path = self.atlas, self.path
+                if atlas is None:
+                    raise ValueError("no atlas open")
+                frames = [dict(f) for f in atlas.frames]
+                last = atlas.last_check
+        else:
+            path = Path(p)
+            try:
+                atlas = core.Atlas.load(path)
+            except Exception as e:
+                raise ValueError(f"could not read {path}: {e}") from e
+            frames, last = atlas.frames, atlas.last_check
+        cache_dir = path.with_name(path.stem + "_frames")
+        groups: dict[tuple, dict] = {}
+        detect = missing = 0
+        for f in frames:
+            here = Path(f["path"]).exists()
+            head = builder.cache_head(cache_dir, f["sha"]) if f.get("sha") else None
+            if head is None or not head["fresh"]:
+                if here:
+                    detect += 1  # (a detection gone or from an older detector: detected again)
+                else:
+                    missing += 1  # (its screenshot is gone: its old detection is used as it is)
+            if head is None:
+                continue
+            g = groups.setdefault(
+                (head["version"], head["fresh"]),
+                {"version": head["version"], "fresh": head["fresh"], "count": 0, "newest": 0.0, "oldest": 1e18},
+            )
+            g["count"] += 1
+            g["newest"] = max(g["newest"], head["time"])
+            g["oldest"] = min(g["oldest"], head["time"])
+        t = self.settings.get("recheck_timing") or {}
+        estimate = detect * float(t.get("detect_s", RECHECK_DETECT_S)) + len(frames) * float(
+            t.get("clean_s", RECHECK_CLEAN_S)
+        )
+        return {
+            "last_check": last,
+            "shots": len(frames),
+            "detect": detect,
+            "missing": missing,
+            "estimate_s": round(estimate),
+            "groups": sorted(groups.values(), key=lambda g: -g["newest"]),
+        }
 
     def _biomes_of(self, final: dict, kept: bool) -> dict:
         """Each map's biome in an atlas-wide result (held under the session lock).

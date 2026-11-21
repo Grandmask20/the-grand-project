@@ -1,7 +1,5 @@
-import { useQueryClient } from "@tanstack/react-query";
 import { PencilIcon, RefreshCwIcon, Trash2Icon } from "lucide-react";
 import { useState } from "react";
-import { AppQueryKeys } from "@/api/AppQueryKeys";
 import { Button } from "@/components/ui/button";
 import {
 	DropdownMenu,
@@ -21,7 +19,6 @@ import { cn } from "@/utils/Cn";
  * to open its folder, rename or delete it. */
 export function AtlasesTab() {
 	const app = useAppClient();
-	const queryClient = useQueryClient();
 	const atlases = useAtlases();
 	const state = useAppState().data;
 	const actions = useAtlasActions();
@@ -35,23 +32,6 @@ export function AtlasesTab() {
 			label: "Name in this list:",
 			value: name,
 			onOk: (n) => void app.renameAtlas(json, n).catch(fail),
-		});
-
-	// Re-check from the card (user: "a refresh icon between delete and rename", asked first: "it should be a prompt,
-	// not an instant button"); another atlas is opened first
-	const recheck = (json: string, name: string, open: boolean) =>
-		s.askConfirm({
-			title: "Re-check atlas",
-			text:
-				`Re-check "${name}"? Screenshots detected by an older detector are detected again (after an ` +
-				`update that can be all of them: long on a big atlas), then the whole atlas is cleaned up again ` +
-				`(a few minutes), and it shows what changed so you can choose which changes to keep.${open ? "" : ` "${name}" is opened first.`}`,
-			yes: "Re-check",
-			onYes: () =>
-				void app
-					.recheckAtlas(json)
-					.then(() => queryClient.invalidateQueries({ queryKey: AppQueryKeys.state }))
-					.catch(fail),
 		});
 
 	return (
@@ -119,7 +99,7 @@ export function AtlasesTab() {
 							aria-label={`Re-check ${a.name}`}
 							title={a.open ? "Re-check this atlas" : "Open and re-check this atlas"}
 							disabled={state?.busy || a.numbers?.shots === 0}
-							onClick={() => recheck(a.json, a.name, !!a.open)}
+							onClick={() => s.askRecheck(a.json)}
 						>
 							<RefreshCwIcon />
 						</Button>

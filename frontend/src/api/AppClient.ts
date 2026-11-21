@@ -4,6 +4,7 @@ import type { WatchState } from "@/domain/adding/WatchState";
 import type { AppState } from "@/domain/app/AppState";
 import type { Meta, ReplaySettings } from "@/domain/app/Meta";
 import type { Parts } from "@/domain/app/Parts";
+import type { RecheckInfo } from "@/domain/app/RecheckInfo";
 import type { SettingsChange, UiSettings } from "@/domain/app/UiSettings";
 import type { UpdateStatus } from "@/domain/app/Update";
 import type { AtlasCard } from "@/domain/atlas/AtlasCard";
@@ -55,6 +56,8 @@ export function createAppClient(http: Http) {
 		openAtlas: (path: string) => http.send<AtlasSummary>("POST", "/api/atlas/open", { path }),
 		/** Re-check an atlas (opened first when another one is open). */
 		recheckAtlas: (path: string) => http.send<Ok>("POST", "/api/atlas/recheck-file", { path }),
+		/** What the Re-check prompt says about an atlas (read, not opened). */
+		recheckInfo: (path: string) => http.get<RecheckInfo>("/api/atlas/recheck-info", { path }),
 		newAtlas: (path: string) => http.send<AtlasSummary>("POST", "/api/atlas/new", { path }),
 		openFolder: (folder: string) => http.send<FolderOpened>("POST", "/api/atlas/folder", { folder }),
 		createFromFolder: (folder: string) => http.send<{ adding: number }>("POST", "/api/atlas/folder/create", { folder }),

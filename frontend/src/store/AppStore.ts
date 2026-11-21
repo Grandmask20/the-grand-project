@@ -160,6 +160,9 @@ export interface AppStoreState {
 	showSources: (p: Point | null) => void;
 	deleteAtlas: string | null;
 	askDeleteAtlas: (json: string | null) => void;
+	/** The atlas (its .json file) the Re-check prompt asks about. */
+	recheckAtlas: string | null;
+	askRecheck: (json: string | null) => void;
 	error: string | null;
 	/** The error is a brief note about the last click (no maps inside a lasso): it closes on the next click. */
 	errorBrief: boolean;
@@ -316,6 +319,8 @@ export const useAppStore = create<AppStoreState>()((set) => ({
 	showSources: (sources) => set({ sources }),
 	deleteAtlas: null,
 	askDeleteAtlas: (deleteAtlas) => set({ deleteAtlas }),
+	recheckAtlas: null,
+	askRecheck: (recheckAtlas) => set({ recheckAtlas }),
 	error: null,
 	errorBrief: false,
 	// an answer for the atlas open before isn't an error: the page just draws the new one

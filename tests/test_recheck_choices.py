@@ -11,6 +11,7 @@ import pytest
 
 from grand_project import cities, core
 from grand_project import finalize as atlas_finalize
+from grand_project.app import constants as K
 from grand_project.app import recheck_choices as rc
 from grand_project.app.events import Events
 from grand_project.app.session import AtlasSession
@@ -342,3 +343,75 @@ def test_recheck_from_a_card_opens_that_atlas_and_queues_its_recheck(tmp_path, m
     finally:
         s._jobs = type(s._jobs)()
         s.shutdown()
+
+
+# ------------------------------------------------------------------ what the Re-check prompt says
+def _cache(folder, sha: str, models: str, version=None, when=None) -> None:
+    from grand_project import builder
+
+    head = {"name": "x", "path": "x", "sha256": sha, "detector": builder.NEW_DETECTOR_ID, "models": models}
+    if version is not None:
+        head["version"] = version
+    if when is not None:
+        head["detected_at"] = when
+    (folder / f"{sha[:16]}_{builder.NEW_DETECTOR_ID}.json").write_text(json.dumps({**head, "nodes": []}))
+
+
+def test_the_prompt_groups_screenshots_by_version_and_counts_what_is_detected_again(tmp_path, monkeypatch):
+    from grand_project import builder
+
+    monkeypatch.setattr(cities, "find_locks", lambda atlas, todo: [])
+    monkeypatch.setattr(builder, "detector_stamp", lambda: "now")
+    path, _at = biome_atlas(tmp_path)
+    at = core.Atlas.load(path)
+    frames_dir = path.with_name(path.stem + "_frames")
+    frames_dir.mkdir(exist_ok=True)
+    at.frames = []
+    for k in range(5):
+        shot = tmp_path / f"s{k}.png"
+        if k != 4:
+            shot.write_bytes(b"png")  # (s4's file is gone)
+        at.frames.append({"name": f"s{k}", "path": str(shot), "sha": str(k) * 64, "w": 1920, "h": 1080,
+                          "M": [[1, 0, 0], [0, 1, 0]], "stats": {}})  # fmt: skip
+    _cache(frames_dir, "0" * 64, "now", "1.23", 2000.0)
+    _cache(frames_dir, "1" * 64, "now", "1.23", 3000.0)
+    _cache(frames_dir, "2" * 64, "old")  # (before versions were kept: the file's time)
+    # s3 has no detection; s4's file is gone and its detection old
+    _cache(frames_dir, "4" * 64, "old")
+    at.last_check = {"time": 1234.0, "version": "1.23"}
+    at.save(path)
+    s = AtlasSession(settings={}, worker=False)
+    try:
+        info = s.recheck_info(path)  # (not open: read from its file)
+        assert info["last_check"] == {"time": 1234.0, "version": "1.23"}
+        assert (info["shots"], info["detect"], info["missing"]) == (5, 2, 1)  # s2 (old) and s3 (none); s4 gone
+        new, old = info["groups"] if info["groups"][0]["version"] == "1.23" else info["groups"][::-1]
+        assert new == {"version": "1.23", "fresh": True, "count": 2, "newest": 3000.0, "oldest": 2000.0}
+        assert old["version"] is None and not old["fresh"] and old["count"] == 2
+        assert info["estimate_s"] == round(2 * K.RECHECK_DETECT_S + 5 * K.RECHECK_CLEAN_S)
+        s.settings["recheck_timing"] = {"detect_s": 10.0, "clean_s": 1.0}  # (measured here before)
+        assert s.recheck_info(path)["estimate_s"] == 25
+        s.open_atlas(path)
+        assert s.recheck_info()["shots"] == 5  # (the open one)
+    finally:
+        s.shutdown()
+
+
+def test_a_recheck_records_when_and_how_long(rechecked):
+    s, path = rechecked
+    s.picks = list(rc.GROUPS)
+    s._run_recheck()
+    saved = core.Atlas.load(path)
+    assert saved.last_check["version"] == K.VERSION and saved.last_check["time"] > 0
+    s._note_timing(10, 25.0, 100, 40.0)
+    assert s.settings["recheck_timing"] == {"detect_s": 2.5, "clean_s": 0.4}
+    s._note_timing(1, 99.0, 2, 99.0)  # (too few to measure: kept as it was)
+    assert s.settings["recheck_timing"] == {"detect_s": 2.5, "clean_s": 0.4}
+
+
+def test_new_detections_say_their_version_and_time(tmp_path):
+    from grand_project import builder
+
+    _cache(tmp_path, "ab" * 32, builder.detector_stamp(), "1.23", 5000.0)
+    assert builder.cache_head(tmp_path, "ab" * 32) == {"fresh": True, "version": "1.23", "time": 5000.0}
+    assert builder.cache_head(tmp_path, "cd" * 32) is None

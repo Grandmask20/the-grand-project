@@ -408,3 +408,9 @@ RECHECK_LANDMARK_ON_MAP = 60.0  # a landmark this close to a map moves with it
 RECHECK_ICON_MATCH = 20.0  # an old and a new icon of one name this close are the same icon
 RECHECK_ICON_ON_MAP = 40.0  # an icon's base this close to a map belongs to it
 RECHECK_ITEMS_SHOWN = 400  # changes listed per group (the count says how many there are)
+# s per screenshot, for the Re-check prompt's estimate until a Re-check on this computer has measured them (kept in
+# the settings, "recheck_timing"): detecting again with 4 worker processes (~8 s each alone, v1.01), and the atlas-wide
+# clean-up (crawl atlas: 188 s for 526 screenshots, v1.23)
+RECHECK_DETECT_S = 2.5
+RECHECK_CLEAN_S = 0.4
+RECHECK_TIMING_MIN = 5  # screenshots: a Re-check's timing is kept only when it detected / cleaned up at least this many

@@ -286,3 +286,6 @@ CITY_OFF_SHIFTS = [(0, -8), (0, -5), (0, 5), (0, 8), (-6, 0), (6, 0)]
 BADGE_FINDER_FILE = rc_paths.ref("badge_finder.npz")
 
 DETECT_DIGEST_MEMO = 20000  # screenshot hashes kept in memory (builder.file_digest), then forgotten
+# bytes read from the start of a saved detection to tell its detector, version and time (builder.cache_head): those
+# fields come first (name, path, sha256, detector, models, version, detected_at: ~400 bytes with a long path)
+CACHE_HEAD_BYTES = 2048
