@@ -15,6 +15,10 @@ import { useAtlases } from "@/hooks/atlas/UseAtlases";
 import { useAppStoreCalm } from "@/store/AppStore";
 import { cn } from "@/utils/Cn";
 
+// the card's buttons light up on hover like the top bar's (user: "a mild highlight"): the ghost button's own hover
+// shade is the card's, so it didn't show on a card
+const CARD_BUTTON = "hover:bg-foreground/15";
+
 /** Saved atlases: a card per known atlas (its map, maps / icons / screenshots); click one to open it, right-click it
  * to open its folder, rename or delete it. */
 export function AtlasesTab() {
@@ -88,6 +92,7 @@ export function AtlasesTab() {
 						<Button
 							size="icon-sm"
 							variant="ghost"
+							className={CARD_BUTTON}
 							aria-label={`Rename ${a.name}`}
 							onClick={() => rename(a.json, a.name)}
 						>
@@ -96,6 +101,7 @@ export function AtlasesTab() {
 						<Button
 							size="icon-sm"
 							variant="ghost"
+							className={CARD_BUTTON}
 							aria-label={`Re-check ${a.name}`}
 							title={a.open ? "Re-check this atlas" : "Open and re-check this atlas"}
 							disabled={state?.busy || a.numbers?.shots === 0}
@@ -106,6 +112,7 @@ export function AtlasesTab() {
 						<Button
 							size="icon-sm"
 							variant="ghost"
+							className={CARD_BUTTON}
 							aria-label={`Delete ${a.name}`}
 							onClick={() => s.askDeleteAtlas(a.json)}
 						>
