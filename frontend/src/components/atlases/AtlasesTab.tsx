@@ -43,8 +43,9 @@ export function AtlasesTab() {
 		s.askConfirm({
 			title: "Re-check atlas",
 			text:
-				`Re-check "${name}"? It runs the full clean-up again (a few minutes on a big atlas), then shows what ` +
-				`changed so you can choose which changes to keep.${open ? "" : ` "${name}" is opened first.`}`,
+				`Re-check "${name}"? Screenshots detected by an older detector are detected again (after an ` +
+				`update that can be all of them: long on a big atlas), then the whole atlas is cleaned up again ` +
+				`(a few minutes), and it shows what changed so you can choose which changes to keep.${open ? "" : ` "${name}" is opened first.`}`,
 			yes: "Re-check",
 			onYes: () =>
 				void app
