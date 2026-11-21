@@ -62,7 +62,7 @@ describe("FindTab", () => {
 		await waitFor(() => expect(multi).toHaveAttribute("aria-pressed", "true"));
 	});
 
-	it("the results drop down under the search; a pick or a click elsewhere closes them, the search opens them again", async () => {
+	it("the results stay through picks and clicks elsewhere (user); their ✕ or Esc closes them, the search opens them again", async () => {
 		const { user } = renderWithApp(<FindTab />, {
 			"GET /api/types": types,
 			"GET /api/search": found,
@@ -71,10 +71,15 @@ describe("FindTab", () => {
 		const box = screen.getByLabelText("Find");
 		await user.type(box, "vaal");
 		await user.click(await screen.findByRole("button", { name: "Vaal city" }));
+		await user.click(screen.getByText("Only"));
+		expect(screen.getByRole("region", { name: "Results" })).toBeInTheDocument();
+		await user.click(screen.getByRole("button", { name: "Close the results" }));
 		expect(screen.queryByRole("region", { name: "Results" })).toBeNull();
 		await user.click(box);
 		expect(screen.getByRole("region", { name: "Results" })).toBeInTheDocument();
-		await user.click(screen.getByText("Only"));
+		act(() => {
+			window.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape" }));
+		});
 		expect(screen.queryByRole("region", { name: "Results" })).toBeNull();
 	});
 

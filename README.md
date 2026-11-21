@@ -99,7 +99,7 @@ A screenshot that might be placed wrong is shown on the map, see-through and out
 - **Mouse:** wheel to zoom at the cursor, drag to pan, right-drag (or Ctrl-drag) to tilt and turn, click a map or a path to select it (its details show in a window over the map, where you clicked; ✕ closes it). Zoomed in, the ground is built sharp from your screenshots themselves.
 - **Keys:** `+` / `-` zoom, `0` fit, arrows pan, Esc cancels what you were doing.
 - **Map tools** (top bar): *Select*, *Route*, *Bookmark*, *I am here*, *Biome* and *Place* (a screenshot by hand). The tool on is lit; click it again, or *Select*, to end it. What a click does now shows in the line above the map, with *End*.
-- **Status line** (bottom): the atlas's numbers and where the mouse is, then the map buttons (zoom, fit the whole atlas, face north, **3D**: tilted view with models of maps, towers, citadels, halls and strongholds; full screen), **Layers** (what the map shows) and **Log**.
+- **Status line** (bottom): the atlas's numbers and where the mouse is, then the map buttons (zoom, fit the whole atlas, face north, **3D**: tilted view with models of maps, towers (beacon on top), citadels (Vaal pyramid, Ezomyte walled town, Faridun camp), halls and Breach strongholds; full screen), **Layers** (what the map shows) and **Log**.
 - **The side panel** is a rail of four tabs: Find, View, Saved (bookmarks, with Route) and Atlases (with Auto-add). Click the open tab again (or ✕) to fold the panel away for more map; drag its edge to resize it.
 - **View tab:**
   - **Background:** *Picture* (the stitched screenshots), *Vector* (flat land with the city / stronghold / ground biomes as areas) or *Off*.
@@ -111,7 +111,7 @@ A screenshot that might be placed wrong is shown on the map, see-through and out
 - **Layers** (status line): Ground, Paths, Maps, Icons, Landmarks, Bookmarks, Names, Biomes, Recent additions, Removed, 3D models, Routes (on, saved only, off) and Debug marks, with the colour legend.
 - **Find tab:**
   - Search by icon name (the maps with it), City / Hall / Tower, bookmark, `#map` (or `map 12`), or `x, y` to go to a spot. The search is loose: words in any order, a typo, letters left out (`abydep` finds Abyssal Depths); the best matches come first.
-  - The results drop down under the search: each with its picture, its name, where it is (its map, a bookmark's group), its map's icons and ★ when bookmarked. The pills under the search switch each kind of result on and off; a search for an icon finds the maps with it (the icons themselves: switch Icons on).
+  - The results drop down under the search and stay open while you go through them (the one selected is lit; their ✕ or Esc closes them): each with its picture, its name, where it is (its map, a bookmark's group), its map's icons and ★ when bookmarked. The pills under the search switch each kind of result on and off; a search for an icon finds the maps with it (the icons themselves: switch Icons on).
   - Tick types to show them; click a type's name to list (and ring) every one of them.
   - *Only what 2+ screenshots show*, *only maps with a ticked icon* and *only potential city maps* narrow the view.
 - **Screenshots** (the selection's window), or right-click → *Screenshots of this spot*, lists the source screenshots for a spot.

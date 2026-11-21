@@ -1,5 +1,5 @@
 import { useQueryClient } from "@tanstack/react-query";
-import { BookmarkIcon, CastleIcon, SplineIcon } from "lucide-react";
+import { BookmarkIcon, CastleIcon, SplineIcon, XIcon } from "lucide-react";
 import { type KeyboardEvent, useEffect, useRef } from "react";
 import { IconPicture } from "@/components/common/IconPicture";
 import { MapMark } from "@/components/common/MapMark";
@@ -55,9 +55,10 @@ function MapIcons({ row }: { row: ResultRow }) {
 
 /**
  * Find's results: a list that drops down under the search, as the route's "to the nearest map with…" does (user).
- * Click one to go there and select it (the list closes); Bookmark all puts them in one group; ↑ ↓ move between them.
+ * Click one to go there and select it, the list staying to go through the rest (user), the one selected lit; its ✕
+ * closes it; Bookmark all puts them in one group; ↑ ↓ move between them.
  */
-export function ResultList({ onPick }: { onPick?: () => void }) {
+export function ResultList({ onClose }: { onClose?: () => void }) {
 	const app = useAppClient();
 	const queryClient = useQueryClient();
 	const results = useAppStore((s) => s.results);
@@ -68,6 +69,7 @@ export function ResultList({ onPick }: { onPick?: () => void }) {
 	const showError = useAppStore((s) => s.showError);
 	const selectLoaded = useAppStore((s) => s.selectLoaded);
 	const kinds = useAppStore((s) => s.findKinds);
+	const sel = useAppStore((s) => (s.selected ? `${s.selected.kind}:${s.selected.id}` : ""));
 	// the kinds Find's pills show (a path, which has no pill, always); a type's list (a type clicked) as asked: its
 	// icons with Icons off too
 	const listed = useAppStore((s) => s.listed && !s.query.trim());
@@ -121,6 +123,17 @@ export function ResultList({ onPick }: { onPick?: () => void }) {
 						Bookmark all
 					</Button>
 				)}
+				{onClose && (
+					<button
+						type="button"
+						aria-label="Close the results"
+						title="Close the results (the search opens them again)"
+						onClick={onClose}
+						className="rounded p-1 text-muted-foreground hover:bg-accent hover:text-foreground"
+					>
+						<XIcon className="size-4" />
+					</button>
+				)}
 			</div>
 			<ul className="max-h-96 overflow-y-auto" onKeyDown={move}>
 				{rows.slice(0, 500).map((r) => (
@@ -128,10 +141,10 @@ export function ResultList({ onPick }: { onPick?: () => void }) {
 						<button
 							type="button"
 							aria-label={r.label}
+							aria-current={sel === `${r.kind}:${r.id}` || undefined}
 							title={rowTooltip(r)}
-							className="flex min-h-9 w-full items-center gap-2.5 rounded-sm px-2 py-1 text-left outline-none hover:bg-accent focus-visible:bg-accent"
+							className="flex min-h-9 w-full items-center gap-2.5 rounded-sm px-2 py-1 text-left outline-none hover:bg-accent focus-visible:bg-accent aria-[current]:bg-accent aria-[current]:shadow-[inset_2px_0_0_var(--color-gold)]"
 							onClick={async () => {
-								onPick?.();
 								flyTo(r.x, r.y, 1);
 								try {
 									await selectLoaded(app.getInfo(r.kind, r.id));

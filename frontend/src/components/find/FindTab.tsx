@@ -56,24 +56,18 @@ export function FindTab() {
 		if (listed && !query.trim() && list.data) setResults(list.data, `${list.data.length} ${listed.label}`);
 	}, [listed, list.data, query, setResults]);
 
-	// the results drop down under the search when a list comes (a search, a type clicked); a pick, a click elsewhere or
-	// Esc closes them, and the search's focus or ↓ opens them again (user: like the route's combo)
+	// the results drop down under the search when a list comes (a search, a type clicked) and stay while you go through
+	// them (user: a pick or a click on the map closed them); their ✕ or Esc closes them, the search's focus or ↓ opens
+	// them again
 	const resultsTitle = useAppStore((s) => s.resultsTitle);
 	const open = useAppStore((s) => s.resultsOpen);
 	const setOpen = useAppStore((s) => s.setResultsOpen);
 	const searchBox = useRef<HTMLDivElement>(null);
 	useEffect(() => {
 		if (!open) return;
-		const away = (e: PointerEvent) => {
-			if (!searchBox.current?.contains(e.target as Node)) setOpen(false);
-		};
 		const esc = (e: KeyboardEvent) => e.key === "Escape" && setOpen(false);
-		window.addEventListener("pointerdown", away, true);
 		window.addEventListener("keydown", esc);
-		return () => {
-			window.removeEventListener("pointerdown", away, true);
-			window.removeEventListener("keydown", esc);
-		};
+		return () => window.removeEventListener("keydown", esc);
 	}, [open, setOpen]);
 	const down = () => {
 		setOpen(true);
@@ -119,7 +113,7 @@ export function FindTab() {
 				>
 					<XIcon className="size-4" />
 				</button>
-				{open && <ResultList onPick={() => setOpen(false)} />}
+				{open && <ResultList onClose={() => setOpen(false)} />}
 			</div>
 			<div className="flex flex-wrap gap-1.5">
 				{(

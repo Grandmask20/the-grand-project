@@ -90,15 +90,23 @@ describe("ResultList", () => {
 		expect(screen.getByRole("button", { name: "Map #12: Breach" })).toHaveFocus();
 	});
 
-	it("goes to a result, selects it and says it was picked", async () => {
+	it("goes to a result and selects it, lit in the list, which stays (user: to go through the rest)", async () => {
 		useAppStore.getState().setResults(rows, "found");
-		const picked = vi.fn();
-		const { user, calls } = renderWithApp(<ResultList onPick={picked} />, { "GET /api/info": nodeInfo });
+		const { user, calls } = renderWithApp(<ResultList />, { "GET /api/info": nodeInfo });
 		await user.click(screen.getByRole("button", { name: "Map #12: Breach" }));
-		expect(picked).toHaveBeenCalledOnce();
 		expect(useAppStore.getState().fly).toMatchObject({ x: 440, y: 200, px: 1 });
 		await waitFor(() => expect(useAppStore.getState().selected?.id).toBe(12));
 		expect(calls.find((c) => c.path === "/api/info")?.params).toEqual({ kind: "node", id: 12 });
+		expect(screen.getByRole("button", { name: "Map #12: Breach" })).toHaveAttribute("aria-current", "true");
+		expect(screen.getByRole("button", { name: "Tower" })).not.toHaveAttribute("aria-current");
+	});
+
+	it("its ✕ closes it", async () => {
+		useAppStore.getState().setResults(rows, "found");
+		const closed = vi.fn();
+		const { user } = renderWithApp(<ResultList onClose={closed} />);
+		await user.click(screen.getByRole("button", { name: "Close the results" }));
+		expect(closed).toHaveBeenCalledOnce();
 	});
 
 	it("bookmarks all results but bookmarks into a group", async () => {
