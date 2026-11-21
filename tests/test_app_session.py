@@ -26,6 +26,13 @@ def session():
     s.shutdown()
 
 
+def settled(session) -> None:
+    """Wait for what opening an atlas starts behind it: the locked-stronghold search ends with a model rebuild (a
+    filter version), which landed in the middle of a test on a busy machine."""
+    if getattr(session, "_lock_thread", None):
+        session._lock_thread.join(10)
+
+
 def points(s: AtlasSession, layer: str, replay: bool = False) -> dict:
     """Every point feature of a vector tile layer at zmax: {id: (atlas x, atlas y, props)} (replay: the timelapse
     tab's tiles)."""
@@ -75,10 +82,7 @@ def test_vector_tiles_hold_the_maps_where_they_are(session, tmp_path):
         assert abs(gx - x) < 0.1 and abs(gy - y) < 0.1 and props["status"] == "confirmed"
     assert maps[6][2]["icons"] == "|Breach|Delirium|"
     assert not points(session, "removed")
-    # the locked-stronghold search ends with a model rebuild (a filter version): waited for, it landed in the middle
-    # on a busy machine
-    if getattr(session, "_lock_thread", None):
-        session._lock_thread.join(10)
+    settled(session)
     v = session.filter_version
     session.set_ui_settings({"layers": {"Removed": True}})
     assert session.filter_version == v + 1 and list(points(session, "removed")) == [15]
@@ -277,6 +281,7 @@ def test_a_settings_change_is_one_log_line():
 def test_drawn_by_at_least_makes_no_tile_again_and_paths_carry_their_share(session, tmp_path):
     path, _pts, _img = make_atlas(tmp_path)
     session.open_atlas(path)
+    settled(session)  # (macOS CI: the search's model rebuild landed after v was read)
     v = session.filter_version
     session.set_ui_settings({"style": {"path_freq": 0.5}})  # (user: each step remade every tile and the 3D scene)
     assert session.filter_version == v
