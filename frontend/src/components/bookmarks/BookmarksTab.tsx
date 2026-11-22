@@ -18,7 +18,8 @@ import { plural } from "@/utils/Format";
 import { LookMark } from "./LookPicker";
 import { SavedRouteMenu } from "./SavedRouteMenu";
 
-/** A row's pen or bin: shown while the row is pointed at or in focus (user: hidden until hovered is fine). */
+/** A row's pen or bin: shown while the row is pointed at or in focus (user: hidden until hovered is fine); always on
+ * a touch screen (can-hover, Theme.css). */
 function RowAction({ label, onClick, children }: { label: string; onClick: () => void; children: ReactNode }) {
 	return (
 		<button
@@ -26,7 +27,7 @@ function RowAction({ label, onClick, children }: { label: string; onClick: () =>
 			aria-label={label}
 			title={label}
 			onClick={onClick}
-			className="rounded p-0.5 text-muted-foreground opacity-0 group-focus-within/row:opacity-100 group-hover/row:opacity-100 hover:bg-background hover:text-foreground focus-visible:opacity-100"
+			className="rounded p-0.5 text-muted-foreground can-hover:opacity-0 group-focus-within/row:opacity-100 group-hover/row:opacity-100 hover:bg-background hover:text-foreground focus-visible:opacity-100"
 		>
 			{children}
 		</button>

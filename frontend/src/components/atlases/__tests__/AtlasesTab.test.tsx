@@ -17,8 +17,9 @@ describe("AtlasesTab", () => {
 		renderWithApp(<AtlasesTab />, { "GET /api/atlases": atlases });
 		const buttons = (await screen.findByRole("button", { name: "Rename second" })).parentElement;
 		// (the column, not each button: a disabled button's own half opacity would show it)
+		// (hidden only where hover works: a touch screen shows them, CodeRabbit)
 		expect(buttons).toHaveClass(
-			"opacity-0",
+			"can-hover:opacity-0",
 			"group-hover/card:opacity-100",
 			"group-has-[:focus-visible]/card:opacity-100",
 		);

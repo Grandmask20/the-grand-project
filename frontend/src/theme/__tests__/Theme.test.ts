@@ -19,3 +19,6 @@ describe("Theme.css: the game's controls keep a keyboard focus mark", () => {
 	it("a tab's focus mark follows its shape (a glow, not a box: user)", () =>
 		expect(rule(".poe-tab:focus-visible")).toMatch(/drop-shadow/));
 });
+
+it("buttons hidden until pointed at are hidden only where the main pointer can hover (touch: CodeRabbit)", () =>
+	expect(css).toContain("@custom-variant can-hover (@media (hover: hover));"));

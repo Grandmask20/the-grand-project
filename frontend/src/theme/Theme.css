@@ -2,6 +2,10 @@
 @import "tw-animate-css";
 @import "maplibre-gl/dist/maplibre-gl.css";
 
+/* only where the main pointer can hover (Tailwind's own hover: test): buttons hidden until their card or row is
+   pointed at stay shown on a touch screen, which never sets off hover (CodeRabbit) */
+@custom-variant can-hover (@media (hover: hover));
+
 /* Dark, like the game's atlas: shadcn/ui components read the tokens below. */
 :root {
 	color-scheme: dark;
