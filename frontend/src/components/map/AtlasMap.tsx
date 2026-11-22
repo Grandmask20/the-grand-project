@@ -11,6 +11,7 @@ import { mapStyle } from "@/logic/map/LayerOrder";
 import { useAppStore } from "@/store/AppStore";
 import { MapControls } from "./controls/MapControls";
 import { FrameRecorder } from "./FrameRecorder";
+import { HoverPeek } from "./HoverPeek";
 import { AtlasLayers } from "./layers/AtlasLayers";
 import { BookmarkLayer } from "./layers/BookmarkLayer";
 import { DebugMarkLayers } from "./layers/DebugMarkLayers";
@@ -124,6 +125,7 @@ export function AtlasMap({ info, meta }: Props) {
 						<GhostLayers />
 						<QuestionLayers />
 						<MapInteraction />
+						<HoverPeek />
 						<MapCamera />
 						<MapLabels />
 						<PlayerMarker />

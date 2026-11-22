@@ -15,6 +15,7 @@ export const LAYER_ORDER = [
 	"biomes-line",
 	"recent",
 	"paths",
+	"hover-lines", // hover peek: the hovered map's paths, under the maps
 	"removed",
 	"saved-routes", // routes saved with the bookmarks: under the one tracked
 	"route-casing",
@@ -28,6 +29,7 @@ export const LAYER_ORDER = [
 	"highlight",
 	"hits-edge",
 	"hits",
+	"hover-maps", // hover peek: the hovered map and its neighbours ringed
 	"route-nodes",
 	"route-here", // the map you are on, on a route tracked
 	"fog-picture", // the timelapse's fog: over the map's own layers, so it hides what isn't revealed yet
