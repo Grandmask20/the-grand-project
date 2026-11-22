@@ -1175,18 +1175,31 @@ class MapImageMixin:
         v = getattr(self, slot, None)
         if v is not None and v[0] == key:
             return v
-        gen, grid = self.opened.gen, self.grid
-        same_grid = v is not None and grid is not None and v[2].to_json() == grid.to_json()
-        last = v if same_grid and v[3] == gen and v[0][3] == key[3] else None
-        if last is None:
+
+        def stands_in() -> bool:
+            """Whether the ones made last may be answered now: this atlas's, this timelapse plan's, this grid's."""
+            grid = self.grid
+            return (
+                v is not None
+                and grid is not None
+                and v[3] == self.opened.gen
+                and v[0][3] == self._tiles_key(steps)[3]
+                and v[2].to_json() == grid.to_json()
+            )
+
+        if not stands_in():
             got = self._lock.acquire()
-        elif gen in self._refresh_waiting:
+        elif self.opened.gen in self._refresh_waiting:
             got = self._lock.acquire(blocking=False)
         else:
             got = self._lock.acquire(timeout=K.TILER_LOCK_WAIT)
         if not got:
-            self._refresh_when_free(slot, gen)
-            return last
+            # asked again after the wait: a job may have moved the map image (or another atlas opened) meanwhile,
+            # and the old ones were answered for the new grid (CodeRabbit). Then waited for, as with none made.
+            if stands_in():
+                self._refresh_when_free(slot, v[3])
+                return v
+            self._lock.acquire()
         try:
             key = self._tiles_key(steps)
             v = getattr(self, slot, None)

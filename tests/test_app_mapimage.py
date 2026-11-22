@@ -149,18 +149,62 @@ def test_another_atlass_tiles_are_never_answered(session, tmp_path):
     assert session._vector[3] == session.opened.gen  # made for this atlas
 
 
-def test_the_refresh_is_dropped_when_another_atlas_opened_meanwhile(session, tmp_path):
+def refresh_calls(session, monkeypatch, name: str) -> list:
+    """Record the atlases (generations) a session method was called for from a refresh thread."""
+    calls, real = [], getattr(session, name)
+
+    def spy(*a, **kw):
+        if threading.current_thread().name == "tiles-refresh":
+            calls.append(session.opened.gen)
+        return real(*a, **kw)
+
+    monkeypatch.setattr(session, name, spy)
+    return calls
+
+
+def join_background(session) -> None:
+    """Wait for the refresh threads and the locked-stronghold search (its own filter version: not the refresh's)."""
+    for t in threading.enumerate():
+        if t.name == "tiles-refresh" or t is getattr(session, "_lock_thread", None):
+            t.join(10)
+
+
+def test_the_refresh_is_dropped_when_another_atlas_opened_meanwhile(session, tmp_path, monkeypatch):
     (tmp_path / "other").mkdir()
     other, _pts, _img = make_atlas(tmp_path / "other")
+    bumped = refresh_calls(session, monkeypatch, "filters_changed")
     with session._lock:  # (this thread holds it: the refresh waits)
         session._refresh_when_free("_vector", session.opened.gen)
         session.open_atlas(other)  # another atlas opened before the lock is free
-        filters = session.filter_version
-    for t in threading.enumerate():
-        if t.name == "tiles-refresh":
-            t.join(10)
-    assert session.filter_version == filters  # not bumped for the atlas opened since (its own versions tell the page)
+    join_background(session)
+    # no new version from the refresh for the atlas opened since (its own versions tell the page); checked on the
+    # refresh's own calls: the second atlas's stronghold search bumps the version too (CodeRabbit)
+    assert bumped == []
     assert not session._refresh_waiting  # (and a later answer from old tiles can ask for a refresh again)
+
+
+def test_a_map_image_moved_during_the_wait_isnt_answered_with_the_old_grid(session):
+    tile(session)
+    canvas, weight, (x0, y0, scale) = session.terrain
+    holding, go = threading.Event(), threading.Event()
+
+    def job():
+        with session._lock:
+            session.set_terrain(canvas, weight, (x0, y0, scale), save=False, cities=False)  # a paste: same grid
+            holding.set()
+            time.sleep(K.TILER_LOCK_WAIT / 3)  # the request is waiting for the lock by now
+            session.set_terrain(canvas, weight, (x0 - 40, y0, scale), save=False, cities=False)
+            go.wait(1.0)
+
+    t = threading.Thread(target=job, daemon=True)
+    t.start()
+    assert holding.wait(10)
+    t0 = time.monotonic()
+    tile(session)
+    # the grid asked again after the wait: it changed, so the request waited for the job (CodeRabbit)
+    assert time.monotonic() - t0 >= 0.9
+    t.join(10)
+    assert session._vector[2].to_json() == session.grid.to_json()
 
 
 def test_tiles_cut_for_another_grid_are_never_answered(session):
@@ -181,24 +225,13 @@ def test_tiles_cut_for_another_grid_are_never_answered(session):
 def test_a_refresh_for_an_atlas_closed_meanwhile_keeps_the_next_atlass(session, tmp_path, monkeypatch):
     (tmp_path / "other").mkdir()
     other, _pts, _img = make_atlas(tmp_path / "other")
-    made_for = []  # the atlases the refresh threads made tiles for
-    real = session._vector_made
-    monkeypatch.setattr(
-        session,
-        "_vector_made",
-        lambda steps=False: (
-            made_for.append(session.opened.gen) if threading.current_thread().name == "tiles-refresh" else None,
-            real(steps),
-        )[1],
-    )
+    made_for = refresh_calls(session, monkeypatch, "_vector_made")  # the atlases tiles were made for
     with session._lock:  # (this thread holds it: both refreshes wait)
         first = session.opened.gen
         session._refresh_when_free("_vector", first)
         session.open_atlas(other)
         session._refresh_when_free("_vector", session.opened.gen)  # the second's, asked while the first's waits
-    for t in threading.enumerate():
-        if t.name == "tiles-refresh" or t is getattr(session, "_lock_thread", None):
-            t.join(10)
+    join_background(session)
     # the second atlas's refresh ran (taken by the first's waiter, it was dropped with it: CodeRabbit); the first's not
     assert made_for == [session.opened.gen] and first != session.opened.gen
     assert not session._refresh_waiting and not session._refresh_stale
