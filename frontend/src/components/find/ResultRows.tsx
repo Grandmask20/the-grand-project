@@ -38,17 +38,21 @@ export function rowTitle(r: ResultRow): string {
 function Crop({ r }: { r: ResultRow }) {
 	const app = useAppClient();
 	const state = useAppState().data;
-	const [failed, setFailed] = useState(false);
+	// the picture that failed, by its address: a new one (the map image made since) is asked for again (a failure
+	// stayed for good: CodeRabbit)
+	const [failed, setFailed] = useState("");
 	const gen = state?.generation;
-	if (gen === undefined || failed) return <span className="size-9 shrink-0 rounded border bg-map" aria-hidden="true" />;
+	const url =
+		gen === undefined ? "" : app.cropUrl(r.at?.[0] ?? r.x, r.at?.[1] ?? r.y, gen, state?.terrain_version ?? 0);
+	if (!url || failed === url) return <span className="size-9 shrink-0 rounded border bg-map" aria-hidden="true" />;
 	return (
 		<img
-			src={app.cropUrl(r.at?.[0] ?? r.x, r.at?.[1] ?? r.y, gen, state?.terrain_version ?? 0)}
+			src={url}
 			alt=""
 			width={36}
 			height={36}
 			loading="lazy"
-			onError={() => setFailed(true)}
+			onError={() => setFailed(url)}
 			className="size-9 shrink-0 rounded border bg-map object-cover"
 		/>
 	);

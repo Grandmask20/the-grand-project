@@ -66,6 +66,14 @@ describe("TypeList", () => {
 		expect(useAppStore.getState().query).toBe("");
 	});
 
+	it("no Bookmark all while a search is still coming (it would save the rows before under its name: CodeRabbit)", async () => {
+		renderWithApp(<TypeList onList={vi.fn()} />, { "GET /api/types": types });
+		await screen.findByText("Places");
+		act(() => useAppStore.getState().setQuery("breach"));
+		expect(screen.getByText('Finding "breach"…')).toBeInTheDocument();
+		expect(screen.queryByRole("button", { name: "Bookmark all" })).not.toBeInTheDocument();
+	});
+
 	it("a type opened low in the list rises to its middle at least (user)", async () => {
 		renderWithApp(<TypeList onList={vi.fn()} />, { "GET /api/types": types });
 		const box = (await screen.findByText("Places")).closest(".overflow-y-auto") as HTMLElement;

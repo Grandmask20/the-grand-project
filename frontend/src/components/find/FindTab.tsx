@@ -41,7 +41,12 @@ export function FindTab() {
 			if (!listed) setResults([], "");
 			return;
 		}
-		if (!d) return;
+		// a new search still coming: the results before go meanwhile (they stayed under its title, where "Bookmark
+		// all" would have saved them under its name: CodeRabbit)
+		if (!d) {
+			setResults([], "");
+			return;
+		}
 		if ("goto" in d) {
 			const [x, y] = d.goto;
 			setGoto([x, y]);

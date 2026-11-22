@@ -167,6 +167,36 @@ def test_a_crop_of_the_ground_is_for_its_atlas_only(opened):
     assert s.crop_jpeg(-1e6, -1e6, s.generation) is None  # no ground there
 
 
+def test_a_crop_made_while_the_map_image_changes_is_dropped(opened, monkeypatch):
+    """A map image put in while a crop is cut: the crop (old grid, new tiles) is dropped (CodeRabbit)."""
+    s, _path, pts = opened
+    real = s.terrain_tile
+
+    def swapped(*a, **k):
+        s.terrain_version += 1  # (as set_terrain does)
+        return real(*a, **k)
+
+    monkeypatch.setattr(s, "terrain_tile", swapped)
+    assert s.crop_jpeg(*pts[0], s.generation) is None
+
+
+def test_crops_are_not_kept_by_the_browser(opened):
+    """Their address starts over with each run of the app: another atlas's could match it later (CodeRabbit)."""
+    from grand_project.app import server
+
+    sent = []
+
+    class FakeHandler:
+        S = opened[0]
+
+        def _bytes(self, data, ctype, cache=True):
+            sent.append(cache)
+
+    x, y = opened[2][0]
+    server.Handler.get_crop(FakeHandler(), {"x": [str(x)], "y": [str(y)], "g": [str(opened[0].generation)]})
+    assert sent == [False]
+
+
 def test_a_rows_picture_is_cut_at_its_map_not_at_the_icon(opened):
     s, _path, pts = opened
     rows = s.search("ritual")["results"]

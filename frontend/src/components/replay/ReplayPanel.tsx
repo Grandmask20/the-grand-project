@@ -57,6 +57,7 @@ export function ReplayPanel({ meta }: { meta: Meta }) {
 	const exporting = useRef<{ cancel: boolean } | null>(null);
 	const [exportInfo, setExportInfo] = useState("");
 	const [busy, setBusy] = useState(false); // a frame export runs: the position is its own (CodeRabbit)
+	const asked = useRef(0); // the settings changes sent: only the newest one's answer is used
 
 	// playback: move on, move the camera
 	// biome-ignore lint/correctness/useExhaustiveDependencies: restarted only when play starts / stops
@@ -80,6 +81,14 @@ export function ReplayPanel({ meta }: { meta: Meta }) {
 		raf = requestAnimationFrame(loop);
 		return () => cancelAnimationFrame(raf);
 	}, [replay?.playing, map, geo, frames.data]);
+
+	// whatever closes the timelapse (its X, the Timelapse tab, another atlas opened) or takes the panel away: a
+	// recording stops and an export is cancelled (the tab's close left both running: CodeRabbit)
+	const open = !!replay;
+	useEffect(() => {
+		if (!open) endCapture(recorder.current, exporting.current);
+	}, [open]);
+	useEffect(() => () => endCapture(recorder.current, exporting.current), []);
 
 	if (!replay) return null;
 	const { plan, pos } = replay;
@@ -109,11 +118,15 @@ export function ReplayPanel({ meta }: { meta: Meta }) {
 	};
 
 	const change = async (c: Partial<ReplaySettings>) => {
+		const mine = ++asked.current;
 		try {
 			const next = await app.setReplay(c);
+			// only the newest change's answer, and only while the timelapse is open (an older one answering last
+			// showed its settings; one answering after a close opened it again: CodeRabbit)
+			if (mine !== asked.current || !useAppStore.getState().replay) return;
 			setReplay({ plan: next, pos: 0, playing: false, recording: false });
 		} catch (e) {
-			showError(e);
+			if (mine === asked.current) showError(e);
 		}
 	};
 
@@ -219,9 +232,7 @@ export function ReplayPanel({ meta }: { meta: Meta }) {
 	};
 
 	const close = async () => {
-		recorder.current?.stop();
-		if (exporting.current) exporting.current.cancel = true;
-		setReplay(null);
+		setReplay(null); // (a recording and an export end with it: above)
 		await app.closeReplay().catch(showError);
 	};
 
@@ -385,6 +396,12 @@ export function ReplayPanel({ meta }: { meta: Meta }) {
 /** A moment after the last key before a number typed is used. */
 const NUMBER_SETTLE_MS = 500;
 
+/** Stop a screen recording still running and cancel a frame export (each only once: a stopped recorder throws). */
+function endCapture(recorder: MediaRecorder | null, exporting: { cancel: boolean } | null) {
+	if (recorder?.state === "recording") recorder.stop();
+	if (exporting) exporting.cancel = true;
+}
+
 /**
  * A number setting typed in a box: used a moment after you stop typing, at once on Enter or on leaving the box (user:
  * the timelapse's length only changed once the box lost focus, Enter did nothing), kept within lo..hi; shows the
@@ -409,12 +426,25 @@ export function NumberSetting({
 }) {
 	const [text, setText] = useState(String(value));
 	const typing = useRef(false);
+	const timer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined); // a value still settling
+	const off = useRef(disabled);
+	off.current = disabled;
 	useEffect(() => {
 		if (!typing.current) setText(String(value));
 	}, [value]);
+	// disabled (a recording started): a value still settling is dropped and the box shows the setting (it was sent
+	// anyway and reset the replay: CodeRabbit)
+	useEffect(() => {
+		if (!disabled) return;
+		clearTimeout(timer.current);
+		typing.current = false;
+		setText(String(value));
+	}, [disabled, value]);
 	// Enter or leaving the box: what was typed, kept within its range (an empty or wrong box goes back)
 	const commit = (t: string) => {
+		clearTimeout(timer.current); // (sent now: not again once it would have settled)
 		typing.current = false;
+		if (off.current) return setText(String(value));
 		const n = Number(t);
 		if (t.trim() === "" || !Number.isFinite(n)) return setText(String(value));
 		const v = Math.min(hi, Math.max(lo, whole ? Math.round(n) : n));
@@ -424,6 +454,7 @@ export function NumberSetting({
 	// typing paused: used only when it is already a number in range; the box is left as typed (a half-typed "2" on
 	// the way to "20" was set to the lowest and written over: self review)
 	const settle = (t: string) => {
+		if (off.current) return;
 		const n = Number(t);
 		const v = whole ? Math.round(n) : n;
 		if (t.trim() !== "" && Number.isFinite(n) && v >= lo && v <= hi && v !== value) onCommit(v);
@@ -433,8 +464,8 @@ export function NumberSetting({
 	latest.current = settle;
 	useEffect(() => {
 		if (!typing.current) return;
-		const t = setTimeout(() => latest.current(text), NUMBER_SETTLE_MS);
-		return () => clearTimeout(t);
+		timer.current = setTimeout(() => latest.current(text), NUMBER_SETTLE_MS);
+		return () => clearTimeout(timer.current);
 	}, [text]);
 	return (
 		<div className="flex items-center gap-1.5 text-xs">

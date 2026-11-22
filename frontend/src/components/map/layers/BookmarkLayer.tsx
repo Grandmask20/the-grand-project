@@ -3,6 +3,7 @@ import { Source } from "react-map-gl/maplibre";
 import { useSettings } from "@/hooks/app/UseSettings";
 import { useBookmarks } from "@/hooks/bookmarks/UseBookmarks";
 import { useMapView } from "@/hooks/map/UseMapView";
+import { bookmarkLook } from "@/logic/BookmarkLook";
 import { layerOn } from "@/logic/map/AtlasLayers";
 import { collection, EMPTY, line, point } from "@/logic/map/Features";
 import { bookmarkIconLayer, bookmarkLayer, litRouteLayers, savedRouteLayer } from "@/logic/map/OverlayLayers";
@@ -34,9 +35,7 @@ export function BookmarkLayer() {
 			for (const b of g.items) {
 				// its look: its own, else its group's (none: the layer's own colour, no icon). A symbol: its picture in
 				// that colour, no ring; a map icon's picture in a ring of the colour, unless without one
-				const colour = b.colour || g.colour || "";
-				const icon = b.icon || g.icon || "";
-				const plain = b.icon ? !!b.plain : !!g.plain;
+				const { colour, icon, plain } = bookmarkLook(b, g);
 				const symbol = isSymbol(icon);
 				if (!b.shown) continue;
 				// a saved route: its lines, no pin (it isn't a spot)

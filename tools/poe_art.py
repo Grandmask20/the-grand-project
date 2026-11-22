@@ -58,12 +58,28 @@ def line_up(left: np.ndarray, mid: np.ndarray, right: np.ndarray, middles: int =
     offs = [(left, 0)] + [(mid, 23 + 27 * k) for k in range(middles)]
     offs.append((right, 23 + 27 * (middles - 1) + 35 - 8))
     width = offs[-1][1] + right.shape[1]
-    out = np.zeros((left.shape[0], width, 4), np.float32)
+    pre = np.zeros((left.shape[0], width, 3), np.float32)  # colour times coverage, laid over each other
+    cover = np.zeros((left.shape[0], width, 1), np.float32)
     for p, x in offs:
         w = min(p.shape[1], width - x)
         a = p[:, :w, 3:4] / 255
-        out[:, x : x + w, :3] = p[:, :w, :3] * a + out[:, x : x + w, :3] * (1 - a)
-        out[:, x : x + w, 3:4] = 255 * (a + out[:, x : x + w, 3:4] / 255 * (1 - a))
+        pre[:, x : x + w] = p[:, :w, :3] * a + pre[:, x : x + w] * (1 - a)
+        cover[:, x : x + w] = a + cover[:, x : x + w] * (1 - a)
+    # back to plain colour (a half-covered light pixel came out half as bright, and was taken for the dark outline:
+    # CodeRabbit)
+    out = np.zeros((left.shape[0], width, 4), np.float32)
+    out[..., :3] = np.where(cover > 0, pre / np.maximum(cover, 1e-6), 0)
+    out[..., 3:4] = cover * 255
+    return out
+
+
+def _shifted(mask: np.ndarray, dy: int, dx: int) -> np.ndarray:
+    """The mask moved by (dy, dx), empty where it moved in from outside (np.roll wrapped the far edge round)."""
+    out = np.zeros_like(mask)
+    h, w = mask.shape
+    out[max(dy, 0) : h + min(dy, 0), max(dx, 0) : w + min(dx, 0)] = mask[
+        max(-dy, 0) : h + min(-dy, 0), max(-dx, 0) : w + min(-dx, 0)
+    ]
     return out
 
 
@@ -86,7 +102,7 @@ def stash_tab(grey: np.ndarray, light: np.ndarray, lit: bool) -> Image.Image:
     near = np.zeros_like(dark)
     for dy in (-1, 0, 1):
         for dx in (-2, -1, 0, 1, 2):
-            near |= np.roll(np.roll(dark, dy, 0), dx, 1)
+            near |= _shifted(dark, dy, dx)  # (not wrapped round the picture's edges: CodeRabbit)
     edge = ~dark & near & (lum > 180)
     fill = ~dark & ~edge & (alpha > 8)
     rows = np.arange(grey.shape[0], dtype=np.float32)[:, None]

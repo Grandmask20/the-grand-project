@@ -131,6 +131,60 @@ def test_a_map_brought_back_brings_its_landmark_back(tmp_path):
         s.shutdown()
 
 
+def test_delete_takes_the_nearest_map(opened):
+    """Two maps within reach of the click: the nearest goes, not the first found (CodeRabbit)."""
+    s, _path, pts = opened
+    x, y = pts[3]
+    s.V["nodes"].append({**s.V["nodes"][3], "id": len(s.V["nodes"]), "x": x + 14, "y": y})  # a ghost beside map 3
+    s.edit_map(x + 12, y, "remove")
+    assert s.atlas.map_edits == [{"x": round(x + 14, 1), "y": round(y, 1), "op": "remove"}]
+
+
+def test_a_detected_landmark_whose_kind_you_changed_goes_with_its_map(tmp_path):
+    """A Hall's map deleted, brought back as a City, deleted again: the Hall goes too (it stayed: CodeRabbit)."""
+    path, pts, _img = make_atlas(tmp_path)
+    at = core.Atlas.load(path)
+    at.final["landmarks"].append({"kind": "Hall", "x": pts[8][0], "y": pts[8][1], "status": "kept"})
+    at.save(path)
+    s = AtlasSession(settings={}, worker=False)
+    try:
+        s.open_atlas(path)
+        x, y = pts[8]
+        here = lambda: [  # noqa: E731
+            lm["kind"]
+            for lm in s.V["landmarks"]
+            if not lm["status"].startswith("removed") and abs(lm["x"] - x) < 30 and abs(lm["y"] - y) < 30
+        ]
+        s.edit_map(x, y, "remove")
+        s.edit_map(x, y, "add", "City")
+        assert here() == ["City"]
+        s.edit_map(x, y, "remove")
+        assert here() == []
+    finally:
+        s.shutdown()
+
+
+def test_a_map_you_added_that_a_check_found_since_can_be_deleted(tmp_path):
+    """You added a map; a later check detected it too (yours is then not drawn). Deleting it deletes the detected one
+    (only your add went, and the detected map stayed: CodeRabbit)."""
+    path, pts, _img = make_atlas(tmp_path)
+    at = core.Atlas.load(path)
+    spot = (2000.0, 2000.0)
+    at.map_edits = [{"x": spot[0], "y": spot[1], "op": "add"}]
+    at.final["nodes"].append({**at.final["nodes"][3], "id": len(at.final["nodes"]), "x": spot[0], "y": spot[1]})
+    at.save(path)
+    s = AtlasSession(settings={}, worker=False)
+    try:
+        s.open_atlas(path)
+        shown = [n for n in s.V["nodes"] if n["status"] != "removed" and (n["x"], n["y"]) == spot]
+        assert len(shown) == 1 and shown[0].get("origin") == "detected"
+        s.edit_map(*spot, "remove")
+        assert s.atlas.map_edits == [{"x": spot[0], "y": spot[1], "op": "remove"}]
+        assert not [n for n in s.V["nodes"] if n["status"] != "removed" and (n["x"], n["y"]) == spot]
+    finally:
+        s.shutdown()
+
+
 def test_bad_map_edits_are_refused(opened):
     s, _path, pts = opened
     for args in (("move",), ("add", "Castle"), ("remove", "City")):

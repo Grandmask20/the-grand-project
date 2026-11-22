@@ -83,7 +83,7 @@ export function TypeList({ onList }: { onList: (label: string, icon: string | nu
 							<span className="min-w-0 flex-1 truncate text-sm font-semibold">
 								{title || `Finding "${query.trim()}"…`}
 							</span>
-							<BookmarkAll rows={results} name={query.trim()} />
+							{title && <BookmarkAll rows={results} name={query.trim()} />}
 							<button
 								type="button"
 								aria-label="Clear the search"

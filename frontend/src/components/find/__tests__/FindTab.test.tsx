@@ -18,6 +18,17 @@ describe("FindTab", () => {
 		expect(calls.filter((c) => c.path === "/api/search").map((c) => c.params)).toEqual([{ q: "vaal" }]); // not per key
 	});
 
+	it("a new search still coming clears the results before (they stayed under its title: CodeRabbit)", async () => {
+		const { user } = renderWithApp(<FindTab />, {
+			"GET /api/types": types,
+			"GET /api/search": () => new Promise(() => {}), // (never answers)
+		});
+		useAppStore.getState().setResults(found.results as never, "Hall (3)");
+		await user.type(screen.getByLabelText("Find"), "vaal");
+		await waitFor(() => expect(useAppStore.getState().results).toEqual([]));
+		expect(useAppStore.getState().resultsTitle).toBe("");
+	});
+
 	it("goes to coordinates and marks them", async () => {
 		const { user } = renderWithApp(<FindTab />, { "GET /api/types": types, "GET /api/search": { goto: [120, -45] } });
 		await user.type(screen.getByLabelText("Find"), "120, -45");

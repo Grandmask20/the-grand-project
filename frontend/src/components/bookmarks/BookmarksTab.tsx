@@ -11,6 +11,7 @@ import { useAppClient } from "@/hooks/app/UseAppClient";
 import { useMeta } from "@/hooks/app/UseMeta";
 import { useBookmarks } from "@/hooks/bookmarks/UseBookmarks";
 import { routeBox, routeTitle } from "@/hooks/map/UseRoutes";
+import { bookmarkLook, type Look } from "@/logic/BookmarkLook";
 import { useAppStoreCalm } from "@/store/AppStore";
 import { cn } from "@/utils/Cn";
 import { plural } from "@/utils/Format";
@@ -309,12 +310,7 @@ export function BookmarksTab() {
 												aria-label="Route"
 											/>
 										) : (
-											<LookMark
-												colour={b.colour || g.colour || standard}
-												icon={b.icon || g.icon}
-												plain={b.icon ? b.plain : g.plain}
-												size={14}
-											/>
+											<LookMark {...rowLook(b, g, standard)} size={14} />
 										)}
 										<button
 											type="button"
@@ -400,4 +396,10 @@ export function BookmarksTab() {
 			)}
 		</div>
 	);
+}
+
+/** A bookmark's look in its row: as the map draws it, the page's colour where neither it nor its group has one. */
+function rowLook(b: Look, g: Look, standard: string) {
+	const look = bookmarkLook(b, g);
+	return { ...look, colour: look.colour || standard };
 }

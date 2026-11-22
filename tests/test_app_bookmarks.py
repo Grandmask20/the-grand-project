@@ -292,12 +292,27 @@ def test_an_icon_can_have_no_border_and_a_symbol_is_an_icon(opened):
     assert s._bookmark(i)["plain"] is True
     s.edit_bookmark(i, "boss", "Run", "", icon="sym:triangle", plain=False)
     assert s._bookmark(i)["icon"] == "sym:triangle" and "plain" not in s._bookmark(i)
-    s.edit_bookmark(i, "boss", "Run", "", icon="", plain=True)  # no icon: nothing to draw without a ring
-    assert "plain" not in s._bookmark(i)
+    # "none" without an icon of its own: kept, for its group's icon (it was dropped: CodeRabbit)
+    s.edit_bookmark(i, "boss", "Run", "", icon="", plain=True)
+    assert s._bookmark(i).get("plain") is True and "icon" not in s._bookmark(i)
     s.style_group("Run", "", "Ritual", plain=True)
     assert s.atlas.group_looks["Run"] == {"icon": "Ritual", "plain": True}
-    s.style_group("Run", "#ff0000", "", plain=True)
-    assert s.atlas.group_looks["Run"] == {"colour": "#ff0000"}
+    s.style_group("Run", "", "", plain=True)  # a group's "none": for its bookmarks' own icons
+    assert s.atlas.group_looks["Run"] == {"plain": True}
+
+
+def test_stale_group_looks_are_dropped_under_the_lock(opened, monkeypatch):
+    """The group names are read and the stale looks dropped under the session lock (a group renamed in between lost
+    its look: CodeRabbit)."""
+    s, _path, pts = opened
+    s.add_bookmark(pts[3][0], pts[3][1], "boss", "Run")
+    s.style_group("Run", "#ff0000", "")
+    held = []
+    real = s.groups
+    monkeypatch.setattr(s, "groups", lambda: held.append(s._lock._is_owned()) or real())
+    s._bookmarks_changed()
+    assert held and all(held)
+    assert s.atlas.group_looks == {"Run": {"colour": "#ff0000"}}
 
 
 def test_a_click_finds_a_pin_where_it_is_drawn(opened):

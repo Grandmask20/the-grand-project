@@ -468,6 +468,11 @@ input[type="checkbox"]:hover:not(:disabled) {
 .poe-icon-btn:active:not(:disabled) {
 	--ibtn: url("../assets/poe/fouriconbuttonpressed.png");
 }
+/* keyboard focus shown (the reskin took the focus ring off icon buttons, ghost ones too: CodeRabbit) */
+.poe-icon-btn:focus-visible {
+	outline: 2px solid var(--ring);
+	outline-offset: 1px;
+}
 .poe-icon-btn:disabled {
 	opacity: 0.45;
 }
@@ -619,6 +624,11 @@ button[data-state="open"] .poe-hamburger {
 	border-radius: 0;
 	background: none;
 	box-shadow: none;
+}
+/* (keyboard focus shown: its box-shadow reset took the focus ring away: CodeRabbit) */
+.poe-dropbox:focus-visible {
+	outline: 2px solid var(--ring);
+	outline-offset: 1px;
 }
 .poe-droparrow {
 	display: inline-block;

@@ -78,7 +78,8 @@ def clean_look(colour, icon, plain=None) -> dict:
     Args:
         colour: The colour, "" or None.
         icon: The icon's raw name ("sym:<name>": a plain symbol), "" or None.
-        plain: The icon drawn without a ring of the colour (only with an icon).
+        plain: No ring ("none" as the colour): for the icon it shows, its own or its group's (a bookmark's choice
+            was dropped without an icon of its own: CodeRabbit).
 
     Returns:
         {"colour"?, "icon"?, "plain"?}: only what is set.
@@ -95,8 +96,8 @@ def clean_look(colour, icon, plain=None) -> dict:
         if not isinstance(icon, str) or len(icon) > LOOK_ICON_MAX or not icon.strip():
             raise ValueError("not an icon's name")
         out["icon"] = icon.strip()
-        if plain:
-            out["plain"] = True
+    if plain:
+        out["plain"] = True
     return out
 
 
@@ -106,10 +107,12 @@ class BookmarksMixin:
     def _bookmarks_changed(self) -> None:
         """Save the atlas and tell the page (it draws the bookmarks itself: the map's tiles stay as they are). The looks
         of groups no longer there (emptied, deleted) go first: a new group of that name starts plain."""
-        if self.atlas is not None and self.atlas.group_looks:
-            names = set(self.groups())
-            for g in [g for g in self.atlas.group_looks if g not in names]:
-                del self.atlas.group_looks[g]
+        # (under the lock: a group renamed between the names read and the pruning lost its look: CodeRabbit)
+        with self._lock:
+            if self.atlas is not None and self.atlas.group_looks:
+                names = set(self.groups())
+                for g in [g for g in self.atlas.group_looks if g not in names]:
+                    del self.atlas.group_looks[g]
         if self.atlas is not None and self.path is not None:
             with self._lock:
                 self.atlas.save(self.path)
@@ -414,8 +417,6 @@ class BookmarksMixin:
             b["plain"] = True
             if not plain:
                 b.pop("plain")
-        if not b.get("icon"):
-            b.pop("plain", None)  # (no icon: nothing to draw without a ring)
         self._bookmarks_changed()
 
     @atlas_edit

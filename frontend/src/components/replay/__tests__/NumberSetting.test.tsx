@@ -41,6 +41,19 @@ describe("NumberSetting (the timelapse's length, maps per step)", () => {
 		expect(box).toHaveValue(20);
 	});
 
+	it("a value still settling when the box is disabled (a recording started) is dropped (CodeRabbit)", async () => {
+		const user = userEvent.setup();
+		const onCommit = vi.fn();
+		const { rerender } = render(<NumberSetting label="length" value={30} lo={5} hi={600} onCommit={onCommit} />);
+		const box = screen.getByRole("spinbutton", { name: "length" });
+		await user.clear(box);
+		await user.type(box, "45");
+		rerender(<NumberSetting label="length" value={30} lo={5} hi={600} disabled onCommit={onCommit} />);
+		await new Promise((r) => setTimeout(r, 800));
+		expect(onCommit).not.toHaveBeenCalled();
+		expect(box).toHaveValue(30);
+	});
+
 	it("an empty box goes back to the setting, and the app's own changes show", async () => {
 		const user = userEvent.setup();
 		const onCommit = vi.fn();

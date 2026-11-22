@@ -1,4 +1,4 @@
-import { act } from "@testing-library/react";
+import { act, waitFor } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 import { SelectionLayers } from "@/components/map/layers/SelectionLayers";
 import { useAppStore } from "@/store/AppStore";
@@ -45,6 +45,23 @@ describe("SelectionLayers", () => {
 		);
 		expect(features(fm, "selected-path")[0].geometry.type).toBe("LineString");
 		expect(vis(fm, "selected")).toBe("none");
+	});
+
+	it("a selected map's lit paths follow its connections as they are now (a deleted neighbour's stayed: CodeRabbit)", async () => {
+		const links: [number, number][][] = [
+			[
+				[440, 200],
+				[500, 200],
+			],
+			[
+				[440, 200],
+				[440, 300],
+			],
+		];
+		// the app's answer now: the map at (440, 300) was deleted since it was selected
+		const { fm } = renderOnMap(<SelectionLayers />, { "GET /api/info": { ...nodeInfo, links: [links[0]] } });
+		act(() => useAppStore.getState().select({ ...nodeInfo, links }));
+		await waitFor(() => expect(features(fm, "selected-path")).toHaveLength(1));
 	});
 
 	it("tilted, a selected icon wears the 3D view's ring, not the flat one", async () => {

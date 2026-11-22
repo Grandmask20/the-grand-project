@@ -44,6 +44,18 @@ describe("ResultRows", () => {
 		expect(screen.getByText("on map #234")).toBeInTheDocument();
 	});
 
+	it("a picture that failed is asked for again once the map image is new (it stayed blank: CodeRabbit)", async () => {
+		const { queryClient } = renderWithApp(<ResultRows rows={[rows[0]]} />, {
+			"GET /api/state": { ...state, generation: 3, terrain_version: 7 },
+		});
+		const row = screen.getByRole("button", { name: /Map #12/ });
+		const crop = () => row.querySelector('img[width="36"]');
+		crop()?.dispatchEvent(new Event("error"));
+		await waitFor(() => expect(crop()).toBeNull()); // the blank one meanwhile
+		queryClient.setQueryData(["state"], { ...state, generation: 3, terrain_version: 8 });
+		await waitFor(() => expect(crop()?.getAttribute("src")).toContain("v=8"));
+	});
+
 	it("goes to a result and selects it", async () => {
 		const { user, calls } = renderWithApp(<ResultRows rows={rows} />, { "GET /api/info": nodeInfo });
 		await user.click(screen.getByRole("button", { name: /Map #12/ }));

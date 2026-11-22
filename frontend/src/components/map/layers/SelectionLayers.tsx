@@ -2,6 +2,7 @@ import { useMemo } from "react";
 import { Source } from "react-map-gl/maplibre";
 import { scenePick, selection3d } from "@/domain/map/Scene3D";
 import { useSettings } from "@/hooks/app/UseSettings";
+import { useInfo } from "@/hooks/find/UseInfo";
 import { useMapView } from "@/hooks/map/UseMapView";
 import { useScene3D } from "@/hooks/map/UseScene3D";
 import { collection, EMPTY, line, point } from "@/logic/map/Features";
@@ -14,6 +15,11 @@ export function SelectionLayers() {
 	const { geo, meta } = useMapView();
 	const selected = useAppStore((s) => s.selected);
 	const results = useAppStore((s) => s.results);
+	// the selection kept fresh, as its box is: the paths lit with a map follow its connections (a connected map deleted
+	// stayed lit: CodeRabbit)
+	const fresh = useInfo(selected ? { kind: selected.kind, id: selected.id } : null).data;
+	const links = (fresh && selected && fresh.kind === selected.kind && fresh.id === selected.id ? fresh : selected)
+		?.links;
 	const goto = useAppStore((s) => s.goto);
 	const settings = useSettings();
 
@@ -38,11 +44,9 @@ export function SelectionLayers() {
 	// paths that connect to it (user: "it could highlight nearby paths which connect to it")
 	const path = useMemo(() => {
 		const lines =
-			selected?.kind === "path" && selected.line?.length
-				? [selected.line]
-				: (selected?.links ?? []).filter((l) => l.length > 1);
+			selected?.kind === "path" && selected.line?.length ? [selected.line] : (links ?? []).filter((l) => l.length > 1);
 		return lines.length ? collection(lines.map((l) => line(l.map(([x, y]) => geo.toLngLat(x, y))))) : EMPTY;
-	}, [geo, selected]);
+	}, [geo, selected, links]);
 	const hits = useMemo(
 		() => collection(results.slice(0, 2000).map((r) => point(geo.toLngLat(r.x, r.y)))),
 		[geo, results],

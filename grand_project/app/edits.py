@@ -98,9 +98,11 @@ class EditsMixin:
         near = lambda e: math.hypot(e["x"] - x, e["y"] - y) < MAP_EDIT_REACH  # noqa: E731
         with self._lock:
             edits = self.atlas.map_edits
-            live = [
-                i for i, n in enumerate(self.V["nodes"]) if n.get("status") != "removed" and near(n)
-            ]  # (the map shown there now)
+            # the maps shown there now, nearest first (the first found could be a neighbour: CodeRabbit)
+            live = sorted(
+                (i for i, n in enumerate(self.V["nodes"]) if n.get("status") != "removed" and near(n)),
+                key=lambda i: math.hypot(self.V["nodes"][i]["x"] - x, self.V["nodes"][i]["y"] - y),
+            )
             if op == "remove":
                 if not live:
                     raise ValueError("there is no map there to delete")
@@ -123,12 +125,15 @@ class EditsMixin:
                         self.atlas.landmark_edits = [e for e in self.atlas.landmark_edits if e not in own]
                         dropped += own
                         # one put there by hand just goes (a delete with nothing at its spot would reach a landmark
-                        # next to it); a detected one is marked deleted
-                        if not any(e.get("kind") and e.get("on") == "map" for e in own):
+                        # next to it); a detected one is marked deleted, also when an edit had changed its kind (a
+                        # Hall brought back as a City stayed a Hall: CodeRabbit)
+                        if not lm.get("added"):
                             e = {"x": round(lm["x"], 1), "y": round(lm["y"], 1), "kind": "", "on": "landmark"}
                             self.atlas.landmark_edits.append(e)
                             made.append(e)
-                if not added:
+                # a delete is kept unless the map shown is the one you added (its add just goes); one a check found
+                # since, where you had added one, needs it (it stayed: CodeRabbit)
+                if n.get("origin") != "by you":
                     rm = {"x": round(n["x"], 1), "y": round(n["y"], 1), "op": "remove"}
                     self.atlas.map_edits.append(
                         rm

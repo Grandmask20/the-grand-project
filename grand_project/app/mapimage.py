@@ -999,6 +999,10 @@ class MapImageMixin:
         """
         if gen != self.generation:
             return None
+        # the map image's version read first, its grid after: a map image put in meanwhile changes the version, and the
+        # crop (old grid, new tiles, or tiles of both) is dropped at the end (no session lock: jobs hold it long;
+        # CodeRabbit)
+        version = self.terrain_version
         g, sharp = self.grid, self._sharp
         if g is None or self._raster is None:
             return None
@@ -1034,7 +1038,7 @@ class MapImageMixin:
                     ay0 - ty * T : ay1 - ty * T, ax0 - tx * T : ax1 - tx * T
                 ]
                 found = True
-        if not found or gen != self.generation:
+        if not found or gen != self.generation or version != self.terrain_version:
             return None
         small = cv2.resize(
             canvas,

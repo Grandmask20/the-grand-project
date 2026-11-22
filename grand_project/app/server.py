@@ -731,7 +731,9 @@ class Handler(BaseHTTPRequestHandler):
     def get_crop(self, q) -> None:
         """A small picture of the ground around a spot (Find's rows), for the atlas of generation `g` only."""
         data = self.S.crop_jpeg(_num(q, "x"), _num(q, "y"), _num(q, "g", -1, int))
-        self._bytes(data, "image/jpeg")
+        # not kept by the browser: its address (generation, map image version) starts over with each run of the app, so
+        # another atlas's crop could match it later (CodeRabbit)
+        self._bytes(data, "image/jpeg", cache=False)
 
     @route("GET", r"/api/tiles/vector/(?P<z>\d+)/(?P<x>\d+)/(?P<y>\d+)\.pbf")
     def get_vector_tile(self, q, z, x, y) -> None:

@@ -1,6 +1,7 @@
 import { BookmarkIcon, CheckIcon } from "lucide-react";
 import { IconPicture } from "@/components/common/IconPicture";
 import { useTypes } from "@/hooks/find/UseTypes";
+import { bookmarkLook } from "@/logic/BookmarkLook";
 import { isSymbol, SYMBOLS, symbolPath } from "@/logic/Symbols";
 import { cn } from "@/utils/Cn";
 
@@ -110,7 +111,8 @@ export function LookPicker({
 	return (
 		<div className="flex flex-col gap-3">
 			<div className="flex items-center gap-2 text-xs text-muted-foreground">
-				<LookMark colour={shown} icon={icon || fallback.icon} plain={icon ? plain : fallback.plain} size={18} />
+				{/* (as it will be drawn: the map's rule) */}
+				<LookMark {...bookmarkLook({ colour, icon, plain }, fallback)} colour={shown} size={18} />
 				as it shows
 			</div>
 			<div className="flex flex-col gap-1.5">
