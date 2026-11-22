@@ -97,6 +97,7 @@ STYLE_DEFAULT = {
     "d3_model_height": 0.8,  # ...and their height times this again
     "d3_model_far": 2.4,  # 3D models are drawn out to this many times the centre's distance
     "d3_beams": True,  # the beams over halls and towers
+    "d3_sky": True,  # a sky over the horizon, and the far ground and models fading into its haze instead of black
     # icons on the flat map (View tab): size (times their in-game size) and picture style: "game art" (the game's own
     # icons), "poe2db art", "from screenshots" (taught crops), "flat colour" (a disc in the type's colour) or "outline"
     "icon_size": 1.0,

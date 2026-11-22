@@ -108,6 +108,7 @@ export function fakeMap({ style = true }: { style?: boolean } = {}) {
 			move({ center: [(b[0][0] + b[1][0]) / 2, (b[0][1] + b[1][1]) / 2] }),
 		),
 		triggerRepaint: vi.fn(),
+		setSky: vi.fn(),
 		addSource: vi.fn((id: string, spec: Record<string, unknown>) => {
 			sources.set(id, { ...spec, setCoordinates: vi.fn(), play: vi.fn(), pause: vi.fn(), setData: vi.fn() });
 		}),

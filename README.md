@@ -111,6 +111,7 @@ A screenshot that might be placed wrong is shown on the map, see-through and out
   - **City biomes and landmarks:** their colours.
   - **Colour by:** each screenshot's area by session, oldest to newest, or *times seen* (a heatmap), in a colour spread you pick.
   - **Reset styles** puts everything back.
+  - **3D view settings, Ground:** how far off the ground fades out, and **sky and fog** (on at first): tilted far enough to see the horizon, a dusky sky over it, and the far ground and 3D models fade into its haze instead of black.
 - **Find tab:**
   - Search by icon name, City / Hall / Tower, bookmark, `#12` or `map 12`, or `x, y` to go to a spot. The search is loose: words in any order, a typo, letters left out; a map is found by its icons too.
   - One list down to the panel's bottom: tick types to show them; click a type's name to open every one of them within the list (and ring them on the map), click it again to fold it. A search's results are the list's first group. Each result shows the ground around it, where it is, and its map's icons with their counts; *Bookmark all* puts them in one group.

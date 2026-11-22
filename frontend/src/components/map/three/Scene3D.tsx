@@ -1,9 +1,10 @@
+import type { SkySpecification } from "maplibre-gl";
 import { useCallback, useEffect } from "react";
 import { scenePick, selection3d } from "@/domain/map/Scene3D";
 import { useAppClient } from "@/hooks/app/UseAppClient";
 import { useShownSettings } from "@/hooks/app/UseShownSettings";
 import { useCustomLayer } from "@/hooks/map/UseCustomLayer";
-import { useMapLibre } from "@/hooks/map/UseMapLibre";
+import { mapAlive, useMapLibre } from "@/hooks/map/UseMapLibre";
 import { useMapView } from "@/hooks/map/UseMapView";
 import { useScene3D } from "@/hooks/map/UseScene3D";
 import { styleColour } from "@/logic/Colours";
@@ -11,6 +12,7 @@ import { GroundFade } from "@/logic/GroundFade";
 import { IconLayer3D } from "@/logic/IconLayer3D";
 import { ModelLayer3D } from "@/logic/ModelLayer3D";
 import { PathLayer3D } from "@/logic/PathLayer3D";
+import { FOG_RGB, SKY } from "@/logic/Sky";
 import { useAppStore } from "@/store/AppStore";
 
 /** The beams' colours in the 3D models (webmap.solids: the hall's beam, the tower's beacon). */
@@ -62,9 +64,24 @@ export function Scene3D() {
 	const pathLayer = useCustomLayer(tilted && layers?.Paths !== false, makePaths);
 	const iconLayer = useCustomLayer(tilted && layers?.Icons !== false, makeIcons);
 
-	// the ground fading into black far off (View: 3D view settings, Ground): over the flat layers, under ours
+	// the sky over the horizon and the haze far things fade into (View: 3D view settings, Sky and fog)
+	const sky = tilted && st?.d3_sky !== false;
+	useEffect(() => {
+		if (!mapAlive(map)) return;
+		// (none: MapLibre's Style takes no sky, its Map's type wants one)
+		map.setSky((sky ? SKY : undefined) as SkySpecification);
+	}, [map, sky]);
+	useEffect(() => {
+		if (modelLayer) {
+			modelLayer.fog = sky ? FOG_RGB : null;
+			map.triggerRepaint();
+		}
+	}, [map, modelLayer, sky]);
+
+	// the ground fading into black far off, or into the haze (View: 3D view settings, Ground): over the flat layers,
+	// under ours
 	const groundFar = tilted ? Number(st?.d3_ground_far ?? 2.4) : 0;
-	const makeFade = useCallback(() => new GroundFade(groundFar), [groundFar]);
+	const makeFade = useCallback(() => new GroundFade(groundFar, sky ? FOG_RGB : [0, 0, 0]), [groundFar, sky]);
 	useCustomLayer(groundFar > 0, makeFade);
 
 	// --- their data: the scene, when it comes (and what the View tab changes in it)

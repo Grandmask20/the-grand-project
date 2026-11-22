@@ -19,14 +19,15 @@ const FS = `
 precision highp float;
 uniform float u_from;
 uniform float u_to;
+uniform vec3 u_col;
 varying float v_w;
 void main() {
 	float a = clamp((v_w - u_from) / max(u_to - u_from, 0.0001), 0.0, 1.0);
-	gl_FragColor = vec4(0.0, 0.0, 0.0, a);
+	gl_FragColor = vec4(u_col, a);
 }`;
 
 /**
- * The 3D view's ground fading into black far off (user: a render distance for the ground too): a sheet over the
+ * The 3D view's ground fading into black (or the sky's haze: View, sky and fog) far off (user: a render distance for the ground too): a sheet over the
  * whole world just above the flat layers, black by distance from the camera, from `far` times the view centre's
  * distance over half that again. Drawn under the 3D models, icons and paths (they have their own reach).
  */
@@ -38,7 +39,11 @@ export class GroundFade implements CustomLayerInterface {
 	private prog: WebGLProgram | null = null;
 	private buf: WebGLBuffer | null = null;
 
-	constructor(private readonly far: number) {}
+	/** Args: `far`: where it starts (times the view centre's distance); `colour`: what it fades into (rgb, 0..1). */
+	constructor(
+		private readonly far: number,
+		private readonly colour: [number, number, number] = [0, 0, 0],
+	) {}
 
 	onAdd(map: MapLibreMap, gl: WebGLRenderingContext | WebGL2RenderingContext): void {
 		this.map = map;
@@ -77,6 +82,7 @@ export class GroundFade implements CustomLayerInterface {
 		gl.uniformMatrix4fv(gl.getUniformLocation(p, "u_m"), false, M);
 		gl.uniform1f(gl.getUniformLocation(p, "u_from"), this.far * w0);
 		gl.uniform1f(gl.getUniformLocation(p, "u_to"), this.far * 1.5 * w0);
+		gl.uniform3f(gl.getUniformLocation(p, "u_col"), ...this.colour);
 		gl.bindBuffer(gl.ARRAY_BUFFER, this.buf);
 		const loc = gl.getAttribLocation(p, "a_xy");
 		gl.enableVertexAttribArray(loc);

@@ -31,6 +31,21 @@ function layer() {
 }
 
 describe("ModelLayer3D", () => {
+	it("far models fade into the haze only while it is given (the shader mixes them toward it)", () => {
+		const { l, gl, called } = layer();
+		l.setModels([model(1)]);
+		l.render(gl, frame);
+		expect(called("uniform1f").map((c) => c.args[1])).toContain(0); // (u_fogOn off)
+		const before = called("uniform3f").length;
+		l.fog = [0.2, 0.1, 0.3];
+		l.render(gl, frame);
+		expect(
+			called("uniform3f")
+				.slice(before)
+				.map((c) => c.args.slice(1)),
+		).toContainEqual([0.2, 0.1, 0.3]);
+	});
+
 	it("compiles its shaders when added", () => {
 		const { called } = layer();
 		expect(called("compileShader")).toHaveLength(2);
