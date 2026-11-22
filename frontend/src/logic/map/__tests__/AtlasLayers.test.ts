@@ -1,5 +1,5 @@
 import { featureFilter } from "@maplibre/maplibre-gl-style-spec";
-import type { LayerSpecification } from "maplibre-gl";
+import type { FilterSpecification, LayerSpecification } from "maplibre-gl";
 import { describe, expect, it } from "vitest";
 import { Geo } from "@/logic/Geo";
 import { ATLAS, atlasLayers, type Look, layerOn, NONE, pathShareFilter, visibility } from "@/logic/map/AtlasLayers";
@@ -37,6 +37,16 @@ describe("AtlasLayers", () => {
 		const all = atlasLayers(geo, mapInfo, meta, look());
 		expect(new Set(all.map((s) => s.id)).size).toBe(all.length);
 		for (const s of all as Any[]) expect(s.source, s.id).toBe(ATLAS);
+	});
+
+	it("Find's heatmap: the maps with its icon, shown only while an icon is picked", () => {
+		expect(layers(look()).heat.layout?.visibility).toBe("none");
+		const heat = layers(look({ heat: "Breach" })).heat as Any;
+		expect(heat).toMatchObject({ type: "heatmap", "source-layer": "maps", layout: { visibility: "visible" } });
+		const glows = featureFilter(heat.filter as FilterSpecification);
+		const map = (icons: string) => ({ type: 1, properties: { icons }, geometry: [] }) as never;
+		expect(glows.filter({ zoom: 0 } as never, map("|Breach|Ritual|"))).toBe(true);
+		expect(glows.filter({ zoom: 0 } as never, map("|Ritual|"))).toBe(false);
 	});
 
 	it("shows the shapes ground only as the background picked", () => {

@@ -14,6 +14,8 @@ export interface Look {
 	tilted: boolean;
 	/** Find: the type whose maps are ringed. */
 	highlight: string | null;
+	/** Find: the icon whose maps glow as a heatmap (null: none). */
+	heat?: string | null;
 }
 
 /** The source the app's vector tiles are in. */
@@ -295,11 +297,49 @@ export function highlightLayers(geo: Geo, meta: Meta, look: Look): LayerSpecific
 	return findRing("highlight", { source: ATLAS, "source-layer": "maps", filter }, geo, meta);
 }
 
+/**
+ * Find's heatmap (MapLibre's "Create a heatmap layer"): the maps with an icon glowing where they are many, to see at a
+ * glance where to look for it. Its reach grows with the map (HEAT_REACH atlas units), so the same spots glow at any zoom.
+ */
+export const HEAT_REACH = 900;
+export function heatLayer(geo: Geo, look: Look): LayerSpecification {
+	const filter: FilterSpecification = look.heat ? ["in", `|${look.heat}|`, ["get", "icons"]] : NONE;
+	return {
+		id: "heat",
+		type: "heatmap",
+		source: ATLAS,
+		"source-layer": "maps",
+		filter,
+		layout: { visibility: visibility(!!look.heat) },
+		paint: {
+			"heatmap-radius": worldSize(geo, HEAT_REACH, 18),
+			"heatmap-intensity": 0.9,
+			"heatmap-opacity": 0.75,
+			"heatmap-color": [
+				"interpolate",
+				["linear"],
+				["heatmap-density"],
+				0,
+				"rgba(0,0,0,0)",
+				0.15,
+				"rgba(120,40,160,0.55)",
+				0.4,
+				"#d8572a",
+				0.7,
+				"#f5a623",
+				1,
+				"#fff2b3",
+			],
+		},
+	};
+}
+
 /** Every layer drawn from the app's vector tiles. */
 export function atlasLayers(geo: Geo, info: MapInfo, meta: Meta, look: Look): LayerSpecification[] {
 	return [
 		...groundLayers(meta, look),
 		pathLayer(geo, meta, look),
+		heatLayer(geo, look),
 		removedLayer(geo, meta, look),
 		iconLayer(geo, info, look),
 		...nodeLayers(geo, meta, look),

@@ -1,5 +1,5 @@
 import { useQueryClient } from "@tanstack/react-query";
-import { ChevronDownIcon, ChevronRightIcon, XIcon } from "lucide-react";
+import { ChevronDownIcon, ChevronRightIcon, FlameIcon, XIcon } from "lucide-react";
 import { useEffect, useRef } from "react";
 import { AppQueryKeys } from "@/api/AppQueryKeys";
 import { IconPicture } from "@/components/common/IconPicture";
@@ -27,6 +27,8 @@ export function TypeList({ onList }: { onList: (label: string, icon: string | nu
 	const results = useAppStore((s) => s.results);
 	const title = useAppStore((s) => s.resultsTitle);
 	const clear = useAppStore((s) => s.clearFind);
+	const heat = useAppStore((s) => s.heat);
+	const setHeat = useAppStore((s) => s.setHeat);
 	const hidden = new Set(settings?.hidden_types ?? []);
 	const all = types.data?.sections.flatMap((s) => s.rows.map((r) => r.label)) ?? [];
 	const searching = query.trim().length > 0;
@@ -135,6 +137,24 @@ export function TypeList({ onList }: { onList: (label: string, icon: string | nu
 											<span className="text-muted-foreground">({row.count})</span>
 											<Chevron className="ml-auto size-4 shrink-0 text-muted-foreground" aria-hidden />
 										</button>
+										{/* a map icon's heatmap: where its maps are many (one at a time; again: off) */}
+										{sec.title === "Map icons" && row.icon && (
+											<button
+												type="button"
+												aria-pressed={heat === row.icon}
+												aria-label={`Heatmap of ${row.label}`}
+												title={
+													heat === row.icon ? "Heatmap on: click to turn it off" : `Where ${row.label} maps are many`
+												}
+												onClick={() => setHeat(heat === row.icon ? null : row.icon)}
+												className={cn(
+													"rounded p-0.5 hover:bg-accent hover:text-foreground",
+													heat === row.icon ? "text-gold" : "text-muted-foreground",
+												)}
+											>
+												<FlameIcon className="size-4" />
+											</button>
+										)}
 										{isOpen && title && <BookmarkAll rows={results} name={row.label} />}
 									</div>
 									{isOpen && (

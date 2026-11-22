@@ -15,6 +15,7 @@ export const LAYER_ORDER = [
 	"biomes-line",
 	"recent",
 	"paths",
+	"heat", // Find's heatmap: over the paths, under the maps
 	"removed",
 	"saved-routes", // routes saved with the bookmarks: under the one tracked
 	"route-casing",
