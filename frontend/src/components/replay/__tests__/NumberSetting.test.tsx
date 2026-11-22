@@ -1,4 +1,4 @@
-import { render, screen, waitFor } from "@testing-library/react";
+import { act, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 import { NumberSetting } from "@/components/replay/ReplayPanel";
@@ -52,6 +52,30 @@ describe("NumberSetting (the timelapse's length, maps per step)", () => {
 		await new Promise((r) => setTimeout(r, 800));
 		expect(onCommit).not.toHaveBeenCalled();
 		expect(box).toHaveValue(30);
+	});
+
+	it("refused, the box shows the setting again; typed on meanwhile, it keeps what's typed (CodeRabbit)", async () => {
+		const user = userEvent.setup();
+		let refuse: (ok: boolean) => void = () => {};
+		const onCommit = vi.fn(
+			() =>
+				new Promise<boolean>((r) => {
+					refuse = r;
+				}),
+		);
+		render(<NumberSetting label="length" value={45} lo={5} hi={600} onCommit={onCommit} />);
+		const box = screen.getByRole("spinbutton", { name: "length" });
+		await user.clear(box);
+		await user.type(box, "60{Enter}");
+		expect(onCommit).toHaveBeenCalledWith(60);
+		await act(async () => refuse(false));
+		expect(box).toHaveValue(45);
+		// a refusal that comes after newer typing leaves the box alone
+		await user.clear(box);
+		await user.type(box, "70{Enter}");
+		await user.type(box, "5");
+		await act(async () => refuse(false));
+		expect(box).toHaveValue(705);
 	});
 
 	it("an empty box goes back to the setting, and the app's own changes show", async () => {

@@ -121,17 +121,21 @@ export function ReplayPanel({ meta }: { meta: Meta }) {
 	// one after another, so the last answer shown is the last change's, and a change that fails leaves the one before
 	// it shown (an older answer arriving last showed its settings; with only the newest kept, a failing newer change
 	// dropped an older one that had worked: CodeRabbit). None once the timelapse is closed (one opened it again).
-	const change = (c: Partial<ReplaySettings>) => {
-		queue.current = queue.current.then(async () => {
-			if (!useAppStore.getState().replay) return;
+	// (whether the app took it: a number box shows the setting again after a refusal)
+	const change = (c: Partial<ReplaySettings>): Promise<boolean> => {
+		const run = queue.current.then(async () => {
+			if (!useAppStore.getState().replay) return false;
 			try {
 				const next = await app.setReplay(c);
 				if (useAppStore.getState().replay) setReplay({ plan: next, pos: 0, playing: false, recording: false });
+				return true;
 			} catch (e) {
 				showError(e);
+				return false;
 			}
 		});
-		return queue.current;
+		queue.current = run.then(() => undefined);
+		return run;
 	};
 
 	const play = () => {
@@ -270,7 +274,7 @@ export function ReplayPanel({ meta }: { meta: Meta }) {
 			hi={hi}
 			whole={key === "per_step"}
 			disabled={replay.recording}
-			onCommit={(v) => void change({ [key]: v })}
+			onCommit={(v) => change({ [key]: v })}
 		/>
 	);
 
@@ -426,10 +430,14 @@ export function NumberSetting({
 	hi: number;
 	whole?: boolean;
 	disabled?: boolean;
-	onCommit: (v: number) => void;
+	/** Use a value; it may answer whether it was taken (refused: the box shows the setting again). */
+	onCommit: (v: number) => void | Promise<boolean>;
 }) {
 	const [text, setText] = useState(String(value));
 	const typing = useRef(false);
+	const edits = useRef(0); // keys typed: a refusal answered after newer typing leaves the box as typed
+	const current = useRef(value);
+	current.current = value;
 	const timer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined); // a value still settling
 	const off = useRef(disabled);
 	off.current = disabled;
@@ -453,7 +461,19 @@ export function NumberSetting({
 		if (t.trim() === "" || !Number.isFinite(n)) return setText(String(value));
 		const v = Math.min(hi, Math.max(lo, whole ? Math.round(n) : n));
 		setText(String(v));
-		if (v !== value) onCommit(v);
+		if (v !== value) send(v);
+	};
+	// a value used; refused, and nothing typed since, the box shows the setting in use again (it kept the refused
+	// number while the replay used the old one: CodeRabbit)
+	const send = (v: number) => {
+		const at = edits.current;
+		const answer = onCommit(v);
+		if (answer)
+			void answer.then((ok) => {
+				if (ok || edits.current !== at) return;
+				typing.current = false;
+				setText(String(current.current));
+			});
 	};
 	// typing paused: used only when it is already a number in range; the box is left as typed (a half-typed "2" on
 	// the way to "20" was set to the lowest and written over: self review)
@@ -461,7 +481,7 @@ export function NumberSetting({
 		if (off.current) return;
 		const n = Number(t);
 		const v = whole ? Math.round(n) : n;
-		if (t.trim() !== "" && Number.isFinite(n) && v >= lo && v <= hi && v !== value) onCommit(v);
+		if (t.trim() !== "" && Number.isFinite(n) && v >= lo && v <= hi && v !== value) send(v);
 	};
 	// (the one as it is then: the setting may have changed meanwhile)
 	const latest = useRef(settle);
@@ -484,6 +504,7 @@ export function NumberSetting({
 				className="h-7 w-20 px-1.5"
 				onChange={(e) => {
 					typing.current = true;
+					edits.current++;
 					setText(e.target.value);
 				}}
 				onKeyDown={(e) => {

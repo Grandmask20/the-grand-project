@@ -115,6 +115,7 @@ describe("ReplayPanel", () => {
 		await user.type(box, "60{Enter}");
 		await waitFor(() => expect(useAppStore.getState().error).toBeTruthy());
 		expect(useAppStore.getState().replay?.plan.settings.length).toBe(45);
+		await waitFor(() => expect(box).toHaveValue(45)); // the box shows the length in use, not the refused 60
 	});
 
 	it("a change answering after the timelapse closed doesn't open it again", async () => {
