@@ -54,8 +54,8 @@
             </div>
         </aside>
         <h2>
-            <span class="text">99 statements &nbsp;</span>
-            <button type="button" class="run button_toggle_run" value="run" data-shortcut="r" title="Toggle lines run">99<span class="text"> run</span></button>
+            <span class="text">113 statements &nbsp;</span>
+            <button type="button" class="run button_toggle_run" value="run" data-shortcut="r" title="Toggle lines run">113<span class="text"> run</span></button>
             <button type="button" class="mis show_mis button_toggle_mis" value="mis" data-shortcut="m" title="Toggle lines missing">0<span class="text"> missing</span></button>
             <button type="button" class="exc show_exc button_toggle_exc" value="exc" data-shortcut="x" title="Toggle lines excluded">0<span class="text"> excluded</span></button>
         </h2>
@@ -65,7 +65,7 @@
             <a id="nextFileLink" class="nav" href="z_1082567d52dc57ce_debug_py.html">&#xbb; next</a>
             &nbsp; &nbsp; &nbsp;
             <a class="nav" href="https://coverage.readthedocs.io/en/7.17.3">coverage.py v7.17.3</a>,
-            created at 2026-11-20 20:52 +0000
+            created at 2026-11-22 01:07 +0000
         </p>
         <aside class="hidden">
             <button type="button" class="button_next_chunk" data-shortcut="j"></button>
@@ -472,6 +472,32 @@
     <p class="pln"><span class="n"><a id="t390" href="#t390">390</a></span><span class="t"><span class="com"># node 75-86 away; a Breach stronghold&#x27;s map node is about 38 units below it (at most 86)</span>&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t391" href="#t391">391</a></span><span class="t"><span class="nam">LANDMARK_NODE_REACH</span> <span class="op">=</span> <span class="num">45.0</span>&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t392" href="#t392">392</a></span><span class="t"><span class="nam">LANDMARK_NODE_REACH_STRONGHOLD</span> <span class="op">=</span> <span class="num">90.0</span>&nbsp;</span><span class="r"></span></p>
+    <p class="pln"><span class="n"><a id="t393" href="#t393">393</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
+    <p class="pln"><span class="n"><a id="t394" href="#t394">394</a></span><span class="t"><span class="com"># ------------------------------------------------------------------ Re-check choices (app.recheck_choices)</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run"><span class="n"><a id="t395" href="#t395">395</a></span><span class="t"><span class="nam">RECHECK_GROUPS</span> <span class="op">=</span> <span class="op">(</span><span class="str">&quot;maps&quot;</span><span class="op">,</span> <span class="str">&quot;paths&quot;</span><span class="op">,</span> <span class="str">&quot;landmarks&quot;</span><span class="op">,</span> <span class="str">&quot;towers&quot;</span><span class="op">,</span> <span class="str">&quot;biomes&quot;</span><span class="op">,</span> <span class="str">&quot;icons&quot;</span><span class="op">)</span>  <span class="com"># the box&#x27;s groups, in its order</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run"><span class="n"><a id="t396" href="#t396">396</a></span><span class="t"><span class="nam">RECHECK_GROUP_NAMES</span> <span class="op">=</span> <span class="op">{</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run run2"><span class="n"><a id="t397" href="#t397">397</a></span><span class="t">    <span class="str">&quot;maps&quot;</span><span class="op">:</span> <span class="str">&quot;Maps&quot;</span><span class="op">,</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run run2"><span class="n"><a id="t398" href="#t398">398</a></span><span class="t">    <span class="str">&quot;paths&quot;</span><span class="op">:</span> <span class="str">&quot;Paths&quot;</span><span class="op">,</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run run2"><span class="n"><a id="t399" href="#t399">399</a></span><span class="t">    <span class="str">&quot;landmarks&quot;</span><span class="op">:</span> <span class="str">&quot;Landmarks&quot;</span><span class="op">,</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run run2"><span class="n"><a id="t400" href="#t400">400</a></span><span class="t">    <span class="str">&quot;towers&quot;</span><span class="op">:</span> <span class="str">&quot;Towers&quot;</span><span class="op">,</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run run2"><span class="n"><a id="t401" href="#t401">401</a></span><span class="t">    <span class="str">&quot;biomes&quot;</span><span class="op">:</span> <span class="str">&quot;Biomes&quot;</span><span class="op">,</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run run2"><span class="n"><a id="t402" href="#t402">402</a></span><span class="t">    <span class="str">&quot;icons&quot;</span><span class="op">:</span> <span class="str">&quot;Icons&quot;</span><span class="op">,</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run run2"><span class="n"><a id="t403" href="#t403">403</a></span><span class="t"><span class="op">}</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run"><span class="n"><a id="t404" href="#t404">404</a></span><span class="t"><span class="nam">RECHECK_MATCH</span> <span class="op">=</span> <span class="num">20.0</span>  <span class="com"># atlas units: an old and a new map this close are the same map</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run"><span class="n"><a id="t405" href="#t405">405</a></span><span class="t"><span class="nam">RECHECK_MOVED</span> <span class="op">=</span> <span class="num">5.0</span>  <span class="com"># a map that moved further than this is listed as moved</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run"><span class="n"><a id="t406" href="#t406">406</a></span><span class="t"><span class="nam">RECHECK_LANDMARK_MATCH</span> <span class="op">=</span> <span class="num">60.0</span>  <span class="com"># an old and a new landmark (or tower) this close are the same one</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run"><span class="n"><a id="t407" href="#t407">407</a></span><span class="t"><span class="nam">RECHECK_LANDMARK_ON_MAP</span> <span class="op">=</span> <span class="num">60.0</span>  <span class="com"># a landmark this close to a map moves with it</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run"><span class="n"><a id="t408" href="#t408">408</a></span><span class="t"><span class="nam">RECHECK_ICON_MATCH</span> <span class="op">=</span> <span class="num">20.0</span>  <span class="com"># an old and a new icon of one name this close are the same icon</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run"><span class="n"><a id="t409" href="#t409">409</a></span><span class="t"><span class="nam">RECHECK_ICON_ON_MAP</span> <span class="op">=</span> <span class="num">40.0</span>  <span class="com"># an icon&#x27;s base this close to a map belongs to it</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run"><span class="n"><a id="t410" href="#t410">410</a></span><span class="t"><span class="nam">RECHECK_ITEMS_SHOWN</span> <span class="op">=</span> <span class="num">400</span>  <span class="com"># changes listed per group (the count says how many there are)</span>&nbsp;</span><span class="r"></span></p>
+    <p class="pln"><span class="n"><a id="t411" href="#t411">411</a></span><span class="t"><span class="com"># s per screenshot, for the Re-check prompt&#x27;s estimate until a Re-check on this computer has measured them (kept in</span>&nbsp;</span><span class="r"></span></p>
+    <p class="pln"><span class="n"><a id="t412" href="#t412">412</a></span><span class="t"><span class="com"># the settings, &quot;recheck_timing&quot;): detecting again with 4 worker processes (~8 s each alone, v1.01), and the atlas-wide</span>&nbsp;</span><span class="r"></span></p>
+    <p class="pln"><span class="n"><a id="t413" href="#t413">413</a></span><span class="t"><span class="com"># clean-up (crawl atlas: 188 s for 526 screenshots, v1.23)</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run"><span class="n"><a id="t414" href="#t414">414</a></span><span class="t"><span class="nam">RECHECK_DETECT_S</span> <span class="op">=</span> <span class="num">2.5</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run"><span class="n"><a id="t415" href="#t415">415</a></span><span class="t"><span class="nam">RECHECK_CLEAN_S</span> <span class="op">=</span> <span class="num">0.4</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run"><span class="n"><a id="t416" href="#t416">416</a></span><span class="t"><span class="nam">RECHECK_TIMING_MIN</span> <span class="op">=</span> <span class="num">5</span>  <span class="com"># screenshots: a Re-check&#x27;s timing is kept only when it detected / cleaned up at least this many</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run"><span class="n"><a id="t417" href="#t417">417</a></span><span class="t"><span class="nam">RECHECK_LINE_POINTS</span> <span class="op">=</span> <span class="num">16</span>  <span class="com"># points along a path&#x27;s drawn line when two results&#x27; lines are compared</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run"><span class="n"><a id="t418" href="#t418">418</a></span><span class="t"><span class="nam">RECHECK_LINE_MOVED</span> <span class="op">=</span> <span class="num">12.0</span>  <span class="com"># atlas units: a drawn line that moved further than this (its maps&#x27; moves aside) changed</span>&nbsp;</span><span class="r"></span></p>
 </main>
 <footer>
     <div class="content">
@@ -481,7 +507,7 @@
             <a class="nav" href="z_1082567d52dc57ce_debug_py.html">&#xbb; next</a>
             &nbsp; &nbsp; &nbsp;
             <a class="nav" href="https://coverage.readthedocs.io/en/7.17.3">coverage.py v7.17.3</a>,
-            created at 2026-11-20 20:52 +0000
+            created at 2026-11-22 01:07 +0000
         </p>
     </div>
 </footer>

@@ -54,18 +54,18 @@
             </div>
         </aside>
         <h2>
-            <span class="text">73 statements &nbsp;</span>
-            <button type="button" class="run button_toggle_run" value="run" data-shortcut="r" title="Toggle lines run">73<span class="text"> run</span></button>
+            <span class="text">91 statements &nbsp;</span>
+            <button type="button" class="run button_toggle_run" value="run" data-shortcut="r" title="Toggle lines run">91<span class="text"> run</span></button>
             <button type="button" class="mis show_mis button_toggle_mis" value="mis" data-shortcut="m" title="Toggle lines missing">0<span class="text"> missing</span></button>
             <button type="button" class="exc show_exc button_toggle_exc" value="exc" data-shortcut="x" title="Toggle lines excluded">0<span class="text"> excluded</span></button>
         </h2>
         <p class="text">
             <a id="prevFileLink" class="nav" href="z_14375325046432a1_check_py.html">&#xab; prev</a> &nbsp; &nbsp;
             <a id="indexLink" class="nav" href="index.html">&Hat; index</a> &nbsp; &nbsp;
-            <a id="nextFileLink" class="nav" href="z_14375325046432a1_landmarks_py.html">&#xbb; next</a>
+            <a id="nextFileLink" class="nav" href="z_14375325046432a1_icon_time_py.html">&#xbb; next</a>
             &nbsp; &nbsp; &nbsp;
             <a class="nav" href="https://coverage.readthedocs.io/en/7.17.3">coverage.py v7.17.3</a>,
-            created at 2026-11-20 20:52 +0000
+            created at 2026-11-22 01:07 +0000
         </p>
         <aside class="hidden">
             <button type="button" class="button_next_chunk" data-shortcut="j"></button>
@@ -329,16 +329,59 @@
     <p class="pln"><span class="n"><a id="t247" href="#t247">247</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t248" href="#t248">248</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t249" href="#t249">249</a></span><span class="t"><span class="nam">SAME_MAP</span> <span class="op">=</span> <span class="num">15.0</span>  <span class="com"># atlas units: two map nodes this close are one map seen twice (the better-seen one counts)</span>&nbsp;</span><span class="r"></span></p>
+    <p class="pln"><span class="n"><a id="t250" href="#t250">250</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
+    <p class="pln"><span class="n"><a id="t251" href="#t251">251</a></span><span class="t"><span class="com"># --- a map&#x27;s icons over time (finalize.icon_time; user&#x27;s rules, v1.23)</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run"><span class="n"><a id="t252" href="#t252">252</a></span><span class="t"><span class="nam">ICON_TIME_GAP</span> <span class="op">=</span> <span class="num">30.0</span>  <span class="com"># s: screenshots closer together are one moment (a scan: 3 s apart at most on the roa test;</span>&nbsp;</span><span class="r"></span></p>
+    <p class="pln"><span class="n"><a id="t253" href="#t253">253</a></span><span class="t"><span class="com"># running a map takes longer: 46-129 s between the single-map test&#x27;s screenshots)</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run"><span class="n"><a id="t254" href="#t254">254</a></span><span class="t"><span class="nam">ICON_TIME_DX</span> <span class="op">=</span> <span class="num">80.0</span>  <span class="com"># px: the icon row searched to each side of the map (5 icons 36 px apart span +-72)</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run"><span class="n"><a id="t255" href="#t255">255</a></span><span class="t"><span class="nam">ICON_TIME_DY</span> <span class="op">=</span> <span class="num">10.0</span>  <span class="com"># px: ... and above / below its line (24 px above the map)</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run"><span class="n"><a id="t256" href="#t256">256</a></span><span class="t"><span class="nam">ICON_TIME_RIM</span> <span class="op">=</span> <span class="num">0.30</span>  <span class="com"># rim score of an icon in the row (the finder&#x27;s candidates start at 0.35; a little lower here)</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run"><span class="n"><a id="t257" href="#t257">257</a></span><span class="t"><span class="nam">ICON_TIME_PEAKS</span> <span class="op">=</span> <span class="num">6</span>  <span class="com"># the strongest rims in the row that are named</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run"><span class="n"><a id="t258" href="#t258">258</a></span><span class="t"><span class="nam">ICON_TIME_VIEWS</span> <span class="op">=</span> <span class="num">8</span>  <span class="com"># screenshots of one moment looked at again, the map nearest their middle first</span>&nbsp;</span><span class="r"></span></p>
+    <p class="pln"><span class="n"><a id="t259" href="#t259">259</a></span><span class="t"><span class="com"># 1 - correlation with the icon&#x27;s own pictures (icon_refs.MAX_DIST 0.40 names an icon): roa test, before / after</span>&nbsp;</span><span class="r"></span></p>
+    <p class="pln"><span class="n"><a id="t260" href="#t260">260</a></span><span class="t"><span class="com"># a change: present 197 of 217 views &lt;= 0.15; gone 202 of 271 &gt; 0.5, 57 between (unsure)</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run"><span class="n"><a id="t261" href="#t261">261</a></span><span class="t"><span class="nam">ICON_TIME_PRESENT</span> <span class="op">=</span> <span class="num">0.15</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run"><span class="n"><a id="t262" href="#t262">262</a></span><span class="t"><span class="nam">ICON_TIME_ABSENT</span> <span class="op">=</span> <span class="num">0.50</span>&nbsp;</span><span class="r"></span></p>
+    <p class="pln"><span class="n"><a id="t263" href="#t263">263</a></span><span class="t"><span class="com"># a rim this icon fits within this of its best match (another icon&#x27;s, or not an icon) might be it: unsure. Roa test:</span>&nbsp;</span><span class="r"></span></p>
+    <p class="pln"><span class="n"><a id="t264" href="#t264">264</a></span><span class="t"><span class="com"># rims left in a row after its icon went fit it at 0.31-0.39 but their best match at 0.02-0.26</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run"><span class="n"><a id="t265" href="#t265">265</a></span><span class="t"><span class="nam">ICON_TIME_MARGIN</span> <span class="op">=</span> <span class="num">0.10</span>&nbsp;</span><span class="r"></span></p>
+    <p class="pln"><span class="n"><a id="t266" href="#t266">266</a></span><span class="t"><span class="com"># icons never judged over time: no picture of their own, not map content, or not on one map</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run"><span class="n"><a id="t267" href="#t267">267</a></span><span class="t"><span class="nam">ICON_TIME_SKIP</span> <span class="op">=</span> <span class="op">{</span><span class="str">&quot;Unidentified&quot;</span><span class="op">,</span> <span class="str">&quot;NotABadge&quot;</span><span class="op">,</span> <span class="str">&quot;PlayerOrBookmark&quot;</span><span class="op">,</span> <span class="str">&quot;LostTower&quot;</span><span class="op">}</span>&nbsp;</span><span class="r"></span></p>
+    <p class="pln"><span class="n"><a id="t268" href="#t268">268</a></span><span class="t"><span class="com"># icons that never appear on a map that didn&#x27;t have them (user): one found only later was found falsely. Abyss is</span>&nbsp;</span><span class="r"></span></p>
+    <p class="pln"><span class="n"><a id="t269" href="#t269">269</a></span><span class="t"><span class="com"># the abyssal fissure; Trader the merchant; Hideout the blue one (the red one can appear)</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run"><span class="n"><a id="t270" href="#t270">270</a></span><span class="t"><span class="nam">ICON_NEVER_APPEARS</span> <span class="op">=</span> <span class="op">{</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run run2"><span class="n"><a id="t271" href="#t271">271</a></span><span class="t">    <span class="str">&quot;Corruption&quot;</span><span class="op">,</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run run2"><span class="n"><a id="t272" href="#t272">272</a></span><span class="t">    <span class="str">&quot;Hideout&quot;</span><span class="op">,</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run run2"><span class="n"><a id="t273" href="#t273">273</a></span><span class="t">    <span class="str">&quot;Abyss&quot;</span><span class="op">,</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run run2"><span class="n"><a id="t274" href="#t274">274</a></span><span class="t">    <span class="str">&quot;AbyssalDepths&quot;</span><span class="op">,</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run run2"><span class="n"><a id="t275" href="#t275">275</a></span><span class="t">    <span class="str">&quot;Expedition&quot;</span><span class="op">,</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run run2"><span class="n"><a id="t276" href="#t276">276</a></span><span class="t">    <span class="str">&quot;ExpeditionRemnant&quot;</span><span class="op">,</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run run2"><span class="n"><a id="t277" href="#t277">277</a></span><span class="t">    <span class="str">&quot;GrandExpedition&quot;</span><span class="op">,</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run run2"><span class="n"><a id="t278" href="#t278">278</a></span><span class="t">    <span class="str">&quot;UniqueMap&quot;</span><span class="op">,</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run run2"><span class="n"><a id="t279" href="#t279">279</a></span><span class="t">    <span class="str">&quot;Trader&quot;</span><span class="op">,</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run run2"><span class="n"><a id="t280" href="#t280">280</a></span><span class="t"><span class="op">}</span>&nbsp;</span><span class="r"></span></p>
+    <p class="pln"><span class="n"><a id="t281" href="#t281">281</a></span><span class="t"><span class="com"># icons that only appear in place of another (user): Cleansed replaces Corruption, never appears otherwise</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run"><span class="n"><a id="t282" href="#t282">282</a></span><span class="t"><span class="nam">ICON_ONLY_REPLACES</span> <span class="op">=</span> <span class="op">{</span><span class="str">&quot;Sanctification&quot;</span><span class="op">:</span> <span class="str">&quot;Corruption&quot;</span><span class="op">}</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run"><span class="n"><a id="t283" href="#t283">283</a></span><span class="t"><span class="nam">ICON_DEADLY</span> <span class="op">=</span> <span class="str">&quot;MapBossSpecial&quot;</span>  <span class="com"># the Deadly Map Boss icon: an attempted deadly boss map keeps it, loses the others</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run"><span class="n"><a id="t284" href="#t284">284</a></span><span class="t"><span class="nam">ICON_CITY_REACH</span> <span class="op">=</span> <span class="num">90.0</span>  <span class="com"># atlas units: a City landmark this close makes the map a City (not a plain deadly boss map)</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run"><span class="n"><a id="t285" href="#t285">285</a></span><span class="t"><span class="nam">ICON_TIME_SNAP</span> <span class="op">=</span> <span class="num">40.0</span>  <span class="com"># px: a screenshot&#x27;s own map this close to where the atlas puts it is that map</span>&nbsp;</span><span class="r"></span></p>
+    <p class="pln"><span class="n"><a id="t286" href="#t286">286</a></span><span class="t"><span class="com"># mean grey around the map below which a screenshot shows it in the dark fog (no icons drawn): unsure. Crawl atlas:</span>&nbsp;</span><span class="r"></span></p>
+    <p class="pln"><span class="n"><a id="t287" href="#t287">287</a></span><span class="t"><span class="com"># a fogged view 22, the same map lit 46-50; roa test views 55-124</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run"><span class="n"><a id="t288" href="#t288">288</a></span><span class="t"><span class="nam">ICON_TIME_DARK</span> <span class="op">=</span> <span class="num">35</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run"><span class="n"><a id="t289" href="#t289">289</a></span><span class="t"><span class="nam">ICON_TIME_WIDE</span> <span class="op">=</span> <span class="num">70</span>  <span class="com"># px around the row where the icon still counts as there (where a screenshot puts a map can be</span>&nbsp;</span><span class="r"></span></p>
+    <p class="pln"><span class="n"><a id="t290" href="#t290">290</a></span><span class="t"><span class="com"># off: roa atlas 65 px)</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run"><span class="n"><a id="t291" href="#t291">291</a></span><span class="t"><span class="nam">ICON_TIME_TIE</span> <span class="op">=</span> <span class="num">0.03</span>  <span class="com"># an icon found near the row counts only when it is within this of its best match (roa test: the</span>&nbsp;</span><span class="r"></span></p>
+    <p class="pln"><span class="n"><a id="t292" href="#t292">292</a></span><span class="t"><span class="com"># player marker over a map fit Cleansed&#x27;s pictures)</span>&nbsp;</span><span class="r"></span></p>
 </main>
 <footer>
     <div class="content">
         <p>
             <a class="nav" href="z_14375325046432a1_check_py.html">&#xab; prev</a> &nbsp; &nbsp;
             <a class="nav" href="index.html">&Hat; index</a> &nbsp; &nbsp;
-            <a class="nav" href="z_14375325046432a1_landmarks_py.html">&#xbb; next</a>
+            <a class="nav" href="z_14375325046432a1_icon_time_py.html">&#xbb; next</a>
             &nbsp; &nbsp; &nbsp;
             <a class="nav" href="https://coverage.readthedocs.io/en/7.17.3">coverage.py v7.17.3</a>,
-            created at 2026-11-20 20:52 +0000
+            created at 2026-11-22 01:07 +0000
         </p>
     </div>
 </footer>
