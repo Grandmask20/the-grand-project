@@ -636,6 +636,33 @@ RF_DETR_HALL_BEAM_SPREAD = 80  # px: how far left / right of the node the beam c
 RF_DETR_HALL_BEAM_MIN = 350  # orange beam pixels from which the beam column places the structure (HALL_ORANGE / 2)
 
 
+# map node states (detect/node_states.py), named like icons: RF-DETR or the map finder finds the map node, the nearest
+# stored picture of its middle names the state, so new pictures never change what is found (finding vs naming)
+NODE_STATES = ("grey", "blue", "green", "red")  # unreachable, can be pathed to, cleared, failed (cities and halls)
+NODE_STATES_FILE = rc_paths.ref("node_states.npz")  # the pictures (tools/node_state_sheet.py freeze)
+NODE_STATE_MAX_DIST = 0.40  # 1 - correlation to the nearest picture; further away the state is unsure (None)
+# a map node may only take a state one of whose pictures has a brightest quarter this close in colour (Lab a/b units,
+# icon_refs.bright_colour): blue glows at about (-5, -18), green at (-38, +38), grey near (0, 0)
+NODE_STATE_COLOUR_TOL = 12.0
+# ... and glows as much: the share of the pixels within NODE_STATE_GLOW_R px of the middle in each glow's colour band
+# (OpenCV HSV: hue ranges, min saturation, min value). The pattern match removes a crop's average colour, so a
+# grey map node in another light matched blue pictures; on the map_state_change screenshots (each folder named by
+# the other two's pictures) this check took grey-called-blue from 4 to 1 of 1,238, NODE_STATE_GLOW_TOL 0.04-0.08
+# all alike, 0.12 worse. Blue map nodes there had a blue share of 0.18-0.41 (5-95%), grey ones mostly 0
+NODE_STATE_GLOW_R = 10
+NODE_STATE_GLOW_BANDS = {
+    "blue": (((95, 130),), 60, 110),
+    "green": (((40, 85),), 90, 90),
+    "red": (((0, 8), (172, 180)), 120, 90),
+}
+NODE_STATE_GLOW_TOL = 0.08  # largest difference in any glow's share to the nearest picture of the state
+NODE_STATE_PICTURES = 100  # pictures kept per state when freezing: states weigh alike, naming stays quick
+NODE_STATE_TRUTH = "states.json"  # hand-checked states next to a folder's screenshots (tools/node_state_sheet.py)
+# the folders the pictures come from; never TRUTH_SETS' screenshots, which score the namer (python -m
+# grand_project.detect score) and so must stay unseen
+NODE_STATE_SETS = [TESTS / "map_state_change" / part for part in ("pre-change", "post-change", "single-map")]
+
+
 # the icon finder's rim template (the average icon as seen on screen, from the hand labels), so teaching new icon
 # pictures (naming) never changes which icons are found: tools/freeze_badge_finder.py
 BADGE_FINDER_FILE = rc_paths.ref("badge_finder.npz")

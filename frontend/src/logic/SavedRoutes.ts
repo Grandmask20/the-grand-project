@@ -149,7 +149,7 @@ export function removeMap(legs: Legs, node: number, graph?: RouteGraph): Legs | 
 			// off and the pieces not joined yet (the ones joined are the route now: CodeRabbit)
 			const avoid = new Set([node]);
 			for (const p of waiting) if (p !== piece && ![...p].some((m) => on.has(m))) for (const m of p) avoid.add(m);
-			const way = graph.shortest([...piece], (u) => on.has(u), avoid);
+			const way = graph.shortest([...piece], (u) => on.has(u), { avoid });
 			if (!way || way.length - 2 > piece.size) continue;
 			const own = treeLegs(way[0], near, piece);
 			out.push([...way.reverse(), ...own[0].slice(1)], ...own.slice(1));

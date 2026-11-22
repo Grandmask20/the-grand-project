@@ -2,6 +2,7 @@
 
 import json
 import logging
+import re
 import threading
 import urllib.error
 import urllib.request
@@ -52,6 +53,10 @@ def test_state_meta_and_map(app):
     assert st == 200 and state["atlas"]["maps"] == 15 and state["map"]["zmax"] >= 1
     meta = json.loads(call(srv, "/api/meta")[2])
     assert meta["colours"]["path_multi"].startswith("#") and "Vaal" in meta["city_types"]
+    # the page colours map node bubbles by state from these
+    states = meta["colours"]["node_state"]
+    assert set(states) == {"grey", "blue", "green", "red"}
+    assert all(re.fullmatch(r"#[0-9a-f]{6}", c) for c in states.values())
 
 
 def test_tiles_over_http(app):

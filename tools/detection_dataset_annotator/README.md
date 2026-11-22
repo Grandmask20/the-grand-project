@@ -248,6 +248,18 @@ changed. It reports the truth Cities a screenshot shows without a
 citadel box (draw them) and the stronghold boxes far from every truth stronghold area (check them). On fr-atlas it
 takes about 15 minutes (the ground ring names each screenshot's icons for the Delirium mist rule).
 
+## Seeding from checked map nodes
+
+`python -m tools.detection_dataset_annotator.node_truth atlas_test_data/map_state_change/*/states.json [--dry-run]`
+cleans the map node boxes of the screenshots a `states.json` lists (the map nodes a person checked on a contact sheet
+of the classical detector's map nodes, `tools/node_state_sheet.py`). The classical detector runs again to know which
+map nodes the sheet showed (not hidden, their crop on the screen); a map node box at a checked position stays as it
+is (its class is still the ground guess), one the sheet showed that nobody checked is deleted (no map node), and the
+rest (at the screen's edge, hidden under an icon row) stay: nobody judged them. No box is added. Each screenshot is
+marked with its `states.json` (`truth`), so a bootstrap round takes it like the biome-truth ones; reviewed screenshots
+are never changed. Atlas folders may keep their screenshots in folders right below `atlas.json` (`map_state_change`'s
+`pre-change/`, `post-change/`, `single-map/`): the splits draw them as that atlas's blocks.
+
 ## Training
 
 `tools/train_rf_detr.py` fine-tunes transformers' RF-DETR (`Roboflow/rf-detr-small` at a pinned Hub revision) with

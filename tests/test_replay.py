@@ -3,19 +3,13 @@
 import numpy as np
 
 from grand_project.app import replay as R
+from grand_project.core import capture_time, time_order
 
 
 def _frame(name, x=0.0, y=0.0):
     """An atlas frame and its area: a 1920 x 1080 screenshot whose top-left corner is at (x, y)."""
     poly = np.array([[x, y], [x + 1920, y], [x + 1920, y + 1080], [x, y + 1080]], float)
     return {"name": name, "path": f"/nowhere/{name}.png"}, (poly, (x, y, x + 1920, y + 1080))
-
-
-def test_capture_time_comes_from_the_steam_name():
-    t1 = R.capture_time({"name": "2694490_20261115193515_1", "path": "/nowhere"})
-    t2 = R.capture_time({"name": "2694490_20261115193535_2", "path": "/nowhere"})
-    assert t1 is not None and t2 - t1 == 20
-    assert R.capture_time({"name": "Screenshot_12", "path": "/nowhere/x.png"}) is None
 
 
 def test_by_time_reveals_an_island_when_taken_and_the_bridge_last():
@@ -53,7 +47,7 @@ def test_spiral_and_distance_start_at_the_first_screenshot_taken():
     names = [f"2694490_202611151{k:03d}00_1" for k in range(40)]
     fr, fp = zip(*[_frame(n, x, y) for n, (x, y) in zip(names, pos, strict=True)], strict=True)
     mids = R.centres(list(fp))
-    first = R.time_order([R.capture_time(f) for f in fr])[0]
+    first = time_order([capture_time(f) for f in fr])[0]
     for kind in ("spiral", "distance"):
         order = R.make_plan(list(fr), list(fp), kind).order
         assert order[0] == first and sorted(order) == list(range(40))
@@ -96,7 +90,7 @@ def test_reveal_by_area_sweeps_smoothly():
 
 
 def test_real_span_leaves_out_pauses():
-    t = R.capture_time
+    t = capture_time
     stamps = ("20261115100000", "20261115100500", "20261115150000")  # 5 min, then a 5 h pause
     times = [t({"name": f"2694490_{s}_1", "path": "/x"}) for s in stamps]
     assert R.real_span(times) == 300

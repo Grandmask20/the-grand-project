@@ -131,6 +131,20 @@ def test_the_detector_size_is_what_scale_screenshot_gives() -> None:
         assert core.detector_size(width, height) == (scaled.shape[1], scaled.shape[0])
 
 
+def test_capture_time_comes_from_the_steam_name(tmp_path) -> None:
+    t1 = core.capture_time({"name": "2694490_20261115193515_1", "path": "/nowhere"})
+    t2 = core.capture_time({"name": "2694490_20261115193535_2", "path": "/nowhere"})
+    assert t1 is not None and t2 - t1 == 20
+    assert core.capture_time({"name": "Screenshot_12", "path": "/nowhere/x.png"}) is None
+    shot = tmp_path / "Screenshot_12.png"
+    shot.write_bytes(b"")
+    assert core.capture_time({"name": "Screenshot_12", "path": str(shot)}) == shot.stat().st_mtime
+
+
+def test_untimed_screenshots_stay_after_the_one_placed_before_them() -> None:
+    assert core.time_order([30.0, None, 10.0, 20.0]) == [2, 3, 0, 1]
+
+
 def test_renaming_an_icon_picture_makes_cached_detections_stale(tmp_path, monkeypatch) -> None:
     """tools/split_icon_type.py renames stored pictures (same rows, same ids): the stamp changes, so caches made with
     the old names are detected again. The database's path has a "#": its read-only URI must still open it."""

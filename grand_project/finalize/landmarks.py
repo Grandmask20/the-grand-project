@@ -305,20 +305,23 @@ def _beam_column(img, x, y, spread=0) -> tuple[int, int, int]:
     return best
 
 
-def _settlements(atlas, maps, landmarks, icons) -> list[dict]:
+def _settlements(atlas, maps, landmarks, icons, state_at) -> list[dict]:
     """Decide which City / Hall detections are kept and which kind each one is.
 
     Hall and City are the same kind of place with a special boss (user's rules): both have a Deadly Map Boss
-    icon (without one it is neither: removed, except a completed City, which keeps only its citadel); a City's
-    map stands on a brass barrel (always, user; beams vary: every type can show blue); a Hall has a normal map
-    base with the beam on a structure next to it. Nearby detections (within SETTLE_MERGE) are one building.
-    A map carrying another exclusive type's icon is neither, and the ocean / Expedition biome never has a City.
+    icon; without one it is neither (removed), unless its map is green (completed: the icon and beam are gone)
+    or red (failed). A City's map stands on a brass barrel (always, user; beams vary: every type can show blue);
+    a Hall has a normal map base with the beam on a structure next to it. Nearby detections (within
+    SETTLE_MERGE) are one building. A map carrying another exclusive type's icon is neither, and the ocean /
+    Expedition biome never has a City.
 
     Args:
         atlas: the core.Atlas (screenshots, map nodes, images).
         maps: list of (frame dict, atlas-to-screen homography) for every screenshot.
         landmarks: the landmark dicts so far (kind, x, y, n, conf, status ...).
-        icons: the merged icons from _clean_icons.
+        icons: the merged icons from _clean_icons that are still there (not lost: finalize.states).
+        state_at: callable (x, y) -> the state of the map node there, or None when no screenshot named it
+            (finalize.states.state_near).
 
     Returns:
         The landmarks: all non-City / Hall ones unchanged, plus one dict per building with kind, x, y, n,
@@ -397,11 +400,16 @@ def _settlements(atlas, maps, landmarks, icons) -> list[dict]:
                 bl, orr = _beam(atlas.image(f["path"]), sp[0, 0], sp[0, 1], b["spread"])
                 blue, orange, seen = blue + bl, orange + orr, seen + 1
         status = "kept"
-        if badge is None and not clash and b["detected"].get("City", 0) >= b["detected"].get("Hall", 0):
-            # a completed City loses its badge (and beam): a green map with only its citadel
-            kind, why = "City", "no Deadly Map Boss badge: completed city?"
+        state = state_at(b["x"], b["y"])
+        voted = "City" if b["detected"].get("City", 0) >= b["detected"].get("Hall", 0) else "Hall"
+        if badge is None and not clash and state in ("green", "red"):
+            # a completed City / Hall loses its badge (and beam): a green map with only its citadel / structure;
+            # a failed one is red
+            kind = voted
+            why = f"no Deadly Map Boss badge: {'completed' if state == 'green' else 'failed'} ({state} map)"
         elif badge is None:
-            kind, why = "Hall", f"its map is a {clash} map" if clash else "no Deadly Map Boss badge"
+            kind = voted
+            why = f"its map is a {clash} map" if clash else "no Deadly Map Boss badge and its map is not green or red"
             status = f"removed: {why} (not a Hall or City)"
         elif barrel:  # a City's map always stands on the barrel (user); every city type can have a blue beam
             kind, why = "City", "brass barrel map base"

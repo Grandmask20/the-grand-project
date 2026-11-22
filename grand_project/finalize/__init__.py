@@ -15,6 +15,9 @@ what was detected; it decides what to *believe*, and stores the result in atlas[
    both ends (the detector's own route_score, at the merged node positions), and the scores are
    averaged.  The detector's selection rules then run once on the whole atlas: no crossings,
    at most 5 exits, no shortcut past a nearer base, no diamond diagonals.
+5. States: each map's state (grey / blue / green / red) and icons come from its newest sightings, as long as
+   the change from the older ones is allowed (grey -> blue -> green, blue -> red; a map that turns green loses
+   its icons); sightings against the rules are counted as detection errors (states.py).
 """
 
 from .check import (  # noqa: F401
@@ -100,6 +103,13 @@ from .constants import (  # noqa: F401
     SHARED_MIN_ALONE,
     SHARED_OK,
     START_LEN,
+    STATE_AFTER,
+    STATE_CHANGE_COST,
+    STATE_ICON_CHANGE_COST,
+    STATE_ICON_MISS_COST,
+    STATE_LOG_MAX,
+    STATE_OPEN,
+    STATE_SETTLE_REACH,
     STRAIGHT_MAX,
     STRAIGHT_VIEWS,
     TOWER_JOIN,
@@ -125,6 +135,13 @@ from .landmarks import (  # noqa: F401
 from .local import (  # noqa: F401
     _footprint,
     finalize_local,
+)
+from .states import (  # noqa: F401
+    fit_nodes,
+    fit_path,
+    fit_presence,
+    state_near,
+    state_stats,
 )
 from .traces import (  # noqa: F401
     _DASHES,

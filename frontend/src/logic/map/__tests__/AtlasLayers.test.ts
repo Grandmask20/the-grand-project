@@ -1,9 +1,9 @@
-import { featureFilter } from "@maplibre/maplibre-gl-style-spec";
+import { createExpression, featureFilter } from "@maplibre/maplibre-gl-style-spec";
 import type { LayerSpecification } from "maplibre-gl";
 import { describe, expect, it } from "vitest";
 import { Geo } from "@/logic/Geo";
 import { ATLAS, atlasLayers, type Look, layerOn, NONE, pathShareFilter, visibility } from "@/logic/map/AtlasLayers";
-import { mapInfo, meta, state } from "@/test/Fixtures";
+import { mapInfo, meta, nodeStates, state } from "@/test/Fixtures";
 
 const geo = new Geo(mapInfo);
 
@@ -31,6 +31,28 @@ function layers(l: Look): Record<string, Any> {
 
 const withStyle = (style: Record<string, string | number | boolean>) =>
 	look({}, { style: { ...state.settings.style, ...style } });
+
+/** A paint or layout value as MapLibre works it out for a map node (zoomed in past the dots), as "#rrggbb". */
+function colourOf(value: unknown, props: Record<string, unknown>, zoom = 22): string {
+	const parsed = createExpression(value, {
+		type: "color",
+		"property-type": "data-driven",
+		expression: { interpolated: false, parameters: ["zoom", "feature"] },
+	} as never);
+	if (parsed.result !== "success") throw new Error(JSON.stringify(parsed.value));
+	const c = parsed.value.evaluate({ zoom }, { type: 1, properties: props, geometry: [] } as never) as {
+		r: number;
+		g: number;
+		b: number;
+	};
+	const hex = (v: number) =>
+		Math.round(v * 255)
+			.toString(16)
+			.padStart(2, "0");
+	return `#${hex(c.r)}${hex(c.g)}${hex(c.b)}`;
+}
+
+const node = (props: Record<string, unknown>) => ({ status: "confirmed", fill: "", icons: "", ...props });
 
 describe("AtlasLayers", () => {
 	it("draws every layer from the app's vector tiles", () => {
@@ -93,6 +115,37 @@ describe("AtlasLayers", () => {
 		const circles = layers(look());
 		expect(circles.maps.maxzoom).toBe(24);
 		expect(layers(withStyle({ map_style: "hidden" })).maps.layout?.visibility).toBe("none");
+	});
+
+	it("colours a map node by its state, by its status while no screenshot named it", () => {
+		const { maps } = layers(look());
+		for (const [st, colour] of Object.entries(nodeStates)) {
+			expect(colourOf(maps.paint?.["circle-color"], node({ state: st }))).toBe(colour);
+			expect(colourOf(maps.paint?.["circle-color"], node({ state: st }), 0)).toBe(colour); // zoomed out dots too
+		}
+		expect(colourOf(maps.paint?.["circle-color"], node({ state: "" }))).toBe(meta.colours.node.confirmed);
+		expect(colourOf(maps.paint?.["circle-color"], node({ status: "single", state: "" }))).toBe(
+			meta.colours.node.single,
+		);
+		expect(colourOf(maps.paint?.["circle-color"], node({ state: "purple" }))).toBe(meta.colours.node.confirmed);
+		// a state wins over the status
+		expect(colourOf(maps.paint?.["circle-color"], node({ status: "single", state: "green" }))).toBe("#50c850");
+	});
+
+	it("a state wins over the View tab's map colour, which colours the maps without one", () => {
+		const { maps } = layers(withStyle({ map_col: "#123456" }));
+		expect(colourOf(maps.paint?.["circle-color"], node({ state: "red" }))).toBe(nodeStates.red);
+		expect(colourOf(maps.paint?.["circle-color"], node({ state: "" }))).toBe("#123456");
+	});
+
+	it("bordered, the ring and the squares take the state's colour (the icon's colour inside)", () => {
+		const bordered = layers(withStyle({ map_style: "squares", map_fill: "bordered" }));
+		const blue = node({ state: "blue", fill: "#aabbcc" });
+		expect(colourOf(bordered.maps.paint?.["circle-stroke-color"], blue)).toBe(nodeStates.blue);
+		expect(colourOf(bordered["maps-square"].paint?.["icon-color"], blue)).toBe(nodeStates.blue);
+		expect(colourOf(bordered.maps.paint?.["circle-color"], blue)).toBe("#aabbcc");
+		const solid = layers(withStyle({ map_style: "squares" }));
+		expect(colourOf(solid["maps-square"].paint?.["icon-color"], blue)).toBe(nodeStates.blue);
 	});
 
 	it("tilted, the flat paths, icons and dots give way to the 3D ones", () => {

@@ -273,15 +273,11 @@ def name_badge(img: np.ndarray, x: float, y: float, names: list[str], F: np.ndar
         (name, 1 - correlation): "Unidentified" when the closest picture is further than icon_refs.MAX_DIST, and
         ("Unidentified", 9.0) when the icon runs off the screenshot or there are no pictures.
     """
-    big = icon_refs.crop(img, x, y, icon_refs.SIZE + 2 * icon_refs.SHIFT)
-    if big is None or not len(names):
+    found = icon_refs.shift_dists(img, x, y, F) if len(names) else None
+    if found is None:
         return "Unidentified", 9.0
-    d = np.full(len(names), 9.0, np.float32)
-    for dy in range(2 * icon_refs.SHIFT + 1):
-        for dx in range(2 * icon_refs.SHIFT + 1):
-            d = np.minimum(d, 1 - F @ icon_refs.feature(big[dy : dy + icon_refs.SIZE, dx : dx + icon_refs.SIZE]))
-    s = icon_refs.SHIFT
-    d[~icon_refs.colour_ok(names, icon_refs.refs().colours, big[s : s + icon_refs.SIZE, s : s + icon_refs.SIZE])] = 9.0
+    d, c = found
+    d[~icon_refs.colour_ok(names, icon_refs.refs().colours, c)] = 9.0
     k = int(np.argmin(d))
     return (names[k] if d[k] <= icon_refs.MAX_DIST else "Unidentified"), float(d[k])
 

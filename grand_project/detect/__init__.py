@@ -12,6 +12,8 @@ Stages, each scored against atlas_test_data/truth/truth.json (not shipped) with 
   5. paths    amber / dim-gold / fog-orange dash mask -> dash-by-dash tracing between maps by the user's
               path rules; two dead ends meeting = a missed map; dashes around a spot are map evidence too
   6. biome    ground type per map: only as first guesses of the RF-DETR dataset's node classes (biomes.py)
+  7. state    grey / blue / green / red per found map, from stored pictures of its middle (node_states.py; named
+              when the detection is saved, builder.extract_frame, so new pictures re-name without re-finding)
 Modes: TRAINING fits models from the hand-labelled truth and stores them in the reference DB
 (table detector_models); LIVE only reads them and never writes the DB.
 
@@ -88,6 +90,16 @@ from .constants import (  # noqa: F401
     MAP_MERGE,
     MAP_MIN,
     MAP_NMS,
+    NODE_STATE_COLOUR_TOL,
+    NODE_STATE_GLOW_BANDS,
+    NODE_STATE_GLOW_R,
+    NODE_STATE_GLOW_TOL,
+    NODE_STATE_MAX_DIST,
+    NODE_STATE_PICTURES,
+    NODE_STATE_SETS,
+    NODE_STATE_TRUTH,
+    NODE_STATES,
+    NODE_STATES_FILE,
     NOT,
     NOT_ON_EXPEDITION,
     PATH_AHEAD,
@@ -250,6 +262,14 @@ from .models import (  # noqa: F401
     load_model,
     safe_model_loads,
     save_model,
+)
+from .node_states import (  # noqa: F401
+    glow_shares,
+    name_state,
+    name_states,
+    save_state_pictures,
+    state_pictures,
+    states_stamp,
 )
 from .paths import (  # noqa: F401
     _WALK_MEMO,

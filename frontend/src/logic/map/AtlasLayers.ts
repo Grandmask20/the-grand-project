@@ -138,6 +138,15 @@ export function pathLayer(geo: Geo, meta: Meta, look: Look): Spec<"line"> {
 }
 
 /**
+ * A map node's colour: its state's (grey / blue / green / red, named by finalize.states) whatever its status or the
+ * View tab's map colour, else `fallback` (no screenshot named its state).
+ */
+function stateColour(meta: Meta, fallback: ExpressionSpecification | string): ExpressionSpecification {
+	const states = Object.entries(meta.colours.node_state).flat();
+	return ["match", ["get", "state"], ...states, fallback] as unknown as ExpressionSpecification;
+}
+
+/**
  * The map nodes in the View tab's style: circles, squares, the game's map node picture, or hidden. As the old window,
  * zoomed out (under 0.45 px per unit) every style is a dot in the map's colour; above that the style's own look takes
  * over and grows with the zoom (user: the map pictures stayed on zoomed out, and the dots never turned into the style).
@@ -151,7 +160,7 @@ export function nodeLayers(geo: Geo, meta: Meta, look: Look): LayerSpecification
 		...Object.entries(meta.colours.node).flat(),
 		"#ffffff",
 	] as unknown as ExpressionSpecification;
-	const mapColour = typeof st.map_col === "string" && st.map_col ? st.map_col : statusColour;
+	const mapColour = stateColour(meta, typeof st.map_col === "string" && st.map_col ? st.map_col : statusColour);
 	// solid: filled with the map's colour (the old window's dots; user: the black inside hid the colour); bordered:
 	// the icon's colour inside a border of its own colour (or the map's colour)
 	const solid = st.map_fill !== "bordered";

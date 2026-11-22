@@ -993,6 +993,7 @@ def meta() -> dict:
         "debug": bool(rc_paths.DEBUG),
         "colours": {
             "node": {k: bgr_hex(v) for k, v in C.NODE_COL.items()},
+            "node_state": {k: bgr_hex(v) for k, v in C.NODE_STATE_COL.items()},
             "path_multi": bgr_hex(C.PATH_MULTI),
             "path_single": bgr_hex(C.PATH_SINGLE),
             "path_abyss": bgr_hex(C.PATH_ABYSS),

@@ -103,6 +103,9 @@ export function MapMenu({ x, y, at, hit, meta, debug, onClose }: Props) {
 							<DropdownMenuItem onSelect={() => routes.setPlayer(node)}>I'm here</DropdownMenuItem>
 						)}
 						<DropdownMenuItem onSelect={() => routes.routeTo(node)}>Route here</DropdownMenuItem>
+						<DropdownMenuItem onSelect={() => routes.routeFromNearest(node)}>
+							Route here from nearest map
+						</DropdownMenuItem>
 					</>
 				)}
 				{hit?.kind === "landmark" && (

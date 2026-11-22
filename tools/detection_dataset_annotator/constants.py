@@ -98,7 +98,8 @@ ANNOTATOR_SPLIT_PINNED_TEST = (
 grand_project.detect score`` and ``tools/compare_detectors.py`` measure on, so those numbers stay on unseen data."""
 
 ANNOTATOR_ATLAS_FILE = "atlas.json"
-"""An atlas's file: its screenshots lie next to it (where the app finds them), and it places each in atlas units."""
+"""An atlas's file: its screenshots lie next to it (where the app finds them) or in folders right below it (e.g.
+map_state_change/pre-change/, post-change/), and it places each in atlas units."""
 
 ANNOTATOR_SPLIT_BLOCK_SHOTS = 60
 """Screenshots per spatial block of an atlas (blocks.py; k-means of the screenshots' middles in atlas units): a block
@@ -293,9 +294,10 @@ ANNOTATOR_TRUTH_FILES = (paths.TEST_DATA / "fr-atlas" / "truth.json",)
 """The hand-labelled biome truths ``build_store`` seeds the store from (the PM's fr-atlas truth, 2026-11-20)."""
 
 ANNOTATOR_TRUTH_MARK = "truth"
-"""The field (in a screenshot's ``extra``, and the export's manifest) naming the biome truth that seeded it: the truth
-vouches for its city areas and citadels, so ``train_rf_detr --truth-seeded`` may train on it unreviewed. A detection
-rerun replaces ``extra``, so the mark goes with the boxes it vouched for."""
+"""The field (in a screenshot's ``extra``, and the export's manifest) naming the truth that seeded it: a biome truth
+(``truth_seed``) vouches for its city areas and citadels, hand-checked map node positions (``node_truth``) for its map
+nodes, so ``train_rf_detr --truth-seeded`` may train on it unreviewed. A detection rerun replaces ``extra``, so the
+mark goes with the boxes it vouched for."""
 
 ANNOTATOR_TRUTH_SOURCE = "biome_truth"
 """Annotation source of boxes a hand-labelled biome truth set (``truth_seed``): no guess, so drawn solid. The PM's
@@ -305,6 +307,10 @@ fr-atlas truth is about 90% right by its labeller's estimate; the classical city
 ANNOTATOR_TRUTH_MAP_REACH = 20.0
 """Atlas units within which a node box's middle is the truth's map (the truth file's own rule: "a map within 20
 atlas units is the same map"; the median map spacing is 82)."""
+
+ANNOTATOR_NODE_TRUTH_REACH = 5.0
+"""1080p px within which a map node box's middle is a hand-checked map node position (``node_truth``): the positions
+are the classical detector's own map nodes, and a box clipped at the screen's edge moves its middle by ~1 px."""
 
 ANNOTATOR_TRUTH_CITY_REACH = 60.0
 """Atlas units within which a citadel box's middle lies of a city area's map for the citadel to be that city's (the

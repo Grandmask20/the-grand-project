@@ -67,7 +67,7 @@ def test_route_graph_holds_shown_maps_and_their_paths(opened):
     s, _path, _pts = opened
     g = s.graph()
     ids = {n["id"] for n in g["nodes"]}
-    assert ids and all({"x", "y", "icons", "status"} <= n.keys() for n in g["nodes"])
+    assert ids and all({"x", "y", "icons", "status", "state"} <= n.keys() for n in g["nodes"])
     assert all(e["a"] in ids and e["b"] in ids for e in g["edges"])
     assert any("line" in e for e in g["edges"])  # a bent path keeps its line
 

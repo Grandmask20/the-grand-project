@@ -734,14 +734,19 @@ def score(truth: dict, outputs: dict) -> dict:
         truth: truth.json contents {shot name: {maps, maybe, not_maps, landmarks, badges}}.
         outputs: Detector outputs {shot name: {nodes, landmarks, icons}}.
 
+    A screenshot whose truth has hand-checked map node states ("states": [{x, y, state}], from the states.json next
+    to its screenshots) also scores the states of the found map nodes there (a map node not found counts neither
+    way: the maps score has it).
+
     Returns:
         {maps: {tp, fp, miss_visible, miss_hidden, fp_what, precision, recall_visible}, landmarks: {kind: {tp,
-        fp, fn}}, badges: {right, wrong, extra, missed, confusion}}.
+        fp, fn}}, badges: {right, wrong, extra, missed, confusion}, states: {right, wrong, unsure, confusion}}.
     """
     s = {
         "maps": {"tp": 0, "fp": 0, "miss_visible": 0, "miss_hidden": 0, "fp_what": {}},
         "landmarks": {},
         "badges": {"right": 0, "wrong": 0, "extra": 0, "missed": 0, "confusion": {}},
+        "states": {"right": 0, "wrong": 0, "unsure": 0, "confusion": {}},
     }
     for name, T in truth.items():
         out = outputs.get(name)
@@ -797,10 +802,32 @@ def score(truth: dict, outputs: dict) -> dict:
                 B["confusion"][key] = B["confusion"].get(key, 0) + 1
         B["extra"] += len(fp)
         B["missed"] += len(fn)
+        _score_states(s["states"], pred, T.get("states", []))
     m = s["maps"]
     m["precision"] = round(m["tp"] / max(1, m["tp"] + m["fp"]), 3)
     m["recall_visible"] = round(m["tp"] / max(1, m["tp"] + m["miss_visible"]), 3)
     return s
+
+
+def _score_states(S: dict, pred: list[dict], truth: list[dict]) -> None:
+    """Add one screenshot's map node states to the states score: each hand-checked map node a found one matches.
+
+    Args:
+        S: The "states" part of the score, updated in place.
+        pred: The found map nodes (with "state": a state, or None when unsure).
+        truth: The hand-checked map nodes ({x, y, state}).
+    """
+    pairs, _fp, _fn = _match(pred, truth, MAP_R)
+    for i, j in pairs:
+        got, want = pred[i].get("state"), truth[j]["state"]
+        if got is None:
+            S["unsure"] += 1
+        elif got == want:
+            S["right"] += 1
+        else:
+            S["wrong"] += 1
+            key = f"{want} called {got}"
+            S["confusion"][key] = S["confusion"].get(key, 0) + 1
 
 
 def print_score(s: dict) -> None:
@@ -823,6 +850,11 @@ def print_score(s: dict) -> None:
     print(f"badges: {B['right']} right, {B['wrong']} wrong name, {B['extra']} not a badge, {B['missed']} missed")
     for k, v in sorted(B["confusion"].items(), key=lambda kv: -kv[1])[:12]:
         print(f"   {v} x {k}")
+    S = s.get("states")
+    if S and S["right"] + S["wrong"] + S["unsure"]:
+        print(f"map node states: {S['right']} right, {S['wrong']} wrong, {S['unsure']} unsure")
+        for k, v in sorted(S["confusion"].items(), key=lambda kv: -kv[1])[:12]:
+            print(f"   {v} x {k}")
 
 
 def cmd_score(a) -> int:

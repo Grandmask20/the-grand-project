@@ -6,6 +6,8 @@ export interface Meta {
 	debug: boolean;
 	colours: {
 		node: Record<string, string>;
+		/** A map node's bubble by its state (grey / blue / green / red); maps without one keep `node`'s. */
+		node_state: Record<string, string>;
 		path_multi: string;
 		path_single: string;
 		path_abyss: string;

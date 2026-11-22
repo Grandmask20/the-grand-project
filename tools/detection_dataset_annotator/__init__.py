@@ -12,10 +12,11 @@ hidden map nodes the classical finder misses), pool (detection in worker process
 validation / test, drawn by spatial blocks of each atlas), split_ledger (the splits by the screenshots' bytes, kept in
 git), build_store (the store's steps as one run), boxes (the editor's boxes <-> saved annotations), export
 (COCO + manifest), score_nodes (the biome and city-area guesses against reviewed boxes), truth_seed (city areas and
-citadels from an atlas's biome truth), app and component (the Streamlit page and its box editor). The labels
+citadels from an atlas's biome truth), node_truth (map node boxes from hand-checked map node positions), app and
+component (the Streamlit page and its box editor). The labels
 themselves are grand_project.detect.labels'.
 Only app and component import Streamlit; the names below do not. The command modules (build_store, export,
-split_ledger, truth_seed, score_nodes) are imported by name, not here (``python -m`` must load them first).
+split_ledger, truth_seed, node_truth, score_nodes) are imported by name, not here (``python -m`` must load them first).
 """
 
 from .blocks import Block, screenshot_blocks

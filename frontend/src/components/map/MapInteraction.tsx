@@ -21,6 +21,7 @@ import type { ModelLayer3D } from "@/logic/ModelLayer3D";
 import { wasDrag } from "@/logic/map/PanGuard";
 import type { PathLayer3D } from "@/logic/PathLayer3D";
 import { pickItem } from "@/logic/Pick";
+import { routeBetween } from "@/logic/Routes";
 import { type MapMode, useAppStore } from "@/store/AppStore";
 import { BiomeMenu } from "./BiomeMenu";
 import { LassoDraw } from "./draw/LassoDraw";
@@ -156,14 +157,19 @@ export function MapInteraction() {
 							break;
 						}
 						setMode({ kind: "normal" });
-						const path = node === mode.from ? null : graph.shortest(mode.from, (u) => u === node);
-						if (!path) {
+						// the first map is where you start, whatever its state; the rest only over maps that can still be
+						// run (routeBetween); the first map clicked again is no route
+						const found =
+							node === mode.from
+								? `No known path from map #${node} to map #${node}.`
+								: routeBetween(graph, mode.from, node);
+						if (typeof found === "string") {
 							setRouteDraft(null);
-							showError(`No known path from map #${mode.from} to map #${node}.`, true);
+							showError(found, true);
 							break;
 						}
-						setRouteDraft(path);
-						setRouteMenu({ path, x: e.point.x, y: e.point.y });
+						setRouteDraft(found);
+						setRouteMenu({ path: found, x: e.point.x, y: e.point.y });
 						break;
 					}
 					case "route-edit":

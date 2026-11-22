@@ -11,13 +11,13 @@ bridge appear when they were taken, and the bridge last (user), not all at once 
 
 from __future__ import annotations
 
-import re
 import time
 from dataclasses import dataclass, field
-from pathlib import Path
 
 import cv2
 import numpy as np
+
+from grand_project.core import capture_time, time_order
 
 from .constants import (
     REPLAY_AREA_RES,
@@ -27,46 +27,6 @@ from .constants import (
     REPLAY_SESSION_GAP,
     REPLAY_SPIRAL_PITCH,
 )
-
-STEAM_TIME = re.compile(r"_(\d{14})_\d+$")  # Steam names screenshots <app id>_<YYYYMMDDHHMMSS>_<n>
-
-
-def capture_time(frame: dict) -> float | None:
-    """When a screenshot was taken: from its Steam file name, else the file's modified time.
-
-    Args:
-        frame: Atlas frame dict ("name", "path").
-
-    Returns:
-        Seconds since the epoch (local time), or None when neither is known.
-    """
-    m = STEAM_TIME.search(frame.get("name", ""))
-    if m:
-        try:
-            return time.mktime(time.strptime(m.group(1), "%Y%m%d%H%M%S"))
-        except ValueError:
-            pass
-    try:
-        return Path(frame["path"]).stat().st_mtime
-    except (OSError, KeyError):
-        return None
-
-
-def time_order(times: list[float | None]) -> list[int]:
-    """Screenshot indices by when they were taken; ones without a time keep their place after the timed one before.
-
-    Args:
-        times: capture_time of each screenshot, in placement order.
-
-    Returns:
-        Indices into times.
-    """
-    last = float("-inf")
-    keys = []
-    for i, t in enumerate(times):  # untimed: right after the screenshot placed before it
-        last = t if t is not None else last
-        keys.append((last if t is None else t, t is None, i))
-    return [k[2] for k in sorted(keys)]
 
 
 def sessions(times: list[float | None], gap: float = REPLAY_SESSION_GAP) -> list[int]:

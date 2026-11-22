@@ -30,6 +30,21 @@ CATEGORIES = [
 BG = (26, 22, 20)
 
 
+# a map node's state in its info (finalize.states)
+NODE_STATE_TEXT = {
+    "grey": "grey (unreachable)",
+    "blue": "blue (can be pathed to)",
+    "green": "green (cleared)",
+    "red": "red (failed)",
+}
+# a map node's bubble on the page by its state (finalize.states), close to the game's own colours; a map no
+# screenshot named the state of keeps its NODE_COL colour
+NODE_STATE_COL = {
+    "grey": (140, 140, 140),  # unreachable
+    "blue": (255, 140, 40),  # can be pathed to
+    "green": (80, 200, 80),  # cleared
+    "red": (60, 60, 230),  # failed
+}
 NODE_COL = {
     "confirmed": (255, 220, 40),
     "icon": (255, 220, 40),

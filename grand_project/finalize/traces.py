@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import contextlib
 import math
 from pathlib import Path
 
@@ -170,24 +171,27 @@ SAVED_CACHE = 400
 
 
 def _saved(atlas, f):
-    """Load a screenshot's saved detection for the path check (up to SAVED_CACHE are kept).
+    """Load a screenshot's saved detection for the check (up to SAVED_CACHE are kept).
 
-    Detections saved before v0.92 get their dash record added (from the image, once).
+    Detections saved before v0.92 get their dash record added (from the image, once). Map node states named with
+    other pictures than today's (``states_from``: a new freeze) are named again from the image, without finding
+    anything again (finding vs naming); with the image gone they stay as they were saved.
 
     Args:
         atlas: the core.Atlas (uses atlas.frames_dir).
         f: the screenshot (frame) dict (needs "sha" and "path").
 
     Returns:
-        A dict with "P" (its maps, (N, 2) screen px), "hidden" and "score" (per map), "edges" (its traced paths),
-        "tree" (KD-tree of its dashes or None), "amber" (KD-tree of amber dashes or None), "grid" (its
-        clearly-visible grid) and "wall" (its fortress wall grid). None when no saved detection is found (then
-        the view is traced the old way).
+        A dict with "P" (its maps, (N, 2) screen px), "hidden", "score" and "state" (per map: its state or None),
+        "icons" (the icons it found: (name, x, y) in screen px), "edges" (its traced paths), "tree" (KD-tree of its
+        dashes or None), "amber" (KD-tree of amber dashes or None), "grid" (its clearly-visible grid) and "wall" (its
+        fortress wall grid). None when no saved detection is found (then the view is traced the old way).
     """
     d = getattr(atlas, "frames_dir", None)
     if d is None or not f.get("sha"):
         return None
-    key = f["sha"]
+    stamp = atlas_detect.states_stamp()
+    key = (f["sha"], stamp)
     if key in _SAVED:
         _SAVED[key] = _SAVED.pop(key)
         return _SAVED[key]
@@ -201,17 +205,29 @@ def _saved(atlas, f):
     data = atlas_io.read_json(cf)
     if data is None:  # cut-off cache: treated as not cached
         return None
-    if any(k not in data for k in ("dash_pts", "seen_grid", "wall_grid", "amber_pts")):
+    dashes = any(k not in data for k in ("dash_pts", "seen_grid", "wall_grid", "amber_pts"))
+    states = data.get("states_from") != stamp
+    if dashes or states:
         img = atlas.image(f["path"]) if Path(f["path"]).exists() else None
-        if img is None:
+        if img is None and dashes:
             return None
-        data.update(atlas_detect.dash_record(img))
-        atlas_io.write_text_atomic(cf, json.dumps(data))
+        if img is not None:
+            if dashes:
+                data.update(atlas_detect.dash_record(img))
+            if states:
+                for n, state in zip(data["nodes"], atlas_detect.name_states(img, data["nodes"]), strict=True):
+                    n["state"] = state
+                data["states_from"] = stamp
+            # a cache that can't be written now (e.g. a Windows lock) is filled in again next time
+            with contextlib.suppress(OSError):
+                atlas_io.write_text_atomic(cf, json.dumps(data))
     D = np.asarray(data["dash_pts"], float).reshape(-1, 2)
     rec = {
         "P": np.array([[n["x"], n["y"]] for n in data["nodes"]], float).reshape(-1, 2),
         "hidden": np.array([bool(n.get("hidden")) for n in data["nodes"]], bool),
         "score": np.array([float(n.get("score", 0.5)) for n in data["nodes"]], float),
+        "state": [n.get("state") if n.get("state") in atlas_detect.NODE_STATES else None for n in data["nodes"]],
+        "icons": [(ic["name"], float(ic["x"]), float(ic["y"])) for ic in data.get("icons", [])],
         "edges": data["edges"],
         "tree": cKDTree(D) if len(D) else None,
         "amber": (lambda A: cKDTree(A) if len(A) else None)(np.asarray(data["amber_pts"], float).reshape(-1, 2)),

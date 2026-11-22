@@ -6,6 +6,7 @@ and the saved atlases are checked through the session, as the page uses them.
 
 import base64
 import json
+import time
 from pathlib import Path
 
 import cv2
@@ -13,6 +14,7 @@ import numpy as np
 import pytest
 
 from grand_project import cities, core
+from grand_project.app.icons import icon_name
 from grand_project.app.library import list_dir
 from grand_project.app.model import view_model
 from grand_project.app.session import AtlasSession
@@ -80,6 +82,23 @@ def test_vector_tiles_hold_the_maps_where_they_are(session, tmp_path):
     assert session.filter_version == v + 1 and list(points(session, "removed")) == [15]
     session.set_ui_settings({"ui": {"background": "vector"}, "layers": {"Labels": False}})  # page-only: same tiles
     assert session.filter_version == v + 1
+
+
+def test_a_maps_state_is_in_its_tiles_and_its_details(session, tmp_path):
+    """The check's state (finalize.states) reaches the map tiles' data and the map's details."""
+    path, _pts, _img = make_atlas(tmp_path)
+    session.open_atlas(path)
+    seen = time.mktime((2026, 11, 21, 20, 25, 0, 0, 0, -1))
+    with session._lock:
+        session.atlas.final["nodes"][3].update(state="green", state_seen=seen, state_errors=2, icons_lost=["Breach"])
+    session.rebuild_model()
+    maps = points(session, "maps")
+    assert maps[3][2]["state"] == "green" and maps[1][2]["state"] == ""
+    lines = session.info("node", 3)["lines"]
+    assert "State: green (cleared), last seen 21 Nov 20:25" in lines
+    assert "2 screenshot(s) disagree about its state (detection errors)" in lines
+    assert f"Lost icons: {icon_name('Breach')}" in lines
+    assert not [line for line in session.info("node", 1)["lines"] if line.startswith(("State", "Lost"))]
 
 
 def test_biomes_ground_icons_and_models(session, tmp_path):

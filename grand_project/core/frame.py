@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import contextlib
 import re
+import time
 import zlib
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -21,6 +22,7 @@ from .constants import (
     ICON_BASE_DY,
     IMAGE_EXT,
     ROW_STEP_PX,
+    STEAM_NAME_TIME,
 )
 from .geometry import persp, rectifier
 
@@ -398,3 +400,41 @@ def row_bases(icons: list[dict]) -> list[tuple[float, float]]:
         for k in r:
             out[k] = (bx, by)
     return out
+
+
+def capture_time(frame: dict) -> float | None:
+    """When a screenshot was taken: from its Steam file name, else the file's modified time.
+
+    Args:
+        frame: Atlas frame dict ("name", "path").
+
+    Returns:
+        Seconds since the epoch (local time), or None when neither is known.
+    """
+    m = re.search(STEAM_NAME_TIME, frame.get("name", ""))
+    if m:
+        try:
+            return time.mktime(time.strptime(m.group(1), "%Y%m%d%H%M%S"))
+        except ValueError:
+            pass
+    try:
+        return Path(frame["path"]).stat().st_mtime
+    except (OSError, KeyError):
+        return None
+
+
+def time_order(times: list[float | None]) -> list[int]:
+    """Screenshot indices by when they were taken; ones without a time keep their place after the timed one before.
+
+    Args:
+        times: capture_time of each screenshot, in placement order.
+
+    Returns:
+        Indices into times.
+    """
+    last = float("-inf")
+    keys = []
+    for i, t in enumerate(times):  # untimed: right after the screenshot placed before it
+        last = t if t is not None else last
+        keys.append((last if t is None else t, t is None, i))
+    return [k[2] for k in sorted(keys)]

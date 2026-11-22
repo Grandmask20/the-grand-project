@@ -1049,7 +1049,7 @@ def blocked_maps(
 
     Args:
         nodes: map node dicts with "x", "y" (atlas units), "status", and optionally "icons" (raw icon names),
-            "tower" and "abyss".
+            "icons_lost" (icons the map lost when it was run: finalize.states), "tower" and "abyss".
         icons: icon dicts with "name" and positions (atlas units).
         landmarks: landmark dicts with "kind", "x", "y" and "status".
         icon_node: icon index -> map node index (from icon_maps), or None to compute it.
@@ -1063,7 +1063,7 @@ def blocked_maps(
     for v, n in enumerate(nodes):
         if n.get("status") == "removed":
             continue
-        for raw in n.get("icons", []):
+        for raw in [*n.get("icons", []), *n.get("icons_lost", [])]:  # a cleared map is still that kind of map
             if raw in BLOCK_ICONS:
                 out.setdefault(v, BLOCK_ICONS[raw])
         if n.get("tower"):

@@ -15,11 +15,44 @@ export function routeMarks(path: number[], at?: number): { rings: number[]; here
 	return { rings: [...new Set(path.slice(at + 1).filter((m) => !run.has(m)))], here: path[at] ?? null };
 }
 
+/** The route from `from` to `to` (fewest maps) over maps that can still be run, or why there is none: it starts on
+ * `from` whatever its state (you are there), then passes grey and blue maps only (user's rule: green and red maps
+ * can't be run again). */
+export function routeBetween(graph: RouteGraph, from: number, to: number): number[] | string {
+	if (from === to) return [to];
+	const shut = graph.closedNote(to);
+	if (shut) return shut;
+	return (
+		graph.shortest(from, (u) => u === to, { runnable: true }) ??
+		`No path from map #${from} to map #${to} over maps that can still be run (grey / blue).`
+	);
+}
+
+/** The route to `node` from the blue map the fewest maps away (Route here from nearest map: the game lets you start
+ * any blue map), blue map first, over maps that can still be run; or why there is none. The map clicked when blue is
+ * its own nearest one. */
+export function routeFromNearestBlue(graph: RouteGraph, node: number): number[] | string {
+	const shut = graph.closedNote(node);
+	if (shut) return shut;
+	if (graph.stateOf(node) === ROUTE_START_STATE) return [node];
+	// from the map clicked outward (paths go both ways: the same maps as from the blue map)
+	const path = graph.shortest(node, (u) => graph.stateOf(u) === ROUTE_START_STATE, { runnable: true });
+	return path ? path.reverse() : `No blue map leads to map #${node} over maps that can still be run (grey / blue).`;
+}
+
+/** How a route is looked for: never through the maps in `avoid`; `runnable`: only over maps that can still be run
+ * (never onto a green or red map, ROUTE_CLOSED; the start is allowed whatever its state: you are there). */
+export interface RouteOptions {
+	avoid?: Set<number>;
+	runnable?: boolean;
+}
+
 /** The maps and paths routes are found on: every map run costs 1 (fewest maps), the length only breaks ties. */
 export class RouteGraph {
 	private readonly adj = new Map<number, number[]>();
 	private readonly pos = new Map<number, Point>();
 	private readonly icons = new Map<number, string[]>();
+	private readonly states = new Map<number, string>();
 	private readonly lines = new Map<string, Point[]>();
 
 	constructor(graph: Graph) {
@@ -27,6 +60,7 @@ export class RouteGraph {
 			this.adj.set(n.id, []);
 			this.pos.set(n.id, [n.x, n.y]);
 			this.icons.set(n.id, n.icons);
+			this.states.set(n.id, n.state ?? "");
 		}
 		for (const e of graph.edges) {
 			if (e.a === e.b || !this.adj.has(e.a) || !this.adj.has(e.b)) continue;
@@ -48,6 +82,23 @@ export class RouteGraph {
 		return this.icons.get(id) ?? [];
 	}
 
+	/** A map's state (grey / blue / green / red), "" when no screenshot named it. */
+	stateOf(id: number): string {
+		return this.states.get(id) ?? "";
+	}
+
+	/** Why a route can't run a map (its state's words: green, cleared; red, failed), or null when it can (grey, blue,
+	 * or no state named). */
+	closed(id: number): string | null {
+		return ROUTE_CLOSED[this.states.get(id) ?? ""] ?? null;
+	}
+
+	/** What the page says when a route is asked to a map that can't be run again, or null when it can be. */
+	closedNote(id: number): string | null {
+		const why = this.closed(id);
+		return why ? `Map #${id} is ${why}: it can't be run again.` : null;
+	}
+
 	/** The map closest to a point. */
 	nearest(x: number, y: number): number | null {
 		let best: number | null = null;
@@ -63,8 +114,9 @@ export class RouteGraph {
 	}
 
 	/** The route from `from` (one map, or the nearest of several) to the first map `done` accepts (fewest maps), or
-	 * null; never through the maps in `avoid`. */
-	shortest(from: number | number[], done: (id: number) => boolean, avoid?: Set<number>): number[] | null {
+	 * null; as `opts` asks (RouteOptions). */
+	shortest(from: number | number[], done: (id: number) => boolean, opts: RouteOptions = {}): number[] | null {
+		const { avoid, runnable } = opts;
 		const starts = new Set((Array.isArray(from) ? from : [from]).filter((s) => this.adj.has(s)));
 		if (!starts.size) return null;
 		const cost = new Map<number, number>();
@@ -83,7 +135,7 @@ export class RouteGraph {
 				return path.reverse();
 			}
 			for (const v of this.adj.get(u) ?? []) {
-				if (avoid?.has(v)) continue;
+				if (avoid?.has(v) || (runnable && this.closed(v))) continue;
 				// a map run outweighs any distance (1e-6 x distance could pass a whole map on a big atlas: CodeRabbit)
 				const nc = c + ROUTE_HOP + this.dist(u, v);
 				if (nc < (cost.get(v) ?? Number.POSITIVE_INFINITY)) {
@@ -160,5 +212,10 @@ class MinHeap {
 	}
 }
 
+/** The map node states a route can't run or pass, and their words (user's rule: green maps are cleared and red ones
+ * failed, neither can be run again; grey and blue ones can: a grey map turns blue once a map next to it is run). */
+const ROUTE_CLOSED: Record<string, string> = { green: "green (cleared)", red: "red (failed)" };
+/** The map node state the game lets you start a map from anywhere (Route here from nearest map starts on one). */
+const ROUTE_START_STATE = "blue";
 /** One map run's cost: more than any route's whole distance in atlas units, so distance only breaks ties. */
 const ROUTE_HOP = 1e12;

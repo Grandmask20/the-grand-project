@@ -22,6 +22,10 @@ It must run on Windows, macOS and Linux.
   green-roofed fortress in sand); always the same orientation
 - **halls**: deadly-boss map on a normal base with an orange beam on a structure next to it
 - **deadly bosses**: map nodes with the red "powerful map boss" icon
+- **map node states**: grey (unreachable), blue (can be pathed to), green (cleared), red (failed: cities and halls,
+  and Unique maps as the test data shows); running maps changes them (grey → blue → green, blue → red; turning green loses every icon; grey / blue maps
+  can lose or gain icons, which move; green and red never change). Named per screenshot by `detect/node_states.py`,
+  followed over time by `finalize/states.py`; hand-checked states are `states.json` next to a folder's screenshots
 - **citadel names** (the dataset's labels): Iron citadel = Ezomyte, Stone citadel = Vaal, Copper citadel = Faridun;
   `citadel_*` boxes frame a city's own map node and barrel
 - **node classes**: in the RF-DETR dataset every map node is labelled with its biome (`map_node_grass` / `_desert` /
@@ -62,7 +66,7 @@ README's developer section). `tools/` are developer helpers
   and reference images are not.
 - **Models**: no pickles from outside. Detector models are skops archives loaded with an allowlist
   (`test_model_safety`); small models are stored as plain arrays in `.npz` (e.g. `references/city_barrel.npz`).
-- **Icons: finding vs naming.** Finding (is there an icon here?) uses only frozen data (`references/badge_finder.npz`: rim template + one picture set); naming (which icon?) uses the growing stored pictures. Teaching icons must never change what is found; re-freeze only on purpose (`python -m tools.freeze_badge_finder`, then retrain and re-score).
+- **Icons: finding vs naming.** Finding (is there an icon here?) uses only frozen data (`references/badge_finder.npz`: rim template + one picture set); naming (which icon?) uses the growing stored pictures. Teaching icons must never change what is found; re-freeze only on purpose (`python -m tools.freeze_badge_finder`, then retrain and re-score). Map node states are named the same way: the node is found (RF-DETR or the map finder), its state named from `references/node_states.npz` (`python -m tools.node_state_sheet freeze`; its pictures never come from the truth sets that score it). A new freeze re-names the saved states at the next check (`states_from`), it never re-finds.
 - **RF-DETR** (`tools/train_rf_detr.py`, `detect/rf_detr*.py`, the annotator's loop tools): trained with
   transformers' `Trainer` on the official roboflow/rf-detr recipe (`RF_DETR_*`; check a recipe change against that
   repo, file:line). Checkpoints are saved in transformers' own key layout (`save_native`: the Trainer reloads them

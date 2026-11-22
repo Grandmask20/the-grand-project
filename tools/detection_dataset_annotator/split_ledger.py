@@ -39,7 +39,7 @@ from grand_project.core.atlas import Atlas
 from grand_project.detect.labels import export_class
 
 from . import constants as K
-from .blocks import Block, screenshot_blocks
+from .blocks import Block, atlas_of, screenshot_blocks
 from .splits import assign_splits, pinned_split, split_report
 from .state import file_hash, relative_source, resolve_path, write_text_atomic
 from .store import ReviewStore
@@ -389,8 +389,8 @@ def overlap_report(paths: Mapping[str, Path], split_of: Mapping[str, str]) -> st
     by_atlas: dict[Path, dict[str, str]] = defaultdict(dict)
     for key, split in split_of.items():
         path = Path(paths[key])
-        if (path.parent / K.ANNOTATOR_ATLAS_FILE).is_file():
-            by_atlas[path.parent / K.ANNOTATOR_ATLAS_FILE][path.stem] = split
+        if (atlas_file := atlas_of(path.parent)) is not None:
+            by_atlas[atlas_file][path.stem] = split
     lines = []
     for atlas_file in sorted(by_atlas):
         overlap = held_out_overlap(atlas_file, by_atlas[atlas_file])

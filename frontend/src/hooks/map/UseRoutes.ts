@@ -2,7 +2,7 @@ import { useCallback, useRef } from "react";
 import type { SavedRoute } from "@/domain/bookmarks/Bookmarks";
 import { usePlayer, useUpdateSettings } from "@/hooks/app/UseSettings";
 import { useRouteGraph } from "@/hooks/map/UseGraph";
-import type { RouteGraph } from "@/logic/Routes";
+import { type RouteGraph, routeBetween, routeFromNearestBlue } from "@/logic/Routes";
 import { legsOf, routeLines, savedRouteOf, visitOrder } from "@/logic/SavedRoutes";
 import { useAppStore } from "@/store/AppStore";
 import { plural } from "@/utils/Format";
@@ -30,9 +30,11 @@ export function useRoutes() {
 		return null;
 	}, [player, graph, setRoute, setMode]);
 
-	// a route found is tracked as every route is (user: Route here showed a list, Track now maps left and Next map)
+	// a route found is tracked as every route is (user: Route here showed a list, Track now maps left and Next map);
+	// a string is why there is none
 	const show = useCallback(
-		(path: number[] | null, none: string) => (path ? trackRef.current(path) : setRoute({ path: [], message: none })),
+		(found: number[] | string) =>
+			typeof found === "string" ? setRoute({ path: [], message: found }) : trackRef.current(found),
 		[setRoute],
 	);
 
@@ -40,10 +42,7 @@ export function useRoutes() {
 		(node: number) => {
 			const from = need();
 			if (from === null || !graph) return;
-			show(
-				from === node ? [node] : graph.shortest(from, (u) => u === node),
-				`No path from your map to map #${node} in this atlas.`,
-			);
+			show(routeBetween(graph, from, node));
 		},
 		[need, graph, show],
 	);
@@ -53,11 +52,19 @@ export function useRoutes() {
 			const from = need();
 			if (from === null || !graph) return;
 			show(
-				graph.shortest(from, (u) => graph.iconsOf(u).includes(icon)),
-				`No reachable map with ${label}.`,
+				graph.shortest(from, (u) => graph.iconsOf(u).includes(icon), { runnable: true }) ??
+					`No reachable map with ${label} that can still be run.`,
 			);
 		},
 		[need, graph, show],
+	);
+
+	/** Route here from nearest map: from the blue map the fewest maps away, whatever your position (user). */
+	const routeFromNearest = useCallback(
+		(node: number) => {
+			if (graph) show(routeFromNearestBlue(graph, node));
+		},
+		[graph, show],
 	);
 
 	const clear = useCallback(() => setRoute(null), [setRoute]);
@@ -111,7 +118,19 @@ export function useRoutes() {
 		if (p) flyTo(p[0], p[1], 0.6);
 	}, [setRoute, graph, flyTo]);
 
-	return { graph, player, setPlayer, clearPlayer, routeTo, routeToNearest, clear, trackRoute, trackSaved, nextMap };
+	return {
+		graph,
+		player,
+		setPlayer,
+		clearPlayer,
+		routeTo,
+		routeToNearest,
+		routeFromNearest,
+		clear,
+		trackRoute,
+		trackSaved,
+		nextMap,
+	};
 }
 
 /** The place in a route tracked of the next map not run yet, or null at its end. */

@@ -19,6 +19,7 @@ from .constants import (
     EXTRA_BADGES,
     EXTRA_MAPS,
     MAP,
+    NODE_STATE_TRUTH,
     TESTS,
     TOWER_REFS,
     TREE_NEG_WEIGHT,
@@ -28,6 +29,7 @@ from .constants import (
 from .landmarks import expedition_rules, landmarks_from, old_landmarks, tower_features, tower_labels
 from .maps import _nms, candidate_labels, map_candidates, map_features
 from .models import save_model
+from .node_states import name_states
 from .paths import maps_from_paths, path_dashes, path_features, trace_paths
 from .walls import fortress_walls
 
@@ -298,6 +300,8 @@ def _run_stages(d: dict, models: dict) -> dict:
     ]  # a landmark inside the HUD outline is HUD art
     nodes = nodes + maps_from_paths(nodes, d["dashes"], img, pts, prob[:, MAP])
     nodes, icons, lms = expedition_rules(nodes, icons, lms)
+    for n, state in zip(nodes, name_states(img, nodes), strict=True):  # as builder.extract_frame names them
+        n["state"] = state
     return {"nodes": nodes, "landmarks": lms, "icons": icons, "edges": trace_paths(nodes, d["dashes"], img)}
 
 
@@ -331,10 +335,25 @@ def _truth_screenshots() -> tuple[dict, dict]:
     truth, where = {}, {}
     for tf, shots in TRUTH_SETS:
         if tf.exists():
+            states = _states_truth(shots)
             for name, t in json.loads(tf.read_text(encoding="utf-8")).items():
-                truth[name] = dict(t, badges=[b for b in t["badges"] if not b["name"].startswith("ExpeditionShip")])
+                truth[name] = dict(
+                    t,
+                    badges=[b for b in t["badges"] if not b["name"].startswith("ExpeditionShip")],
+                    states=states.get(name, []),
+                )
                 where[name] = shots / name
     return truth, where
+
+
+def _states_truth(shots: Path) -> dict:
+    """The hand-checked map node states next to a folder's screenshots (NODE_STATE_TRUTH; {} without the file).
+
+    Returns:
+        {screenshot file name: [{x, y, state}]} (screen px, as truth.json).
+    """
+    f = shots / NODE_STATE_TRUTH
+    return json.loads(f.read_text(encoding="utf-8")) if f.exists() else {}
 
 
 def cmd_score_rf_detr() -> int:
@@ -354,8 +373,11 @@ def cmd_score_rf_detr() -> int:
     truth, where = _truth_screenshots()
     new = {}
     for name in truth:
-        out = detect_rf_detr(cv2.imdecode(np.fromfile(str(where[name]), np.uint8), cv2.IMREAD_COLOR))
+        img = cv2.imdecode(np.fromfile(str(where[name]), np.uint8), cv2.IMREAD_COLOR)
+        out = detect_rf_detr(img)
         out["icons"] = [icon for icon in out["icons"] if not icon["name"].startswith("ExpeditionShip")]
+        for n, state in zip(out["nodes"], name_states(img, out["nodes"]), strict=True):  # as the program names them
+            n["state"] = state
         new[name] = out
     print("\n== RF-DETR detector (held-out: the truth screenshots are always test)")
     atlas_truth.print_score(atlas_truth.score(truth, new))

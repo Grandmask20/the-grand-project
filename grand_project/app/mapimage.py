@@ -972,6 +972,7 @@ class MapImageMixin:
                         "icons": "|" + "|".join(icons) + "|" if icons else "",
                         "tower": bool(n.get("tower")),
                         "biome": pot[0] if pot else "",
+                        "state": n.get("state") or "",
                         **step("node", i),
                     },
                 }

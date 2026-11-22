@@ -55,3 +55,14 @@ def test_blocks_are_the_same_every_time(tmp_path: Path) -> None:
     first = screenshot_blocks(paths, shots_per_block=5)
     assert first == screenshot_blocks(dict(reversed(list(paths.items()))), shots_per_block=5)
     assert len(set(first.values())) == 7
+
+
+def test_screenshots_in_folders_below_their_atlas_are_its_blocks(tmp_path: Path) -> None:
+    """map_state_change keeps its screenshots in pre-change/, post-change/ ... with atlas.json one folder up: they are
+    that atlas's blocks together, not one block each."""
+    atlas = tmp_path / "state_change"
+    places = {f"pre{i}": (i * 300.0, 0.0) for i in range(4)} | {f"post{i}": (i * 300.0, 100.0) for i in range(4)}
+    write_atlas(atlas, places)
+    paths = {name: atlas / ("pre" if name.startswith("pre") else "post") / f"{name}.png" for name in places}
+    blocks = screenshot_blocks(paths, shots_per_block=8)
+    assert set(blocks.values()) == {Block(relative_source(atlas), 0)}

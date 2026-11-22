@@ -59,11 +59,15 @@ export const state: AppState = {
 	map: null,
 };
 
+/** The map node states' colours in `meta`. */
+export const nodeStates = { grey: "#8c8c8c", blue: "#288cff", green: "#50c850", red: "#e63c3c" };
+
 export const meta: Meta = {
 	version: "1.17",
 	debug: false,
 	colours: {
 		node: { confirmed: "#28dcff", single: "#ff9600" },
+		node_state: nodeStates,
 		path_multi: "#28d7ff",
 		path_single: "#ffb900",
 		path_abyss: "#ff50e6",

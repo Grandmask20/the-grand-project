@@ -10,6 +10,9 @@ export interface GraphNode {
 	y: number;
 	icons: string[];
 	status: string;
+	/** The map node's state (grey / blue / green / red, named by finalize.states; "" or left out when no screenshot
+	 * named it): routes never run green or red maps. */
+	state?: string;
 }
 
 export interface GraphEdge {

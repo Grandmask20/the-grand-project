@@ -128,6 +128,7 @@ def extract_frame(image_path: Path, cache_dir: Path) -> core.Frame:
     if img is None:
         raise ValueError(f"{image_path.name} is not a readable image (damaged or not fully written)")
     r = atlas_detect.detect(img)
+    states = atlas_detect.name_states(img, r["nodes"])  # named apart from finding: new pictures re-name, not re-find
     data = {
         "name": image_path.stem,
         "path": str(image_path.resolve()),
@@ -141,15 +142,16 @@ def extract_frame(image_path: Path, cache_dir: Path) -> core.Frame:
                 "x": float(n["x"]),
                 "y": float(n["y"]),
                 "score": float(n.get("score", 0.5)),
-                "state": "auto",
+                "state": state,
                 "source": n.get("source", "map finder"),
                 "hidden": bool(n.get("hidden")),
                 "unverified": False,
                 "tower": bool(n.get("tower")),
                 "icon": "",
             }
-            for n in r["nodes"]
+            for n, state in zip(r["nodes"], states, strict=True)
         ],
+        "states_from": atlas_detect.states_stamp(),
         "edges": [
             {"a": int(e["a"]), "b": int(e["b"]), "conf": float(e["conf"]), "status": e["status"], "line": e["line"]}
             for e in r["edges"]
@@ -445,6 +447,7 @@ def cmd_add(args) -> int:
     atlas_path = Path(args.atlas)
     atlas = core.Atlas.load(atlas_path) if atlas_path.exists() else core.Atlas()
     cache_dir = atlas_path.with_name(atlas_path.stem + "_frames")
+    atlas.frames_dir = cache_dir  # a new atlas too: the check reads the saved detections (paths, map node states)
     from grand_project import paths as rc_paths
 
     if not rc_paths.DATABASE.exists():
