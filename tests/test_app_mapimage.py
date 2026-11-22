@@ -112,7 +112,7 @@ def test_with_a_refresh_waiting_the_lock_isnt_waited_for_at_all(session, monkeyp
     before = tile(session)
     monkeypatch.setattr(K, "TILER_LOCK_WAIT", HOLD)  # (waited for in full, an answer would come after the job)
     with Job(session, lambda: session.set_terrain(*session.terrain, save=False, cities=False)):
-        monkeypatch.setattr(session, "_refresh_waiting", True)  # a refresh pending: the lock is known to be taken
+        monkeypatch.setattr(session, "_refresh_waiting", {session.opened.gen})  # a refresh pending: lock taken
         data, soon = answered_soon(lambda: tile(session))
         assert soon and data == before  # (each of a move's ~50 tiles waited its turn before: self review)
 
@@ -153,7 +153,7 @@ def test_the_refresh_is_dropped_when_another_atlas_opened_meanwhile(session, tmp
     (tmp_path / "other").mkdir()
     other, _pts, _img = make_atlas(tmp_path / "other")
     with session._lock:  # (this thread holds it: the refresh waits)
-        session._refresh_when_free("_vector")
+        session._refresh_when_free("_vector", session.opened.gen)
         session.open_atlas(other)  # another atlas opened before the lock is free
         filters = session.filter_version
     for t in threading.enumerate():
@@ -161,3 +161,44 @@ def test_the_refresh_is_dropped_when_another_atlas_opened_meanwhile(session, tmp
             t.join(10)
     assert session.filter_version == filters  # not bumped for the atlas opened since (its own versions tell the page)
     assert not session._refresh_waiting  # (and a later answer from old tiles can ask for a refresh again)
+
+
+def test_tiles_cut_for_another_grid_are_never_answered(session):
+    tile(session)
+    x0, y0, scale = session.terrain[2]
+    canvas, weight = session.terrain[0], session.terrain[1]
+    with Job(
+        session, lambda: session.set_terrain(canvas, weight, (x0 - 40, y0, scale), save=False, cities=False)
+    ) as job:
+        threading.Timer(1.0, job.go.set).start()  # the job lets go after a second
+        t0 = time.monotonic()
+        tile(session)
+        # waited for the lock: the map image lies elsewhere now, and features cut for the old grid sat off its ground
+        assert time.monotonic() - t0 >= 0.9  # (CodeRabbit)
+    assert session._vector[2].to_json() == session.grid.to_json()
+
+
+def test_a_refresh_for_an_atlas_closed_meanwhile_keeps_the_next_atlass(session, tmp_path, monkeypatch):
+    (tmp_path / "other").mkdir()
+    other, _pts, _img = make_atlas(tmp_path / "other")
+    made_for = []  # the atlases the refresh threads made tiles for
+    real = session._vector_made
+    monkeypatch.setattr(
+        session,
+        "_vector_made",
+        lambda steps=False: (
+            made_for.append(session.opened.gen) if threading.current_thread().name == "tiles-refresh" else None,
+            real(steps),
+        )[1],
+    )
+    with session._lock:  # (this thread holds it: both refreshes wait)
+        first = session.opened.gen
+        session._refresh_when_free("_vector", first)
+        session.open_atlas(other)
+        session._refresh_when_free("_vector", session.opened.gen)  # the second's, asked while the first's waits
+    for t in threading.enumerate():
+        if t.name == "tiles-refresh" or t is getattr(session, "_lock_thread", None):
+            t.join(10)
+    # the second atlas's refresh ran (taken by the first's waiter, it was dropped with it: CodeRabbit); the first's not
+    assert made_for == [session.opened.gen] and first != session.opened.gen
+    assert not session._refresh_waiting and not session._refresh_stale
