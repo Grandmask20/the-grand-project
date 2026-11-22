@@ -183,27 +183,44 @@ def test_the_refresh_is_dropped_when_another_atlas_opened_meanwhile(session, tmp
     assert not session._refresh_waiting  # (and a later answer from old tiles can ask for a refresh again)
 
 
-def test_a_map_image_moved_during_the_wait_isnt_answered_with_the_old_grid(session):
+def test_a_map_image_moved_during_the_wait_isnt_answered_with_the_old_grid(session, monkeypatch):
     tile(session)
     canvas, weight, (x0, y0, scale) = session.terrain
-    holding, go = threading.Event(), threading.Event()
+    # long enough that the job surely moves the map image while the request waits (moving it takes a moment)
+    monkeypatch.setattr(K, "TILER_LOCK_WAIT", 3.0)
+    holding, waiting, moved, go = (threading.Event() for _ in range(4))
+    real = session._lock.acquire
+
+    def acquire(*a, **kw):  # the request reaching its timed wait for the lock: told to the job (no sleep guesses)
+        if threading.current_thread().name == "request" and kw.get("timeout", -1) > 0:
+            waiting.set()
+        return real(*a, **kw)
+
+    monkeypatch.setattr(session._lock, "acquire", acquire)
 
     def job():
         with session._lock:
             session.set_terrain(canvas, weight, (x0, y0, scale), save=False, cities=False)  # a paste: same grid
             holding.set()
-            time.sleep(K.TILER_LOCK_WAIT / 3)  # the request is waiting for the lock by now
-            session.set_terrain(canvas, weight, (x0 - 40, y0, scale), save=False, cities=False)
-            go.wait(1.0)
+            assert waiting.wait(10)
+            session.set_terrain(canvas, weight, (x0 - 40, y0, scale), save=False, cities=False)  # moved
+            moved.set()
+            go.wait(30)  # until the test lets go
 
-    t = threading.Thread(target=job, daemon=True)
-    t.start()
+    worker = threading.Thread(target=job, daemon=True)
+    worker.start()
     assert holding.wait(10)
-    t0 = time.monotonic()
-    tile(session)
-    # the grid asked again after the wait: it changed, so the request waited for the job (CodeRabbit)
-    assert time.monotonic() - t0 >= 0.9
-    t.join(10)
+    request = threading.Thread(target=lambda: tile(session), name="request", daemon=True)
+    request.start()
+    assert moved.wait(10)
+    # past its wait the request asks again and finds the grid changed: it keeps waiting for the job, rather than
+    # answering the old ones for the new grid (CodeRabbit)
+    request.join(K.TILER_LOCK_WAIT + 1.0)
+    assert request.is_alive()
+    go.set()
+    request.join(10)
+    worker.join(10)
+    assert not request.is_alive()
     assert session._vector[2].to_json() == session.grid.to_json()
 
 
