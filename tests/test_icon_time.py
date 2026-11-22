@@ -146,3 +146,19 @@ def test_a_screenshot_with_no_known_time_decides_nothing(world, monkeypatch):
     monkeypatch.setattr(it.core, "capture_time", lambda f: times[f["name"]])
     looks[(NEW, "MapBoss")] = looks[(NEW2, "MapBoss")] = False
     assert run([icon("MapBoss", OLD)])["gone"] == set()
+
+
+def test_cleansed_replacing_corruption_the_second_look_confirmed(world):
+    run, looks = world
+    looks[(OLD, "Sanctification")] = False
+    looks[(OLD, "Corruption")] = True  # (the detector missed it in OLD; the second look saw it)
+    looks[(NEW, "Corruption")] = looks[(NEW2, "Corruption")] = False
+    got = run([icon("Sanctification", NEW), icon("Corruption", NEW)])  # (Corruption "found" only in NEW: missed)
+    assert 0 not in got["false"]  # (Corruption was there before: Cleansed replaced it)
+
+
+def test_the_deadly_boss_sweep_leaves_a_towers_floating_icon(world):
+    run, looks = world
+    looks[(NEW, "Sanctification")] = looks[(NEW2, "Sanctification")] = False
+    icons = [icon("MapBossSpecial", OLD, NEW), icon("Sanctification", OLD), dict(icon("Breach", OLD), spread=60.0)]
+    assert run(icons)["gone"] == {1}  # (the floating Breach copy is a tower's: never judged)

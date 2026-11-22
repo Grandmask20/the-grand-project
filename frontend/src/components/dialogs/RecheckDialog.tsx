@@ -46,7 +46,7 @@ export function RecheckDialog() {
 
 	return (
 		<Dialog open onOpenChange={(o) => !o && close(null)}>
-			<DialogContent className="sm:max-w-lg">
+			<DialogContent className="max-h-[calc(100vh-2rem)] overflow-y-auto sm:max-w-lg">
 				<DialogHeader>
 					<DialogTitle>Re-check “{name}”?</DialogTitle>
 					<DialogDescription className="text-foreground">

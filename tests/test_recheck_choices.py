@@ -101,8 +101,10 @@ def test_every_group_ticked_is_the_new_result_and_none_ticked_the_old_one():
     old = grid_final()
     new = changed_final(old)
     every = rc.merge(old, new, set(rc.GROUPS))
-    assert every["stats"].pop("recheck_kept") == []
-    assert same(every, new)
+    assert every["stats"]["recheck_kept"] == []
+    for k in ("nodes", "paths", "landmarks", "icons"):
+        assert same(every[k], new[k]), k
+    assert every["stats"]["paths"] == len(new["paths"])  # (the accepted numbers, for the atlas card)
     none = rc.merge(old, new, set())
     for k in ("nodes", "paths", "landmarks", "icons"):
         assert same(none[k], old[k]), k
@@ -182,26 +184,33 @@ def test_a_question_with_ticks_waits_for_a_page_and_takes_only_its_own_groups():
     ev = Events()
     got = []
     groups = [{"id": "maps", "name": "Maps", "count": 2, "items": [], "ticked": True}]
-    t = threading.Thread(target=lambda: got.append(ev.ask_choices("Tick", {"groups": groups})))
+    t = threading.Thread(target=lambda: got.append(ev.ask_choices("Tick", {"groups": groups})), daemon=True)
     t.start()
-    assert _wait(lambda: ev.open_questions())  # (no page open: it waits for one, unlike a yes / no question)
-    q = ev.open_questions()[0]
-    assert q["choices"]["groups"][0]["id"] == "maps"
-    assert not ev.answer(q["id"], False)  # (no plain No: only its button answers it)
-    assert not ev.answer(q["id"], True)  # (with no ticks sent)
-    assert ev.answer(q["id"], True, picked=["maps", "nonsense", 3])
-    t.join(5)
+    try:  # (a failed check before the answer would leave the question waiting, and pytest with it: CodeRabbit)
+        assert _wait(lambda: ev.open_questions())  # (no page open: it waits for one, unlike a yes / no question)
+        q = ev.open_questions()[0]
+        assert q["choices"]["groups"][0]["id"] == "maps"
+        assert not ev.answer(q["id"], False)  # (no plain No: only its button answers it)
+        assert not ev.answer(q["id"], True)  # (with no ticks sent)
+        assert ev.answer(q["id"], True, picked=["maps", "nonsense", 3])
+    finally:
+        t.join(5)
+        ev.end_questions()
+        t.join(5)
     assert got == [["maps"]]
 
 
 def test_a_question_with_ticks_is_none_when_the_app_closes():
     ev = Events()
     got = []
-    t = threading.Thread(target=lambda: got.append(ev.ask_choices("Tick", {"groups": []})))
+    t = threading.Thread(target=lambda: got.append(ev.ask_choices("Tick", {"groups": []})), daemon=True)
     t.start()
-    assert _wait(lambda: ev.open_questions())
-    assert ev.end_questions() == 1
-    t.join(5)
+    try:
+        assert _wait(lambda: ev.open_questions())
+        assert ev.end_questions() == 1
+    finally:
+        ev.end_questions()
+        t.join(5)
     assert got == [None]
     assert ev.ask_choices("again?", {"groups": []}) is None  # (closing: none is asked any more)
 
@@ -251,6 +260,8 @@ def rechecked(tmp_path, monkeypatch):
 def test_the_recheck_asks_and_keeps_what_you_left_unticked(rechecked):
     s, path = rechecked
     before = copy.deepcopy(s.atlas.final)
+    # the biomes before, taken now: read after the re-check, its kept biomes would shape both sides (CodeRabbit)
+    old = {i: lab for i, (lab, _st) in s.D["potential"].items()}
     s.picks = ["maps", "paths", "landmarks"]  # the City goes; its biome stays as it was
     s._run_recheck()
     groups = {g["id"]: g for g in s.asked[0]["groups"]}
@@ -264,7 +275,6 @@ def test_the_recheck_asks_and_keeps_what_you_left_unticked(rechecked):
     assert saved.biome_kept  # the biomes it would have changed are held as they were
     s.rebuild_model()
     shown = {i: lab for i, (lab, _st) in s.D["potential"].items()}
-    old = {i: lab for i, (lab, _st) in cities.biomes(core.Atlas.load(path), _view(before, path))["potential"].items()}
     assert {i: v for i, v in shown.items() if i != 0} == {i: v for i, v in old.items() if i != 0}
     # your ticks are kept for every atlas, the next box starts with them
     assert s.ui_settings()["recheck_update"] == {g: g != "biomes" for g in rc.GROUPS}
@@ -278,14 +288,6 @@ def test_kept_landmarks_keep_their_biome_with_nothing_held(rechecked):
     saved = core.Atlas.load(path)
     assert len(saved.final["landmarks"]) == len(before["landmarks"]) and saved.biome_kept == []
     assert s.ui_settings()["recheck_update"]["landmarks"] is False
-
-
-def _view(final, path):
-    from grand_project.app.model import view_model
-
-    at = core.Atlas.load(path)
-    at.final = final
-    return view_model(at)
 
 
 def test_the_recheck_with_everything_ticked_takes_it_all(rechecked):
@@ -429,3 +431,54 @@ def test_the_recheck_is_not_applied_once_another_atlas_is_open(rechecked, monkey
     s._run_recheck()
     assert same(core.Atlas.load(path).final, before)  # (nothing written into the file of the atlas asked about)
     assert "another atlas was opened" in s.events.status
+
+
+# ------------------------------------------------------------------ CodeRabbit round 1
+def test_as_many_maps_as_can_be_are_paired():
+    old = {"nodes": [{"x": 0.0, "y": 0.0, "status": "confirmed"}, {"x": 25.0, "y": 0.0, "status": "confirmed"}]}
+    new = {"nodes": [{"x": -11.0, "y": 0.0, "status": "confirmed"}, {"x": 9.0, "y": 0.0, "status": "confirmed"}]}
+    assert rc.match_maps(old, new) == {0: 0, 1: 1}  # (nearest-first gave 0 -> 9 and left 25 alone)
+
+
+def test_a_kept_path_line_moves_with_its_maps():
+    old = grid_final()
+    old["paths"][0]["line"] = [[0.0, 0.0], [100.0, 10.0], [200.0, 0.0]]  # (path 0 - 1)
+    new = copy.deepcopy(old)
+    new["nodes"][1]["x"] += 10  # (map 1 moved 10)
+    out = rc.merge(old, new, {"maps"})  # (new maps, old paths)
+    line = next(p for p in out["paths"] if (p["a"], p["b"]) == (0, 1))["line"]
+    assert line[0] == [0.0, 0.0] and line[-1] == [210.0, 0.0] and line[1] == [105.0, 10.0]
+
+
+def test_a_kept_biome_replaces_only_its_own_maps_earlier_one():
+    old = grid_final()
+    merged = copy.deepcopy(old)
+    already = [{"x": 200.0, "y": 0.0, "biome": "Vaal city"}]  # (map 1's, 200 from map 0... and 15 from nothing else)
+    already.append({"x": 15.0, "y": 0.0, "biome": "Faridun city"})  # (map 0's: 15 from it)
+    kept = rc.kept_biomes(merged, old, {0: None, 1: "Vaal city"}, {0: "Ezomyte city", 1: "Vaal city"}, already)
+    assert {"x": 200.0, "y": 0.0, "biome": "Vaal city"} in kept  # (map 1's choice stays)
+    assert {"x": 0.0, "y": 0.0, "biome": "Ezomyte city"} in kept and len(kept) == 2  # (map 0's replaced)
+
+
+def test_a_path_of_another_kind_between_the_same_maps_is_listed():
+    old = grid_final()
+    new = copy.deepcopy(old)
+    new["paths"][0] = {**new["paths"][0], "kind": "abyss", "abyss": True}
+    assert texts(rc.changes(old, new, {}, {}), "paths") == ["Path #0 – #1 changed"]
+    assert rc.changes(old, copy.deepcopy(old), {}, {})["paths"]["count"] == 0
+
+
+def test_nothing_of_the_recheck_lands_in_the_atlas_before_you_apply(rechecked, monkeypatch):
+    s, path = rechecked
+    before = copy.deepcopy(core.Atlas.load(path).final)
+    old_icons = s.atlas.icons
+    monkeypatch.setattr(type(s.atlas), "rebuild_icons", lambda self, frames: setattr(self, "icons", [{"name": "x"}]))
+
+    def answer_after_a_save(question, choices, labels=None):
+        s.atlas.save(path)  # (a bookmark or an edit saves while the box is open)
+        assert same(core.Atlas.load(path).final, before) and s.atlas.icons is old_icons
+        return ["maps"]  # (icons left unticked)
+
+    monkeypatch.setattr(s.events, "ask_choices", answer_after_a_save)
+    s._run_recheck()
+    assert s.atlas.icons is old_icons  # (the re-check's icon list only when Icons is ticked)

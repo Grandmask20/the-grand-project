@@ -128,13 +128,20 @@ def icon_check(img: np.ndarray, mx: float, my: float, name: str, anchored: bool 
     peak = (wide >= cv2.dilate(wide, np.ones((9, 9), np.uint8))) & (wide >= ICON_TIME_RIM)
     ys, xs = np.nonzero(peak)
     near = np.asarray(others if others is not None else np.zeros((0, 2)), float).reshape(-1, 2)
+
+    def fits(px: float, py: float) -> tuple[float, float]:
+        """How well a rim fits this icon's pictures, and its best match among all pictures (1 - correlation)."""
+        own = badges.name_badge(img, px, py, [name] * len(rows), R.F[rows])[1]
+        return own, badges.name_badge(img, px, py, R.names, R.F)[1]
+
+    def is_it(own: float, best: float) -> bool:
+        # (a close fit that is also its best match: the player marker over a map fits Cleansed's pictures too)
+        return own <= ICON_TIME_PRESENT and own <= best + ICON_TIME_TIE
+
     for k in np.argsort(-wide[ys, xs])[: 2 * ICON_TIME_PEAKS]:
         px, py = wx0 + xs[k], wy0 + ys[k]
-        _nm, own = badges.name_badge(img, px, py, [name] * len(rows), R.F[rows])
-        if own > ICON_TIME_PRESENT:
-            continue
-        # (it must be the icon's best match: the player marker over a map fits Cleansed's pictures too)
-        if own > badges.name_badge(img, px, py, R.names, R.F)[1] + ICON_TIME_TIE:
+        own, best = fits(px, py)
+        if not is_it(own, best):
             continue
         in_row = x0 <= px <= x1 and y0 <= py <= y1
         # (in another map's row: that map's own icon)
@@ -151,13 +158,11 @@ def icon_check(img: np.ndarray, mx: float, my: float, name: str, anchored: bool 
         return False  # (no icon rim anywhere in the row)
     maybe = False
     for k in np.argsort(-sc[ys, xs])[:ICON_TIME_PEAKS]:
-        px, py = x0 + xs[k], y0 + ys[k]
-        _nm, own = badges.name_badge(img, px, py, [name] * len(rows), R.F[rows])
-        if own <= ICON_TIME_PRESENT:
+        own, best = fits(x0 + xs[k], y0 + ys[k])
+        if is_it(own, best):
             return True
         # a rim plainly something else (another icon, or the namer's "not an icon" pictures, a clearly better
         # match) isn't this icon; one this icon fits nearly as well might be it
-        _other, best = badges.name_badge(img, px, py, R.names, R.F)
         if own <= ICON_TIME_ABSENT and own <= best + ICON_TIME_MARGIN:
             maybe = True
     return None if maybe else False
@@ -202,6 +207,14 @@ def icons_over_time(
     """
     when = {f["name"]: core.capture_time(f) for f, _Hi in maps}
     by_name = {f["name"]: (f, Hi) for f, Hi in maps}
+
+    def judged(k: int) -> bool:
+        """Whether an icon is judged over time at all: a known one, not left out already, not a tower's floating
+        icon (copies far apart, even over a map not known as a tower - user)."""
+        return (
+            k not in skip and icons[k]["name"] not in ICON_TIME_SKIP and icons[k].get("spread", 0.0) < ICON_TOWER_SPREAD
+        )
+
     asks: dict[str, list] = {}  # screenshot -> [(key, mx, my, icon name)] to look at
     plans = []
     for i, nd in enumerate(nodes):
@@ -216,12 +229,7 @@ def icons_over_time(
             continue  # (all at one moment: nothing could change)
         names: dict[str, list[int]] = {}
         for k in nd["icons"]:
-            # (copies far apart: a tower's floating icon, even on a map not known as a tower - user)
-            if (
-                k not in skip
-                and icons[k]["name"] not in ICON_TIME_SKIP
-                and icons[k].get("spread", 0.0) < ICON_TOWER_SPREAD
-            ):
+            if judged(k):
                 names.setdefault(icons[k]["name"], []).append(k)
         for name, ks in names.items():
             found = set().union(*(set(icons[k]["frames"]) for k in ks))
@@ -254,11 +262,15 @@ def icons_over_time(
             seen[key] = None if img is None else icon_check(img, x, y, name, anchored, rest)
     gone: set[int] = set()
     false: set[int] = set()
-    for i, name, ks, per in plans:
+    verdicts_of: dict[tuple[int, str], list] = {}  # (map, icon) -> per moment: True / False / None
+    for i, name, _ks, per in plans:
         verdicts = []  # per moment: True (has it), False (shows the map without it), None (unsure)
         for vs, hit in per:
             got = [seen.get((i, name, v)) for v in vs]
             verdicts.append(True if hit or any(g is True for g in got) else (False if False in got else None))
+        verdicts_of[(i, name)] = verdicts
+    for i, name, ks, per in plans:
+        verdicts = verdicts_of[(i, name)]
         settled = [k for k, v in enumerate(verdicts) if v is not None]
         if not settled:
             continue
@@ -272,7 +284,9 @@ def icons_over_time(
             false.update(ks)
         elif name in ICON_ONLY_REPLACES:
             before = ICON_ONLY_REPLACES[name]
-            had = any(
+            # (the one it replaces in an earlier moment: found by the detector, or confirmed by the second look -
+            # the detector alone missed some: CodeRabbit)
+            had = any(v is True for v in verdicts_of.get((i, before), [])[:first]) or any(
                 icons[k]["name"] == before and set(icons[k]["frames"]) & {v for vs, _ in per[:first] for v in vs}
                 for k in nodes[i]["icons"]
             )
@@ -283,9 +297,9 @@ def icons_over_time(
     for i, nd in enumerate(nodes):
         if not alive[i]:
             continue
-        ks = [k for k in nd["icons"] if k not in skip]
+        ks = [k for k in nd["icons"] if judged(k)]  # (the same icons as above: never a tower's - CodeRabbit)
         boss = [k for k in ks if icons[k]["name"] == ICON_DEADLY]
-        others = [k for k in ks if icons[k]["name"] not in (ICON_DEADLY, *ICON_TIME_SKIP)]
+        others = [k for k in ks if icons[k]["name"] != ICON_DEADLY]
         city = any(math.hypot(nd["x"] - x, nd["y"] - y) < ICON_CITY_REACH for x, y in cities or [])
         if boss and not city and not set(boss) & gone and set(others) & gone:
             gone.update(others)

@@ -46,7 +46,8 @@ class WatchMixin:
         Returns:
             The folder, or None.
         """
-        self.settings.pop("watch_folder", None)  # before v1.11 one folder for every atlas: forgotten
+        with self._settings_lock:  # (the worker saves the settings too)
+            self.settings.pop("watch_folder", None)  # before v1.11 one folder for every atlas: forgotten
         return self.settings.get("watch_folders", {}).get(self._atlas_key())
 
     def watch_dir(self) -> str:
@@ -79,14 +80,15 @@ class WatchMixin:
         with self._lock.steady():
             if not self.path:
                 raise ValueError("open or create an atlas first")
-            folders = self.settings.setdefault("watch_folders", {})
-            if folder:
-                if not Path(folder).is_dir():
-                    raise ValueError(f"not a folder: {folder}")
-                folders[self._atlas_key()] = str(folder)
-            else:
-                folders.pop(self._atlas_key(), None)
-            self.save_settings()
+            if folder and not Path(folder).is_dir():
+                raise ValueError(f"not a folder: {folder}")
+            with self._settings_lock:  # (changed and saved in one step: the worker saves them too)
+                folders = self.settings.setdefault("watch_folders", {})
+                if folder:
+                    folders[self._atlas_key()] = str(folder)
+                else:
+                    folders.pop(self._atlas_key(), None)
+                self.save_settings()
             if self._watch_on:
                 self.start_watch()
             self.events.publish("watch", self.watch_state())

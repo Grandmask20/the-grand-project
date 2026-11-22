@@ -5,11 +5,11 @@ changed per group (maps, paths, landmarks, towers, biomes, icons), each change n
 to update. An unticked group stays as it was before, linked to the map it was on (user: "things that aren't ticked
 don't get updated from recheck and just use the pre-checked choices linked to each map it was on beforehand").
 
-Maps are matched old to new by position (one to one, nearest first, within RECHECK_MATCH). Everything else is tied
-to maps: paths by their two maps, a map's icons and tower flag by the map, landmarks and icons placed on the map's
-spot, moved with it. Biomes are worked out from the rest (cities.biomes), so a biome kept as it was is stored
-apart: the maps whose biome would change keep theirs in atlas.biome_kept (applied like the biomes drawn by hand,
-below them), until a Re-check that updates biomes.
+Maps are matched old to new by position (one to one within RECHECK_MATCH: as many as can be, the nearest).
+Everything else is tied to maps: paths by their two maps (their drawn lines moved with them), a map's icons and
+tower flag by the map, landmarks and icons placed on the map's spot, moved with it. Biomes are worked out from the
+rest (cities.biomes), so a biome kept as it was is stored apart: the maps whose biome would change keep theirs in
+atlas.biome_kept (applied like the biomes drawn by hand, below them), until a Re-check that updates biomes.
 """
 
 from __future__ import annotations
@@ -34,25 +34,51 @@ def _alive_lm(lms: list[dict]) -> list[int]:
 
 
 def _pairs(a: np.ndarray, b: np.ndarray, reach: float) -> list[tuple[int, int, float]]:
-    """One-to-one pairs of points of a and b, nearest first, within reach.
+    """One-to-one pairs of points of a and b within reach: as many as can be made, the nearest among those.
+
+    Nearest-first alone could leave a point unpaired that another in-range pairing keeps (old 0 and 25, new -11 and
+    9: 0 took 9 and 25 lost its pair, and with it the paths kept on it: CodeRabbit). Each group of points that can
+    reach each other is paired on its own (an assignment problem; the groups are small).
 
     Returns:
         [(index in a, index in b, distance)].
     """
+    from scipy.optimize import linear_sum_assignment
+
     if not len(a) or not len(b):
         return []
-    tb = cKDTree(b)
-    cand = []
-    for i, near in enumerate(tb.query_ball_point(a, reach)):
-        for j in near:
-            cand.append((float(math.hypot(*(a[i] - b[j]))), i, j))
-    cand.sort()
-    used_a, used_b, out = set(), set(), []
-    for d, i, j in cand:
-        if i not in used_a and j not in used_b:
-            used_a.add(i)
-            used_b.add(j)
-            out.append((i, j, d))
+    near = cKDTree(b).query_ball_point(a, reach)
+    edges = [(i, j) for i, js in enumerate(near) for j in js]
+    if not edges:
+        return []
+    # groups: points of a and b joined by a possible pair (a's i is node i, b's j is node len(a) + j)
+    parent = list(range(len(a) + len(b)))
+
+    def root(k):
+        while parent[k] != k:
+            parent[k] = parent[parent[k]]
+            k = parent[k]
+        return k
+
+    for i, j in edges:
+        parent[root(i)] = root(len(a) + j)
+    groups: dict[int, list[tuple[int, int]]] = {}
+    for i, j in edges:
+        groups.setdefault(root(i), []).append((i, j))
+    out = []
+    for es in groups.values():
+        ia = sorted({i for i, _ in es})
+        jb = sorted({j for _, j in es})
+        if len(es) == 1:
+            i, j = es[0]
+            out.append((i, j, float(np.hypot(*(a[i] - b[j])))))
+            continue
+        cost = np.full((len(ia), len(jb)), 1e9)  # (no pair possible: far dearer than any real one)
+        for i, j in es:
+            cost[ia.index(i), jb.index(j)] = float(np.hypot(*(a[i] - b[j])))
+        for r, c in zip(*linear_sum_assignment(cost), strict=True):
+            if cost[r, c] < 1e9:
+                out.append((ia[r], jb[c], float(cost[r, c])))
     return out
 
 
@@ -86,6 +112,36 @@ def _path_key(p: dict) -> tuple[int, int]:
 def _mid(nodes: list[dict], p: dict) -> tuple[float, float]:
     a, b = nodes[p["a"]], nodes[p["b"]]
     return (a["x"] + b["x"]) / 2, (a["y"] + b["y"]) / 2
+
+
+def _line(p: dict, nodes: list[dict], flip: bool) -> np.ndarray:
+    """A path's drawn line (its straight one without), RECHECK_LINE_POINTS points evenly along it, from its map a."""
+    pts = np.asarray(
+        p.get("line") or [[nodes[p["a"]]["x"], nodes[p["a"]]["y"]], [nodes[p["b"]]["x"], nodes[p["b"]]["y"]]], float
+    )
+    if flip:
+        pts = pts[::-1]
+    seg = np.hypot(*np.diff(pts, axis=0).T)
+    at = np.concatenate([[0.0], np.cumsum(seg)])
+    if at[-1] <= 0:
+        return np.repeat(pts[:1], K.RECHECK_LINE_POINTS, axis=0)
+    t = np.linspace(0, at[-1], K.RECHECK_LINE_POINTS)
+    return np.stack([np.interp(t, at, pts[:, 0]), np.interp(t, at, pts[:, 1])], 1)
+
+
+def _path_changed(p: dict, q: dict, on: list[dict], nn: list[dict], m: dict) -> bool:
+    """Whether a path the old and the new result both have (the same two maps) looks different: another kind, or a
+    drawn line that moved more than RECHECK_LINE_MOVED (its maps' own moves aside: the line runs from its maps)."""
+    if p.get("kind") != q.get("kind") or bool(p.get("abyss")) != bool(q.get("abyss")):
+        return True
+    flip = m[p["a"]] != q["a"]  # (the new path runs the other way round)
+    lp, lq = _line(p, on, False), _line(q, nn, flip)
+    # the old line carried along with its maps' moves, as merge carries it
+    da = np.array([nn[m[p["a"]]]["x"] - on[p["a"]]["x"], nn[m[p["a"]]]["y"] - on[p["a"]]["y"]])
+    db = np.array([nn[m[p["b"]]]["x"] - on[p["b"]]["x"], nn[m[p["b"]]]["y"] - on[p["b"]]["y"]])
+    t = np.linspace(0, 1, K.RECHECK_LINE_POINTS)[:, None]
+    lp = lp + (1 - t) * da + t * db
+    return float(np.hypot(*(lp - lq).T).max()) > K.RECHECK_LINE_MOVED
 
 
 def _lm_name(lm: dict) -> str:
@@ -170,6 +226,13 @@ def changes(
     old_keys = {_path_key(p): p for p in old["paths"] if p["a"] in alive_o and p["b"] in alive_o}
     new_keys = {_path_key(p): p for p in new["paths"] if p["a"] in alive_n and p["b"] in alive_n}
     in_new = {(min(m[a], m[b]), max(m[a], m[b])) for a, b in old_keys if a in m and b in m}
+    # the same two maps, another kind of path or another drawn line: changed (saved unasked when nothing else
+    # changed: CodeRabbit)
+    for (a, b), p in old_keys.items():
+        if a in m and b in m:
+            q = new_keys.get((min(m[a], m[b]), max(m[a], m[b])))
+            if q is not None and _path_changed(p, q, on, nn, m):
+                out["paths"].append(_item(f"Path #{a} – #{b} changed", *_mid(nn, q), "change"))
     for (a, b), p in old_keys.items():
         if not (a in m and b in m and (min(m[a], m[b]), max(m[a], m[b])) in new_keys):
             out["paths"].append(_item(f"Path #{a} – #{b} removed", *_mid(on, p), "removed"))
@@ -284,7 +347,22 @@ def merge(old: dict, new: dict, update: set[str]) -> dict:
         for p in other["paths"]:
             a, b = to_base.get(p["a"]), to_base.get(p["b"])
             if a is not None and b is not None:
-                paths.append({**p, "a": a, "b": b})
+                q = {**p, "a": a, "b": b}
+                if p.get("line"):
+                    # its drawn line moved with its maps (the map renderer draws the line when there is one: it
+                    # ended where the map used to be - CodeRabbit), each end by its map's shift, blended along it
+                    da = (nodes[a]["x"] - on[p["a"]]["x"], nodes[a]["y"] - on[p["a"]]["y"])
+                    db = (nodes[b]["x"] - on[p["b"]]["x"], nodes[b]["y"] - on[p["b"]]["y"])
+                    n = len(p["line"])
+                    q["line"] = [
+                        [
+                            round(pt[0] + (1 - t) * da[0] + t * db[0], 2),
+                            round(pt[1] + (1 - t) * da[1] + t * db[1], 2),
+                        ]
+                        for k, pt in enumerate(p["line"])
+                        for t in [k / (n - 1) if n > 1 else 0.0]
+                    ]
+                paths.append(q)
 
     # the other side's things placed by their map: (its index in base, how far it moved)
     alive_o = _alive(on)
@@ -331,6 +409,10 @@ def merge(old: dict, new: dict, update: set[str]) -> dict:
 
     stats = dict(new.get("stats", {}))
     stats["recheck_kept"] = sorted(set(K.RECHECK_GROUPS) - set(update))
+    # the numbers of what was accepted, not of the re-check's result (the atlas card reads them: CodeRabbit)
+    stats["nodes_kept"] = sum(1 for n in nodes if n.get("status") != "removed")
+    stats["paths"] = len(paths)
+    stats["icons_shown"] = len(icons)
     return {"nodes": nodes, "paths": paths, "landmarks": landmarks, "icons": icons, "stats": stats}
 
 
@@ -355,14 +437,19 @@ def kept_biomes(merged: dict, old: dict, merged_biomes: dict, old_biomes: dict, 
         The new atlas.biome_kept: [{"x", "y", "biome" ("" = none)}].
     """
     m = match_maps(old, merged)
-    out = [dict(k) for k in already]
-    add = []
+    add: dict[int, dict] = {}  # merged map index -> its kept biome
     for i, j in m.items():
         a, b = old_biomes.get(i), merged_biomes.get(j)
         if a != b:
             n = merged["nodes"][j]
-            add.append({"x": round(n["x"], 2), "y": round(n["y"], 2), "biome": a or ""})
-    if add and out:
-        t = cKDTree(np.array([[k["x"], k["y"]] for k in add], float))
-        out = [k for k in out if not t.query_ball_point([k["x"], k["y"]], K.RECHECK_MATCH)]
-    return out + add
+            add[j] = {"x": round(n["x"], 2), "y": round(n["y"], 2), "biome": a or ""}
+    # an earlier kept biome goes only when its own map gets a new one (by radius, a neighbour's saved choice was
+    # dropped with no replacement: CodeRabbit)
+    alive = _alive(merged["nodes"])
+    tree = _tree(merged["nodes"], alive)
+    out = []
+    for k in already:
+        j = _nearest_map(merged["nodes"], alive, tree, k["x"], k["y"], K.RECHECK_MATCH)
+        if j is None or j not in add:
+            out.append(dict(k))
+    return out + list(add.values())

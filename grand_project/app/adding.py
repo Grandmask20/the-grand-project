@@ -719,11 +719,16 @@ class AddingMixin:
             if not self.owns(rec):
                 self._done("Re-check stopped: another atlas was opened")
                 return
-            # (the clean-up makes a new atlas-wide result and never changes the old one: no copy needed)
-            old = atlas.final
-            atlas.rebuild_icons(builder.cached_frames(path, atlas.frames))
-            atlas_finalize.finalize(atlas, log=self.events.log)
-            new = atlas.final
+            # the candidate is made aside: the atlas keeps its result and its icon list until you apply (a save
+            # meanwhile - a bookmark, an edit - or a failure listing the changes wrote it unapproved: CodeRabbit).
+            # (The clean-up makes a new result and icon list and never changes the old ones: no copies needed.)
+            old, old_icons = atlas.final, atlas.icons
+            try:
+                atlas.rebuild_icons(builder.cached_frames(path, atlas.frames))
+                atlas_finalize.finalize(atlas, log=self.events.log)
+                new, new_icons = atlas.final, atlas.icons
+            finally:
+                atlas.final, atlas.icons = old, old_icons
             self._note_timing(len(stale), t1 - t0, len(atlas.frames), time.monotonic() - t1)
             listed = None
             if old is not None:
@@ -735,10 +740,9 @@ class AddingMixin:
                     self._biomes_of(atlas, new, kept=False),
                     icon_label,
                 )
-                # the map shows the atlas as it was while you choose (and hand edits made meanwhile apply to it)
-                atlas.final = old
             if listed is None or not any(g["count"] for g in listed.values()):
-                atlas.final = new  # (nothing to choose from: only its numbers can differ)
+                # (nothing to choose from: only its numbers can differ)
+                atlas.final, atlas.icons = new, new_icons
                 atlas.last_check = self._check_record()
                 atlas.save(path)
                 done = "whole atlas re-checked" + (": nothing changed" if listed is not None else "")
@@ -768,6 +772,8 @@ class AddingMixin:
                     atlas.biome_kept,
                 )
             atlas.final = merged
+            if "icons" in picked:
+                atlas.icons = new_icons  # (the icons as the re-check merged them: kept as before when unticked)
             atlas.last_check = self._check_record()
             atlas.save(path)
         self.rebuild_model()

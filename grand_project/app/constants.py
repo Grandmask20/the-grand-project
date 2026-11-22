@@ -414,3 +414,5 @@ RECHECK_ITEMS_SHOWN = 400  # changes listed per group (the count says how many t
 RECHECK_DETECT_S = 2.5
 RECHECK_CLEAN_S = 0.4
 RECHECK_TIMING_MIN = 5  # screenshots: a Re-check's timing is kept only when it detected / cleaned up at least this many
+RECHECK_LINE_POINTS = 16  # points along a path's drawn line when two results' lines are compared
+RECHECK_LINE_MOVED = 12.0  # atlas units: a drawn line that moved further than this (its maps' moves aside) changed

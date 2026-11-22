@@ -29,8 +29,10 @@ def session():
 def settled(session) -> None:
     """Wait for what opening an atlas starts behind it: the locked-stronghold search ends with a model rebuild (a
     filter version), which landed in the middle of a test on a busy machine."""
-    if getattr(session, "_lock_thread", None):
-        session._lock_thread.join(10)
+    t = getattr(session, "_lock_thread", None)
+    if t:
+        t.join(60)  # (the test runner's own timeout covers a hang)
+        assert not t.is_alive(), "the locked-stronghold search didn't end"
 
 
 def points(s: AtlasSession, layer: str, replay: bool = False) -> dict:
