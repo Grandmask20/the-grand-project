@@ -89,6 +89,14 @@ export function routeLayers(geo: Geo, on: boolean): { line: Spec[]; nodes: Spec;
 	};
 }
 
+/** The maps a shift-drag box picked (BoxSelect), ringed in blue. */
+export const boxPickedLayer = (geo: Geo): Spec => ({
+	id: "box-picked",
+	type: "circle",
+	source: "box-picked",
+	paint: { "circle-radius": ringRadius(geo, 3), ...hollow("#4da3ff", 3) },
+});
+
 /** The screenshots added last, outlined, the newest brightest. */
 export const recentLayer = (meta: Meta, on: boolean): Spec => ({
 	id: "recent",

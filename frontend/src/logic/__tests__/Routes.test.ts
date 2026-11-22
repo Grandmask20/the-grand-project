@@ -33,6 +33,12 @@ const graph = new RouteGraph({
 });
 
 describe("RouteGraph", () => {
+	it("lists every map and where it is", () => {
+		const all = graph.positions();
+		expect(all.length).toBeGreaterThan(1);
+		for (const [id, at] of all) expect(graph.at(id)).toEqual(at);
+	});
+
 	it("takes the fewest maps", () => {
 		expect(graph.shortest(0, (u) => u === 3)).toEqual([0, 1, 2, 3]);
 	});

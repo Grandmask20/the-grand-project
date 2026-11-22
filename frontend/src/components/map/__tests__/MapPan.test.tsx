@@ -23,7 +23,7 @@ describe("MapPan", () => {
 		expect(fm.map.panBy).toHaveBeenCalledTimes(1);
 	});
 
-	it("leaves right-drag, Ctrl-drag, the lasso and a screenshot placed by hand alone", () => {
+	it("leaves right-drag, Ctrl-drag, Shift-drag (a box), the lasso and a screenshot placed by hand alone", () => {
 		const { fm } = renderOnMap(<MapPan />);
 		const el = fm.map.getCanvasContainer();
 		const drag = (extra: MouseEventInit) => {
@@ -33,6 +33,7 @@ describe("MapPan", () => {
 		};
 		drag({ button: 2 });
 		drag({ button: 0, ctrlKey: true });
+		drag({ button: 0, shiftKey: true });
 		act(() => useAppStore.getState().setMode({ kind: "lasso" }));
 		drag({ button: 0 });
 		expect(fm.map.panBy).not.toHaveBeenCalled();

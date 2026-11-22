@@ -7,7 +7,7 @@ import { useAppStore } from "@/store/AppStore";
  * Panning (left-drag, MapLibre's own drag pan off): the mouse's movement in px moves the map at the scale of the
  * view's centre. MapLibre's own drag keeps the grabbed ground point under the mouse, which near the horizon moved
  * further and further with every px (user: it sped up endlessly). Not while drawing a lasso or moving a screenshot
- * placed by hand, nor with Ctrl (tilt and turn).
+ * placed by hand, nor with Ctrl (tilt and turn) or Shift (BoxSelect).
  */
 export function MapPan() {
 	const map = useMapLibre();
@@ -18,7 +18,8 @@ export function MapPan() {
 		const down = (e: MouseEvent) => {
 			if (e.button === 0) pressAt(e.clientX, e.clientY);
 			const kind = useAppStore.getState().mode.kind;
-			if (e.button !== 0 || e.ctrlKey || kind === "lasso" || kind === "ghost") return;
+			// (with Shift: BoxSelect's box, not a pan)
+			if (e.button !== 0 || e.ctrlKey || e.shiftKey || kind === "lasso" || kind === "ghost") return;
 			last = [e.clientX, e.clientY];
 		};
 		const move = (e: MouseEvent) => {
