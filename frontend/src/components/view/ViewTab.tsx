@@ -180,6 +180,14 @@ export function ViewTab() {
 						locked={lock}
 					>
 						{slider("fades out at", "d3_ground_far", 0, 6, 0.1, 2.4, (v) => (v ? times(v) : "never"))}
+						<Label className="font-normal">
+							<Switch
+								checked={st.d3_sky !== false}
+								onCheckedChange={(v) => set({ d3_sky: v === true })}
+								aria-label="sky and fog"
+							/>
+							sky and fog (far ground and models fade into haze)
+						</Label>
 					</Section>
 					<RevealWhileUsed layer="3D models" view="3d">
 						<Section {...fold("3D models", `size ${times(num("d3_model_size", 1))}`)} locked={lock}>

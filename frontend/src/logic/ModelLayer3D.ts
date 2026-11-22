@@ -33,13 +33,17 @@ uniform float u_size;
 uniform float u_height;
 uniform float u_far;
 uniform float u_pos;
+uniform float u_fogOn; // 1: models far off fade into the sky's haze (View: sky and fog)
 varying vec3 v_col;
 varying float v_show;
 varying vec3 v_pick;
+varying float v_fog;
 void main() {
 	v_pick = a_pick;
 	vec4 ca = u_m * vec4(a_anchor, 0.0, 1.0);
 	if (ca.w > u_far) { gl_Position = vec4(2.0, 2.0, 2.0, 1.0); return; } // past the render distance
+	// the haze: none up to half the render distance, all of it at its end (so they fade out rather than pop)
+	v_fog = u_fogOn * smoothstep(0.5 * u_far, u_far, ca.w);
 	vec2 xy = a_anchor + (a_pos.xy - a_anchor) * u_size;
 	gl_Position = u_m * vec4(xy, a_pos.z * u_size * u_height, 1.0);
 	// light from the north-west and above; tops brightest, as MapLibre's own models looked
@@ -55,16 +59,19 @@ precision mediump float;
 uniform float u_pick; // 1: draw each model's pick code as its colour (clicks read it back)
 uniform vec3 u_sel; // the selected map node's pick code (bytes, 0..1); its models are lit up
 uniform float u_selOn;
+uniform vec3 u_fogCol;
 varying vec3 v_col;
 varying float v_show;
 varying vec3 v_pick;
+varying float v_fog;
 void main() {
 	if (v_show < 0.5) discard;
 	if (u_pick > 0.5) { gl_FragColor = vec4(v_pick, 1.0); return; }
 	// the selected map node's pillar or structure, in the selection's gold (its icons keep their look: a selected
 	// map node and a selected icon looked the same with the ring on the icon: user)
 	bool sel = u_selOn > 0.5 && all(lessThan(abs(v_pick - u_sel), vec3(0.002)));
-	gl_FragColor = vec4(sel ? mix(v_col, vec3(1.0, 0.8, 0.2), 0.6) : v_col, 1.0);
+	vec3 col = sel ? mix(v_col, vec3(1.0, 0.8, 0.2), 0.6) : v_col;
+	gl_FragColor = vec4(mix(col, u_fogCol, v_fog), 1.0);
 }`;
 
 const STRIDE = 15; // floats per vertex
@@ -93,6 +100,8 @@ export class ModelLayer3D implements CustomLayerInterface {
 	height = 1;
 	far = 3;
 	pos = 1e9;
+	/** The haze far models fade into (rgb, 0..1; View: sky and fog), or null: none. */
+	fog: [number, number, number] | null = null;
 
 	onAdd(map: MapLibreMap, gl: WebGLRenderingContext | WebGL2RenderingContext): void {
 		this.map = map;
@@ -240,6 +249,8 @@ export class ModelLayer3D implements CustomLayerInterface {
 			((sel >> 16) & 255) / 255,
 		);
 		gl.uniform1f(gl.getUniformLocation(p, "u_selOn"), sel > 0 ? 1 : 0);
+		gl.uniform1f(gl.getUniformLocation(p, "u_fogOn"), this.fog ? 1 : 0);
+		gl.uniform3f(gl.getUniformLocation(p, "u_fogCol"), ...(this.fog ?? [0, 0, 0]));
 		gl.bindBuffer(gl.ARRAY_BUFFER, this.buf);
 		const attrs: [string, number, number][] = [
 			["a_pos", 3, 0],

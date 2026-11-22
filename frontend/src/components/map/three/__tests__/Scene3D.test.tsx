@@ -3,6 +3,7 @@ import { describe, expect, it, vi } from "vitest";
 import { Scene3D } from "@/components/map/three/Scene3D";
 import type { IconLayer3D } from "@/logic/IconLayer3D";
 import type { ModelLayer3D } from "@/logic/ModelLayer3D";
+import { FOG_RGB, SKY } from "@/logic/Sky";
 import { useAppStore } from "@/store/AppStore";
 import { mapInfo, state } from "@/test/Fixtures";
 import { renderOnMap } from "@/test/RenderOnMap";
@@ -116,6 +117,23 @@ describe("Scene3D", () => {
 		await waitFor(() =>
 			expect(impl<{ pending: { id: number }[] }>(fm, "paths-3d-gl")?.pending.map((p) => p.id)).toEqual([7, 9]),
 		);
+	});
+
+	it("tilted: a sky over the horizon, and the models fading into its haze", async () => {
+		const { fm } = renderOnMap(<Scene3D />, app());
+		expect(fm.map.setSky).toHaveBeenLastCalledWith(undefined); // (flat: no sky)
+		tilt();
+		await waitFor(() => expect(fm.map.setSky).toHaveBeenLastCalledWith(SKY));
+		await waitFor(() => expect(impl<{ fog: unknown }>(fm, "models-3d-gl")?.fog).toEqual(FOG_RGB));
+	});
+
+	it("sky and fog off: no sky, the models fade into nothing", async () => {
+		const off = { ...state.settings, style: { ...state.settings.style, d3_sky: false } };
+		const { fm } = renderOnMap(<Scene3D />, app({ ...state, settings: off }));
+		tilt();
+		await waitFor(() => expect(impl<{ fog: unknown }>(fm, "models-3d-gl")).toBeDefined());
+		expect(impl<{ fog: unknown }>(fm, "models-3d-gl")?.fog).toBeNull();
+		expect(fm.map.setSky).not.toHaveBeenCalledWith(SKY);
 	});
 
 	it("beams off: the beams' models are left out", async () => {

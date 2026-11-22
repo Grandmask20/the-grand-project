@@ -16,7 +16,17 @@ describe("GroundFade", () => {
 		fade.onAdd(map as never, gl);
 		fade.render(gl, frame);
 		expect(called("drawArrays")).toHaveLength(1);
+		expect(called("uniform3f").at(-1)?.args.slice(1)).toEqual([0, 0, 0]); // (black)
 		fade.onRemove(map as never, gl);
 		expect(called("deleteProgram")).toHaveLength(1);
+	});
+
+	it("fades into the colour given instead (the sky's haze)", () => {
+		const { map } = fakeMap();
+		const { gl, called } = fakeGl();
+		const fade = new GroundFade(2.4, [0.1, 0.2, 0.3]);
+		fade.onAdd(map as never, gl);
+		fade.render(gl, frame);
+		expect(called("uniform3f").at(-1)?.args.slice(1)).toEqual([0.1, 0.2, 0.3]);
 	});
 });
