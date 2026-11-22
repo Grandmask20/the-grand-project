@@ -11,18 +11,26 @@ import time
 import pytest
 
 from grand_project import cities
+from grand_project.app import constants as K
 from grand_project.app.session import AtlasSession
 from tests.webmap_data import make_atlas
 
 HOLD = 6.0  # seconds the "job" holds the lock: well past any answer that doesn't wait for it
+WAIT = K.TILER_LOCK_WAIT  # the app's own (the other tests wait longer: conftest)
 
 
 @pytest.fixture
 def session(monkeypatch, tmp_path):
+    monkeypatch.setattr(K, "TILER_LOCK_WAIT", WAIT)
     monkeypatch.setattr(cities, "find_locks", lambda atlas, todo: [])  # (no locked-stronghold search behind the test)
     s = AtlasSession(settings={}, worker=False)
     path, _pts, _img = make_atlas(tmp_path)
     s.open_atlas(path)
+    # (opening starts the locked-stronghold search, which ends with a filter version of its own: waited for,
+    # it landed in the middle of a test's versions)
+    t = getattr(s, "_lock_thread", None)
+    if t:
+        t.join(60)
     yield s
     s.shutdown()
 
@@ -72,8 +80,9 @@ def refreshed(s, before: int) -> bool:
     deadline = time.monotonic() + 10
     while time.monotonic() < deadline:
         v = s._vector
-        if s.filter_version > before and v is not None and v[0] == s._tiles_key(False):
-            return any(e["kind"] == "filters" and e["data"] == s.filter_version for e in s.events.history)
+        told = any(e["kind"] == "filters" and e["data"] == s.filter_version for e in list(s.events.history))
+        if s.filter_version > before and v is not None and v[0] == s._tiles_key(False) and told:
+            return True  # (told right after the locked step it was made in)
         time.sleep(0.05)
     return False
 
@@ -97,6 +106,26 @@ def test_a_filter_changed_during_a_job_keeps_the_tiles_made_before(session):
         data, soon = answered_soon(lambda: tile(session))
         assert soon and data == before  # (dropped by the filter change, every request waited for the job)
     assert refreshed(session, filters + 1)
+
+
+def test_with_a_refresh_waiting_the_lock_isnt_waited_for_at_all(session, monkeypatch):
+    before = tile(session)
+    monkeypatch.setattr(K, "TILER_LOCK_WAIT", HOLD)  # (waited for in full, an answer would come after the job)
+    with Job(session, lambda: session.set_terrain(*session.terrain, save=False, cities=False)):
+        monkeypatch.setattr(session, "_refresh_waiting", True)  # a refresh pending: the lock is known to be taken
+        data, soon = answered_soon(lambda: tile(session))
+        assert soon and data == before  # (each of a move's ~50 tiles waited its turn before: self review)
+
+
+def test_the_refresh_makes_anew_only_what_was_asked_for(session):
+    session.scene_3d()  # the 3D view opened once, then the flat map again
+    tile(session)
+    scene_before = session._scene3d[0]
+    filters = session.filter_version
+    with Job(session, lambda: session.set_terrain(*session.terrain, save=False, cities=False)):
+        tile(session)  # only the flat map's tiles asked for meanwhile
+    assert refreshed(session, filters)
+    assert session._scene3d[0] == scene_before  # not made anew under the lock: it was never asked for (self review)
 
 
 def test_the_3d_scene_during_a_job_is_the_one_made_before(session):
@@ -124,7 +153,7 @@ def test_the_refresh_is_dropped_when_another_atlas_opened_meanwhile(session, tmp
     (tmp_path / "other").mkdir()
     other, _pts, _img = make_atlas(tmp_path / "other")
     with session._lock:  # (this thread holds it: the refresh waits)
-        session._refresh_when_free()
+        session._refresh_when_free("_vector")
         session.open_atlas(other)  # another atlas opened before the lock is free
         filters = session.filter_version
     for t in threading.enumerate():

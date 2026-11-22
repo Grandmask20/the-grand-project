@@ -147,10 +147,12 @@ class MapImageMixin:
         self._sharp_key = None  # the sharp tile folder in use (kept with the new one: _sharp_folder)
         self._terrain_job = 0
         self.filter_version = 0
-        self._vector = None  # (key, VectorTiler, None, grid, generation): see _made_under_lock
-        # a refresh of the page's vector tiles waits for the session lock (_refresh_when_free): one at a time
+        self._vector = None  # (versions, VectorTiler, grid, generation): see _made_under_lock
+        # a refresh of the page's vector tiles waits for the session lock (_refresh_when_free): one at a time, with
+        # what was answered from old ones meanwhile (made anew under the lock)
         self._refresh_lock = threading.Lock()
         self._refresh_waiting = False
+        self._refresh_stale: set[str] = set()
         self._reset_mapimage()
 
     def _reset_mapimage(self) -> None:
@@ -1156,7 +1158,9 @@ class MapImageMixin:
         requests took all the browser's connections, so even the ground of a spot jumped to never came (user).
         Meanwhile the one made last is answered, what the map showed before the change, and the page is told to ask
         again once the lock is free (_refresh_when_free). Only one made for this atlas and this timelapse plan:
-        with none, the request waits for the lock as before.
+        with none, the request waits for the lock as before. With a refresh waiting already, the lock is known to be
+        taken: not waited for at all (each of a move's ~50 tiles waited its turn, seconds before the map's maps came:
+        self review).
 
         Args:
             slot: The attribute it is kept in.
@@ -1171,8 +1175,14 @@ class MapImageMixin:
         if v is not None and v[0] == key:
             return v
         last = v if v is not None and v[3] == self.opened.gen and v[0][3] == key[3] else None
-        if not self._lock.acquire(timeout=K.TILER_LOCK_WAIT if last is not None else -1):
-            self._refresh_when_free()
+        if last is None:
+            got = self._lock.acquire()
+        elif self._refresh_waiting:
+            got = self._lock.acquire(blocking=False)
+        else:
+            got = self._lock.acquire(timeout=K.TILER_LOCK_WAIT)
+        if not got:
+            self._refresh_when_free(slot)
             return last
         try:
             key = self._tiles_key(steps)
@@ -1188,39 +1198,53 @@ class MapImageMixin:
         finally:
             self._lock.release()
 
-    def _refresh_when_free(self) -> None:
-        """Once the session lock is free, make the vector tiles and 3D scene anew and tell the page to ask for them
-        again: they were answered from the ones made before a change while work held the lock (_made_under_lock),
-        and the page keeps a tile it has until its address changes. One waiter at a time, on a thread of its own;
-        it takes the atlas's generation first and acts only while that atlas is still open."""
+    def _refresh_when_free(self, slot: str) -> None:
+        """Once the session lock is free, make the vector tiles (and whatever else was answered from old ones) anew
+        and tell the page to ask for them again: they were answered from the ones made before a change while work
+        held the lock (_made_under_lock), and the page keeps a tile it has until its address changes. One waiter at a
+        time, on a thread of its own; it takes the atlas's generation first and acts only while that atlas is still
+        open.
+
+        Args:
+            slot: What was answered from old ones (_vector, _vector_steps, _scene3d, _scene3d_steps).
+        """
         with self._refresh_lock:
+            self._refresh_stale.add(slot)
             if self._refresh_waiting:
                 return
             self._refresh_waiting = True
         gen = self.opened.gen
+        makers = {
+            "_vector": (self._vector_made, False),
+            "_vector_steps": (self._vector_made, True),
+            "_scene3d": (self._scene_made, False),
+            "_scene3d_steps": (self._scene_made, True),
+        }
 
         def wait() -> None:
             """Wait for the lock, then make them anew under it and tell the page (background thread)."""
             bumped = False
             try:
                 with self._lock:
-                    with self._refresh_lock:  # (an answer from the old ones after this asks for another refresh)
-                        self._refresh_waiting = False
-                    if not self.owns(gen):
-                        return  # another atlas opened since: its own versions tell the page
-                    self.filters_changed(publish=False)  # new addresses: the page asks again
-                    bumped = True
-                    # made now, in the same locked step: a job taking the lock next left them unmade, and the page's
-                    # new requests had only the old ones again. Only those in use (a timelapse, the 3D view).
-                    for slot, steps, make in (
-                        ("_vector", False, self._vector_made),
-                        ("_vector_steps", True, self._vector_made),
-                        ("_scene3d", False, self._scene_made),
-                        ("_scene3d_steps", True, self._scene_made),
-                    ):
-                        v = getattr(self, slot, None)
-                        if v is not None and v[3] == gen:
+                    try:
+                        with self._refresh_lock:
+                            stale, self._refresh_stale = self._refresh_stale | {"_vector"}, set()
+                        if not self.owns(gen):
+                            return  # another atlas opened since: its own versions tell the page
+                        self.filters_changed(publish=False)  # new addresses: the page asks again
+                        bumped = True
+                        # made now, in the same locked step: a job taking the lock next left them unmade, and the
+                        # page's new requests had only the old ones again. The flat map's tiles (always shown) and
+                        # what was asked for meanwhile only: the 3D scene made for every refresh once the 3D view
+                        # had been opened, seconds under the lock (self review)
+                        for name in stale:
+                            make, steps = makers[name]
                             make(steps)
+                    finally:
+                        # cleared at the end of the locked step: an answer from old ones while these are being made
+                        # (for the addresses before) needs no refresh of its own, the page asks again after it
+                        with self._refresh_lock:
+                            self._refresh_waiting = False
             except Exception:
                 LOG.exception("the map's vector tiles could not be made again")  # (each request makes its own then)
             finally:

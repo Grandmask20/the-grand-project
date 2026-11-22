@@ -62,6 +62,17 @@ def app_settings(tmp_path, monkeypatch) -> Path:
     return f
 
 
+@pytest.fixture(autouse=True)
+def tiles_wait_for_the_lock(monkeypatch) -> None:
+    """A test reading the vector tiles or the 3D scene right after a change gets them made anew, as it always did:
+    the app answers from the ones made before when the session lock stays taken past K.TILER_LOCK_WAIT (a job),
+    and a background search holding it a moment on a busy machine would hand a test the old ones. The tests of that
+    answer (test_app_mapimage) set the real wait back."""
+    from grand_project.app import constants as K
+
+    monkeypatch.setattr(K, "TILER_LOCK_WAIT", 60.0)
+
+
 @pytest.fixture(scope="session")
 def test_data() -> Path:
     """The test data folder (paths.TEST_DATA: local_paths.json, ATLAS_TEST_DATA or ./atlas_test_data)."""
