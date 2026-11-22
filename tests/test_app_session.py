@@ -6,6 +6,7 @@ and the saved atlases are checked through the session, as the page uses them.
 
 import base64
 import json
+import threading
 from pathlib import Path
 
 import cv2
@@ -90,6 +91,83 @@ def test_vector_tiles_hold_the_maps_where_they_are(session, tmp_path):
     assert session.filter_version == v + 1 and list(points(session, "removed")) == [15]
     session.set_ui_settings({"ui": {"background": "vector"}, "layers": {"Labels": False}})  # page-only: same tiles
     assert session.filter_version == v + 1
+
+
+class Job:
+    """A job holding the session lock (adding screenshots holds it for minutes), on a thread of its own: `work` runs
+    under it once it is taken, then the lock is kept until `end()`."""
+
+    def __init__(self, session, work=lambda: None):
+        self.taken, self.done = threading.Event(), threading.Event()
+
+        def run():
+            with session._lock:
+                work()
+                self.taken.set()
+                self.done.wait(60)
+
+        self.thread = threading.Thread(target=run, daemon=True)
+        self.thread.start()
+        assert self.taken.wait(60)
+
+    def end(self):
+        self.done.set()
+        self.thread.join(60)
+
+
+def answered(fn, timeout: float = 20.0):
+    """Run fn on a thread of its own; its answer, or fail when it waits (for a job) past the timeout."""
+    out: list = []
+    t = threading.Thread(target=lambda: out.append(fn()), daemon=True)
+    t.start()
+    t.join(timeout)
+    assert out, "it waited for the job"
+    return out[0]
+
+
+def test_a_filter_changed_during_a_job_shows_on_the_map_at_once(session, tmp_path):
+    path, _pts, _img = make_atlas(tmp_path)
+    session.open_atlas(path)
+    settled(session)
+    job = Job(session)
+    try:
+        session.set_ui_settings({"layers": {"Removed": True}})  # (the page's request: no job wait)
+        assert list(answered(lambda: points(session, "removed"))) == [15]
+        assert answered(lambda: json.loads(session.scene_3d()))["paths"]  # the 3D view's scene too
+    finally:
+        job.end()
+
+
+def test_what_a_job_changes_shows_on_the_map_as_it_changes_it(session, tmp_path):
+    path, _pts, _img = make_atlas(tmp_path)
+    session.open_atlas(path)
+    settled(session)
+    assert 0 in points(session, "maps")
+
+    def remove_map_0():
+        session.atlas.final["nodes"][0]["status"] = "removed"
+        session.rebuild_model()  # (as adding does after each screenshot, the lock still held)
+
+    job = Job(session, remove_map_0)
+    try:
+        info = answered(session.map_info)
+        maps = answered(lambda: points(session, "maps"))
+        assert 0 not in maps and len(maps) == 14
+        # the versions the page asks with are those of what it gets: never an address with older tiles in it
+        assert session._vector[0][:3] == (info["model_version"], info["filter_version"], info["terrain_version"])
+    finally:
+        job.end()
+
+
+def test_the_map_asks_for_the_versions_the_tiles_are_made_from(session, tmp_path):
+    path, _pts, _img = make_atlas(tmp_path)
+    session.open_atlas(path)
+    settled(session)
+    info = session.map_info()
+    session.model_version += 1  # a change under way (a job between bumping the version and putting in the model)
+    assert session.map_info()["model_version"] == info["model_version"]  # the page isn't told before the tiles are
+    session.rebuild_model()
+    assert session.map_info()["model_version"] == session.model_version > info["model_version"]
 
 
 def test_biomes_ground_icons_and_models(session, tmp_path):

@@ -233,6 +233,7 @@ class ReplayMixin:
             self._replay_on = False
             self._plan = None
             self._replay_steps = None
+            self._source_sync("replay")
             self._vector_steps = None
             self._scene3d_steps = None
 
@@ -253,8 +254,12 @@ class ReplayMixin:
             self._replan()
         return self.replay_payload() if getattr(self, "_replay_on", False) else {"settings": self.replay_settings()}
 
-    def _replan(self) -> None:
-        """Work out the plan and the step of every map, icon and landmark."""
+    def _replan(self, sync: bool = True) -> None:
+        """Work out the plan and the step of every map, icon and landmark.
+
+        Args:
+            sync: Put the steps in the map's tiles' source now (False: the caller does, with the model they are for).
+        """
         st = self.replay_settings()
         frames = self.atlas.frames
         fp = self.D.get("footprints") or []
@@ -289,6 +294,8 @@ class ReplayMixin:
         self._fog = None
         # the timelapse tab's tiles carry this token (other tabs' plain tiles aren't made again: user)
         self.replay_token = getattr(self, "replay_token", 0) + 1
+        if sync:
+            self._source_sync("replay", "replay_token")
 
     def replay_steps(self) -> dict | None:
         """Return each item's step while the replay is open (the vector tiles carry them).
