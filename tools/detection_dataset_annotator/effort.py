@@ -28,6 +28,7 @@ from typing import Any
 import numpy as np
 from scipy.optimize import linear_sum_assignment, nnls
 
+from grand_project import core
 from grand_project.detect import constants as DK
 from grand_project.detect.labels import family as label_family
 
@@ -35,9 +36,6 @@ from . import constants as K
 
 EDIT_KINDS = ("kept", "relabelled", "moved", "deleted", "added")
 """What a review can do to a box (``Edits``' fields)."""
-
-DETECTOR_WIDTH = 1920.0
-"""The detector's screenshot width: the match radii are in its pixels (larger screenshots are scaled to it)."""
 
 
 @dataclass
@@ -107,11 +105,19 @@ def match_boxes(before: Sequence[np.ndarray], after: Sequence[np.ndarray], radiu
     return [(int(r), int(c)) for r, c in zip(rows, cols, strict=True) if distance[r, c] <= radius]
 
 
+def pixel_scale(width: float | None, height: float | None) -> float:
+    """A screenshot's pixels per detector pixel: how ``core.scale_screenshot`` resizes it (1.0 for a 1080p
+    screenshot, a crop, or a size that is not known)."""
+    if not width or not height:
+        return 1.0
+    return float(width) / core.detector_size(int(width), int(height))[0]
+
+
 def edit_cost(
     prelabels: Iterable[Mapping[str, Any]],
     final: Iterable[Mapping[str, Any]],
     *,
-    width: float = DETECTOR_WIDTH,
+    scale: float = 1.0,
     families: Iterable[str] | None = None,
 ) -> dict[str, Edits]:
     """What turned ``prelabels`` into ``final``, family by family.
@@ -119,13 +125,12 @@ def edit_cost(
     Args:
         prelabels: the boxes first shown (annotation dicts: ``label``, ``bbox`` x, y, w, h).
         final: the reviewed (or reference) boxes.
-        width: the screenshot's width in the boxes' pixels (the radii are the detector's 1080p ones).
+        scale: the boxes' pixels per detector pixel (``pixel_scale``; the radii are the detector's 1080p ones).
         families: only these families (all by default).
 
     Returns:
         family -> its ``Edits``.
     """
-    scale = width / DETECTOR_WIDTH
     chosen = None if families is None else set(families)
     grouped: dict[str, tuple[list[tuple[str, np.ndarray]], list[tuple[str, np.ndarray]]]] = {}
     for side, boxes in ((0, prelabels), (1, final)):
@@ -195,8 +200,8 @@ def reviews(store) -> list[Review]:
     for key, item in store.items(reviewed_only=True):
         prelabel = item.get(K.ANNOTATOR_PRELABEL_FIELD) or {}
         review = item.get(K.ANNOTATOR_REVIEW_FIELD) or {}
-        width = float(item.get("width") or DETECTOR_WIDTH)
-        edits = total(edit_cost(store.prelabels(key), item["annotations"], width=width))
+        scale = pixel_scale(item.get("width"), item.get("height"))
+        edits = total(edit_cost(store.prelabels(key), item["annotations"], scale=scale))
         active = review.get("active_s")
         out.append(
             Review(
@@ -306,6 +311,7 @@ __all__ = [
     "edit_cost",
     "fit_seconds",
     "match_boxes",
+    "pixel_scale",
     "report_lines",
     "reviews",
     "total",

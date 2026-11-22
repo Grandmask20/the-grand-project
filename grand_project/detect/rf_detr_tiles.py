@@ -247,7 +247,8 @@ def _brightness_contrast(image: np.ndarray, rng: random.Random) -> np.ndarray:
     alone: it tells the biome."""
     alpha = 1.0 + rng.uniform(-K.RF_DETR_AUGMENT_CONTRAST, K.RF_DETR_AUGMENT_CONTRAST)
     beta = 255.0 * rng.uniform(-K.RF_DETR_AUGMENT_BRIGHTNESS, K.RF_DETR_AUGMENT_BRIGHTNESS)
-    return cv2.convertScaleAbs(image, alpha=alpha, beta=beta)
+    # clipped, not cv2.convertScaleAbs: that takes the absolute value, so a darkened black pixel would turn grey
+    return np.clip(np.rint(image.astype(np.float32) * alpha + beta), 0, 255).astype(np.uint8)
 
 
 def random_tile(

@@ -191,3 +191,18 @@ def test_the_validation_tile_of_an_empty_screenshot() -> None:
     tile, keep, kept = T.densest_tile(np.zeros((1080, 1920, 3), np.uint8), [])
     assert tile.shape == (K.RF_DETR_TILE, K.RF_DETR_TILE, 3) and keep == [] and kept == []
     assert T.repeat_factors([]) == [] and T.rare_classes([]) == set()
+
+
+def test_brightness_and_contrast_clip_at_black_and_white() -> None:
+    """A tile darkened (or lightened) past the range is clipped: never folded back as a grey."""
+
+    class Extreme:
+        def __init__(self, pick) -> None:
+            self.pick = pick
+
+        def uniform(self, low: float, high: float) -> float:
+            return self.pick(low, high)
+
+    dark = T._brightness_contrast(np.full((4, 4, 3), 5, np.uint8), Extreme(min))
+    light = T._brightness_contrast(np.full((4, 4, 3), 250, np.uint8), Extreme(max))
+    assert dark.dtype == np.uint8 and (dark == 0).all() and (light == 255).all()

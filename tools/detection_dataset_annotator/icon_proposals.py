@@ -314,25 +314,34 @@ def hidden_nodes(
     offset = node_offset(on_nodes, nodes)
     known = _points(nodes)
     visible = _points([node for node in nodes if not node.get("hidden")])
-    icon_points = _points(icons)
     spots = np.zeros((0, 2)) if spots is None else np.asarray(spots, dtype=float).reshape(-1, 2)
     height, width = img.shape[:2]
     found: list[dict[str, Any]] = []
+
+    def clear(x: float, y: float, others: np.ndarray) -> bool:
+        """Whether a map node at x, y keeps clear of the known map nodes and of other rows' icons."""
+        if len(known) and np.hypot(known[:, 0] - x, known[:, 1] - y).min() <= detect_constants.MAP_NMS:
+            return False
+        # an icon of another row there: this row is a marker pinned above that icon, not a row above a map node
+        return not (len(others) and np.hypot(others[:, 0] - x, others[:, 1] - y).min() <= K.ANNOTATOR_ICON_NMS)
+
     for row in _icon_rows(on_nodes):
         x = (row[0]["x"] + row[-1]["x"]) / 2  # the map node sits under the row's middle (user's rule)
         y = float(np.mean([icon["y"] for icon in row]))
         y += offset
         if len(visible) and np.hypot(visible[:, 0] - x, visible[:, 1] - y).min() <= detect_constants.HIDDEN_SNAP:
             continue  # a visible map node this close is the row's map node, not a hidden one next to it (user's rule)
-        if len(known) and np.hypot(known[:, 0] - x, known[:, 1] - y).min() <= detect_constants.MAP_NMS:
+        # the row's own icons stand right above its map node (a single one ROW_DY above, closer than ICON_NMS)
+        mine = {id(icon) for icon in row}
+        others = _points([icon for icon in icons if id(icon) not in mine])
+        if not clear(x, y, others):
             continue
-        if len(icon_points) and np.hypot(icon_points[:, 0] - x, icon_points[:, 1] - y).min() <= K.ANNOTATOR_ICON_NMS:
-            continue  # a marker pinned above another icon, not a row above a map node
         if len(spots):
             distance = np.hypot(spots[:, 0] - x, spots[:, 1] - y)
             nearest = int(np.argmin(distance))
-            if distance[nearest] <= K.ANNOTATOR_HIDDEN_SNAP:
-                x, y = float(spots[nearest, 0]), float(spots[nearest, 1])
+            snapped = float(spots[nearest, 0]), float(spots[nearest, 1])
+            if distance[nearest] <= K.ANNOTATOR_HIDDEN_SNAP and clear(*snapped, others):
+                x, y = snapped  # else the estimate, which is clear of both
         if not (0 <= x < width and 0 <= y < height) or core.on_hud_mask([(x, y)], width, height, pad=0)[0]:
             continue
         node = {"x": round(x, 1), "y": round(y, 1), "hidden": True, "source": "icon row", "proposal": True}

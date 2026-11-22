@@ -400,6 +400,8 @@ class Annotator {
     });
     // Keys belong to the editor after a click inside it and stop after a click anywhere else on the page.
     this.on(document, "pointerdown", (event) => this.setActive(event.composedPath().includes(this.wrap)));
+    // ... and again when the keyboard brings the focus back to the canvas (Tab), after a click elsewhere.
+    this.on(viewport, "focus", () => this.setActive(true));
     this.resizeObserver = new ResizeObserver(() => {
       if (!this.fitted) this.fit();
     });
@@ -588,7 +590,13 @@ class Annotator {
 
   // ---- pointer --------------------------------------------------------------------------------------------
 
+  inHelp(event) {
+    // Events on the shortcuts card: it lies over the canvas, but scrolling or selecting its text edits nothing.
+    return !this.helpEl.hidden && event.composedPath().includes(this.helpEl);
+  }
+
   pointerDown(event) {
+    if (this.inHelp(event)) return;
     this.setActive(true);
     this.viewport.focus({ preventScroll: true });
     if (event.button === 2) return; // keep the browser's menu (Save image as gives the clean screenshot)
@@ -707,6 +715,7 @@ class Annotator {
     box.y = Math.min(top, bottom);
     box.w = Math.max(1, Math.abs(right - left));
     box.h = Math.max(1, Math.abs(bottom - top));
+    this.clampBox(box); // an edge collapsed onto the image's edge: the 1 px minimum must not stick out past it
     this.markEdited(box);
     this.updateBoxNode(box);
   }
@@ -761,6 +770,7 @@ class Annotator {
   }
 
   wheel(event) {
+    if (this.inHelp(event)) return; // the card scrolls; the boxes and the zoom stay
     event.preventDefault();
     if (this.selected.size && !(event.ctrlKey || event.metaKey)) {
       // A selected box is resized from its centre; Shift+wheel scrolls sideways in some browsers, so read both.

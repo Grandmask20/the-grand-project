@@ -39,11 +39,14 @@ def prefer_pip_cuda_libraries() -> None:
     entries = _library_dirs()
     if not entries:
         return
+    sep = K.RF_DETR_CUDA_PATH_SEPARATOR
+    first = sep.join(entries)
     existing = os.environ.get("LD_LIBRARY_PATH", "")
-    current = existing.split(os.pathsep) if existing else []
-    if current[: len(entries)] == entries:
+    # compared as text, never split: a folder name may hold the separator (a drive letter, where tests fake Linux)
+    if existing == first or existing.startswith(first + sep):
         return
-    env = {**os.environ, "LD_LIBRARY_PATH": os.pathsep.join(entries + current), K.RF_DETR_CUDA_REEXEC_ENV: "1"}
+    env = {**os.environ, "LD_LIBRARY_PATH": f"{first}{sep}{existing}" if existing else first}
+    env[K.RF_DETR_CUDA_REEXEC_ENV] = "1"
     sys.stdout.flush()
     sys.stderr.flush()
     os.execve(sys.executable, [sys.executable, *sys.orig_argv[1:]], env)

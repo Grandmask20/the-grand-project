@@ -11,7 +11,14 @@ import pytest
 from grand_project.detect import constants as DK
 from tools.detection_dataset_annotator import ReviewStore, image_key, model_prelabel
 from tools.detection_dataset_annotator import constants as K
-from tools.detection_dataset_annotator.model_prelabel import draw_arms, eligible, merge, model_annotations, snap
+from tools.detection_dataset_annotator.model_prelabel import (
+    draw_arms,
+    eligible,
+    merge,
+    model_annotations,
+    recorded_arms,
+    snap,
+)
 
 
 def _box(label: str, x: float, y: float, size: float = 38.7, source: str = "classical", **fields: Any) -> dict:
@@ -120,7 +127,7 @@ def test_a_pass_pre_labels_the_model_arm_and_records_both(
     keys = [image_key(path) for path in paths]
     review_store.claim_splits({keys[0]: "train", keys[1]: "train", keys[2]: "validation", keys[3]: "train"})
     arms = {keys[0]: DK.RF_DETR_SOURCE_MODEL, keys[1]: K.ANNOTATOR_CLASSICAL_SOURCE, keys[3]: DK.RF_DETR_SOURCE_MODEL}
-    monkeypatch.setattr(model_prelabel, "draw_arms", lambda blocks, share, seed: arms)
+    monkeypatch.setattr(model_prelabel, "draw_arms", lambda blocks, share, seed, given=None: arms)
     monkeypatch.setattr(model_prelabel, "_blocks", lambda items: {key: key for key, _item in items})
     found = [{"label": "map_node_vaal", "family": "node", "score": 0.9, "box": [281.0, 281.0, 319.0, 319.0]}]
 
@@ -144,3 +151,55 @@ def test_a_pass_pre_labels_the_model_arm_and_records_both(
     assert K.ANNOTATOR_PRELABEL_FIELD not in held
     assert [b["label"] for b in busy["annotations"]] == ["map_node_water"]  # the review in progress is kept
     assert K.ANNOTATOR_PRELABEL_FIELD not in busy and review_store.prelabels(keys[3])[0]["label"] == "map_node_grass"
+
+
+def test_a_block_keeps_the_arm_an_earlier_pass_gave_it() -> None:
+    """A --limit pass (or newly detected screenshots) leaves some of a block for later: those join its arm."""
+    blocks = {"a1": "atlas#0", "a2": "atlas#0", "b1": "atlas#1", "c1": "atlas#2"}
+    items = [("a1", {K.ANNOTATOR_PRELABEL_FIELD: {"source": DK.RF_DETR_SOURCE_MODEL}}), ("b1", {}), ("c1", {})]
+    given = recorded_arms(items, blocks)
+    assert given == {"atlas#0": DK.RF_DETR_SOURCE_MODEL}
+    for seed in range(5):  # whatever the draw of the other blocks
+        arms = draw_arms({"a2": "atlas#0", "b1": "atlas#1", "c1": "atlas#2"}, 0.0, seed, given)
+        assert arms == {"a2": DK.RF_DETR_SOURCE_MODEL, "b1": "classical", "c1": "classical"}
+
+
+def test_without_a_store_nothing_is_eligible_and_nothing_is_made(tmp_path: Path, capsys) -> None:
+    out = tmp_path / "no-store"
+    assert model_prelabel.main(["--dry-run", "--output-dir", str(out), "--model", str(tmp_path / "model")]) == 0
+    assert "0 screenshots eligible" in capsys.readouterr().out and not out.exists()
+
+
+def test_a_screenshot_seeded_while_the_model_looked_keeps_the_truth(
+    tmp_path: Path, review_store: ReviewStore, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Truth seeding saved its boxes and mark while the model looked at the screenshot: the model's boxes, made from
+    the older ones, are not saved, and the screenshot gets no arm."""
+    path = tmp_path / "one.png"
+    path.write_bytes(b"1")
+    review_store.add_images([path])
+    key = image_key(path)
+    result = {"width": 1920, "height": 1080, "annotations": [_box("map_node_grass", 300, 300)]}
+    review_store.record_detection(key, result, force=False)
+    review_store.claim_splits({key: "train"})
+    monkeypatch.setattr(
+        model_prelabel,
+        "draw_arms",
+        lambda blocks, share, seed, given=None: dict.fromkeys(blocks, DK.RF_DETR_SOURCE_MODEL),
+    )
+    monkeypatch.setattr(model_prelabel, "_blocks", lambda items: {k: k for k, _item in items})
+    seeded = [_box("map_node_vaal", 300, 300, source=K.ANNOTATOR_TRUTH_SOURCE, id="b0")]
+
+    def predict(detector, path):
+        mark = {K.ANNOTATOR_TRUTH_MARK: "truth.json"}
+        assert review_store.save_review(key, 1, annotations=seeded, extra=mark, prelabel=True, untouched=True)
+        return [], (1920, 1080), (1920, 1080)
+
+    monkeypatch.setattr(model_prelabel, "predict", predict)
+    monkeypatch.setattr("grand_project.detect.rf_detr_model.load_detector", lambda model_dir: {})
+    (tmp_path / "model").mkdir()
+    out = review_store.path.parent
+    assert model_prelabel.main(["--model", str(tmp_path / "model"), "--output-dir", str(out), "--policy", "model"]) == 0
+    item = review_store.item(key)
+    assert [(b["label"], b["source"]) for b in item["annotations"]] == [("map_node_vaal", K.ANNOTATOR_TRUTH_SOURCE)]
+    assert K.ANNOTATOR_PRELABEL_FIELD not in item

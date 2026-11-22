@@ -143,3 +143,15 @@ def test_a_pinned_screenshot_takes_its_block_and_kept_splits_stay() -> None:
 def test_block_splits_are_deterministic() -> None:
     items, blocks = _blocked(2)
     assert assign_splits(items, blocks=blocks, seed=5) == assign_splits(items, blocks=blocks, seed=5)
+
+
+def test_screenshots_kept_in_other_splits_than_their_block_count_where_they_are() -> None:
+    """A block whose members already have different splits (2 train, 2 test: it goes to train) leaves 2 in test: the
+    new blocks are drawn to fill the shares as the screenshots really lie (4 / 2 / 2 of 8 at 0.5 / 0.25 / 0.25)."""
+    items = {f"m{i}": {"map_node_grass": 50} for i in range(4)} | {f"s{i}": {"map_node_grass": 50} for i in range(4)}
+    blocks = {f"m{i}": Block("atlas", 0) for i in range(4)}
+    fixed = {"m0": "train", "m1": "train", "m2": "test", "m3": "test"}
+    splits = assign_splits(items, fractions=(0.5, 0.25, 0.25), fixed=fixed, blocks=blocks, bins=1)
+    assert {key: splits[key] for key in fixed} == fixed
+    counts = {name: list(splits.values()).count(name) for name in K.ANNOTATOR_SPLITS}
+    assert counts == {"train": 4, "validation": 2, "test": 2}

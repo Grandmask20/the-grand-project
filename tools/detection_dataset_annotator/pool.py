@@ -87,19 +87,40 @@ class _Run:
     total: int = 0
     completed: int = 0
     errors: int = 0
+    removed: int = 0
+    """Screenshots taken out of the store (a rebuild removing copies) while they were being detected."""
     interrupt: BaseException | None = None
 
     def succeed(self, job: Job, result: dict[str, Any]) -> None:
         # The store raises the screenshot's revision: the editor remounts and shows these detections instead of
         # autosaving old boxes over them.
-        self.store.record_detection(job[0], result, force=self.force)
+        try:
+            self.store.record_detection(job[0], result, force=self.force)
+        except KeyError:
+            if not self._gone(job):
+                raise
+            return
         self.completed += 1
         self._report(job)
 
     def fail(self, job: Job, error: str) -> None:
-        self.store.record_failure(job[0], error, force=self.force)
+        try:
+            self.store.record_failure(job[0], error, force=self.force)
+        except KeyError:
+            if not self._gone(job):
+                raise
+            return
         self.errors += 1
         self._report(job)
+
+    def _gone(self, job: Job) -> bool:
+        """Whether the job's screenshot left the store meanwhile (then it is skipped and counted); a KeyError for a
+        screenshot still there is no such case, and its caller raises it again."""
+        if self.store.item(job[0]) is not None:
+            return False
+        self.removed += 1
+        self._report(job)
+        return True
 
     def fail_remaining(self, error: str) -> None:
         while self.pending:
@@ -109,7 +130,7 @@ class _Run:
         if not self.progress:
             return
         try:
-            self.progress(self.completed + self.errors, self.total, job[1])
+            self.progress(self.completed + self.errors + self.removed, self.total, job[1])
         except BaseException as exc:
             # Streamlit's stop / rerun signals are BaseExceptions, which asyncio lets out of the event loop at once,
             # skipping the other workers' cleanup. Kept here and raised again once every worker is stopped.

@@ -60,9 +60,11 @@ def detector_stamp() -> str:
 
         h = hashlib.sha1()
         try:
-            c = sqlite3.connect(f"file:{DB_PATH.as_posix()}?mode=ro", uri=True)
+            # as_uri percent-encodes the path: a raw "#" or "?" in it would end the path early and drop "mode=ro"
+            c = sqlite3.connect(f"{Path(DB_PATH).resolve().as_uri()}?mode=ro", uri=True)
             h.update(repr(sorted(c.execute("SELECT name, created FROM detector_models"))).encode())
-            h.update(repr(c.execute("SELECT COUNT(*), MAX(id) FROM badge_refs").fetchone()).encode())
+            # every picture's name too: renaming pictures (tools/split_icon_type.py) changes what icons are called
+            h.update(repr(c.execute("SELECT id, name FROM badge_refs ORDER BY id").fetchall()).encode())
             c.close()
         except Exception:  # no database: models load nothing either
             h.update(b"no database")

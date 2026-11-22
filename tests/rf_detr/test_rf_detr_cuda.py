@@ -30,7 +30,7 @@ def test_a_system_cuda_first_restarts_the_process_once(packages: list[str], monk
     monkeypatch.setattr(rf_detr_cuda.os, "execve", lambda exe, argv, env: calls.append(env))
     rf_detr_cuda.prefer_pip_cuda_libraries()
     (env,) = calls
-    assert env["LD_LIBRARY_PATH"].split(":") == [*packages, "/usr/local/cuda/lib64"]
+    assert env["LD_LIBRARY_PATH"] == ":".join([*packages, "/usr/local/cuda/lib64"])  # whole: C:\ folders on Windows
     assert env[K.RF_DETR_CUDA_REEXEC_ENV] == "1"
 
 

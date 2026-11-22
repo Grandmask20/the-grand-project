@@ -296,3 +296,28 @@ def test_predicted_walls_join_the_classical_wall_mask() -> None:
     walls = [{"family": "wall", "box": [10.0, 20.0, 60.0, 80.0]}, {"family": "node", "box": [100, 100, 140, 140]}]
     mask = rf_detr_model._wall_mask(img, walls)
     assert mask[50, 30] and not mask[120, 120] and not mask[5, 5]
+
+
+def test_a_hall_whose_icon_was_missed_is_at_the_map_node_inside_its_box(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Without its deadly-boss icon the Hall is still its map node (the one inside its box), not the box's middle."""
+    predictions = [
+        {"label": "map_node_grass", "family": "node", "box": [980.0, 680.0, 1020.0, 720.0], "score": 0.9},
+        {"label": "hall", "family": "hall", "box": [890.0, 600.0, 1020.0, 725.0], "score": 0.7},
+    ]
+    result = _detect(monkeypatch, predictions)
+    assert [(lm["kind"], lm["x"], lm["y"]) for lm in result["landmarks"]] == [("Hall", 1000.0, 700.0)]
+
+
+def test_the_expedition_rules_come_before_the_paths(monkeypatch: pytest.MonkeyPatch) -> None:
+    """As in the classical detector: a tower under an Expedition icon is an ordinary ocean map before the path
+    tracer looks at it (a tower's map takes paths from farther away)."""
+    predictions = [
+        {"label": "map_node_water", "family": "node", "box": [880.0, 480.0, 920.0, 520.0], "score": 0.9},
+        {"label": "tower", "family": "tower", "box": [860.0, 285.0, 940.0, 505.0], "score": 0.8},
+        {"label": "icon", "family": "icon", "box": [883.0, 459.0, 917.0, 493.0], "score": 0.9},
+    ]
+    traced: list[list[dict]] = []
+    monkeypatch.setattr(rf_detr_model, "trace_paths", lambda nodes, dashes, img: traced.append(nodes) or [])
+    result = _detect(monkeypatch, predictions, names=[K.EXPEDITION])
+    assert [bool(node.get("tower")) for node in traced[0]] == [False]
+    assert not any(lm["kind"] == "Tower" for lm in result["landmarks"])

@@ -51,6 +51,12 @@ class Match:
     unsure: bool  # the two best are within --unsure
 
 
+def _read_only(db: Path) -> str:
+    """A database's read-only SQLite URI; as_uri percent-encodes the path (a raw "#" or "?" in it would end the path
+    early and drop "mode=ro")."""
+    return f"{db.resolve().as_uri()}?mode=ro"
+
+
 def art_features(name: str) -> np.ndarray:
     """Picture features of a type's art at the sizes the importer stores it, shifted +-icon_refs.SHIFT px.
 
@@ -102,7 +108,7 @@ def stored_pictures(db: Path, old: str, arts: dict, unsure: float) -> list[tuple
     Returns:
         (badge_refs row id, match) per picture.
     """
-    c = sqlite3.connect(f"file:{db.as_posix()}?mode=ro", uri=True)
+    c = sqlite3.connect(_read_only(db), uri=True)
     rows = c.execute("SELECT id, png FROM badge_refs WHERE name = ? ORDER BY id", (old,)).fetchall()
     c.close()
     out = []
@@ -239,7 +245,7 @@ def main(argv: list[str] | None = None) -> int:
             for i, m in rows:
                 names[i] = m.name
             model["names"] = names
-            c = sqlite3.connect(f"file:{db.as_posix()}?mode=ro", uri=True)
+            c = sqlite3.connect(_read_only(db), uri=True)
             info = json.loads(c.execute("SELECT info FROM detector_models WHERE name = 'badges'").fetchone()[0] or "{}")
             c.close()
             models.save_model("badges", model, info, path=db)

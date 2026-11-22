@@ -213,3 +213,36 @@ def test_freeze_and_check_from_the_command_line(
     assert "0 rows added" in capsys.readouterr().out
     assert split_ledger.main(["check", "--output-dir", output_dir]) == 0
     assert "every split is the ledger's" in capsys.readouterr().out
+
+
+def test_a_relative_manifest_path_lies_in_the_manifests_folder(tmp_path: Path, split_ledger_file: Path) -> None:
+    """As the trainer reads the manifest (rf_detr.load_annotator_manifest): a relative path is beside it, wherever
+    the check runs from."""
+    (shot,) = _shots(tmp_path / "export" / "shots", 1)
+    write_ledger([Entry(file_hash(shot), "train", "", relative_source(shot))], split_ledger_file)
+    rows = [{"path": "shots/" + shot.name, "split": "train"}]
+    assert check_manifest({"images": rows}, base=tmp_path / "export") == []
+
+
+def test_the_ledger_is_held_for_one_read_check_and_write(split_ledger_file: Path) -> None:
+    """A second export waits while one holds the ledger (its rows would otherwise be written over)."""
+    import threading
+
+    order: list[str] = []
+    holding, done = threading.Event(), threading.Event()
+
+    def other() -> None:
+        holding.wait()
+        with split_ledger._ledger_lock(split_ledger_file):
+            order.append("other")
+        done.set()
+
+    thread = threading.Thread(target=other)
+    thread.start()
+    with split_ledger._ledger_lock(split_ledger_file):
+        holding.set()
+        assert not done.wait(0.3)  # still waiting for this one
+        order.append("first")
+    assert done.wait(10)
+    thread.join()
+    assert order == ["first", "other"]

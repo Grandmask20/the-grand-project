@@ -119,3 +119,31 @@ def test_reviewed_landmarks_reach_the_city_rules(tmp_path: Path, monkeypatch: py
         ("City", 400.0, 540.0),
     ]
     assert seen["city_types"] == {3: "Vaal"}
+
+
+def test_a_reviewed_hall_is_at_its_map_node(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, namer: dict) -> None:
+    """A hall box frames its map node and structure: the Hall the city rules see is its map node (the one under its
+    deadly-boss icon, even when another map node lies nearer the box's middle), as the detector reports it."""
+    image = _shot(tmp_path / "a.png")
+    seen = {}
+
+    def areas(nodes, edges, icons, landmarks, city_types):
+        seen.update(landmarks=landmarks)
+        return {}
+
+    monkeypatch.setattr(score_nodes, "city_area_nodes", areas)
+    namer[(1000, 676)] = "MapBossSpecial"
+    boxes = [
+        _node("map_node_grass", 1000, 700),
+        _node("map_node_grass", 930, 640),  # inside the box too, nearer its middle, but not under the icon
+        {"label": "icon", "bbox": [983, 659, 34, 34]},
+        {"label": "hall", "bbox": [890, 600, 130, 125]},
+    ]
+    guess_nodes(image, boxes, 1920, 1080)
+    assert [(lm["kind"], lm["x"], lm["y"]) for lm in seen["landmarks"]] == [("Hall", 1000.5, 700.5)]  # its middle
+
+
+@pytest.mark.parametrize("ring", [["38", "19"], ["-1", "10"], ["nan", "38"], ["10", "inf"]])
+def test_a_ring_that_is_no_ring_is_refused(ring: list[str], tmp_path: Path) -> None:
+    with pytest.raises(SystemExit):
+        main(["--ring", *ring, "--output-dir", str(tmp_path)])

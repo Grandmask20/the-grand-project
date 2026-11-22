@@ -461,3 +461,42 @@ def test_checkpoints_keep_transformers_own_key_layout(tmp_path: Path) -> None:
     reloaded = transformers.RfDetrForObjectDetection.from_pretrained(tmp_path / "native")
     pairs = zip(reloaded.state_dict().values(), model.state_dict().values(), strict=True)
     assert all(torch.equal(a, b) for a, b in pairs)
+
+
+def test_a_resume_goes_on_with_the_saved_dataset(tmp_path: Path, fakes, ledger) -> None:
+    """--resume with the run's own command (its manifest given again) uses the dataset the run saved, rather than
+    refusing to build over it, and goes on to its checkpoints."""
+    manifest = _export(tmp_path)
+    _freeze(manifest, ledger)
+    out = tmp_path / "run"
+    assert T.main(["--annotator-manifest", str(manifest), "--output-dir", str(out), "--dataset-only"]) == 0
+    (out / "checkpoints").mkdir()
+    args = ["--annotator-manifest", str(manifest), "--output-dir", str(out), "--resume", "--device", "cpu",
+            "--workers", "0"]  # fmt: skip
+    with pytest.raises(SystemExit, match="no checkpoint"):  # not FileExistsError: the dataset was reused
+        T.main(args)
+
+
+def test_resume_passes_over_a_checkpoint_without_its_ema(tmp_path: Path) -> None:
+    """A run stopped between the Trainer's files and the EMA's leaves a checkpoint without its EMA: resuming from it
+    would start a fresh average, so the newest whole one is taken (numbers sorted as numbers), and the callback
+    refuses an incomplete one."""
+    folder = tmp_path / "checkpoints"
+
+    def checkpoint(step: int, state: bool = True) -> Path:
+        ema = folder / f"checkpoint-{step}" / T.EMA_DIR
+        ema.mkdir(parents=True)
+        (ema / "model.safetensors").write_bytes(b"x")
+        if state:
+            (ema / T.EMA_STATE).write_text('{"updates": 1}')
+        return ema.parent
+
+    checkpoint(2)
+    whole = checkpoint(9)
+    broken = checkpoint(10, state=False)
+    (folder / "runs").mkdir()  # not a checkpoint
+    assert T.last_complete_checkpoint(folder) == whole
+    assert T.last_complete_checkpoint(tmp_path / "nothing") is None
+    callback = T.EmaCallback(0.9, 10.0, resume_from=broken)
+    with pytest.raises(RuntimeError, match="no complete EMA"):
+        callback.on_train_begin(SimpleNamespace(output_dir=str(tmp_path)), None, None, model=_tiny(LABELS))

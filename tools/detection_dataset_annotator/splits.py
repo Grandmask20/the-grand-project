@@ -112,28 +112,37 @@ def assign_splits(
     classes = sorted({name for counts in items.values() for name in counts})
     per_atlas = Counter(block.atlas for block in groups)
     atlases = sorted(atlas for atlas, count in per_atlas.items() if count > 1)
-    counts = np.zeros((len(groups), len(classes) + 1 + len(atlases)))
-    for g, keys_of in enumerate(members):
-        for key in keys_of:
-            for c, name in enumerate(classes):
-                counts[g, c] += items[key].get(name, 0)
-        counts[g, len(classes)] = size[g]
-        if groups[g].atlas in atlases:
-            counts[g, len(classes) + 1 + atlases.index(groups[g].atlas)] = size[g]
+    row: dict[str, np.ndarray] = {}  # per screenshot: its boxes of every class, 1 screenshot, 1 of its atlas
+    for key in keys:
+        row[key] = np.zeros(len(classes) + 1 + len(atlases))
+        for c, name in enumerate(classes):
+            row[key][c] = items[key].get(name, 0)
+        row[key][len(classes)] = 1
+        if block_of[key].atlas in atlases:
+            row[key][len(classes) + 1 + atlases.index(block_of[key].atlas)] = 1
+    counts = np.array([sum((row[key] for key in keys_of), np.zeros(len(row[keys[0]]))) for keys_of in members])
     bin_of = _bins(counts[:, : len(classes)].sum(axis=1) / size, bins)
     split_of = np.array([_block_split(m, pinned, fixed, names) for m in members])
     free = split_of < 0
+
+    def own_split(key: str, block: int) -> int:
+        """The split a screenshot ends in: its pinned one, else the one it has, else its block's."""
+        given = pinned.get(key) if pinned.get(key) in names else fixed.get(key)
+        return names.index(given) if given in names else int(split_of[block])
+
     rng = random.Random(seed)
     share = np.asarray(fractions, float)
-    # Bins from the quietest blocks to the busiest; in each, the blocks that have a split count first, then the
-    # others in random order, each to the split furthest below its share of screenshots so far: every split gets
-    # screenshots of every busyness, in its share, however few there are.
+    # Bins from the quietest blocks to the busiest; in each, the blocks that have a split count first (each member
+    # in the split it keeps: a block's members can have different ones), then the others in random order, each to
+    # the split furthest below its share of screenshots so far: every split gets screenshots of every busyness, in its
+    # share, however few there are.
     have = np.zeros(len(names))
     for b in np.unique(bin_of):
         in_bin = [int(g) for g in np.nonzero(bin_of == b)[0]]
         for g in in_bin:
             if not free[g]:
-                have[split_of[g]] += size[g]
+                for key in members[g]:
+                    have[own_split(key, g)] += 1
         todo = [g for g in in_bin if free[g]]
         rng.shuffle(todo)
         for g in todo:
@@ -144,10 +153,12 @@ def assign_splits(
             split_of[g] = split
             have[split] += size[g]
 
-    # refine: swaps of two free blocks of one bin between two splits, kept while they lower the error
+    # refine: swaps of two free blocks of one bin between two splits, kept while they lower the error (a free block's
+    # members all follow it, so a swap moves its counts whole)
     per_split = np.zeros((len(names), counts.shape[1]))
-    for g, split in enumerate(split_of):
-        per_split[split] += counts[g]
+    for g, keys_of in enumerate(members):
+        for key in keys_of:
+            per_split[own_split(key, g)] += row[key]
     column_total = counts.sum(axis=0)
     targets = share[:, None] * column_total[None, :]
     scale = np.maximum(column_total, 1.0)[None, :]
@@ -168,11 +179,7 @@ def assign_splits(
         if new_error < error - 1e-12:
             per_split, error = trial, new_error
             split_of[i], split_of[j] = b, a
-    out = {}
-    for key in keys:
-        given = pinned.get(key) if pinned.get(key) in names else fixed.get(key)
-        out[key] = given if given in names else names[int(split_of[index[block_of[key]]])]
-    return out
+    return {key: names[own_split(key, index[block_of[key]])] for key in keys}
 
 
 def split_report(

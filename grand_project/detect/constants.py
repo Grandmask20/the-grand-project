@@ -20,6 +20,8 @@ RF_DETR_DEVICE_ENV = "GRAND_PROJECT_RF_DETR_DEVICE"  # optional torch device ove
 # set by tools.train_rf_detr when it restarts itself with the pip CUDA libraries first on LD_LIBRARY_PATH (the
 # dynamic linker reads it only at process start), so it restarts at most once
 RF_DETR_CUDA_REEXEC_ENV = "GRAND_PROJECT_RF_DETR_CUDA_REEXEC"
+RF_DETR_CUDA_PATH_SEPARATOR = ":"  # LD_LIBRARY_PATH's separator (a Linux variable: never os.pathsep, which is
+# ";" on Windows, where the tests fake Linux)
 RF_DETR_DEFAULT_MODEL_DIR = rc_paths.ROOT / "runs" / "rf-detr-small" / "best"
 RF_DETR_TRAINED_ON = "trained_on.txt"  # in a kept model's folder: the screenshots it trained on (one project-relative
 # path a line), which the annotator's model pre-labels skip (they would only replay its training labels)

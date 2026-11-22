@@ -3,7 +3,8 @@ boxes with the classical detector, leave a reviewer fewer edits than the classic
 
     python -m tools.detection_dataset_annotator.simulate_loop --manifest DATASET/manifest.json \\
         --classical-store DATASET/review_state.before-loop.sqlite3 [--rounds "8,2;0,3;1,4,6"] \\
-        [--atlas atlas_test_data/fr-atlas/crawl_atlas_v076] [--output-dir runs/loop-sim] [--epochs 40] [--skip-train]
+        [--atlas atlas_test_data/fr-atlas/crawl_atlas_v076] [--truth atlas_test_data/fr-atlas/truth.json] \\
+        [--output-dir runs/loop-sim] [--epochs 40] [--skip-train]
 
 Each round reveals more of the atlas's training blocks (the split ledger's spatial blocks) as if a reviewer had
 reviewed them, the review being the atlas's hand truth (its truth-seeded boxes: ``train_rf_detr --truth-seeded``),
@@ -14,10 +15,13 @@ classical boxes relabelled by the model, and those plus the model's own finds) i
 against the truth-seeded boxes:
 
 - **gold**: what the hand truth knows. A matched map node's city area (each node class reduced to its city area or
-  none: the truth says nothing about grass or water), and the citadels (the truth deletes false ones and types the
-  rest; a City it reports without a citadel box was never drawn, so a model that finds one is counted as wrong).
+  none: the truth says nothing about grass or water), only for node boxes at a map of the truth (``--truth``: a node
+  the truth has no map for kept its classical class, which is no truth), and the citadels (the truth deletes false
+  ones and types the rest; a City it reports without a citadel box was never drawn, so a model that finds one is
+  counted as wrong).
 - **silver**: everything else (map nodes found or not, icons, towers, halls, strongholds, reveal buttons) compared
-  with the classical detector's boxes: disagreements, which in a real review are edits or fixes.
+  with the classical detector's boxes (``--classical-store``): disagreements, which in a real review are edits or
+  fixes.
 
 The classical policy's boxes are the classical detector's from before the truth was seeded (``--classical-store``:
 the store as it was, kept when the store was rebuilt). The report (``report.md``, ``report.json``) gives the edits
@@ -31,9 +35,9 @@ import json
 import sqlite3
 import subprocess
 import sys
-from collections.abc import Iterable, Mapping, Sequence
+from collections.abc import Callable, Iterable, Mapping, Sequence
 from contextlib import closing
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from typing import Any
 
 from grand_project.detect import labels as L
@@ -41,6 +45,8 @@ from grand_project.detect import labels as L
 from . import constants as K
 from .effort import EDIT_KINDS, Edits, edit_cost, total
 from .model_prelabel import merge, model_annotations, predict
+from .state import file_hash
+from .truth_seed import Truth, truth_map_at
 
 GOLD_FAMILIES = ("node", "citadel")
 """The families the hand truth speaks about (a node only for its city area)."""
@@ -96,16 +102,34 @@ def city_area(annotation: Mapping[str, Any]) -> dict[str, Any]:
 
 
 def score(
-    prelabels: Sequence[Mapping[str, Any]], reference: Sequence[Mapping[str, Any]], *, width: float
+    prelabels: Sequence[Mapping[str, Any]],
+    reference: Sequence[Mapping[str, Any]],
+    baseline: Sequence[Mapping[str, Any]],
+    *,
+    scale: float = 1.0,
+    known: Callable[[Mapping[str, Any]], bool] | None = None,
 ) -> dict[str, Edits]:
-    """A policy's pre-labels against the truth-seeded reference: ``gold`` (node city areas on matched nodes, the
-    citadels) and ``silver`` (node finds and every other family, against the classical boxes)."""
-    gold_nodes = edit_cost(
-        [city_area(a) for a in prelabels], [city_area(a) for a in reference], width=width, families=["node"]
-    ).get("node", Edits())
-    citadels = edit_cost(prelabels, reference, width=width, families=["citadel"]).get("citadel", Edits())
+    """A policy's pre-labels scored: ``gold`` against the truth-seeded ``reference`` (node city areas on matched
+    nodes the truth knows, the citadels) and ``silver`` against the classical ``baseline`` (node finds and every
+    other family).
+
+    Args:
+        prelabels: the policy's boxes.
+        reference: the truth-seeded boxes.
+        baseline: the classical detector's boxes.
+        scale: the boxes' pixels per detector pixel (``effort.pixel_scale``).
+        known: a node box -> whether the truth has a map at its middle (None: every node box).
+    """
+
+    def gold_nodes_of(boxes: Sequence[Mapping[str, Any]]) -> list[dict[str, Any]]:
+        return [city_area(a) for a in boxes if L.is_node(str(a.get("label", ""))) and (known is None or known(a))]
+
+    gold_nodes = edit_cost(gold_nodes_of(prelabels), gold_nodes_of(reference), scale=scale, families=["node"]).get(
+        "node", Edits()
+    )
+    citadels = edit_cost(prelabels, reference, scale=scale, families=["citadel"]).get("citadel", Edits())
     others = edit_cost(
-        prelabels, reference, width=width, families=[f for f in _families(prelabels, reference) if f != "citadel"]
+        prelabels, baseline, scale=scale, families=[f for f in _families(prelabels, baseline) if f != "citadel"]
     )
     silver = total({name: edits for name, edits in others.items() if name != "node"})
     node = others.get("node", Edits())
@@ -122,15 +146,19 @@ def classical_boxes(store_path: Path) -> dict[str, list[dict[str, Any]]]:
     """The classical detector's boxes per screenshot (its project-relative file), read from a store copy without
     changing it."""
     out: dict[str, list[dict[str, Any]]] = {}
-    # closing(): a connection's own ``with`` only ends a transaction, and an open file cannot be removed on Windows
-    with closing(sqlite3.connect(f"file:{store_path.as_posix()}?mode=ro", uri=True)) as db:
+    # closing(): a connection's own ``with`` only ends a transaction, and an open file cannot be removed on Windows;
+    # as_uri percent-encodes the path: a raw "#" or "?" in it would end the path early and drop "mode=ro"
+    with closing(sqlite3.connect(f"{store_path.resolve().as_uri()}?mode=ro", uri=True)) as db:
+        # LEFT JOIN: a screenshot the classical detector found nothing on has its (empty) boxes too
         rows = db.execute(
             "SELECT images.source, annotations.label, annotations.x, annotations.y, annotations.w, annotations.h, "
-            "annotations.source FROM annotations JOIN images ON images.key = annotations.image_key "
+            "annotations.source FROM images LEFT JOIN annotations ON images.key = annotations.image_key "
             "ORDER BY images.position, annotations.ord"
         )
         for source, label, x, y, w, h, box_source in rows:
-            out.setdefault(source, []).append({"label": label, "bbox": [x, y, w, h], "source": box_source})
+            boxes = out.setdefault(source, [])
+            if label is not None:  # NULL: the LEFT JOIN's no box (a box's label is never NULL)
+                boxes.append({"label": label, "bbox": [x, y, w, h], "source": box_source})
     return out
 
 
@@ -138,7 +166,9 @@ def held_out(manifest: Mapping[str, Any], atlas: str) -> dict[str, list[Mapping[
     """The atlas's truth-seeded validation and test screenshots of a manifest, by split."""
     out: dict[str, list[Mapping[str, Any]]] = {"validation": [], "test": []}
     for row in manifest.get("images", []):
-        if row.get("split") in out and row.get(K.ANNOTATOR_TRUTH_MARK) and str(row.get("source", "")).startswith(atlas):
+        # by path component: "<atlas>-backup/..." is another folder
+        inside = PurePosixPath(str(row.get("source", ""))).is_relative_to(PurePosixPath(atlas))
+        if row.get("split") in out and row.get(K.ANNOTATOR_TRUTH_MARK) and inside:
             out[row["split"]].append(row)
     return out
 
@@ -164,17 +194,51 @@ def train_round(
         "--epochs",
         str(args.epochs),
     ]
-    command += (
-        ["--reuse-dataset"] if (dataset_dir / "labels.json").is_file() else ["--annotator-manifest", str(args.manifest)]
-    )
+    if dataset_matches(dataset_dir, args.manifest):
+        command += ["--reuse-dataset"]
+    else:  # none yet, or one built from other inputs (an earlier simulation's): built anew
+        command += ["--annotator-manifest", str(args.manifest)]
+        if dataset_dir.exists():
+            command += ["--overwrite-dataset"]
     if previous is not None:
         command += ["--init-from", str(previous)]
     print(" ".join(command), flush=True)
     subprocess.run(command, check=True)
 
 
+def dataset_matches(dataset_dir: Path, manifest: Path) -> bool:
+    """Whether a saved dataset was built from this manifest and the split ledger as it is now, truth-seeded (its
+    ``metadata.json`` provenance, ``train_rf_detr``), so a round may reuse it."""
+    meta_file = dataset_dir / "metadata.json"
+    if not (dataset_dir / "labels.json").is_file() or not meta_file.is_file():
+        return False
+    meta = json.loads(meta_file.read_text(encoding="utf-8"))
+    ledger = K.ANNOTATOR_SPLIT_LEDGER
+    return (
+        meta.get("truth_seeded") is True
+        and meta.get("manifest_sha256") == file_hash(manifest)
+        and ledger.is_file()
+        and meta.get("ledger_sha256") == file_hash(ledger)
+    )
+
+
+def truth_known(truth: Truth | None, row: Mapping[str, Any]) -> Callable[[Mapping[str, Any]], bool]:
+    """A held-out screenshot's node box -> whether the truth has a map at its middle (never, for a screenshot the
+    truth does not place; always, without a truth)."""
+    if truth is None:
+        return lambda box: True
+    shot = truth.screenshots.get(Path(str(row["path"])).name)
+    if shot is None:
+        return lambda box: False
+    at = truth_map_at(truth, shot, int(row.get("width") or shot["w"]), int(row.get("height") or shot["h"]))
+    return lambda box: at(box) is not None
+
+
 def score_round(
-    best: Path, shots: Mapping[str, list[Mapping[str, Any]]], classical: Mapping[str, list[dict[str, Any]]]
+    best: Path,
+    shots: Mapping[str, list[Mapping[str, Any]]],
+    classical: Mapping[str, list[dict[str, Any]]],
+    truth: Truth | None = None,
 ) -> dict[str, Any]:
     """Every policy's edits on the held-out screenshots with a round's model, per split (per screenshot means)."""
     from grand_project.detect.rf_detr_model import load_detector
@@ -188,8 +252,10 @@ def score_round(
             model = model_annotations(found, detector_size, raw_size)
             base = classical.get(str(row["source"]), [])
             reference = [{"label": a["label"], "bbox": a["bbox"]} for a in row["annotations"]]
+            scale = raw_size[0] / detector_size[0]
+            known = truth_known(truth, row)
             for policy in K.ANNOTATOR_PRELABEL_POLICIES:
-                result = score(merge(base, model, policy, width=raw_size[0]), reference, width=raw_size[0])
+                result = score(merge(base, model, policy, scale=scale), reference, base, scale=scale, known=known)
                 for part in ("gold", "silver"):
                     sums[policy][part] = sums[policy][part] + result[part]
         count = max(1, len(rows))
@@ -244,6 +310,9 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--classical-store", type=Path, required=True, help="the store before the truth was seeded")
     parser.add_argument("--rounds", default=DEFAULT_ROUNDS, help="block numbers each round reveals, rounds by ';'")
     parser.add_argument("--atlas", default="atlas_test_data/fr-atlas/crawl_atlas_v076", help="the truth's atlas folder")
+    parser.add_argument(
+        "--truth", default="atlas_test_data/fr-atlas/truth.json", help="the atlas's truth file (gold: its maps only)"
+    )
     parser.add_argument("--output-dir", type=Path, default=Path("runs/loop-sim"))
     parser.add_argument("--epochs", type=int, default=40, help="most epochs per round (early stopping ends sooner)")
     parser.add_argument("--skip-train", action="store_true", help="score the rounds' existing models only")
@@ -253,6 +322,7 @@ def main(argv: list[str] | None = None) -> int:
     rounds = revealed(read_ledger(), args.atlas, parse_rounds(args.rounds))
     shots = held_out(manifest, args.atlas)
     classical = classical_boxes(resolve_path(args.classical_store))
+    truth = Truth.load(resolve_path(args.truth))
     missing = [row["source"] for rows in shots.values() for row in rows if row["source"] not in classical]
     if missing:
         raise SystemExit(f"{len(missing)} held-out screenshots are not in the classical store: {missing[:3]}")
@@ -274,7 +344,7 @@ def main(argv: list[str] | None = None) -> int:
             "round": number,
             "train_screenshots": len(subset),
             "validation_mean_ap": summary.get("best_validation_mean_ap"),
-            "scores": score_round(best, shots, classical),
+            "scores": score_round(best, shots, classical, truth),
         }
         results.append(result)
         (output / "report.json").write_text(json.dumps(results, indent=2) + "\n", encoding="utf-8")
@@ -284,7 +354,17 @@ def main(argv: list[str] | None = None) -> int:
     return 0
 
 
-__all__ = ["city_area", "classical_boxes", "held_out", "parse_rounds", "report_markdown", "revealed", "score"]
+__all__ = [
+    "city_area",
+    "classical_boxes",
+    "dataset_matches",
+    "held_out",
+    "parse_rounds",
+    "report_markdown",
+    "revealed",
+    "score",
+    "truth_known",
+]
 
 
 if __name__ == "__main__":

@@ -9,7 +9,7 @@ from pathlib import Path
 
 import pytest
 
-from tools.detection_dataset_annotator import ReviewStore, build_store, image_key
+from tools.detection_dataset_annotator import ReviewStore, build_store, image_key, relative_source
 from tools.detection_dataset_annotator import constants as K
 
 
@@ -73,7 +73,8 @@ def test_a_run_brings_an_old_store_up_to_date_and_a_second_changes_nothing(
     done = build_store.build(tmp_path / "out", truths=[truth], workers=1, say=lines.append)
 
     assert done == Counter({"added": 1, "removed": 2, "kept reviewed": 1, "detected": 1, "seeded": 1})
-    assert any("kept, reviewed" in line and "z-copies/ok_b.png" in line for line in lines)
+    # the name as the run prints it: a file outside the project is named by its own (on Windows, backslashed) path
+    assert any("kept, reviewed" in line and relative_source(old_store["copy_b"]) in line for line in lines)
     with ReviewStore.open(tmp_path / "out" / K.ANNOTATOR_STORE_FILE) as store:
         assert sorted(Path(path).relative_to(tmp_path).as_posix() for path in store.paths().values()) == [
             "shots/a-atlas/ok_a.png",

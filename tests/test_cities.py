@@ -68,3 +68,20 @@ def test_no_button_is_unknown() -> None:
     noise = rng.integers(0, 256, (1080, 1920, 3), np.uint8)
     assert cities.name_button(noise, 960, 540, margin=16)[0] == "unknown"
     assert cities.name_button(noise, 5, 5) == ("unknown", -1.0)  # too near the edge for a symbol
+
+
+def test_a_typed_city_rules_its_type_out_for_its_neighbours(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A city whose type is known (its citadel's own label) keeps it, sure, and a city closer than TRIO_GAP never takes
+    it: here B looks clearly Vaal, but its typed Vaal neighbour leaves it the best other type."""
+    looks = [[0.40, 0.10, 0.80]]
+    found = iter(looks)
+    monkeypatch.setattr(cities, "look_distances", lambda feats: next(found))
+    image = np.zeros((1080, 1920, 3), np.uint8)
+    assert cities.screenshot_city_types(image, POINTS, {0: "Vaal"}) == [("Vaal", True), ("Ezomyte", True)]
+    found = iter(looks)
+    landmarks = [
+        {"kind": "City", "x": 600.0, "y": 500.0, "city_type": "Vaal"},
+        {"kind": "Hall", "x": 750.0, "y": 800.0},
+        {"kind": "City", "x": 900.0, "y": 500.0},
+    ]
+    assert cities.landmark_city_types(image, landmarks) == {0: ("Vaal", True), 2: ("Ezomyte", True)}

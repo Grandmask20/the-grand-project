@@ -262,6 +262,24 @@ def _boss_node(nodes: list[dict], x: float, y: float) -> dict | None:
     return min(near, key=lambda n: abs(n["x"] - x) + abs(n["y"] - y - K.ROW_DY), default=None)
 
 
+def hall_node(box: list[float], nodes: list[dict], bosses: list[dict]) -> dict | None:
+    """The map node a hall's box stands for: the one inside it under its deadly-boss icon, else (the icon missed) the
+    one inside it nearest the box's middle, else None.
+
+    Args:
+        box: the hall's ``xyxy`` box (its map node and structure).
+        nodes: map node dicts with "x", "y".
+        bosses: the deadly-boss icons ("MapBossSpecial"), dicts with "x", "y".
+    """
+    inside = [n for n in nodes if _inside(box, n["x"], n["y"])]
+    for boss in bosses:
+        node = _boss_node(inside, boss["x"], boss["y"])
+        if node is not None:
+            return node
+    cx, cy = _centre(box)
+    return min(inside, key=lambda n: np.hypot(n["x"] - cx, n["y"] - cy), default=None)
+
+
 def _wall_mask(img: np.ndarray, detections: list[dict[str, Any]]) -> np.ndarray:
     """Build a wall mask by merging RF-DETR wall boxes with the precise classical wall mask."""
     mask = fortress_walls(img)
@@ -334,10 +352,8 @@ def detect_rf_detr(img: np.ndarray) -> dict:
         landmarks.append(landmark)
     bosses = [i for i in icons if i["name"] == "MapBossSpecial"]
     for item in by_family.get("hall", []):
-        # the Hall is its map node (as the classical detector reports it): the one under its deadly-boss icon
-        inside = [n for n in nodes if _inside(item["box"], n["x"], n["y"])]
-        under_icon = [n for b in bosses if (n := _boss_node(inside, b["x"], b["y"])) is not None]
-        node = under_icon[0] if under_icon else None
+        # the Hall is its map node (as the classical detector reports it)
+        node = hall_node(item["box"], nodes, bosses)
         x, y = (node["x"], node["y"]) if node else _centre(item["box"])
         landmarks.append({"kind": "Hall", "x": round(x, 1), "y": round(y, 1), "score": round(item["score"], 3)})
     for item in by_family.get("stronghold", []):
@@ -374,10 +390,11 @@ def detect_rf_detr(img: np.ndarray) -> dict:
                     if node is tower or np.hypot(node["x"] - tower["x"], node["y"] - tower["y"]) > K.TOWER_NMS
                 ]
 
+    # the Expedition rules first, as in the classical detector: they clear tower flags the path tracer reads
+    nodes, icons, landmarks = expedition_rules(nodes, icons, landmarks)
     edges = trace_paths(nodes, classical_path_dashes(img), img)
     wall = _wall_mask(img, detections)
     edges = [edge for edge in edges if wall_share(edge["line"], wall) < K.WALL_CROSS]
-    nodes, icons, landmarks = expedition_rules(nodes, icons, landmarks)
     return {
         "width": w,
         "height": h,
@@ -392,6 +409,7 @@ __all__ = [
     "class_families",
     "detect_rf_detr",
     "family_detections",
+    "hall_node",
     "load_detector",
     "predict_tiles",
     "reset_rf_detr_runtime",

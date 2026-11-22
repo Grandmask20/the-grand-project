@@ -21,11 +21,13 @@ for a person to decide (moving a screenshot a model trained on into validation o
 from __future__ import annotations
 
 import argparse
+import contextlib
 import csv
 import io
 import json
+import os
 from collections import Counter, defaultdict
-from collections.abc import Iterable, Mapping
+from collections.abc import Iterable, Iterator, Mapping
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from pathlib import Path
@@ -91,6 +93,37 @@ class SplitConflict(ValueError):
 
 def _ledger_path(path: Path | None) -> Path:
     return K.ANNOTATOR_SPLIT_LEDGER if path is None else Path(path)
+
+
+@contextlib.contextmanager
+def _ledger_lock(path: Path | None = None) -> Iterator[None]:
+    """Hold the ledger for one read, check and rewrite (``<ledger>.lock``), so two exports at once (the page and a
+    command, or two stores) never write over each other's new rows. The system frees the lock when a process ends."""
+    lock = _ledger_path(path).with_name(f"{_ledger_path(path).name}.lock")
+    lock.parent.mkdir(parents=True, exist_ok=True)
+    with lock.open("a+b") as handle:
+        if os.name == "nt":
+            import msvcrt
+
+            while True:
+                handle.seek(0)
+                try:
+                    msvcrt.locking(handle.fileno(), msvcrt.LK_LOCK, 1)  # gives up after 10 s: then wait again
+                    break
+                except OSError:
+                    continue
+        else:
+            import fcntl
+
+            fcntl.flock(handle.fileno(), fcntl.LOCK_EX)
+        try:
+            yield
+        finally:
+            if os.name == "nt":
+                handle.seek(0)
+                msvcrt.locking(handle.fileno(), msvcrt.LK_UNLCK, 1)
+            else:
+                fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
 
 
 def read_ledger(path: Path | None = None) -> dict[str, Entry]:
@@ -165,6 +198,9 @@ def settle_splits(
 ) -> Settled:
     """Give every processed screenshot of the store its split, keep it in the store and the ledger.
 
+    The ledger is read, checked and rewritten under its lock (``_ledger_lock``): the rows another export added
+    meanwhile are kept, and checked like every other row.
+
     Args:
         store: the review store.
         every: the store's items as one read gave them (``store.items()``), when the caller has them already.
@@ -180,74 +216,77 @@ def settle_splits(
     unreadable = sorted(relative_source(paths[key]) for key in paths if key not in digests)
     keys = sorted(digests)
     names = {key: relative_source(paths[key]) for key in keys}
-    book = read_ledger(ledger)
-    by_file: dict[str, Entry] = {}
-    for entry in book.values():
-        by_file.setdefault(entry.file, entry)
+    with _ledger_lock(ledger):
+        book = read_ledger(ledger)
+        by_file: dict[str, Entry] = {}
+        for entry in book.values():
+            by_file.setdefault(entry.file, entry)
 
-    from_ledger: dict[str, str] = {}
-    by_name: set[str] = set()
-    for key in keys:
-        entry = book.get(digests[key])
-        if entry is None and (entry := by_file.get(names[key])) is not None:
-            by_name.add(key)  # the file's bytes changed: it is still the same screenshot
-        if entry is not None:
-            from_ledger[key] = entry.split
-    stored = {key: split for key, split in store.splits().items() if key in digests}
-    pinned = {key: split for key in keys if (split := pinned_split(paths[key])) is not None}
+        from_ledger: dict[str, str] = {}
+        by_name: set[str] = set()
+        for key in keys:
+            entry = book.get(digests[key])
+            if entry is None and (entry := by_file.get(names[key])) is not None:
+                by_name.add(key)  # the file's bytes changed: it is still the same screenshot
+            if entry is not None:
+                from_ledger[key] = entry.split
+        stored = {key: split for key, split in store.splits().items() if key in digests}
+        pinned = {key: split for key in keys if (split := pinned_split(paths[key])) is not None}
 
-    problems = []
-    for key in keys:
-        given = {"ledger": from_ledger.get(key), "store": stored.get(key), "pinned": pinned.get(key)}
-        given = {where: split for where, split in given.items() if split}
-        if len(set(given.values())) > 1:
-            problems.append(f"{names[key]}: " + ", ".join(f"{where} {split}" for where, split in given.items()))
-    same_bytes: dict[str, list[str]] = defaultdict(list)
-    for key in keys:
-        same_bytes[digests[key]].append(key)
-    for group in same_bytes.values():
-        kept = {pinned.get(key) or from_ledger.get(key) or stored.get(key) for key in group} - {None}
-        if len(kept) > 1:
-            problems.append("same bytes, different splits: " + ", ".join(names[key] for key in group))
-    if problems:
-        raise SplitConflict(problems)
+        problems = []
+        for key in keys:
+            given = {"ledger": from_ledger.get(key), "store": stored.get(key), "pinned": pinned.get(key)}
+            given = {where: split for where, split in given.items() if split}
+            if len(set(given.values())) > 1:
+                problems.append(f"{names[key]}: " + ", ".join(f"{where} {split}" for where, split in given.items()))
+        same_bytes: dict[str, list[str]] = defaultdict(list)
+        for key in keys:
+            same_bytes[digests[key]].append(key)
+        for group in same_bytes.values():
+            kept = {pinned.get(key) or from_ledger.get(key) or stored.get(key) for key in group} - {None}
+            if len(kept) > 1:
+                problems.append("same bytes, different splits: " + ", ".join(names[key] for key in group))
+        if problems:
+            raise SplitConflict(problems)
 
-    fixed = {**stored, **from_ledger}
-    blocks = screenshot_blocks({key: paths[key] for key in keys})
-    for group in same_bytes.values():
-        # copies share their first one's block, so they are drawn together, and a split one of them has
-        kept = next((pinned.get(key) or fixed.get(key) for key in group if pinned.get(key) or fixed.get(key)), None)
-        for key in group:
-            blocks[key] = blocks[group[0]]
-            if kept is not None and key not in pinned:
-                fixed.setdefault(key, kept)
-    items = {key: box_classes(item) for key, item in processed if key in digests}
-    split_of = assign_splits(items, pinned=pinned, fixed=fixed, blocks=blocks)
+        fixed = {**stored, **from_ledger}
+        blocks = screenshot_blocks({key: paths[key] for key in keys})
+        for group in same_bytes.values():
+            # copies share their first one's block, so they are drawn together, and a split one of them has
+            kept = next((pinned.get(key) or fixed.get(key) for key in group if pinned.get(key) or fixed.get(key)), None)
+            for key in group:
+                blocks[key] = blocks[group[0]]
+                if kept is not None and key not in pinned:
+                    fixed.setdefault(key, kept)
+        items = {key: box_classes(item) for key, item in processed if key in digests}
+        split_of = assign_splits(items, pinned=pinned, fixed=fixed, blocks=blocks)
 
-    origins: Counter[str] = Counter()
-    for key in keys:
-        if key in by_name:
-            origins["ledger (by file name: its bytes changed)"] += 1
-        elif key in from_ledger:
-            origins["ledger"] += 1
-        elif key in stored:
-            origins["store"] += 1
-        elif key in pinned:
-            origins["pinned to test"] += 1
-        elif key in fixed:
-            origins["same bytes as one with a split"] += 1
-        else:
-            origins["drawn"] += 1
-    new = {key: split for key, split in split_of.items() if stored.get(key) != split}
-    if new:
-        split_of.update(store.claim_splits(new))  # another export's claim, made meanwhile, stands
-    added = 0
-    for key in keys:
-        if digests[key] not in book:
-            book[digests[key]] = Entry(digests[key], split_of[key], _block_name(blocks[key], names[key]), names[key])
-            added += 1
-    if added:
-        write_ledger(book.values(), ledger)
+        origins: Counter[str] = Counter()
+        for key in keys:
+            if key in by_name:
+                origins["ledger (by file name: its bytes changed)"] += 1
+            elif key in from_ledger:
+                origins["ledger"] += 1
+            elif key in stored:
+                origins["store"] += 1
+            elif key in pinned:
+                origins["pinned to test"] += 1
+            elif key in fixed:
+                origins["same bytes as one with a split"] += 1
+            else:
+                origins["drawn"] += 1
+        new = {key: split for key, split in split_of.items() if stored.get(key) != split}
+        if new:
+            split_of.update(store.claim_splits(new))  # another export's claim, made meanwhile, stands
+        added = 0
+        for key in keys:
+            if digests[key] not in book:
+                book[digests[key]] = Entry(
+                    digests[key], split_of[key], _block_name(blocks[key], names[key]), names[key]
+                )
+                added += 1
+        if added:
+            write_ledger(book.values(), ledger)
     return Settled(split_of, blocks, items, origins, added, unreadable)
 
 
@@ -270,23 +309,39 @@ def _check_rows(rows: list[tuple[str, Path, str | None, str]], ledger: Path | No
     return problems
 
 
-def _manifest_rows(manifest: Mapping[str, Any]) -> list[tuple[str, Path, str | None, str]]:
-    return [
-        (relative_source(Path(row["path"])), Path(row["path"]), row.get("split"), "manifest")
-        for row in manifest.get("images", [])
-    ]
+def _manifest_rows(manifest: Mapping[str, Any], base: Path | None) -> list[tuple[str, Path, str | None, str]]:
+    """The manifest's screenshots as rows to check; a relative path lies in ``base`` (the manifest's folder, as
+    ``rf_detr.load_annotator_manifest`` reads it)."""
+    rows = []
+    for row in manifest.get("images", []):
+        path = Path(str(row["path"]))
+        if not path.is_absolute() and base is not None:
+            path = Path(base) / path
+        rows.append((relative_source(path), path, row.get("split"), "manifest"))
+    return rows
 
 
-def check_manifest(manifest: Mapping[str, Any], *, ledger: Path | None = None) -> list[str]:
+def check_manifest(manifest: Mapping[str, Any], *, base: Path | None = None, ledger: Path | None = None) -> list[str]:
     """Where an export's manifest disagrees with the ledger (the trainer's check before every dataset it builds:
-    a screenshot a model trained on must stay in train). Needs no store; changes nothing."""
-    return _check_rows(_manifest_rows(manifest), ledger)
+    a screenshot a model trained on must stay in train). Needs no store; changes nothing.
+
+    Args:
+        manifest: the export's ``manifest.json``.
+        base: the folder its relative paths lie in (its own folder).
+        ledger: the ledger file (default ``ANNOTATOR_SPLIT_LEDGER``).
+    """
+    return _check_rows(_manifest_rows(manifest, base), ledger)
 
 
 def check_splits(
-    store: ReviewStore, *, ledger: Path | None = None, manifest: Mapping[str, Any] | None = None
+    store: ReviewStore,
+    *,
+    ledger: Path | None = None,
+    manifest: Mapping[str, Any] | None = None,
+    manifest_base: Path | None = None,
 ) -> list[str]:
-    """Where the store's splits (and an export's manifest's) disagree with the ledger, or are missing from it.
+    """Where the store's splits (and an export's manifest's, its relative paths in ``manifest_base``) disagree with
+    the ledger, or are missing from it.
 
     Changes nothing. An empty list: every split given so far is the ledger's.
     """
@@ -296,7 +351,7 @@ def check_splits(
         if item.get("split")
     ]
     if manifest is not None:
-        rows += _manifest_rows(manifest)
+        rows += _manifest_rows(manifest, manifest_base)
     return _check_rows(rows, ledger)
 
 
@@ -360,10 +415,11 @@ def main(argv: list[str] | None = None) -> int:
         every = list(store.items())
         paths = {key: Path(item["path"]) for key, item in every}
         if args.command == "check":
-            manifest = None
+            manifest = base = None
             if args.manifest:
-                manifest = json.loads(resolve_path(args.manifest).read_text(encoding="utf-8"))
-            problems = check_splits(store, ledger=ledger, manifest=manifest)
+                manifest_path = resolve_path(args.manifest)
+                manifest, base = json.loads(manifest_path.read_text(encoding="utf-8")), manifest_path.parent
+            problems = check_splits(store, ledger=ledger, manifest=manifest, manifest_base=base)
             report = overlap_report(paths, store.splits())
             if report:
                 print(report)

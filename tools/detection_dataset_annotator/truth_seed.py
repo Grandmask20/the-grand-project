@@ -15,9 +15,10 @@ Cities, and how each screenshot is placed (``M``, ``horizon``). For every unrevi
   the fortress); the others take the city type of the area they stand in.
 
 The boxes it sets get the source ``ANNOTATOR_TRUTH_SOURCE`` (no guess: drawn solid; the screenshot is still
-reviewed). Reviewed screenshots are never changed, and a second run changes nothing. It reports what it changed, the
-truth Cities a screenshot shows without a citadel box (to draw while reviewing) and the stronghold boxes far from
-every truth stronghold area (to check: the truth labels roughly every stronghold area).
+reviewed). Reviewed or edited screenshots are never changed (checked again in the write), a screenshot whose
+ground ring could not be read is left unmarked (seeded on the next run), and a second run changes nothing. It reports
+what it changed, the truth Cities a screenshot shows without a citadel box (to draw while reviewing) and the
+stronghold boxes far from every truth stronghold area (to check: the truth labels roughly every stronghold area).
 """
 
 from __future__ import annotations
@@ -25,7 +26,7 @@ from __future__ import annotations
 import argparse
 import json
 from collections import Counter
-from collections.abc import Callable
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from functools import cached_property
 from pathlib import Path
@@ -130,12 +131,47 @@ def _set(annotation: dict[str, Any], label: str, source: str) -> bool:
     return True
 
 
+def _placing(
+    shot: dict[str, Any], width: int, height: int
+) -> tuple[np.ndarray, Callable[[Sequence[Mapping[str, Any]]], np.ndarray]]:
+    """How the truth places a screenshot's boxes: (its screen-to-atlas homography, boxes -> their middles in atlas
+    units, (n, 2), NaN for a box without a place)."""
+    sx, sy = shot["w"] / width, shot["h"] / height
+    homography = screen_to_atlas(np.asarray(shot["M"], float), rectifier(shot["w"], shot["h"], shot.get("horizon")))
+
+    def place(boxes: Sequence[Mapping[str, Any]]) -> np.ndarray:
+        return np.asarray(persp(homography, [_middle(box, sx, sy) for box in boxes]), float).reshape(-1, 2)
+
+    return homography, place
+
+
+def truth_map_at(
+    truth: Truth, shot: dict[str, Any], width: int, height: int
+) -> Callable[[Mapping[str, Any]], int | None]:
+    """A box of the screenshot -> the truth map its middle stands on (``ANNOTATOR_TRUTH_MAP_REACH``), or None: where
+    the truth knows the map (its city area, or that it lies in none).
+
+    Args:
+        truth: the atlas's truth.
+        shot: the screenshot's placement in the truth file.
+        width: the screenshot's width in the boxes' pixels.
+        height: its height.
+    """
+    _homography, place = _placing(shot, width, height)
+
+    def at(box: Mapping[str, Any]) -> int | None:
+        (point,) = place([box])
+        return _nearest(truth.map_tree, point, K.ANNOTATOR_TRUTH_MAP_REACH) if np.isfinite(point).all() else None
+
+    return at
+
+
 def seed_screenshot(
     item: dict[str, Any],
     shot: dict[str, Any],
     truth: Truth,
     read_image: Callable[[Path], np.ndarray | None],
-) -> tuple[list[dict[str, Any]] | None, Counter[str]]:
+) -> tuple[list[dict[str, Any]] | None, Counter[str], bool]:
     """One screenshot's boxes as the truth has them.
 
     Args:
@@ -146,16 +182,17 @@ def seed_screenshot(
             ring is needed.
 
     Returns:
-        The changed boxes (None when nothing changed), and what was done (counts by kind).
+        The changed boxes (None when nothing changed), what was done (counts by kind), and whether the seeding is
+        complete: False when a city node outside every city area needed its ground ring and the screenshot could not
+        be read (it is not the truth's yet: seeded again on the next run).
     """
     done: Counter[str] = Counter()
     boxes = [dict(annotation) for annotation in item.get("annotations", [])]
     if not boxes:
-        return None, done
+        return None, done, True
     width, height = int(item.get("width") or shot["w"]), int(item.get("height") or shot["h"])
-    sx, sy = shot["w"] / width, shot["h"] / height
-    homography = screen_to_atlas(np.asarray(shot["M"], float), rectifier(shot["w"], shot["h"], shot.get("horizon")))
-    places = persp(homography, [_middle(box, sx, sy) for box in boxes])
+    homography, locate = _placing(shot, width, height)
+    places = locate(boxes)
     city_maps, city_types = truth.city_maps
     changed = False
     keep = [True] * len(boxes)
@@ -190,10 +227,12 @@ def seed_screenshot(
             _nearest(truth.stronghold_maps, place, K.ANNOTATOR_TRUTH_STRONGHOLD_REACH) is None
         ):
             done["stronghold far from truth strongholds (check)"] += 1
+    complete = True
     if ring:
         image = read_image(Path(item["path"]))
         if image is None:
-            done["unreadable screenshot (city nodes left)"] += len(ring)
+            done["unreadable screenshot (city nodes left, not marked)"] += len(ring)
+            complete = False
         else:
             changed |= _ring_again(boxes, ring, image, width, height, done)
     citadels = [
@@ -202,7 +241,7 @@ def seed_screenshot(
         if kept and L.family(box["label"]) == "citadel"
     ]
     done["truth City without a citadel box (draw)"] += _cities_missed(citadels, truth.cities, homography, shot)
-    return ([box for box, kept in zip(boxes, keep, strict=True) if kept] if changed else None), done
+    return ([box for box, kept in zip(boxes, keep, strict=True) if kept] if changed else None), done, complete
 
 
 def _ring_again(
@@ -273,18 +312,28 @@ def seed_store(store: ReviewStore, truth: Truth, *, dry_run: bool = False) -> tu
     ]
     done: Counter[str] = Counter()
     changed = 0
+    skipped = "skipped: reviewed, edited or detected again meanwhile"
     for key, item in todo:
-        boxes, counts = seed_screenshot(item, truth.screenshots[Path(item["path"]).name], truth, _detector_image)
+        boxes, counts, complete = seed_screenshot(
+            item, truth.screenshots[Path(item["path"]).name], truth, _detector_image
+        )
         done.update(counts)
+        if not complete:
+            continue  # neither boxes nor mark: a truth-seeded round must not take it before it is seeded whole
         mark = {K.ANNOTATOR_TRUTH_MARK: truth.source}
+        # a reviewer's edit or review made since the read (the page open beside it) keeps its boxes
+        guard = {"untouched": True, "expect_boxes": item["annotations"]}
         if boxes is None:
-            if not dry_run and item.get(K.ANNOTATOR_TRUTH_MARK) != truth.source:
-                store.save_review(key, int(item["edit_version"]), extra=mark)
+            marked = dry_run or item.get(K.ANNOTATOR_TRUTH_MARK) == truth.source
+            if not marked and not store.save_review(key, int(item["edit_version"]), extra=mark, **guard):
+                done[skipped] += 1
             continue
-        if dry_run or store.save_review(key, int(item["edit_version"]), annotations=boxes, extra=mark, prelabel=True):
+        if dry_run or store.save_review(
+            key, int(item["edit_version"]), annotations=boxes, extra=mark, prelabel=True, **guard
+        ):
             changed += 1
         else:
-            done["skipped: detected again meanwhile"] += 1
+            done[skipped] += 1
     return done, changed, len(todo)
 
 

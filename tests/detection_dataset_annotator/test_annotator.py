@@ -178,7 +178,7 @@ def test_citadels_are_labelled_by_type(monkeypatch: pytest.MonkeyPatch) -> None:
         "landmarks": [
             {"kind": "City", "x": 600, "y": 500},
             {"kind": "City", "x": 900, "y": 500},
-            {"kind": "City", "x": 1500, "y": 500, "city_type": "Faridun"},
+            {"kind": "City", "x": 1700, "y": 500, "city_type": "Faridun"},  # beyond TRIO_GAP of B: rules out nothing
             {"kind": "Hall", "x": 1200, "y": 900},
             {"kind": "City", "x": 50, "y": 50},
         ]
@@ -322,6 +322,12 @@ def test_copies_name_the_first_file_with_the_same_bytes(tmp_path: Path) -> None:
     assert [path.name for path in ordered] == ["a.png", "B.png", "c.png", "d.png"]
     assert copies(ordered) == {files["B.png"]: files["a.png"], files["c.png"]: files["a.png"]}
     assert file_hash(files["a.png"]) == hashlib.sha256(b"same").hexdigest()
+    # a pinned test screenshot is the one kept, wherever it comes in the order (else it would lose its test split)
+    pinned = {files["c.png"]}
+    assert copies(ordered, prefer=pinned.__contains__) == {
+        files["a.png"]: files["c.png"],
+        files["B.png"]: files["c.png"],
+    }
 
 
 def test_editor_never_changes_the_screenshot(tmp_path: Path, review_store: ReviewStore) -> None:

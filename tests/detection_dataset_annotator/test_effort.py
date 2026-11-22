@@ -17,6 +17,7 @@ from tools.detection_dataset_annotator.effort import (
     arm_reports,
     edit_cost,
     fit_seconds,
+    pixel_scale,
     report_lines,
     reviews,
     total,
@@ -66,7 +67,7 @@ def test_radii_scale_with_the_screenshot() -> None:
     """A 4K screenshot's boxes are twice the detector's pixels: so is the match radius (node: 20 px at 1080p)."""
     before, after = [_box("map_node", 100, 100, 77.4, 77.4)], [_box("map_node", 130, 100, 77.4, 77.4)]
     assert edit_cost(before, after)["node"] == Edits(deleted=1, added=1)
-    assert edit_cost(before, after, width=3840)["node"] == Edits(kept=1, moved=1)
+    assert edit_cost(before, after, scale=2.0)["node"] == Edits(kept=1, moved=1)
 
 
 def test_only_the_families_asked_for_are_scored() -> None:
@@ -128,3 +129,10 @@ def test_the_command_line_reports_the_default_store(tmp_path: Path, annotator_ou
     assert saved["arms"]["rf_detr"]["screenshots"] == 1
     assert saved["reviews"][0]["edits"]["added"] == 1 and saved["reviews"][0]["active_s"] == 12.0
     assert effort.main(["--output-dir", str(tmp_path / "nothing")]) == 1
+
+
+def test_the_pixel_scale_is_how_the_detector_resizes_the_screenshot() -> None:
+    """Only whole game windows taller or shorter than 1080 px are resized: an ultrawide 1080p screenshot and a crop
+    keep their pixels (the raw width alone would inflate their radii)."""
+    assert pixel_scale(3840, 2160) == 2.0 and pixel_scale(2560, 1440) == pytest.approx(4 / 3)
+    assert pixel_scale(2560, 1080) == pixel_scale(800, 600) == pixel_scale(None, None) == 1.0

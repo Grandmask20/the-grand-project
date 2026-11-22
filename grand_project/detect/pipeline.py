@@ -47,9 +47,10 @@ def ensure_models() -> None:
     """
     for k in ("maps", "badges", "towers"):
         if k not in _models:
-            _models[k] = load_model(k)
-            if _models[k] is None:
+            model = load_model(k)
+            if model is None:  # not cached: a later call looks again (once the model is trained)
                 raise RuntimeError(f"no {k} model in the DB yet: run  python -m grand_project.detect train")
+            _models[k] = model
 
 
 def _detect_classical(img: np.ndarray, found_maps: tuple[list[dict], np.ndarray, np.ndarray] | None = None) -> dict:

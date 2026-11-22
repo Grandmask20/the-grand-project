@@ -51,6 +51,7 @@ from .frame import (  # noqa: F401
     Frame,
     _hud_cache,
     atlas_files,
+    detector_size,
     hud_mask,
     is_atlas_output,
     is_full_window,

@@ -74,7 +74,16 @@ def icon_type(label: str) -> str | None:
 
 def _decode(f: Path) -> np.ndarray | None:
     """A picture file as BGRA, cut to the box of its visible (alpha > _ALPHA_MIN) pixels; None if unreadable."""
-    im = cv2.imdecode(np.fromfile(str(f), np.uint8), cv2.IMREAD_UNCHANGED)
+    try:
+        data = np.fromfile(str(f), np.uint8)
+    except OSError:
+        return None
+    if not data.size:
+        return None  # imdecode refuses an empty buffer with an error, not None
+    try:
+        im = cv2.imdecode(data, cv2.IMREAD_UNCHANGED)
+    except cv2.error:
+        return None
     if im is None:
         return None
     if im.ndim == 2:

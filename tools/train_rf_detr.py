@@ -21,7 +21,8 @@ Go on from an earlier model into a new output folder, on a new export or on the 
     python -m tools.train_rf_detr --reuse-dataset --dataset-dir runs/rf-detr-small/dataset \\
         --output-dir runs/rf-detr-small-2 --init-from runs/rf-detr-small/best
 
-Resume an interrupted run from its last checkpoint: the same command with ``--resume``.
+Resume an interrupted run from its last checkpoint (the newest with its EMA): the same command with ``--resume``
+(the run's saved dataset is used again).
 
 What the model sees: native-scale tiles of the 1080p screenshots with the game HUD painted over
 (``grand_project.detect.rf_detr_tiles``): random tiles in training (scale jitter, tiles centred on rare classes,
@@ -93,7 +94,6 @@ from transformers import (  # noqa: E402
     TrainingArguments,
 )
 from transformers.trainer import TRAINING_ARGS_NAME  # noqa: E402
-from transformers.trainer_utils import get_last_checkpoint  # noqa: E402
 
 EMA_DIR = "ema"
 """The folder inside each checkpoint holding the EMA weights (a Transformers model folder)."""
@@ -281,6 +281,36 @@ def ema_update(decay: float, tau: float):
     return update
 
 
+def ema_complete(checkpoint: Path) -> bool:
+    """Whether a checkpoint holds its whole EMA: the weights and the update count (``EmaCallback.on_save`` writes them
+    after the Trainer's own files, so a run stopped in between leaves a checkpoint without them)."""
+    folder = Path(checkpoint) / EMA_DIR
+    weights = (folder / "model.safetensors").is_file() or (folder / "model.safetensors.index.json").is_file()
+    return weights and (folder / EMA_STATE).is_file()
+
+
+def last_complete_checkpoint(checkpoints: Path) -> Path | None:
+    """The newest ``checkpoint-N`` with its whole EMA (``ema_complete``), for ``--resume``; newer ones without it
+    are passed over (said so), or None when there is none."""
+    if not checkpoints.is_dir():
+        return None
+    prefix = "checkpoint-"
+    found = sorted(
+        (
+            path
+            for path in checkpoints.iterdir()
+            if path.is_dir() and path.name.startswith(prefix) and path.name[len(prefix) :].isdigit()
+        ),
+        key=lambda path: int(path.name[len(prefix) :]),
+        reverse=True,
+    )
+    for path in found:
+        if ema_complete(path):
+            return path
+        print(f"--resume: {path.name} has no complete EMA ({EMA_DIR}/), passed over", flush=True)
+    return None
+
+
 class EmaCallback(TrainerCallback):
     """An exponential moving average of the weights, updated after every optimizer step and saved into every
     checkpoint (``<checkpoint>/ema``): it is the model the run evaluates and keeps.
@@ -302,12 +332,16 @@ class EmaCallback(TrainerCallback):
             return
         self.ema = AveragedModel(model, multi_avg_fn=ema_update(self.decay, self.tau), use_buffers=True)
         self.ema.module.eval()
-        saved = None if self.resume_from is None else self.resume_from / EMA_DIR
-        if saved is not None and saved.is_dir():
-            weights = AutoModelForObjectDetection.from_pretrained(saved, use_safetensors=True).state_dict()
-            self.ema.module.load_state_dict(weights)
-            count = json.loads((saved / EMA_STATE).read_text(encoding="utf-8"))["updates"]
-            self.ema.n_averaged.fill_(int(count))
+        if self.resume_from is None:
+            return
+        saved = self.resume_from / EMA_DIR
+        if not ema_complete(self.resume_from):
+            # a fresh EMA with no updates would replace the averaged weights the run evaluates and keeps
+            raise RuntimeError(f"{self.resume_from} has no complete EMA ({EMA_DIR}/ weights and {EMA_STATE})")
+        weights = AutoModelForObjectDetection.from_pretrained(saved, use_safetensors=True).state_dict()
+        self.ema.module.load_state_dict(weights)
+        count = json.loads((saved / EMA_STATE).read_text(encoding="utf-8"))["updates"]
+        self.ema.n_averaged.fill_(int(count))
 
     def on_step_end(self, args, state, control, model=None, **kwargs):
         if self.ema is not None and model is not None:
@@ -536,7 +570,7 @@ def _check_ledger(manifest_path: Path) -> str:
     from tools.detection_dataset_annotator.split_ledger import check_manifest
 
     manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
-    problems = check_manifest(manifest)
+    problems = check_manifest(manifest, base=manifest_path.parent)  # its relative paths, as the dataset reads them
     if problems:
         shown = "\n  ".join(problems[:20])
         more = f"\n  ... and {len(problems) - 20} more" if len(problems) > 20 else ""
@@ -547,7 +581,8 @@ def _check_ledger(manifest_path: Path) -> str:
 def _load_or_build_dataset(args: argparse.Namespace):
     """Build the Arrow dataset from the manifest (after the ledger check) or load a saved one, with its labels."""
     dataset_dir = args.dataset_dir or args.output_dir / "dataset"
-    if args.reuse_dataset:
+    # a resumed run goes on with the data it began with (its folder holds it: rebuilt, the folder would be in the way)
+    if args.reuse_dataset or (args.resume and (dataset_dir / "labels.json").is_file()):
         from datasets import load_from_disk
 
         dataset = load_from_disk(str(dataset_dir))
@@ -714,10 +749,9 @@ def main(argv: list[str] | None = None) -> int:
 
     set_seed(args.seed)
     checkpoints = args.output_dir / "checkpoints"
-    last = get_last_checkpoint(str(checkpoints)) if args.resume and checkpoints.is_dir() else None
-    resume_from = Path(last) if last else None
+    resume_from = last_complete_checkpoint(checkpoints) if args.resume else None
     if args.resume and resume_from is None:  # before a model is downloaded or loaded
-        raise SystemExit(f"--resume: no checkpoint in {checkpoints}")
+        raise SystemExit(f"--resume: no checkpoint (with its EMA) in {checkpoints}")
     base = args.init_from or K.RF_DETR_MODEL_NAME
     processor = load_processor(base)
     model = load_model(base, label_map)

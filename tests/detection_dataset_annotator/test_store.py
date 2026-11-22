@@ -334,3 +334,25 @@ def test_an_untouched_save_leaves_a_review_in_progress(tmp_path: Path, review_st
     assert not review_store.save_review(reviewed, 1, annotations=new, prelabel=True, untouched=True)
     labels = {key: [a["label"] for a in review_store.item(key)["annotations"]] for key in (fresh, edited, reviewed)}
     assert labels == {fresh: ["map_node_vaal"], edited: ["tower"], reviewed: ["icon"]}
+
+
+def test_a_background_save_needs_the_boxes_it_worked_from_and_no_mark(
+    tmp_path: Path, review_store: ReviewStore
+) -> None:
+    """A pass that read a screenshot's boxes (and saw no truth mark) saves only while they are still those boxes and no
+    mark was set meanwhile: another pass's boxes or mark are never overwritten from an older read."""
+    first, second = _shots(tmp_path, "a.png", "b.png")
+    key, marked = (
+        _detected(review_store, first, _box("icon", 10.0)),
+        _detected(review_store, second, _box("icon", 10.0)),
+    )
+    snapshot = review_store.item(key)["annotations"]
+    seeded = [_box("map_node_vaal", 10.0)]
+    assert review_store.save_review(key, 1, annotations=seeded, prelabel=True, untouched=True)  # another pass
+    late = [_box("map_node_grass", 10.0)]
+    assert not review_store.save_review(key, 1, annotations=late, prelabel=True, expect_boxes=snapshot)
+    assert [a["label"] for a in review_store.item(key)["annotations"]] == ["map_node_vaal"]
+    assert review_store.save_review(key, 1, annotations=late, expect_boxes=review_store.item(key)["annotations"])
+    assert review_store.save_review(marked, 1, extra={K.ANNOTATOR_TRUTH_MARK: "truth.json"})
+    assert not review_store.save_review(marked, 1, annotations=late, unmarked=[K.ANNOTATOR_TRUTH_MARK])
+    assert review_store.save_review(marked, 1, extra={"note": 1}, unmarked=["other"])

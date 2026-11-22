@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import os
 import sys
+from collections import deque
 from pathlib import Path
 from typing import Any
 
@@ -182,3 +183,25 @@ def test_a_stop_from_the_progress_callback_is_raised_unwrapped(tmp_path: Path, r
 
 def test_default_workers_fit_the_machine() -> None:
     assert 1 <= pool.default_workers() <= pool.cpu_count()
+
+
+def test_a_screenshot_removed_while_it_was_detected_is_skipped(tmp_path: Path, review_store: ReviewStore) -> None:
+    """A rebuild removed a screenshot while its answer was on the way: the answer is dropped and the run goes on; a
+    KeyError for a screenshot still in the store is a bug, and raised."""
+    keys = _add(review_store, tmp_path, "gone", "kept")
+    seen: list[int] = []
+    run = pool._Run(
+        store=review_store, pending=deque(), force=False, progress=lambda done, total, path: seen.append(done)
+    )
+    run.total = 2
+    review_store.remove_unreviewed([keys["gone"]])
+    run.succeed((keys["gone"], "gone.png"), {"width": 1920, "height": 1080, "annotations": []})
+    run.fail((keys["gone"], "gone.png"), "boom")
+    assert (run.completed, run.errors, run.removed, seen) == (0, 0, 2, [1, 2])
+
+    def broken(key, result, *, force):
+        raise KeyError("a bug")
+
+    review_store.record_detection = broken  # type: ignore[method-assign]
+    with pytest.raises(KeyError, match="a bug"):
+        run.succeed((keys["kept"], "kept.png"), {"annotations": []})

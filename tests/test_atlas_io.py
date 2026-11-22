@@ -2,11 +2,14 @@
 
 import json
 import os
+import sqlite3
 
+import numpy as np
 import pytest
 
 from grand_project import builder, core
 from grand_project import fileio as atlas_io
+from grand_project.detect import constants as detect_constants
 
 
 def test_atomic_write_replaces_and_leaves_no_temp_files(tmp_path):
@@ -119,3 +122,34 @@ def test_a_screenshot_put_back_after_being_missing_is_read_again(tmp_path):
     cv2.imwrite(str(shot), np.full((1080, 1920, 3), 90, np.uint8))
     img = atlas.image(str(shot))  # (a kept None was returned until the cache dropped it: CodeRabbit)
     assert img is not None and img.shape == (1080, 1920, 3)
+
+
+def test_the_detector_size_is_what_scale_screenshot_gives() -> None:
+    """1440p and 4K windows to 1080p; 1080p, an ultrawide 1080p screenshot and a crop as they are."""
+    for width, height in [(1920, 1080), (2560, 1440), (3840, 2160), (2560, 1080), (1280, 720), (800, 600)]:
+        scaled = core.scale_screenshot(np.zeros((height, width, 3), np.uint8))
+        assert core.detector_size(width, height) == (scaled.shape[1], scaled.shape[0])
+
+
+def test_renaming_an_icon_picture_makes_cached_detections_stale(tmp_path, monkeypatch) -> None:
+    """tools/split_icon_type.py renames stored pictures (same rows, same ids): the stamp changes, so caches made with
+    the old names are detected again. The database's path has a "#": its read-only URI must still open it."""
+    db = tmp_path / "refs #1.sqlite3"
+    c = sqlite3.connect(db)
+    c.execute("CREATE TABLE detector_models (name TEXT, created TEXT)")
+    c.execute("CREATE TABLE badge_refs (id INTEGER PRIMARY KEY, name TEXT)")
+    c.execute("INSERT INTO badge_refs (name) VALUES ('ArcaneOrProsperous')")
+    c.commit()
+    c.close()
+    monkeypatch.setattr(detect_constants, "DB_PATH", db)
+
+    def stamp() -> str:
+        monkeypatch.setattr(builder, "_STAMP", [])  # worked out once per process: again here
+        return builder.detector_stamp()
+
+    before = stamp()
+    c = sqlite3.connect(db)
+    c.execute("UPDATE badge_refs SET name = 'ArcaneHordes'")
+    c.commit()
+    c.close()
+    assert stamp() != before

@@ -146,13 +146,28 @@ def scale_screenshot(img: np.ndarray) -> np.ndarray:
     Returns:
         The image scaled to SCREEN_HEIGHT px tall, or ``img`` itself when it is 1080p already or a crop.
     """
-    if img.shape[0] == K.SCREEN_HEIGHT:
+    height, width = img.shape[:2]
+    size = detector_size(width, height)
+    if size == (width, height):
         return img
-    if img.shape[0] < 720 or not 1.5 <= img.shape[1] / img.shape[0] <= 2.5:
-        return img
-    s = K.SCREEN_HEIGHT / img.shape[0]
-    size = (max(1, round(img.shape[1] * s)), K.SCREEN_HEIGHT)
-    return cv2.resize(img, size, interpolation=cv2.INTER_AREA if s < 1 else cv2.INTER_CUBIC)
+    return cv2.resize(img, size, interpolation=cv2.INTER_AREA if size[1] < height else cv2.INTER_CUBIC)
+
+
+def detector_size(width: int, height: int) -> tuple[int, int]:
+    """The size scale_screenshot gives a screenshot of this size: the detector's pixels.
+
+    Args:
+        width: The screenshot's width in px.
+        height: Its height in px.
+
+    Returns:
+        (width, height) scaled to SCREEN_HEIGHT px tall, or the size itself for a 1080p screenshot or a crop (under
+        720 px tall, or not shaped like a whole game window: widescreen, 1.5 to 2.5 wide per tall).
+    """
+    if height == K.SCREEN_HEIGHT or height < 720 or not 1.5 <= width / height <= 2.5:
+        return width, height
+    s = K.SCREEN_HEIGHT / height
+    return max(1, round(width * s)), K.SCREEN_HEIGHT
 
 
 def is_full_window(w: int, h: int) -> bool:

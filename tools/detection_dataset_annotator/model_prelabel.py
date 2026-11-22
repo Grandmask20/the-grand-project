@@ -8,12 +8,14 @@ Only unreviewed **training** screenshots without a reviewer's box are pre-labell
 reviewed from a model's pre-labels would lean toward the model, and the model would then be scored on its own
 answers (user's rule: held-out screenshots keep the classical pre-labels). The screenshots the model trained on
 (``RF_DETR_TRAINED_ON`` in its folder) are left too: their pre-labels would only replay its training labels; so are
-the ones a hand truth seeded (a truth-seeded round trusts their boxes). A screenshot reviewed or edited while the pass
-runs (the page open beside it) keeps its review: each save checks that first, in the same write.
+the ones a hand truth seeded (a truth-seeded round trusts their boxes). A screenshot reviewed, edited, truth-seeded or
+pre-labelled by another pass while this one runs (the page open beside it) keeps what it has: each save checks that
+first, in the same write.
 
 The loop is measured as an A/B test: the eligible screenshots' spatial blocks (the split ledger's) are drawn, a
 ``--share`` of them get the model's pre-labels and the others keep the classical ones, and every screenshot records
-its arm (``ANNOTATOR_PRELABEL_FIELD``), so ``effort`` compares the arms' review edits and times.
+its arm (``ANNOTATOR_PRELABEL_FIELD``), so ``effort`` compares the arms' review edits and times. A block an earlier
+pass gave an arm keeps it for its later screenshots (``recorded_arms``).
 
 The model's boxes are snapped to the box rules (``snap``) and joined with the screenshot's current pre-labels by a
 policy (``merge``, ``ANNOTATOR_PRELABEL_POLICIES``); a box the model and the classical detector agree on is
@@ -27,6 +29,7 @@ import argparse
 import json
 import random
 import time
+from collections import Counter
 from collections.abc import Iterable, Mapping, Sequence
 from pathlib import Path
 from typing import Any
@@ -36,7 +39,7 @@ from grand_project.detect import constants as DK
 from grand_project.detect.proposals import box_at_point, clip_box
 
 from . import constants as K
-from .effort import DETECTOR_WIDTH, box_family, corners, match_boxes
+from .effort import box_family, corners, match_boxes
 
 PROTECTED_SOURCES = frozenset({K.ANNOTATOR_TRUTH_SOURCE, K.ANNOTATOR_MANUAL_SOURCE})
 """Box sources whose class the model never changes: a hand truth's, a reviewer's."""
@@ -96,7 +99,7 @@ def merge(
     model: Sequence[Mapping[str, Any]],
     policy: str,
     *,
-    width: float = DETECTOR_WIDTH,
+    scale: float = 1.0,
 ) -> list[dict[str, Any]]:
     """Join a screenshot's classical pre-labels and a model's boxes (``ANNOTATOR_PRELABEL_POLICIES``).
 
@@ -106,7 +109,7 @@ def merge(
         policy: ``classical`` (the pre-labels as they are), ``model`` (the model's boxes; a hand truth's or a
             reviewer's box is kept in place of the model's there), ``relabel`` (the pre-labels, with the class of the
             model's box each matches) or ``union`` (those, plus the model's boxes no pre-label matches).
-        width: the screenshot's width in the boxes' pixels (the match radii are the detector's 1080p ones).
+        scale: the boxes' pixels per detector pixel (``effort.pixel_scale``; the match radii are the detector's).
 
     Returns:
         The pre-labels to show.
@@ -118,8 +121,7 @@ def merge(
     if policy == "model":
         # the model's boxes in place of the classical ones, but a hand truth's or a reviewer's box stays as it is
         protected = [a for a in classical if a.get("source") in PROTECTED_SOURCES]
-        return merge(protected, model, "union", width=width)
-    scale = width / DETECTOR_WIDTH
+        return merge(protected, model, "union", scale=scale)
     out = [dict(a) for a in classical]
     matched_model: set[int] = set()
     for name in sorted({box_family(a) for a in (*classical, *model)}):
@@ -195,22 +197,36 @@ def eligible(items: Iterable[tuple[str, Mapping[str, Any]]], skip: set[str]) -> 
     return out
 
 
-def draw_arms(blocks: Mapping[str, str], share: float, seed: int) -> dict[str, str]:
-    """Image key -> its arm (``rf_detr`` or ``classical``): a ``share`` of the blocks (rounded) get the model, by a
-    seeded draw of whole blocks (neighbouring screenshots overlap: one block, one arm).
+def draw_arms(
+    blocks: Mapping[str, str], share: float, seed: int, given: Mapping[str, str] | None = None
+) -> dict[str, str]:
+    """Image key -> its arm (``rf_detr`` or ``classical``): a block that already has an arm keeps it (``given``);
+    of the others a ``share`` (rounded) get the model, by a seeded draw of whole blocks (neighbouring screenshots
+    overlap: one block, one arm).
 
     Args:
         blocks: image key -> its spatial block (the ledger's; a key of its own when it has none).
-        share: the fraction of blocks the model pre-labels.
+        share: the fraction of the new blocks the model pre-labels.
         seed: the draw's seed.
+        given: block -> the arm an earlier pass gave its screenshots (``recorded_arms``).
     """
-    names = sorted(set(blocks.values()))
+    given = dict(given or {})
+    names = sorted(set(blocks.values()) - set(given))
     random.Random(seed).shuffle(names)
     chosen = set(names[: round(share * len(names))])
-    return {
-        key: DK.RF_DETR_SOURCE_MODEL if block in chosen else K.ANNOTATOR_CLASSICAL_SOURCE
-        for key, block in blocks.items()
-    }
+    arm = {block: DK.RF_DETR_SOURCE_MODEL if block in chosen else K.ANNOTATOR_CLASSICAL_SOURCE for block in names}
+    return {key: given.get(block) or arm[block] for key, block in blocks.items()}
+
+
+def recorded_arms(items: Iterable[tuple[str, Mapping[str, Any]]], blocks: Mapping[str, str]) -> dict[str, str]:
+    """Block -> the arm earlier passes gave its screenshots (``ANNOTATOR_PRELABEL_FIELD``; the most common one), so a
+    block's later screenshots (a ``--limit`` pass, newly detected ones) join the same arm."""
+    counts: dict[str, Counter[str]] = {}
+    for key, item in items:
+        arm = (item.get(K.ANNOTATOR_PRELABEL_FIELD) or {}).get("source")
+        if arm and key in blocks:
+            counts.setdefault(blocks[key], Counter())[str(arm)] += 1
+    return {block: arms.most_common(1)[0][0] for block, arms in counts.items()}
 
 
 def _blocks(items: Sequence[tuple[str, Mapping[str, Any]]]) -> dict[str, str]:
@@ -242,31 +258,44 @@ def main(argv: list[str] | None = None) -> int:
 
     model_sha = file_hash(model_dir / "model.safetensors") if (model_dir / "model.safetensors").is_file() else None
     round_name = f"{model_dir.parent.name}/{model_dir.name} {time.strftime('%Y-%m-%d %H:%M')}"
-    with ReviewStore.open(resolve_path(args.output_dir) / K.ANNOTATOR_STORE_FILE) as store:
-        todo = eligible(store.items(), trained_on(model_dir))
+    store_path = resolve_path(args.output_dir) / K.ANNOTATOR_STORE_FILE
+    if not store_path.is_file():  # opening it would create an empty store (and its folder)
+        print(f"0 screenshots eligible: no annotator store at {store_path}")
+        return 0
+    with ReviewStore.open(store_path) as store:
+        every = list(store.items())
+        todo = eligible(every, trained_on(model_dir))
         if args.limit is not None:
             todo = todo[: args.limit]
-        arms = draw_arms(_blocks(todo), args.share, args.seed)
+        blocks = _blocks(every)
+        arms = draw_arms({key: blocks[key] for key, _item in todo}, args.share, args.seed, recorded_arms(every, blocks))
         counts = {arm: sum(1 for value in arms.values() if value == arm) for arm in set(arms.values())}
         print(f"{len(todo)} screenshots eligible; arms {counts} (policy {args.policy}, model {model_dir})")
         if args.dry_run or not todo:
             return 0
         detector = None
         done = skipped = 0
+        # a screenshot reviewed, edited, truth-seeded or pre-labelled by another pass meanwhile (the page or another
+        # tool open beside this one) keeps what it has: every save checks that in its own write
+        guard = {"untouched": True, "unmarked": (K.ANNOTATOR_TRUTH_MARK, K.ANNOTATOR_PRELABEL_FIELD)}
         for key, item in todo:
             if item.get("split") != "train":  # never: eligible() takes training screenshots only (user's rule)
                 raise RuntimeError(f"refusing to pre-label a {item.get('split')} screenshot: {item['path']}")
             record = {"source": arms[key], "policy": args.policy, "round": round_name}
             if arms[key] == K.ANNOTATOR_CLASSICAL_SOURCE:
-                store.save_review(key, int(item["edit_version"]), extra={K.ANNOTATOR_PRELABEL_FIELD: record})
+                if not store.save_review(
+                    key, int(item["edit_version"]), extra={K.ANNOTATOR_PRELABEL_FIELD: record}, **guard
+                ):
+                    skipped += 1
                 continue
             if detector is None:
                 from grand_project.detect.rf_detr_model import load_detector
 
                 detector = load_detector(model_dir)
+            base = store.prelabels(key)  # what the model's boxes are joined with: unchanged until the save
             found, detector_size, raw_size = predict(detector, Path(item["path"]))
             model = model_annotations(found, detector_size, raw_size)
-            boxes = merge(store.prelabels(key), model, args.policy, width=raw_size[0])
+            boxes = merge(base, model, args.policy, scale=raw_size[0] / detector_size[0])
             record.update(model=str(model_dir), model_sha=model_sha, found=len(model))
             if store.save_review(
                 key,
@@ -274,7 +303,8 @@ def main(argv: list[str] | None = None) -> int:
                 annotations=boxes,
                 prelabel=True,
                 extra={K.ANNOTATOR_PRELABEL_FIELD: record},
-                untouched=True,  # a screenshot reviewed or edited meanwhile (the page is open) keeps its review
+                expect_boxes=base,
+                **guard,
             ):
                 done += 1
                 if done % 50 == 0:
@@ -282,13 +312,13 @@ def main(argv: list[str] | None = None) -> int:
             else:
                 skipped += 1
         print(
-            f"done: {done} screenshots pre-labelled by the model, {skipped} left (reviewed, edited or detected "
-            f"again meanwhile) ({json.dumps(counts)})"
+            f"done: {done} screenshots pre-labelled by the model, {skipped} left (reviewed, edited, seeded or "
+            f"detected again meanwhile) ({json.dumps(counts)})"
         )
     return 0
 
 
-__all__ = ["draw_arms", "eligible", "merge", "model_annotations", "predict", "snap", "trained_on"]
+__all__ = ["draw_arms", "eligible", "merge", "model_annotations", "predict", "recorded_arms", "snap", "trained_on"]
 
 
 if __name__ == "__main__":

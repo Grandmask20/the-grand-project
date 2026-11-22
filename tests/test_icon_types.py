@@ -8,7 +8,7 @@ import numpy as np
 from grand_project import icon_refs
 from grand_project.detect import constants as K
 from grand_project.detect import models
-from grand_project.detect.icon_types import dataset_icon_types, icon_class, icon_picture, icon_type
+from grand_project.detect.icon_types import dataset_icon_types, file_picture, icon_class, icon_picture, icon_type
 
 
 def _nameable() -> set[str]:
@@ -63,3 +63,11 @@ def test_dataset_types_keep_the_table_order() -> None:
     assert types == [name for name in K.ICON_INFO if name in types]
     assert "Unidentified" not in types
     assert not set(types) & K.ICON_LEGACY
+
+
+def test_an_empty_or_broken_picture_file_is_no_picture(tmp_path) -> None:
+    """OpenCV refuses an empty buffer with an error: such a file is no picture, as a broken one is."""
+    empty, broken = tmp_path / "empty.webp", tmp_path / "broken.webp"
+    empty.write_bytes(b"")
+    broken.write_bytes(b"not a picture")
+    assert file_picture(empty, 34) is None and file_picture(broken, 34) is None

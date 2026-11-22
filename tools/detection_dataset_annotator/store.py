@@ -490,6 +490,8 @@ class ReviewStore:
         extra: Mapping[str, Any] | None = None,
         prelabel: bool = False,
         untouched: bool = False,
+        expect_boxes: Iterable[Mapping[str, Any]] | None = None,
+        unmarked: Iterable[str] = (),
     ) -> bool:
         """Save a screenshot's edited boxes, its review flag and/or fields of ``extra``, if it is still at detection
         ``revision``.
@@ -508,6 +510,10 @@ class ReviewStore:
             untouched: save only while nobody reviewed or edited the screenshot (unreviewed, its boxes still its
                 pre-labels), checked in the same write: a model pass running beside the page never overwrites a review
                 in progress.
+            expect_boxes: save only while the screenshot's boxes are still these (the snapshot a background pass
+                worked from): another pass's boxes saved meanwhile are never overwritten with ones made from older.
+            unmarked: save only while ``extra`` has none of these fields (a truth mark or a pre-label arm set
+                meanwhile).
         """
         with self._write():
             row = self._db.execute(
@@ -517,6 +523,13 @@ class ReviewStore:
                 return False
             if untouched and not self._untouched(key):
                 return False
+            if expect_boxes is not None and self._boxes(key) != [dict(box) for box in expect_boxes]:
+                return False
+            marks = tuple(unmarked)
+            if marks:
+                (stored,) = self._db.execute("SELECT extra FROM images WHERE key = ?", (key,)).fetchone()
+                if any(name in json.loads(stored) for name in marks):
+                    return False
             if annotations is not None:
                 numbered, counter = _numbered(annotations, row[1])
                 self._replace_annotations(key, numbered)
@@ -535,6 +548,11 @@ class ReviewStore:
                         merged[name] = value
                 self._db.execute("UPDATE images SET extra = ? WHERE key = ?", (json.dumps(merged), key))
         return True
+
+    def _boxes(self, key: str) -> list[dict[str, Any]]:
+        """A screenshot's boxes in the editor's order, as ``item`` gives them (inside a transaction)."""
+        rows = self._db.execute(f"{_SELECT_ANNOTATIONS} WHERE image_key = ? ORDER BY ord", (key,))
+        return [_annotation(row) for row in rows]
 
     def _untouched(self, key: str) -> bool:
         """Whether a screenshot is unreviewed and its boxes are still its pre-labels (inside a write)."""

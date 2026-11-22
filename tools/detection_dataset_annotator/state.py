@@ -10,7 +10,7 @@ import hashlib
 import json
 import os
 import tempfile
-from collections.abc import Iterable, Mapping
+from collections.abc import Callable, Iterable, Mapping
 from dataclasses import asdict, dataclass, fields
 from pathlib import Path
 from typing import Any
@@ -69,7 +69,7 @@ def discover_images(roots: Iterable[Path]) -> list[Path]:
 
     Folders named in ``ANNOTATOR_SKIP_DIRS`` (an atlas's own map pictures) are not entered. A file whose path UTF-8
     cannot hold is left out (see ``_utf8``). Of files with the same bytes only the first in ``discovery_order`` is
-    kept (``copies``).
+    kept, a pinned test screenshot before the others (``copies``).
     """
     found: dict[str, Path] = {}
     for root in roots:
@@ -94,7 +94,8 @@ def discover_images(roots: Iterable[Path]) -> list[Path]:
 
 
 def discovery_order(paths: Iterable[Path]) -> list[Path]:
-    """Paths in discovery's order (by path, ignoring case): of files with the same bytes, the first is kept."""
+    """Paths in discovery's order (by path, ignoring case): of files with the same bytes, the first is kept (a
+    pinned test screenshot first, ``copies``)."""
     return sorted(paths, key=lambda path: str(path).casefold())
 
 
@@ -109,12 +110,21 @@ def file_hash(path: Path) -> str:
         return hashlib.file_digest(handle, "sha256").hexdigest()
 
 
-def copies(paths: Iterable[Path]) -> dict[Path, Path]:
-    """Each file with the same bytes as an earlier one (in the given order) -> that first one.
+def _pinned(path: Path) -> bool:
+    """Whether a screenshot is pinned to the test split (``splits.pinned_split``; imported here: splits imports this
+    module through blocks)."""
+    from .splits import pinned_split
+
+    return pinned_split(path) is not None
+
+
+def copies(paths: Iterable[Path], prefer: Callable[[Path], bool] = _pinned) -> dict[Path, Path]:
+    """Each file with the same bytes as an earlier one (in the given order) -> that first one; a file ``prefer``
+    picks (by default a pinned test screenshot) comes before the others with its bytes, so it is the one kept.
 
     A copy would be labelled twice and could land in two splits (the 115 ``screenshots/crawl`` files are fr-atlas's
-    own). Only files of one size are compared, so a usual discovery reads no file. A file that cannot be read is no
-    copy.
+    own); a pinned screenshot kept as an unpinned copy would lose its test split. Only files of one size are
+    compared, so a usual discovery reads no file. A file that cannot be read is no copy.
     """
     by_size: dict[int, list[Path]] = {}
     for path in paths:
@@ -123,7 +133,8 @@ def copies(paths: Iterable[Path]) -> dict[Path, Path]:
     out: dict[Path, Path] = {}
     for same_size in by_size.values():
         first: dict[str, Path] = {}
-        for path in same_size if len(same_size) > 1 else ():
+        ordered = sorted(same_size, key=lambda path: not prefer(path)) if len(same_size) > 1 else ()  # stable
+        for path in ordered:
             try:
                 digest = file_hash(path)
             except OSError:

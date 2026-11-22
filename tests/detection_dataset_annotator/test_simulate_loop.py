@@ -13,6 +13,7 @@ from tools.detection_dataset_annotator import constants as K
 from tools.detection_dataset_annotator.simulate_loop import (
     city_area,
     classical_boxes,
+    dataset_matches,
     held_out,
     parse_rounds,
     report_markdown,
@@ -20,6 +21,7 @@ from tools.detection_dataset_annotator.simulate_loop import (
     score,
 )
 from tools.detection_dataset_annotator.split_ledger import Entry, write_ledger
+from tools.detection_dataset_annotator.state import file_hash
 
 ATLAS = "atlas_test_data/fr-atlas/crawl_atlas_v076"
 
@@ -68,7 +70,7 @@ def test_gold_is_what_the_truth_knows_and_silver_the_rest() -> None:
         _box("citadel_copper", 1500, 300, 80),  # a false citadel: gold delete (and the real one is a gold add)
         _box("icon", 700, 700, 34),
     ]
-    result = score(prelabels, reference, width=1920)
+    result = score(prelabels, reference, reference)  # the classical boxes: where the reference has them
     assert result["gold"].relabelled == 1 and result["gold"].kept == 1
     assert (result["gold"].deleted, result["gold"].added) == (1, 1)  # the citadels
     assert (result["silver"].deleted, result["silver"].added) == (1, 1)  # the node far off
@@ -80,6 +82,7 @@ def test_held_out_screenshots_are_the_atlas_truth_seeded_validation_and_test() -
         {"source": f"{ATLAS}/b.png", "split": "test", K.ANNOTATOR_TRUTH_MARK: "t.json"},
         {"source": f"{ATLAS}/c.png", "split": "train", K.ANNOTATOR_TRUTH_MARK: "t.json"},
         {"source": "atlas_test_data/roa-atlas/d.png", "split": "test"},
+        {"source": f"{ATLAS}-backup/e.png", "split": "test", K.ANNOTATOR_TRUTH_MARK: "t.json"},  # another folder
     ]
     shots = held_out({"images": images}, ATLAS)
     assert [row["source"] for row in shots["validation"]] == [f"{ATLAS}/a.png"]
@@ -92,9 +95,15 @@ def test_the_classical_boxes_are_read_from_a_store_copy(tmp_path: Path, review_s
     review_store.add_images([path])
     result = {"width": 1920, "height": 1080, "annotations": [{"label": "tower", "bbox": [5, 5, 20, 20]}]}
     review_store.record_detection(image_key(path), result, force=False)
+    nothing = tmp_path / "nothing.png"  # the classical detector found nothing on it: its boxes are none, not missing
+    nothing.write_bytes(b"y")
+    review_store.add_images([nothing])
+    review_store.record_detection(image_key(nothing), {"width": 1920, "height": 1080, "annotations": []}, force=False)
     boxes = classical_boxes(review_store.path)
-    (source,) = boxes
-    assert boxes[source] == [{"label": "tower", "bbox": [5.0, 5.0, 20.0, 20.0], "source": None}]
+    assert boxes == {
+        relative_source(path): [{"label": "tower", "bbox": [5.0, 5.0, 20.0, 20.0], "source": None}],
+        relative_source(nothing): [],
+    }
 
 
 def test_the_report_lists_every_policy_per_round() -> None:
@@ -145,15 +154,23 @@ def test_a_simulation_trains_each_round_on_from_the_last_and_scores_every_policy
         (round_dir / "training_summary.json").write_text(json.dumps({"best_validation_mean_ap": 0.5}))
         dataset = Path(command[command.index("--dataset-dir") + 1])
         dataset.mkdir(parents=True, exist_ok=True)
-        (dataset / "labels.json").write_text("{}")  # the first round built the dataset
+        (dataset / "labels.json").write_text("{}")  # the first round built the dataset, from these inputs
+        provenance = {"manifest_sha256": file_hash(manifest), "ledger_sha256": file_hash(K.ANNOTATOR_SPLIT_LEDGER)}
+        (dataset / "metadata.json").write_text(json.dumps({**provenance, "truth_seeded": True}))
 
     found = [{"label": "map_node_vaal", "family": "node", "score": 0.9, "box": [281.0, 281.0, 319.0, 319.0]}]
     monkeypatch.setattr(simulate_loop.subprocess, "run", train)
     monkeypatch.setattr(simulate_loop, "predict", lambda detector, path: (found, (1920, 1080), (1920, 1080)))
     monkeypatch.setattr("grand_project.detect.rf_detr_model.load_detector", lambda model_dir: {})
     out = tmp_path / "sim"
+    truth = tmp_path / "truth.json"  # a Vaal area map where both held-out screenshots show their node (1:1)
+    truth.write_text(json.dumps({
+        "maps": [[300.0, 300.0, "Vaal city"]], "biomes": [],
+        "screenshots": [{"name": n, "file": f"{n}.png", "w": 1920, "h": 1080, "M": [[1, 0, 0], [0, 1, 0]],
+                         "horizon": None} for n in ("val", "tst")],
+    }))  # fmt: skip
     args = ["--manifest", str(manifest), "--classical-store", str(review_store.path), "--rounds", "0;1",
-            "--atlas", name, "--output-dir", str(out), "--epochs", "2"]  # fmt: skip
+            "--atlas", name, "--truth", str(truth), "--output-dir", str(out), "--epochs", "2"]  # fmt: skip
     assert simulate_loop.main(args) == 0
 
     first, second = commands
@@ -169,3 +186,34 @@ def test_a_simulation_trains_each_round_on_from_the_last_and_scores_every_policy
         assert scores["screenshots"] == 1
         assert scores["classical"]["gold"]["relabelled"] == 1.0 and scores["relabel"]["gold"]["edits"] == 0.0
     assert "## Round 2: 2 training screenshots" in (out / "report.md").read_text()
+
+
+def test_gold_counts_only_nodes_the_truth_has_a_map_for_and_silver_is_against_classical() -> None:
+    """A node box at no truth map kept its classical class in the reference: no gold edit either way. Silver
+    compares with the classical boxes, not the reference (a reference box the classical detector never had is no
+    silver edit of a policy that lacks it too)."""
+    reference = [_box("map_node_vaal", 300, 300), _box("map_node_ezomyte", 600, 300), _box("tower", 900, 300, 60)]
+    prelabels = [_box("map_node_grass", 300, 300), _box("map_node_grass", 600, 300)]
+    baseline = [_box("map_node_grass", 300, 300), _box("map_node_grass", 600, 300)]
+    known = lambda box: box["bbox"][0] < 450  # noqa: E731 - the truth has a map at the first node only
+    result = score(prelabels, reference, baseline, known=known)
+    assert (result["gold"].relabelled, result["gold"].kept) == (1, 0)
+    assert result["silver"].edits == 0  # the tower is the reference's alone: nothing against classical
+
+
+def test_a_dataset_is_reused_only_when_built_from_the_same_inputs(tmp_path: Path) -> None:
+    manifest = tmp_path / "manifest.json"
+    manifest.write_text("{}")
+    write_ledger([Entry("sha", "train", "", "a.png")])
+    dataset = tmp_path / "dataset"
+    assert not dataset_matches(dataset, manifest)  # none yet
+    dataset.mkdir()
+    (dataset / "labels.json").write_text("{}")
+    meta = {"manifest_sha256": file_hash(manifest), "ledger_sha256": file_hash(K.ANNOTATOR_SPLIT_LEDGER)}
+    (dataset / "metadata.json").write_text(json.dumps({**meta, "truth_seeded": True}))
+    assert dataset_matches(dataset, manifest)
+    (dataset / "metadata.json").write_text(json.dumps({**meta, "truth_seeded": False}))
+    assert not dataset_matches(dataset, manifest)  # built without the truth-seeded screenshots
+    (dataset / "metadata.json").write_text(json.dumps({**meta, "truth_seeded": True}))
+    manifest.write_text('{"images": []}')
+    assert not dataset_matches(dataset, manifest)  # another export

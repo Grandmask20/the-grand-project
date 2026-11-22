@@ -202,3 +202,15 @@ def test_the_annotator_shares_one_map_finder_run(test_data: Path, monkeypatch: p
     assert detect_classical(image, found_maps=found) == detect_classical(image)
     _maps, pts, prob = find_maps(image, _models["maps"])
     np.testing.assert_array_equal(icon_proposals.map_spots(found[1], found[2]), icon_proposals.map_spots(pts, prob))
+
+
+def test_a_lone_icon_at_the_crawl_offset_gets_its_hidden_map_node() -> None:
+    """A lone icon stands ROW_DY (24 px) above its map node, closer than ANNOTATOR_ICON_NMS: the row's own icon never
+    makes it a marker over another icon. A snap onto a faint glow that would land on a known map node keeps the
+    estimate."""
+    image = np.zeros((1080, 1920, 3), np.uint8)
+    found = icon_proposals.hidden_nodes(image, {"nodes": []}, [{"x": 600, "y": 400}])
+    assert [(node["x"], node["y"]) for node in found] == [(600.0, 424.0)]
+    known = [{"x": 622.0, "y": 430.0, "hidden": True}]  # 23 px from the estimate, 16 px from the glow
+    found = icon_proposals.hidden_nodes(image, {"nodes": known}, [{"x": 600, "y": 400}], np.array([[607.0, 426.0]]))
+    assert [(node["x"], node["y"]) for node in found] == [(600.0, 424.0)]

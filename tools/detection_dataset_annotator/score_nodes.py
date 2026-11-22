@@ -24,6 +24,7 @@ from grand_project.detect import constants as DK
 from grand_project.detect import labels as L
 from grand_project.detect.biomes import city_area_nodes, node_biomes
 from grand_project.detect.icon_types import icon_type
+from grand_project.detect.rf_detr_model import hall_node
 
 from . import constants as K
 from .detection import decode_image
@@ -66,6 +67,7 @@ def guess_nodes(
     sx, sy = img.shape[1] / width, img.shape[0] / height
     nodes, truth = [], []
     icons, landmarks, city_types = [], [], {}
+    halls: list[tuple[int, list[float]]] = []
     for annotation in annotations:
         label = str(annotation.get("label", ""))
         x, y = _middle(annotation, sx, sy)
@@ -77,15 +79,24 @@ def guess_nodes(
         elif kind := L.landmark_kind(label):
             # Every reviewed landmark, as the classical detector reports it: the city rules keep towers, halls,
             # strongholds and other cities out of a city's area (cities.blocked_maps). A tower stands on its map
-            # node, the box's bottom edge.
+            # node, the box's bottom edge; a hall is its map node (placed below, once the icons have names).
             if kind == "Tower":
                 y = (float(annotation["bbox"][1]) + float(annotation["bbox"][3])) * sy
             if kind == "City":
                 city_types[len(landmarks)] = L.city_type(label)
+            if kind == "Hall":
+                bx, by, bw, bh = (float(v) for v in annotation["bbox"])
+                halls.append((len(landmarks), [bx * sx, by * sy, (bx + bw) * sx, (by + bh) * sy]))
             landmarks.append({"kind": kind, "x": x, "y": y})
     if not nodes:
         return []
     name_icons(img, icons)
+    bosses = [icon for icon in icons if icon["name"] == "MapBossSpecial"]
+    for index, box in halls:
+        # the hall's reviewed map node (the one under its deadly-boss icon), as the detector places a Hall
+        node = hall_node(box, nodes, bosses)
+        if node is not None:
+            landmarks[index].update(x=node["x"], y=node["y"])
     edges = trace_paths(nodes, path_dashes(img), img)
     areas = city_area_nodes(nodes, edges, icons, landmarks, city_types)
     out = []
@@ -133,6 +144,8 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--ring", nargs=2, type=float, metavar=("INNER", "OUTER"), help="try another BIOME_RING (px)")
     parser.add_argument("--limit", type=int, default=None, help="score at most this many screenshots")
     args = parser.parse_args(argv)
+    if args.ring and not (np.isfinite(args.ring).all() and 0 <= args.ring[0] < args.ring[1]):
+        parser.error("--ring needs two finite radii, 0 <= INNER < OUTER")
     ring = DK.BIOME_RING
     if args.ring:
         DK.BIOME_RING = (args.ring[0], args.ring[1])  # read live by biomes.node_biomes; put back below

@@ -20,6 +20,7 @@ Potential maps
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from pathlib import Path
 
 import cv2
@@ -129,16 +130,20 @@ def city_window(img: np.ndarray, x: float, y: float) -> tuple[np.ndarray, bool]:
     return img[max(0, Y - 220) : Y + 140, max(0, X - 270) : X + 270], whole
 
 
-def screenshot_city_types(img: np.ndarray, points: list[tuple[float, float]]) -> list[tuple[str, bool]]:
+def screenshot_city_types(
+    img: np.ndarray, points: list[tuple[float, float]], known: Mapping[int, str] | None = None
+) -> list[tuple[str, bool]]:
     """Guess the type of each city seen in ONE screenshot (no atlas: no hand-set types and no trio partners).
 
     The look-alike part of city_types on a single view: each city's ground window is matched against city_refs.npz,
     the clearest city (biggest margin between its two best allowed types) is decided first, and cities closer than
-    TRIO_GAP never share a type (screenshot px are about atlas units).
+    TRIO_GAP never share a type (screenshot px are about atlas units). A ``known`` city keeps its type, sure, and
+    rules it out for the cities near it.
 
     Args:
         img: BGR screenshot in detector pixels (1080p, core.read_screenshot / core.scale_screenshot).
         points: (x, y) of each city's map node in the screenshot.
+        known: index in ``points`` -> the type that city already has (a citadel's own label).
 
     Returns:
         One (type, sure) per point; sure is False when the margin is under CITY_LOOK_SURE, the window is cut off by
@@ -146,15 +151,20 @@ def screenshot_city_types(img: np.ndarray, points: list[tuple[float, float]]) ->
         it closer than TRIO_GAP, whose type ruled one out, is unsure itself.
     """
     n = len(points)
+    out: list[tuple[str, bool] | None] = [None] * n
+    for k, typ in (known or {}).items():
+        if typ in TYPES:
+            out[k] = (typ, True)
     dist: list[list[float] | None] = [None] * n
     whole = [False] * n
     for k, (x, y) in enumerate(points):
+        if out[k] is not None:
+            continue
         win, whole[k] = city_window(img, x, y)
         if win.shape[0] >= 8 and win.shape[1] >= 8:
             dist[k] = look_distances([window_feature(win)])
     P = np.array(points, float).reshape(-1, 2)
     D = np.hypot(P[:, None, 0] - P[None, :, 0], P[:, None, 1] - P[None, :, 1])
-    out: list[tuple[str, bool] | None] = [None] * n
     while True:
         best = None
         for k in range(n):
@@ -192,12 +202,12 @@ def landmark_city_types(img: np.ndarray, landmarks: list[dict]) -> dict[int, tup
         Index in landmarks -> (type, sure), for the City landmarks only.
     """
     found = [i for i, lm in enumerate(landmarks) if lm.get("kind") == "City"]
-    out = {i: (str(landmarks[i]["city_type"]), True) for i in found if landmarks[i].get("city_type") in TYPES}
-    open_ = [i for i in found if i not in out]
-    if open_:
-        points = [(float(landmarks[i]["x"]), float(landmarks[i]["y"])) for i in open_]
-        out.update(zip(open_, screenshot_city_types(img, points), strict=True))
-    return out
+    if not found:
+        return {}
+    # the typed cities take part as known ones: a guess next to one never takes its type
+    known = {j: str(landmarks[i]["city_type"]) for j, i in enumerate(found) if landmarks[i].get("city_type") in TYPES}
+    points = [(float(landmarks[i]["x"]), float(landmarks[i]["y"])) for i in found]
+    return dict(zip(found, screenshot_city_types(img, points, known), strict=True))
 
 
 def _load_refs():

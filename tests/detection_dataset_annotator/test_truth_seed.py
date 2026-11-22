@@ -66,10 +66,10 @@ def desert_ring(monkeypatch: pytest.MonkeyPatch) -> None:
 def test_a_screenshot_takes_the_truth_city_areas_and_citadels(tmp_path: Path, desert_ring: None) -> None:
     truth = _truth(tmp_path)
     item = {"path": str(tmp_path / "shot.png"), "width": 1920, "height": 1080, "annotations": _boxes()}
-    boxes, done = seed_screenshot(
+    boxes, done, complete = seed_screenshot(
         item, truth.screenshots["shot.png"], truth, lambda path: np.zeros((1080, 1920, 3), np.uint8)
     )
-    assert boxes is not None
+    assert boxes is not None and complete
     labelled = [(box["label"], box["source"]) for box in boxes]
     assert labelled == [
         ("map_node_vaal", TRUTH_SOURCE),
@@ -89,8 +89,8 @@ def test_a_screenshot_twice_seeded_changes_no_more(tmp_path: Path, desert_ring: 
     truth = _truth(tmp_path)
     item = {"path": str(tmp_path / "shot.png"), "width": 1920, "height": 1080, "annotations": _boxes()}
     image = np.zeros((1080, 1920, 3), np.uint8)
-    boxes, _done = seed_screenshot(item, truth.screenshots["shot.png"], truth, lambda path: image)
-    again, _done = seed_screenshot(
+    boxes, _done, _complete = seed_screenshot(item, truth.screenshots["shot.png"], truth, lambda path: image)
+    again, _done, _complete = seed_screenshot(
         {**item, "annotations": boxes}, truth.screenshots["shot.png"], truth, lambda p: image
     )
     assert again is None
@@ -150,3 +150,49 @@ def test_a_box_without_a_place_is_left(tmp_path: Path) -> None:
     nowhere = {"label": "map_node_vaal", "bbox": [None, None, None, None], "source": "classical"}
     item = {"path": str(tmp_path / "shot.png"), "width": 1920, "height": 1080, "annotations": [nowhere]}
     assert seed_screenshot(item, truth.screenshots["shot.png"], truth, lambda path: None)[0] is None
+
+
+def test_a_screenshot_that_cannot_be_read_is_left_unmarked_until_it_can(
+    tmp_path: Path, review_store: ReviewStore, desert_ring: None, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A city node outside every area needs its ground ring: without the picture the screenshot is not the truth's
+    yet, so it gets neither boxes nor mark (a truth-seeded round would take it), and the next run seeds it."""
+    path = tmp_path / "shot.png"
+    truth = _truth(tmp_path)
+    review_store.add_images([path])
+    result = {"detected": True, "width": 1920, "height": 1080, "annotations": _boxes(), "error": None}
+    review_store.record_detection(image_key(path), result, force=True)
+    monkeypatch.setattr(truth_seed, "_detector_image", lambda path: None)
+    done, changed, _placed = seed_store(review_store, truth)
+    item = review_store.item(image_key(path))
+    assert (
+        changed == 0
+        and K.ANNOTATOR_TRUTH_MARK not in item
+        and done["unreadable screenshot (city nodes left, not marked)"]
+    )
+    monkeypatch.setattr(truth_seed, "_detector_image", lambda path: np.zeros((1080, 1920, 3), np.uint8))
+    assert seed_store(review_store, truth)[1] == 1
+    assert review_store.item(image_key(path))[K.ANNOTATOR_TRUTH_MARK] == truth.source
+
+
+def test_an_edit_made_while_seeding_ran_is_kept(
+    tmp_path: Path, review_store: ReviewStore, desert_ring: None, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A reviewer edits the screenshot after seeding read it (the page open beside it): the edit stays, unmarked."""
+    path = tmp_path / "shot.png"
+    truth = _truth(tmp_path)
+    review_store.add_images([path])
+    key = image_key(path)
+    result = {"detected": True, "width": 1920, "height": 1080, "annotations": _boxes(), "error": None}
+    review_store.record_detection(key, result, force=True)
+    edit = [_box("tower", 800, 300, source=K.ANNOTATOR_MANUAL_SOURCE) | {"id": "b0"}]
+
+    def read_while_edited(path: Path) -> np.ndarray:
+        assert review_store.save_review(key, 1, annotations=edit)
+        return np.zeros((1080, 1920, 3), np.uint8)
+
+    monkeypatch.setattr(truth_seed, "_detector_image", read_while_edited)
+    done, changed, _placed = seed_store(review_store, truth)
+    item = review_store.item(key)
+    assert changed == 0 and done["skipped: reviewed, edited or detected again meanwhile"] == 1
+    assert [box["label"] for box in item["annotations"]] == ["tower"] and K.ANNOTATOR_TRUTH_MARK not in item
