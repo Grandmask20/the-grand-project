@@ -28,7 +28,9 @@ describe("OverlayLayers", () => {
 		expect(routeLayers(geo, true).line.map((s) => [s.id, "source" in s && s.source])).toEqual([
 			["route-casing", "route"],
 			["route", "route"],
+			["route-dash", "route"], // (its dashes, over it)
 		]);
+		expect(routeLayers(geo, true).runner).toMatchObject({ id: "route-runner", source: "route-runner" });
 		expect(hitLayers(geo, meta).map((s) => s.id)).toEqual(["hits-edge", "hits"]);
 	});
 

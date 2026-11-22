@@ -19,6 +19,7 @@ export const LAYER_ORDER = [
 	"saved-routes", // routes saved with the bookmarks: under the one tracked
 	"route-casing",
 	"route",
+	"route-dash", // the route's dashes marching along it
 	"icons",
 	"maps",
 	"maps-square",
@@ -30,6 +31,7 @@ export const LAYER_ORDER = [
 	"hits",
 	"route-nodes",
 	"route-here", // the map you are on, on a route tracked
+	"route-runner", // the dot walking the route
 	"fog-picture", // the timelapse's fog: over the map's own layers, so it hides what isn't revealed yet
 	"outline", // the screenshots coming in, over the fog
 	"ground-fade-gl", // the 3D view: the ground fading out far off, over the flat layers and under the 3D ones

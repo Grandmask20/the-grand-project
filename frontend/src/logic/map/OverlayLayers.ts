@@ -51,8 +51,10 @@ export const gotoLayer = (): Spec => ({
 	paint: { "circle-radius": 12, ...hollow("#ff4040", 3) },
 });
 
-/** The route: a green line edged in black (`route`) and its maps ringed (`route-nodes`). */
-export function routeLayers(geo: Geo, on: boolean): { line: Spec[]; nodes: Spec; here: Spec } {
+/** The route: a green line edged in black (`route`) with dark dashes marching along it toward where it goes
+ * (`route-dash`, RouteLayers animates them), its maps ringed (`route-nodes`), and the runner walking it
+ * (`route-runner`). */
+export function routeLayers(geo: Geo, on: boolean): { line: Spec[]; nodes: Spec; here: Spec; runner: Spec } {
 	const layout = { visibility: visibility(on), "line-cap": "round" as const, "line-join": "round" as const };
 	return {
 		line: [
@@ -64,6 +66,13 @@ export function routeLayers(geo: Geo, on: boolean): { line: Spec[]; nodes: Spec;
 				paint: { "line-color": "#000000", "line-width": 9, "line-opacity": 0.7 },
 			},
 			{ id: "route", type: "line", source: "route", layout, paint: { "line-color": "#7cff6b", "line-width": 5 } },
+			{
+				id: "route-dash",
+				type: "line",
+				source: "route",
+				layout: { visibility: visibility(on) },
+				paint: { "line-color": "#0b3d0b", "line-width": 2.5, "line-dasharray": [0, 4, 3] },
+			},
 		],
 		nodes: {
 			id: "route-nodes",
@@ -84,6 +93,19 @@ export function routeLayers(geo: Geo, on: boolean): { line: Spec[]; nodes: Spec;
 				"circle-opacity": 0.55,
 				"circle-stroke-color": "#000000",
 				"circle-stroke-width": 2,
+			},
+		},
+		// the runner: a white dot walking the route (to the next map, on a route tracked)
+		runner: {
+			id: "route-runner",
+			type: "circle",
+			source: "route-runner",
+			layout: { visibility: visibility(on) },
+			paint: {
+				"circle-radius": 6,
+				"circle-color": "#ffffff",
+				"circle-stroke-color": "#0b3d0b",
+				"circle-stroke-width": 2.5,
 			},
 		},
 	};

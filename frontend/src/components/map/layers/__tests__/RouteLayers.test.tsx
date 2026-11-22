@@ -37,6 +37,7 @@ describe("RouteLayers", () => {
 		expect(line.coordinates).toHaveLength(4); // the curved path's 3 points, then straight on
 		const nodes = fm.sources.get("route-nodes")?.data as GeoJSON.FeatureCollection;
 		expect(nodes.features.map((f) => f.properties?.id)).toEqual([2, 3]);
+		expect(fm.sources.has("route-runner")).toBe(true); // (the runner walking it: useRouteRun)
 	});
 
 	it("hides with its toggle", () => {
