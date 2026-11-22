@@ -431,7 +431,7 @@ export function NumberSetting({
 	whole?: boolean;
 	disabled?: boolean;
 	/** Use a value; it may answer whether it was taken (refused: the box shows the setting again). */
-	onCommit: (v: number) => void | Promise<boolean>;
+	onCommit: (v: number) => Promise<boolean> | undefined;
 }) {
 	const [text, setText] = useState(String(value));
 	const typing = useRef(false);
