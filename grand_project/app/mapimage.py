@@ -31,13 +31,17 @@ from grand_project import cities as atlas_cities
 from grand_project import logs as atlas_log
 from grand_project.webmap.constants import (
     WEBMAP_BEAM_MIN,
+    WEBMAP_CROP_PX,
+    WEBMAP_CROP_UNITS,
     WEBMAP_FOG_DARK,
     WEBMAP_ICON_MIN_PX,
     WEBMAP_ICON_SPRITE,
     WEBMAP_ICON_UNITS,
+    WEBMAP_JPEG_QUALITY,
     WEBMAP_MASK_MAX,
     WEBMAP_OVERZOOM,
     WEBMAP_SHARP_LEVEL,
+    WEBMAP_TILE,
     WEBMAP_TOWER_SAME,
 )
 from grand_project.webmap.shapes import biome_polygons, land_polygons
@@ -154,6 +158,9 @@ class MapImageMixin:
         self.grid: Grid | None = None
         self._raster: RasterTiler | None = None
         self._sharp: SharpTiles | None = None
+        # (grid, raster tiler, sharp tiles, version): the map image's tiling, handed over as one (a crop read the grid
+        # and the tiles at different moments of a change: CodeRabbit)
+        self._tile_state: tuple = (None, None, None, self.terrain_version)
         self._ground = None
         self._ground_for = None
         self._tiles.clear()
@@ -307,6 +314,7 @@ class MapImageMixin:
             self._ground = None
             self.terrain_version += 1
             self._terrain_snap = (self.terrain, self.terrain_version)
+            self._tile_state = (self.grid, self._raster, self._sharp, self.terrain_version)  # (all of it at once)
             self._tiles.clear()
             self._vector = None
             self._scene3d = None
@@ -960,11 +968,15 @@ class MapImageMixin:
         Returns:
             The JPEG bytes, or None where there is no ground.
         """
-        key = ("t", self.terrain_version, z, x, y)
+        return self._tile_from(self._tile_state, z, x, y, wanted)
+
+    def _tile_from(self, state: tuple, z: int, x: int, y: int, wanted=None) -> bytes | None:
+        """terrain_tile, from one map image's tiling (_tile_state, read once by the caller)."""
+        _grid, raster, sharp, version = state
+        key = ("t", version, z, x, y)
         hit = self._tiles.get(key)
         if hit is not None:
             return hit or None
-        raster, sharp = self._raster, self._sharp
         if raster is None:
             return None
         if sharp is not None and sharp.has(z):
@@ -978,6 +990,70 @@ class MapImageMixin:
             data = raster.jpeg(z, x, y)
         self._tiles.put(key, data or b"")
         return data
+
+    def crop_jpeg(self, x: float, y: float, gen: int) -> bytes | None:
+        """Return a small picture of the ground around an atlas point (Find's rows show the map node itself: user's
+        mockup), from the map's own ground tiles (so shared with the map and its caches): the sharp ground when the
+        map image alone is too coarse for it.
+
+        Args:
+            x: Atlas x.
+            y: Atlas y.
+            gen: The atlas generation the page asked for: another atlas's crop is never made or sent (the page's
+                pictures carry it; checked again once made, a switch meanwhile drops it).
+
+        Returns:
+            JPEG bytes (WEBMAP_CROP_PX square), or None (another atlas, no map image, no ground there).
+        """
+        if gen != self.generation:
+            return None
+        # one map image's grid and tiles, read once: a map image put in meanwhile can't mix with it (no session lock:
+        # jobs hold it long; CodeRabbit)
+        state = self._tile_state
+        g, raster, sharp, _version = state
+        if g is None or raster is None:
+            return None
+        want = WEBMAP_CROP_PX / (2 * WEBMAP_CROP_UNITS)  # px per atlas unit wanted
+        z = g.zmax
+        while sharp is not None and sharp.has(z + 1) and g.scale * 2.0 ** (z - g.zmax) < want:
+            z += 1
+        f = 2.0 ** (z - g.zmax)
+        wx, wy = g.world_px(x, y)
+        half = WEBMAP_CROP_UNITS * g.scale * f  # px at level z
+        cx, cy = wx * f, wy * f
+        x0, y0 = int(math.floor(cx - half)), int(math.floor(cy - half))
+        side = max(1, int(math.ceil(2 * half)))
+        T = WEBMAP_TILE
+        canvas = np.zeros((side, side, 3), np.uint8)
+        found = False
+        for ty in range(y0 // T, (y0 + side - 1) // T + 1):
+            for tx in range(x0 // T, (x0 + side - 1) // T + 1):
+                if tx < 0 or ty < 0:
+                    continue
+                data = self._tile_from(state, z, tx, ty)
+                if not data:
+                    continue
+                tile = cv2.imdecode(np.frombuffer(data, np.uint8), cv2.IMREAD_COLOR)
+                if tile is None:
+                    continue
+                # the part of this tile in the crop
+                ax0, ay0 = max(x0, tx * T), max(y0, ty * T)
+                ax1, ay1 = min(x0 + side, (tx + 1) * T), min(y0 + side, (ty + 1) * T)
+                if ax1 <= ax0 or ay1 <= ay0:
+                    continue
+                canvas[ay0 - y0 : ay1 - y0, ax0 - x0 : ax1 - x0] = tile[
+                    ay0 - ty * T : ay1 - ty * T, ax0 - tx * T : ax1 - tx * T
+                ]
+                found = True
+        if not found or gen != self.generation:
+            return None
+        small = cv2.resize(
+            canvas,
+            (WEBMAP_CROP_PX, WEBMAP_CROP_PX),
+            interpolation=cv2.INTER_AREA if side > WEBMAP_CROP_PX else cv2.INTER_CUBIC,
+        )
+        ok, buf = cv2.imencode(".jpg", small, [cv2.IMWRITE_JPEG_QUALITY, WEBMAP_JPEG_QUALITY])
+        return buf.tobytes() if ok else None
 
     def vector_tile(self, z: int, x: int, y: int, replay: bool = False) -> bytes:
         """Return a vector tile (MVT) of what the filters show.

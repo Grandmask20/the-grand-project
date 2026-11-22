@@ -414,8 +414,10 @@ class AtlasSession(
                     raise ValueError("wait until the screenshots being added are done")
                 self._forget_session()
                 before = self.opened
-                self._switch(None, None)
+                # the map image cleared before "no atlas" is said, as opening one does (a crop asked for in between
+                # was cut from the closed atlas's map: CodeRabbit)
                 self._reset_mapimage()
+                self._switch(None, None)
                 if before.scope:
                     self.events.log("closed the atlas", before.scope)
         self.events.publish("atlas", self.atlas_summary())
@@ -605,6 +607,8 @@ _WORDS = {
     "icon_style": "icon style",
     "map_size": "map size",
     "map_style": "map style",
+    "bookmark_size": "bookmark size",
+    "bookmark_at": "bookmarks sit on the",
     "age_tint": "colour by",
     "side_width": "side panel width",
 }

@@ -35,7 +35,7 @@ export function LogTab() {
 					</Button>
 				)}
 			</div>
-			<div className="flex-1 overflow-y-auto rounded border bg-card p-2 font-mono text-xs leading-5 whitespace-pre-wrap">
+			<div className="flex-1 poe-frame overflow-y-auto bg-[var(--well)] p-2 font-mono text-xs leading-5 whitespace-pre-wrap">
 				{log.map((line, k) => (
 					// biome-ignore lint/suspicious/noArrayIndexKey: log lines repeat
 					<div key={k}>{line}</div>

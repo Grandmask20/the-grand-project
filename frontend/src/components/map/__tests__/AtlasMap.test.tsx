@@ -1,6 +1,8 @@
 import { act, screen, waitFor } from "@testing-library/react";
+import { LngLat } from "maplibre-gl";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { AtlasMap } from "@/components/map/AtlasMap";
+import { AtlasMap, constrainTo } from "@/components/map/AtlasMap";
+import { Geo } from "@/logic/Geo";
 import { LAYER_ORDER } from "@/logic/map/LayerOrder";
 import { useAppStore } from "@/store/AppStore";
 import { fakeMap } from "@/test/FakeMap";
@@ -88,5 +90,13 @@ describe("AtlasMap", () => {
 		await waitFor(() => expect(useAppStore.getState().map).toBe(fm.map));
 		act(() => unmount());
 		expect(useAppStore.getState().map).toBeNull();
+	});
+
+	it("keeps the zoom within the map's own limits (user: you could zoom in endlessly)", () => {
+		const keep = constrainTo(mapInfo, new Geo(mapInfo));
+		const c = new LngLat(0, 0);
+		expect(keep(c, 40).zoom).toBe(mapInfo.maxzoom);
+		expect(keep(c, -3).zoom).toBe(0);
+		expect(keep(c, 4.5).zoom).toBe(4.5);
 	});
 });

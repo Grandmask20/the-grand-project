@@ -66,6 +66,19 @@ export type BookmarkEdit = {
 	note: string;
 	/** Saving a route (Save route): it goes in as a route bookmark. */
 	route?: SavedRoute;
+	/** Its own look as it is now ("": none); unknown (left out), the edit keeps it. */
+	colour?: string;
+	icon?: string;
+	plain?: boolean;
+};
+
+/** A bookmark group being renamed or given a look (its pen in Bookmarks). */
+export type GroupEdit = {
+	name: string;
+	colour: string;
+	icon: string;
+	plain: boolean;
+	onRenamed?: (to: string) => void;
 };
 
 export type Camera = { x: number; y: number; px: number; bearing: number; pitch: number };
@@ -88,6 +101,10 @@ export interface AppStoreState {
 	/** The page each tab with pages shows (Atlases: atlases / auto; Bookmarks: bookmarks / route; Log: log / debug). */
 	pages: Record<string, string>;
 	setPage: (tab: string, page: string) => void;
+	/** The View tab's sections open ("2d:Paths", "3d:Icons"...): none at first (user: all view settings folded on
+	 * first open), then as you left them while the app is open. */
+	viewOpen: string[];
+	toggleViewSection: (key: string) => void;
 	/** Layers shown because you changed one of their View settings (cleared when you leave the tab). */
 	/** The layers shown because a View setting of theirs is in use (RevealWhileUsed), and notices (VIEW_NOTICE). */
 	editing: string[];
@@ -156,6 +173,8 @@ export interface AppStoreState {
 	askConfirm: (c: Confirm | null) => void;
 	bookmarkEdit: BookmarkEdit | null;
 	editBookmark: (b: BookmarkEdit | null) => void;
+	groupEdit: GroupEdit | null;
+	editGroup: (g: GroupEdit | null) => void;
 	sources: Point | null;
 	showSources: (p: Point | null) => void;
 	deleteAtlas: string | null;
@@ -200,7 +219,8 @@ export const useAppStore = create<AppStoreState>()((set) => ({
 	setMap: (map) => set({ map }),
 	camera: null,
 	setCamera: (camera) => set({ camera }),
-	tab: "find",
+	// the Bookmarks tab first (user: "starting on the bookmarks tab is good")
+	tab: "bookmarks",
 	// leaving the Bookmarks tab ends "Add bookmark" (user: it stayed on, and a later click on the map added one)
 	setTab: (asked) =>
 		set((st) => {
@@ -217,6 +237,11 @@ export const useAppStore = create<AppStoreState>()((set) => ({
 		}),
 	pages: {},
 	setPage: (tab, page) => set((st) => ({ pages: { ...st.pages, [tab]: page } })),
+	viewOpen: [],
+	toggleViewSection: (key) =>
+		set((st) => ({
+			viewOpen: st.viewOpen.includes(key) ? st.viewOpen.filter((k) => k !== key) : [...st.viewOpen, key],
+		})),
 	editing: [],
 	hold: (layer) => {
 		const era = holdEra;
@@ -266,7 +291,17 @@ export const useAppStore = create<AppStoreState>()((set) => ({
 	query: "",
 	setQuery: (query) => set(query.trim() ? { query, highlight: null, goto: null } : { query }),
 	listed: null,
-	listType: (label, icon) => set({ findText: "", query: "", listed: { label, icon }, highlight: icon, goto: null }),
+	// (the results before go at once: they showed under the type opened until its own came)
+	listType: (label, icon) =>
+		set({
+			findText: "",
+			query: "",
+			listed: { label, icon },
+			highlight: icon,
+			goto: null,
+			results: [],
+			resultsTitle: "",
+		}),
 	clearFind: () =>
 		set({ findText: "", query: "", listed: null, highlight: null, goto: null, results: [], resultsTitle: "" }),
 	highlight: null,
@@ -315,6 +350,8 @@ export const useAppStore = create<AppStoreState>()((set) => ({
 	askConfirm: (confirm) => set({ confirm }),
 	bookmarkEdit: null,
 	editBookmark: (bookmarkEdit) => set({ bookmarkEdit }),
+	groupEdit: null,
+	editGroup: (groupEdit) => set({ groupEdit }),
 	sources: null,
 	showSources: (sources) => set({ sources }),
 	deleteAtlas: null,
@@ -356,6 +393,7 @@ export const useAppStore = create<AppStoreState>()((set) => ({
 			prompt: null,
 			confirm: null,
 			bookmarkEdit: null,
+			groupEdit: null,
 			sources: null,
 			recheckAtlas: null, // (asked about the atlas open before: another one opened meanwhile, self review)
 		});

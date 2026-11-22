@@ -20,7 +20,7 @@ export function ProgressBox({ text }: { text: string | null }) {
 	return (
 		<div
 			role="status"
-			className="absolute top-3 right-14 z-30 rounded-md border border-gold/70 bg-card/95 px-3 py-1.5 font-mono text-xs text-gold shadow"
+			className="absolute top-3 right-14 z-30 poe-panel poe-panel-sm px-3 py-1.5 font-mono text-xs text-gold shadow"
 		>
 			{text.replace(/[.…]+$/, "")}
 			{dots} <span className="text-muted-foreground">{secs}s</span>

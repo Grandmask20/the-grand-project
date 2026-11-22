@@ -95,7 +95,8 @@ def test_bookmark_search_and_pick(app):
     )
     assert call(srv, "/api/bookmarks", "POST", {"x": pts[2][0], "y": pts[2][1], "name": "again"})[0] == 409
     res = json.loads(call(srv, "/api/search?q=ritual")[2])["results"]
-    assert [r["kind"] for r in res] == ["bookmark"]
+    # the bookmark first (its name is the search), then the map with a Ritual icon (maps are found by their icons)
+    assert [r["kind"] for r in res][0] == "bookmark" and {r["kind"] for r in res} <= {"bookmark", "node"}
     hit = json.loads(call(srv, "/api/pick", "POST", {"x": pts[5][0], "y": pts[5][1], "z": 1.0})[2])
     assert hit["kind"] == "node" and hit["id"] == 5
 

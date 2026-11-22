@@ -1,4 +1,3 @@
-import { ChevronDownIcon, ChevronUpIcon } from "lucide-react";
 import { useMeta } from "@/hooks/app/UseMeta";
 import { useSettings, useUpdateSettings } from "@/hooks/app/UseSettings";
 import { cityColours, styleColour } from "@/logic/Colours";
@@ -37,7 +36,10 @@ export function LayersDock() {
 	];
 
 	return (
-		<section className="@container shrink-0 border-t bg-card/60 px-3 py-2" aria-label="Layers">
+		<section
+			className="@container shrink-0 border-t border-[var(--tab-edge)] bg-black/30 px-3 py-2"
+			aria-label="Layers"
+		>
 			<button
 				type="button"
 				className="flex w-full items-center justify-between text-xs font-semibold tracking-wide text-gold uppercase"
@@ -45,7 +47,8 @@ export function LayersDock() {
 				aria-expanded={open}
 			>
 				Layers
-				{open ? <ChevronDownIcon className="size-4" /> : <ChevronUpIcon className="size-4" />}
+				{/* the game's dropdown button, turned while open */}
+				<span className={cn("poe-drop", !open && "rotate-180")} aria-hidden="true" />
 			</button>
 			{open && (
 				<>
@@ -64,12 +67,8 @@ export function LayersDock() {
 										title={r.label}
 										disabled={recording}
 										onClick={() => update.mutate({ layers: r.next })}
-										className={cn(
-											"truncate rounded-md border px-1.5 py-1 text-xs",
-											r.pressed
-												? "border-gold/70 bg-accent text-foreground"
-												: "border-border text-muted-foreground hover:bg-accent/50",
-										)}
+										// the game's buttons (user): green on, red when off (any "off" is red: user)
+										className={cn("poe-btn poe-btn-xs truncate", r.pressed ? "poe-btn-green" : "poe-btn-red")}
 									>
 										<RoutesLabel r={r} />
 									</button>
@@ -83,12 +82,8 @@ export function LayersDock() {
 									aria-pressed={on}
 									disabled={recording}
 									onClick={() => update.mutate({ layers: { [key]: !on } })}
-									className={cn(
-										"truncate rounded-md border px-1.5 py-1 text-xs",
-										on
-											? "border-gold/70 bg-accent text-foreground"
-											: "border-border text-muted-foreground hover:bg-accent/50",
-									)}
+									// the game's buttons (user): green on, grey off
+									className={cn("poe-btn poe-btn-xs truncate", on ? "poe-btn-green" : "text-[#bfb08a]")}
 								>
 									{label}
 								</button>

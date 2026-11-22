@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { StaleError } from "@/api/Http";
 import { useAppStore } from "@/store/AppStore";
+import { resetStore } from "@/test/RenderWithApp";
 
 describe("useAppStore", () => {
 	it("counts fly and fit requests so the same spot can be asked twice", () => {
@@ -125,5 +126,23 @@ describe("useAppStore", () => {
 		answer({ kind: "node", id: 1 } as never);
 		await loading;
 		expect(useAppStore.getState().selected).toBeNull();
+	});
+
+	it("the page starts on the Bookmarks tab, the View sections folded (user)", () => {
+		resetStore(); // (as the page starts: the tests before changed the tab)
+		const s = useAppStore.getState();
+		expect(s.tab).toBe("bookmarks");
+		expect(s.viewOpen).toEqual([]);
+		s.toggleViewSection("2d:Paths");
+		expect(useAppStore.getState().viewOpen).toEqual(["2d:Paths"]);
+		useAppStore.getState().toggleViewSection("2d:Paths");
+		expect(useAppStore.getState().viewOpen).toEqual([]);
+	});
+
+	it("a type listed starts without the results before (they showed under it until its own came)", () => {
+		const s = useAppStore.getState();
+		s.setResults([{ kind: "node", id: 1, label: "Map #1", x: 0, y: 0 }], "1 Breach");
+		s.listType("Ritual", "Ritual");
+		expect(useAppStore.getState()).toMatchObject({ results: [], resultsTitle: "", listed: { label: "Ritual" } });
 	});
 });

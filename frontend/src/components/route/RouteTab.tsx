@@ -1,9 +1,12 @@
+import { CheckIcon, NavigationIcon } from "lucide-react";
 import { Section } from "@/components/common/Section";
 import { Button } from "@/components/ui/button";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { useTypes } from "@/hooks/find/UseTypes";
 import { nextNew, useRoutes } from "@/hooks/map/UseRoutes";
 import { useAppStore } from "@/store/AppStore";
+import { cn } from "@/utils/Cn";
+import { RouteProgress } from "./RouteProgress";
 
 /** Directions: where you are, the fewest maps to a map or to the nearest map with an icon. */
 export function RouteTab() {
@@ -88,11 +91,7 @@ export function RouteTab() {
 			    how many maps are left, on to the next, and its maps (user: Route here and tracking worked apart) */}
 			{route?.at !== undefined && (
 				<Section title="Tracking">
-					<p className="font-medium">{route.message}</p>
-					<p className="text-xs text-muted-foreground">
-						On map #{route.path[route.at]}
-						{next !== null && <>, next: map #{route.path[next]}</>}
-					</p>
+					<RouteProgress path={route.path} at={route.at} />
 					<div className="flex gap-1.5">
 						<Button size="xs" disabled={next === null} onClick={routes.nextMap}>
 							Next map
@@ -101,16 +100,45 @@ export function RouteTab() {
 							Stop tracking
 						</Button>
 					</div>
-					<ol className="flex max-h-72 list-decimal flex-col overflow-y-auto pl-6 text-xs">
-						{[...new Set(route.path)].slice(1).map((id) => {
+					{/* the route as steps (banner's #51, liked by the user): run, where you are, next, still to come */}
+					<ol aria-label="The route's maps" className="flex max-h-80 flex-col overflow-y-auto">
+						{[...new Set(route.path)].map((id, k) => {
 							const p = routes.graph?.at(id);
 							const what = (routes.graph?.iconsOf(id) ?? []).map((n) => iconOf.get(n) ?? n).join(", ");
-							const run = runSet.has(id);
+							const here = id === route.path[route.at ?? 0];
+							const run = runSet.has(id) && !here;
+							const isNext = next !== null && id === route.path[next];
 							return (
-								<li key={id} className={run ? "text-muted-foreground line-through" : undefined}>
-									<button type="button" className="hover:text-gold" onClick={() => p && flyTo(p[0], p[1], 0.6)}>
-										map #{id}
-										{what && <span className="text-muted-foreground"> · {what}</span>}
+								<li key={id}>
+									<button
+										type="button"
+										title={what ? `map #${id} · ${what}` : `map #${id}`}
+										onClick={() => p && flyTo(p[0], p[1], 0.6)}
+										className={cn(
+											"flex min-h-8 w-full items-center gap-2.5 rounded px-1.5 text-left text-sm hover:bg-accent",
+											here && "bg-accent",
+											run && "text-muted-foreground",
+										)}
+									>
+										<span
+											className={cn(
+												"flex size-5 shrink-0 items-center justify-center rounded-full text-xs font-semibold",
+												here
+													? "bg-gold text-background"
+													: run
+														? "bg-muted text-muted-foreground"
+														: "border border-border text-muted-foreground",
+											)}
+											title={here ? "you are here" : run ? "run" : undefined}
+										>
+											{here ? <NavigationIcon className="size-3" /> : run ? <CheckIcon className="size-3" /> : k}
+										</span>
+										<span className={cn("flex-1", run && "line-through")}>
+											map #{id}
+											{k === 0 && <span className="text-muted-foreground"> · start</span>}
+										</span>
+										{isNext && <span className="rounded bg-muted px-1.5 text-xs font-semibold text-gold">next</span>}
+										{what && <span className="max-w-32 truncate text-xs text-muted-foreground">{what}</span>}
 									</button>
 								</li>
 							);

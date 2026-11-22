@@ -101,7 +101,14 @@ STYLE_DEFAULT = {
     # icons), "poe2db art", "from screenshots" (taught crops), "flat colour" (a disc in the type's colour) or "outline"
     "icon_size": 1.0,
     "icon_style": "game art",
+    # bookmarks on the map (View tab, user): their pins' size (times BOOKMARK_PIN_R), and where a pin sits: on the
+    # "icon" row above its spot (ICON_ROW_DY up, where a map's icons are) or on the "map node" (the spot itself)
+    "bookmark_size": 1.0,
+    "bookmark_at": "icon",
 }  # View tab
+
+BOOKMARK_PIN_R = 11.0  # atlas units: a bookmark pin's radius at size 1 (it grows with the zoom, as the map's icons do)
+BOOKMARK_ATS = ("icon", "map node")
 
 
 ICON_ROW_DY, ICON_ROW_STEP = 24, 36  # icons are drawn in a row this far above their map node, this far apart,
@@ -131,6 +138,7 @@ FOLDER_FRONT_WAIT = 3.0  # s: how long an atlas folder's newly opened Explorer w
 FOLDER_PATHS_WAIT = 5.0  # s: at most this long for the Windows shell to say which folders Explorer shows
 FOLDER_FRONT_POLL = 0.05  # s: how often it is looked for (it shows where Explorer puts it until found and moved)
 ROUTE_POINTS_MAX = 20_000  # a saved route's lines and maps: at most this many points (across a 14k-map atlas ~2k)
+LOOK_ICON_MAX = 80  # the longest icon name a bookmark's or group's look takes (the raw names are shorter)
 ROUTE_LEGS_MAX = 200  # a saved route: its main leg and at most this many less one branches
 
 # the in-app update (app/updater.py): GitHub's latest release of the player build
@@ -303,6 +311,9 @@ EDIT_SAME = 90.0  # atlas units: a hand edit applies to the landmark this close 
 
 # a little between re-checks)
 EDIT_SPOT = 15.0  # a new edit replaces an older one only at the same spot
+MAP_EDIT_REACH = 25.0  # atlas units: a map deleted or added by hand is the one this close to its spot (a map drifts a
+# little when the atlas is checked again; maps stand ~200 apart)
+MAP_ICON_REACH = 45.0  # an icon whose base is this close to a map deleted by hand goes with it (cities.icon_maps)
 
 
 # --- replay / timelapse (app.replay and the page's timelapse player), and colouring screenshots by when taken

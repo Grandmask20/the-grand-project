@@ -1,18 +1,16 @@
-import { SearchIcon, XIcon } from "lucide-react";
+import { XIcon } from "lucide-react";
 import { useEffect } from "react";
-import { Section } from "@/components/common/Section";
-import { Checkbox } from "@/components/ui/checkbox";
+import { GameIcon } from "@/components/common/GameIcon";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { Switch } from "@/components/ui/switch";
 import { useSettings, useUpdateSettings } from "@/hooks/app/UseSettings";
 import { useListType } from "@/hooks/find/UseListType";
 import { useSearch } from "@/hooks/find/UseSearch";
 import { useAppStore } from "@/store/AppStore";
-import { ResultList } from "./ResultList";
-import { SelectedBox } from "./SelectedBox";
 import { TypeList } from "./TypeList";
 
-/** Find: search, the type list (what the map shows), the results and the selected item's details. */
+/** Find: search, and one list down to the panel's bottom: the types (what the map shows) with the results in it. */
 export function FindTab() {
 	// Find's state lives in the store (one owner: the map's Esc clears it too, and it outlasts this tab: CodeRabbit)
 	const text = useAppStore((s) => s.findText);
@@ -43,7 +41,12 @@ export function FindTab() {
 			if (!listed) setResults([], "");
 			return;
 		}
-		if (!d) return;
+		// a new search still coming: the results before go meanwhile (they stayed under its title, where "Bookmark
+		// all" would have saved them under its name: CodeRabbit)
+		if (!d) {
+			setResults([], "");
+			return;
+		}
 		if ("goto" in d) {
 			const [x, y] = d.goto;
 			setGoto([x, y]);
@@ -59,7 +62,8 @@ export function FindTab() {
 
 	const filter = (key: "multi_only" | "only_icon_maps" | "near_only", label: string) => (
 		<Label className="font-normal">
-			<Checkbox
+			{/* (an on/off setting: the game's round toggle, as its options menu) */}
+			<Switch
 				checked={!!settings?.[key]}
 				onCheckedChange={(v) => update.mutate({ [key]: v === true })}
 				aria-label={label}
@@ -69,23 +73,24 @@ export function FindTab() {
 	);
 
 	return (
-		<div className="flex flex-col gap-4">
+		<div className="flex h-full flex-col gap-4">
 			<div className="relative">
-				<SearchIcon className="absolute top-2 left-2 size-4 text-muted-foreground" />
+				{/* (inside the search bar's framed end) */}
+				<GameIcon name="search" className="absolute top-[9px] left-4 size-4" />
 				<Input
 					aria-label="Find"
 					placeholder="Find: a name, an icon, #12, or x, y"
 					value={text}
 					onChange={(e) => setText(e.target.value)}
 					onKeyDown={(e) => e.key === "Escape" && clear()}
-					className="pr-8 pl-8"
+					className="poe-search pr-7 pl-6"
 				/>
 				<button
 					type="button"
 					aria-label="Clear the search"
 					title="Clear the search and the rings on the map (Esc)"
 					onClick={clear}
-					className="absolute top-1.5 right-1.5 rounded p-0.5 text-muted-foreground hover:bg-accent hover:text-foreground"
+					className="absolute top-1.5 right-3 rounded p-0.5 text-muted-foreground hover:bg-accent hover:text-foreground"
 				>
 					<XIcon className="size-4" />
 				</button>
@@ -95,11 +100,7 @@ export function FindTab() {
 				{filter("only_icon_maps", "only maps with a ticked icon")}
 				{filter("near_only", "only potential city maps")}
 			</div>
-			<Section title="Types">
-				<TypeList onList={listType} />
-			</Section>
-			<ResultList />
-			<SelectedBox />
+			<TypeList onList={listType} />
 		</div>
 	);
 }

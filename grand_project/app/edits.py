@@ -1,6 +1,7 @@
 """app.edits: part of AtlasSession (a mixin; see app/session.py): hand edits kept in the atlas file.
 
-Landmarks changed, added or deleted (atlas.landmark_edits), city types set by hand, biomes drawn with the lasso
+Maps deleted or added (atlas.map_edits), landmarks changed, added or deleted (atlas.landmark_edits), city types
+set by hand, biomes drawn with the lasso
 (atlas.biome_edits), and the search for locked Breach strongholds (the hand badge) in new screenshots.
 """
 
@@ -16,7 +17,7 @@ from grand_project import cities as atlas_cities
 from grand_project import logs as atlas_log
 
 from .atlaslock import atlas_edit
-from .constants import EDIT_SPOT, LANDMARK_KINDS
+from .constants import EDIT_SPOT, LANDMARK_KINDS, MAP_EDIT_REACH
 
 LOG = atlas_log.get("app")
 
@@ -71,6 +72,108 @@ class EditsMixin:
             if not kind:  # a deleted city keeps no hand-set type
                 atlas_cities.set_type(self.atlas, x, y, None)
         self._edited(f"landmark at ({x:.0f}, {y:.0f}) " + (f"is now a {kind}" if kind else "deleted"))
+
+    @atlas_edit
+    def edit_map(self, x: float, y: float, op: str, kind: str = "") -> None:
+        """Delete the map at x, y, or add one there (user: ghost maps from detection, maps it missed).
+
+        Delete: a map added by hand there goes (its edit with it); any other map is marked deleted by you, and a
+        landmark standing on it is deleted too. Add: a map deleted by hand there comes back, its landmark as it was;
+        else a map is added (a landmark of `kind` with it: a City, a Hall, a Tower...).
+
+        Args:
+            x: Atlas x.
+            y: Atlas y.
+            op: "remove" or "add".
+            kind: For "add": a landmark kind (LANDMARK_KINDS) to put on it, or "" for a plain map.
+
+        Raises:
+            ValueError: With no atlas open, an unknown op or kind, no map to delete there, or a map already there.
+        """
+        self._need_atlas()
+        if op not in ("remove", "add"):
+            raise ValueError(f"unknown map edit: {op}")
+        if kind and (op != "add" or kind not in LANDMARK_KINDS):
+            raise ValueError(f"unknown landmark kind: {kind}")
+        near = lambda e: math.hypot(e["x"] - x, e["y"] - y) < MAP_EDIT_REACH  # noqa: E731
+        with self._lock:
+            edits = self.atlas.map_edits
+            # the maps shown there now, nearest first (the first found could be a neighbour: CodeRabbit)
+            live = sorted(
+                (i for i, n in enumerate(self.V["nodes"]) if n.get("status") != "removed" and near(n)),
+                key=lambda i: math.hypot(self.V["nodes"][i]["x"] - x, self.V["nodes"][i]["y"] - y),
+            )
+            if op == "remove":
+                if not live:
+                    raise ValueError("there is no map there to delete")
+                n = self.V["nodes"][live[0]]
+                # the add that made this map (or one a check found there since) goes: one whose nearest map shown is
+                # this one, not every add near the click (a neighbour you added went too) nor one another map owns (an
+                # add a check had found next to it was lost: CodeRabbit)
+                shown = [(j, m) for j, m in enumerate(self.V["nodes"]) if m.get("status") != "removed"]
+                to_n = lambda e: math.hypot(e["x"] - n["x"], e["y"] - n["y"])  # noqa: E731
+
+                def owner(e: dict) -> int:
+                    return min(shown, key=lambda jm: math.hypot(jm[1]["x"] - e["x"], jm[1]["y"] - e["y"]))[0]
+
+                added = sorted(
+                    (e for e in edits if e["op"] == "add" and to_n(e) < MAP_EDIT_REACH and owner(e) == live[0]),
+                    key=to_n,
+                )[:1]
+                self.atlas.map_edits = [e for e in edits if e not in added]
+                # the landmark standing on it goes with it (a false City on a ghost map): the landmark edits this
+                # takes away and makes are kept in the delete, so bringing the map back puts them back as they were
+                # (its City came back with it no more: self review)
+                dropped: list[dict] = []
+                made: list[dict] = []
+                for k, v in self.D.get("landmark_node", {}).items():
+                    lm = self.V["landmarks"][k]
+                    if v == live[0] and not lm["status"].startswith("removed"):
+                        own = [
+                            e
+                            for e in self.atlas.landmark_edits
+                            if math.hypot(e["x"] - lm["x"], e["y"] - lm["y"]) < EDIT_SPOT
+                        ]
+                        self.atlas.landmark_edits = [e for e in self.atlas.landmark_edits if e not in own]
+                        dropped += own
+                        # one put there by hand just goes (a delete with nothing at its spot would reach a landmark
+                        # next to it); a detected one is marked deleted, also when an edit had changed its kind (a
+                        # Hall brought back as a City stayed a Hall: CodeRabbit)
+                        if not lm.get("added"):
+                            e = {"x": round(lm["x"], 1), "y": round(lm["y"], 1), "kind": "", "on": "landmark"}
+                            self.atlas.landmark_edits.append(e)
+                            made.append(e)
+                # a delete is kept unless the map shown is the one you added (its add just goes); one a check found
+                # since, where you had added one, needs it (it stayed: CodeRabbit)
+                if n.get("origin") != "by you":
+                    rm = {"x": round(n["x"], 1), "y": round(n["y"], 1), "op": "remove"}
+                    self.atlas.map_edits.append(
+                        rm
+                        | ({"landmarks_dropped": dropped} if dropped else {})
+                        | ({"landmarks_made": made} if made else {})
+                    )
+                what = f"map #{live[0]} deleted"
+            else:
+                deleted = [e for e in edits if e["op"] == "remove" and near(e)]
+                if live and not deleted:
+                    raise ValueError("there is a map there already")
+                self.atlas.map_edits = [e for e in edits if e not in deleted]
+                # a deleted map brought back: its landmark edits as they were before the delete
+                for d in deleted:
+                    made = d.get("landmarks_made", [])
+                    self.atlas.landmark_edits = [e for e in self.atlas.landmark_edits if e not in made]
+                    self.atlas.landmark_edits += [
+                        e for e in d.get("landmarks_dropped", []) if e not in self.atlas.landmark_edits
+                    ]
+                if not deleted:
+                    self.atlas.map_edits.append({"x": round(x, 1), "y": round(y, 1), "op": "add"})
+                if kind:
+                    self.atlas.landmark_edits = [
+                        e for e in self.atlas.landmark_edits if math.hypot(e["x"] - x, e["y"] - y) >= EDIT_SPOT
+                    ]
+                    self.atlas.landmark_edits.append({"x": round(x, 1), "y": round(y, 1), "kind": kind, "on": "map"})
+                what = ("deleted map brought back" if deleted else "map added") + (f" as a {kind}" if kind else "")
+        self._edited(f"{what} at ({x:.0f}, {y:.0f})")
 
     @atlas_edit
     def set_city_type(self, i: int, typ: str | None) -> None:

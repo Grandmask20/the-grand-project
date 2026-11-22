@@ -27,6 +27,7 @@ import { MapLabels } from "./MapLabels";
 import { MapPan } from "./MapPan";
 import { MapSprites } from "./MapSprites";
 import { PlayerMarker } from "./PlayerMarker";
+import { SelectionBox } from "./SelectionBox";
 import { TileSources } from "./sources/TileSources";
 import { Scene3D } from "./three/Scene3D";
 
@@ -130,8 +131,14 @@ export function AtlasMap({ info, meta }: Props) {
 					</MapViewContext.Provider>
 				)}
 			</MapGL>
+			{/* the selection's box: beside the map's own element, so the map never takes its clicks or wheel */}
+			{map && (
+				<MapViewContext.Provider value={view}>
+					<SelectionBox />
+				</MapViewContext.Provider>
+			)}
 			{!shown && (
-				<div className="absolute inset-0 z-10 flex flex-col items-center justify-center gap-2 bg-background text-sm text-muted-foreground">
+				<div className="absolute inset-0 z-10 flex flex-col items-center justify-center gap-2 poe-grain text-sm text-muted-foreground">
 					<p className="text-foreground">Loading atlas…</p>
 					{Object.entries(parts).map(([name, p]) =>
 						p ? (
@@ -154,7 +161,7 @@ export function AtlasMap({ info, meta }: Props) {
 				</div>
 			)}
 			{startError && (
-				<div className="absolute inset-0 z-20 flex flex-col items-center justify-center gap-2 bg-background p-4 text-center text-sm">
+				<div className="absolute inset-0 z-20 flex flex-col items-center justify-center gap-2 poe-grain p-4 text-center text-sm">
 					<p className="text-destructive">The map could not start: {startError}</p>
 					<p className="text-muted-foreground">
 						It needs WebGL: check that hardware acceleration is on in the browser's settings.
@@ -165,7 +172,7 @@ export function AtlasMap({ info, meta }: Props) {
 				</div>
 			)}
 			{(failed.length > 0 || tileError) && (
-				<div className="absolute top-2 left-2 z-10 max-w-md rounded border border-destructive bg-card p-2 text-xs text-destructive">
+				<div className="absolute top-2 left-2 z-10 max-w-md rounded border border-destructive poe-grain p-2 text-xs text-destructive">
 					{failed.map(([name, p]) => (
 						<p key={name}>
 							{PART_NAMES[name] ?? name} could not be made: {p?.error}
@@ -224,9 +231,11 @@ function useShown(map: MapLibreMap | null, tileError: string | null) {
  * Pan freely, well past the atlas (user: the old window let you pan off it), but the centre stays within half an
  * atlas past its edges (MapLibre's world was too small a limit on a big atlas, and tilted the view reaches the
  * horizon: it panned off endlessly, user). Part of MapLibre's own constraint, so every camera change keeps to it:
- * corrected afterwards from move events, the two limits fought (a jump far out overflowed the stack).
+ * corrected afterwards from move events, the two limits fought (a jump far out overflowed the stack). It takes the
+ * place of MapLibre's own, which also kept the zoom within its limits: so does this one (user: you could zoom in
+ * endlessly, past the map's deepest zoom).
  */
-function constrainTo(info: MapInfo, geo: Geo) {
+export function constrainTo(info: MapInfo, geo: Geo) {
 	const ax0 = info.grid.x0;
 	const ay0 = info.grid.y0;
 	const ax1 = ax0 + info.grid.width / info.grid.scale;
@@ -241,7 +250,7 @@ function constrainTo(info: MapInfo, geo: Geo) {
 		);
 		return {
 			center: new LngLat(Math.min(Math.max(lng, -180), 180), Math.min(Math.max(lat, -MAX_LAT), MAX_LAT)),
-			zoom,
+			zoom: Math.min(Math.max(zoom, 0), info.maxzoom),
 		};
 	};
 }
