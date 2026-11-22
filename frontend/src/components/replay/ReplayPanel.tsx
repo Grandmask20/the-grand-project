@@ -57,8 +57,12 @@ export function ReplayPanel({ meta }: { meta: Meta }) {
 	const exporting = useRef<{ cancel: boolean } | null>(null);
 	const [exportInfo, setExportInfo] = useState("");
 	const [busy, setBusy] = useState(false); // a frame export runs: the position is its own (CodeRabbit)
-	// settings changes, sent one after another (each answer then lands in order: CodeRabbit)
+	// settings changes, sent one after another (each answer then lands in order: CodeRabbit), and how many are still
+	// on their way: no recording or export starts until they are done (an answer reset the panel while the recorder
+	// ran: CodeRabbit)
 	const queue = useRef<Promise<void>>(Promise.resolve());
+	const [pending, setPending] = useState(0);
+	const pendingNow = useRef(0);
 
 	// playback: move on, move the camera
 	// biome-ignore lint/correctness/useExhaustiveDependencies: restarted only when play starts / stops
@@ -123,8 +127,14 @@ export function ReplayPanel({ meta }: { meta: Meta }) {
 	// dropped an older one that had worked: CodeRabbit). None once the timelapse is closed (one opened it again).
 	// (whether the app took it: a number box shows the setting again after a refusal)
 	const change = (c: Partial<ReplaySettings>): Promise<boolean> => {
+		const counted = (d: number) => {
+			pendingNow.current += d;
+			setPending(pendingNow.current);
+		};
+		counted(1);
 		const run = queue.current.then(async () => {
-			if (!useAppStore.getState().replay) return false;
+			// (none sent while a recording or an export runs: they keep the plan they started with)
+			if (!useAppStore.getState().replay || useAppStore.getState().replay?.recording) return false;
 			try {
 				const next = await app.setReplay(c);
 				if (useAppStore.getState().replay) setReplay({ plan: next, pos: 0, playing: false, recording: false });
@@ -134,7 +144,10 @@ export function ReplayPanel({ meta }: { meta: Meta }) {
 				return false;
 			}
 		});
-		queue.current = run.then(() => undefined);
+		queue.current = run.then(
+			() => counted(-1),
+			() => counted(-1),
+		);
 		return run;
 	};
 
@@ -150,7 +163,7 @@ export function ReplayPanel({ meta }: { meta: Meta }) {
 	 * GIF export did. The last frame stays up for 2 s.
 	 */
 	const exportReplay = async (kind: ExportKind) => {
-		if (!map || !geo || !frames.data || exporting.current) return;
+		if (!map || !geo || !frames.data || exporting.current || pendingNow.current) return;
 		const fps = kind === "gif" ? GIF_FPS : VIDEO_FPS;
 		const n = Math.max(2, Math.round(st.length * fps));
 		const count = kind === "gif" ? Math.min(GIF_MAX_FRAMES, n) : n;
@@ -208,7 +221,8 @@ export function ReplayPanel({ meta }: { meta: Meta }) {
 			exporting.current = null;
 			setBusy(false);
 			setExportInfo("");
-			if (still()) patch({ recording: false });
+			// (only for its own timelapse: a new one opened meanwhile had its recording flag cleared: CodeRabbit)
+			if (still() && useAppStore.getState().replay?.plan === plan) patch({ recording: false });
 		}
 	};
 
@@ -218,7 +232,7 @@ export function ReplayPanel({ meta }: { meta: Meta }) {
 	};
 
 	const record = () => {
-		if (!map) return;
+		if (!map || pendingNow.current) return;
 		if (recorder.current) {
 			recorder.current.stop();
 			return;
@@ -347,7 +361,12 @@ export function ReplayPanel({ meta }: { meta: Meta }) {
 					// one Export with both kinds (user: the old window exported GIFs, the page only recorded video)
 					<DropdownMenu>
 						<DropdownMenuTrigger asChild>
-							<Button size="xs" variant="outline">
+							<Button
+								size="xs"
+								variant="outline"
+								disabled={pending > 0}
+								title={pending > 0 ? "Wait until the settings changed are saved" : undefined}
+							>
 								<DownloadIcon />
 								Export
 							</Button>
@@ -441,6 +460,9 @@ export function NumberSetting({
 	const edits = useRef(0); // keys typed: a refusal answered after newer typing leaves the box as typed
 	const current = useRef(value);
 	current.current = value;
+	// a value sent and still on its way: a new one is compared with it, not the setting in use (typed back to the
+	// setting while another was on its way, it was never sent and the other won: CodeRabbit)
+	const sent = useRef<number | null>(null);
 	const timer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined); // a value still settling
 	const off = useRef(disabled);
 	off.current = disabled;
@@ -464,19 +486,22 @@ export function NumberSetting({
 		if (t.trim() === "" || !Number.isFinite(n)) return setText(String(value));
 		const v = Math.min(hi, Math.max(lo, whole ? Math.round(n) : n));
 		setText(String(v));
-		if (v !== value) send(v);
+		if (v !== (sent.current ?? value)) send(v);
 	};
 	// a value used; refused, and nothing typed since, the box shows the setting in use again (it kept the refused
 	// number while the replay used the old one: CodeRabbit)
 	const send = (v: number) => {
 		const at = edits.current;
 		const answer = onCommit(v);
-		if (answer)
+		if (answer) {
+			sent.current = v;
 			void answer.then((ok) => {
+				if (sent.current === v) sent.current = null;
 				if (ok || edits.current !== at) return;
 				typing.current = false;
 				setText(String(current.current));
 			});
+		}
 	};
 	// typing paused: used only when it is already a number in range; the box is left as typed (a half-typed "2" on
 	// the way to "20" was set to the lowest and written over: self review)
@@ -484,7 +509,7 @@ export function NumberSetting({
 		if (off.current) return;
 		const n = Number(t);
 		const v = whole ? Math.round(n) : n;
-		if (t.trim() !== "" && Number.isFinite(n) && v >= lo && v <= hi && v !== value) send(v);
+		if (t.trim() !== "" && Number.isFinite(n) && v >= lo && v <= hi && v !== (sent.current ?? value)) send(v);
 	};
 	// (the one as it is then: the setting may have changed meanwhile)
 	const latest = useRef(settle);

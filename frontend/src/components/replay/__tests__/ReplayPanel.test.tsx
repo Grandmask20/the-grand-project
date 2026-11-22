@@ -125,10 +125,28 @@ describe("ReplayPanel", () => {
 		await user.click(screen.getByRole("button", { name: "Export" }));
 		await user.click(await screen.findByRole("menuitem", { name: /^GIF/ }));
 		await waitFor(() => expect(exportFile.finishing).toBe(true));
-		// another timelapse open by the time the file is done (the panel's cancel only comes with a close)
-		act(() => useAppStore.getState().setReplay({ plan: plan(30), pos: 0, playing: false, recording: false }));
+		// another timelapse open by the time the file is done (the panel's cancel only comes with a close), recording
+		act(() => useAppStore.getState().setReplay({ plan: plan(30), pos: 0, playing: false, recording: true }));
 		await act(async () => exportFile.finish(new Blob(["gif"])));
 		expect(download).not.toHaveBeenCalled();
+		// ...and its recording flag left as it is (cleared, its Stop was hidden: CodeRabbit)
+		expect(useAppStore.getState().replay?.recording).toBe(true);
+	});
+
+	it("no export or recording starts while a settings change is on its way (CodeRabbit)", async () => {
+		let answer: (p: ReplayPlan) => void = () => {};
+		const { user } = open({
+			"PATCH /api/replay": () =>
+				new Promise<ReplayPlan>((r) => {
+					answer = r;
+				}),
+		});
+		const box = screen.getByRole("spinbutton", { name: "length (s)" });
+		await user.clear(box);
+		await user.type(box, "45{Enter}");
+		expect(screen.getByRole("button", { name: "Export" })).toBeDisabled();
+		await act(async () => answer(plan(45)));
+		await waitFor(() => expect(screen.getByRole("button", { name: "Export" })).toBeEnabled());
 	});
 
 	it("sends settings changes one after another: the last answer shown is the last change's (CodeRabbit)", async () => {
