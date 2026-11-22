@@ -2,7 +2,7 @@ import type { LayerSpecification } from "maplibre-gl";
 import type { Meta } from "@/domain/app/Meta";
 import type { Geo } from "@/logic/Geo";
 import { findRing, visibility } from "./AtlasLayers";
-import { ringRadius, worldSize } from "./Sizes";
+import { ringRadius, worldSize, zoomAt } from "./Sizes";
 
 /**
  * The layers of what the page draws over the tiles, each over a GeoJSON source of the same name (the source a layer
@@ -84,6 +84,39 @@ export function routeLayers(geo: Geo, on: boolean): { line: Spec[]; nodes: Spec;
 				"circle-opacity": 0.55,
 				"circle-stroke-color": "#000000",
 				"circle-stroke-width": 2,
+			},
+		},
+	};
+}
+
+/** Hover peek (HoverPeek): the map under the mouse, its paths and the maps they go to, lit in teal. */
+export function hoverLayers(geo: Geo): { lines: Spec; maps: Spec } {
+	return {
+		lines: {
+			id: "hover-lines",
+			type: "line",
+			source: "hover-peek",
+			filter: ["==", ["geometry-type"], "LineString"],
+			layout: { "line-cap": "round", "line-join": "round" },
+			paint: { "line-color": "#5dcaa5", "line-width": 4, "line-opacity": 0.9 },
+		},
+		maps: {
+			id: "hover-maps",
+			type: "circle",
+			source: "hover-peek",
+			filter: ["==", ["geometry-type"], "Point"],
+			paint: {
+				// (zoom on the outside: MapLibre takes it nowhere else) the hovered map's ring wider than its neighbours'
+				"circle-radius": [
+					"interpolate",
+					["exponential", 2],
+					["zoom"],
+					zoomAt(geo, 0.25),
+					["case", ["get", "here"], 8, 5],
+					zoomAt(geo, 1.6),
+					["case", ["get", "here"], 20, 17],
+				],
+				...hollow("#5dcaa5", 2.5),
 			},
 		},
 	};

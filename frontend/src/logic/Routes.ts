@@ -44,6 +44,11 @@ export class RouteGraph {
 		return this.pos.get(id);
 	}
 
+	/** The maps a path joins straight to this one. */
+	neighbours(id: number): number[] {
+		return this.adj.get(id) ?? [];
+	}
+
 	iconsOf(id: number): string[] {
 		return this.icons.get(id) ?? [];
 	}

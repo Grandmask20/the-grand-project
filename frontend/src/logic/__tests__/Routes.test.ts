@@ -33,6 +33,11 @@ const graph = new RouteGraph({
 });
 
 describe("RouteGraph", () => {
+	it("names the maps a path joins straight to one", () => {
+		expect(graph.neighbours(0)).toContain(1);
+		expect(graph.neighbours(12345)).toEqual([]);
+	});
+
 	it("takes the fewest maps", () => {
 		expect(graph.shortest(0, (u) => u === 3)).toEqual([0, 1, 2, 3]);
 	});
