@@ -13,6 +13,18 @@ describe("AtlasesTab", () => {
 		expect(screen.getByText("open")).toBeInTheDocument();
 	});
 
+	it("a card's buttons show only while it is pointed at or reached by the keyboard (user: reveal on hover)", async () => {
+		renderWithApp(<AtlasesTab />, { "GET /api/atlases": atlases });
+		const buttons = (await screen.findByRole("button", { name: "Rename second" })).parentElement;
+		// (the column, not each button: a disabled button's own half opacity would show it)
+		expect(buttons).toHaveClass(
+			"opacity-0",
+			"group-hover/card:opacity-100",
+			"group-has-[:focus-visible]/card:opacity-100",
+		);
+		expect(buttons?.closest(".group\\/card")).not.toBeNull();
+	});
+
 	it("opens another atlas from its card", async () => {
 		const { user, calls } = renderWithApp(<AtlasesTab />, {
 			"GET /api/atlases": atlases,
