@@ -1,30 +1,43 @@
 import { useQueryClient } from "@tanstack/react-query";
-import {
-	ChevronDownIcon,
-	ChevronRightIcon,
-	EyeIcon,
-	EyeOffIcon,
-	PencilIcon,
-	RouteIcon,
-	Trash2Icon,
-} from "lucide-react";
-import { useState } from "react";
+import { ChevronDownIcon, ChevronRightIcon, EyeIcon, EyeOffIcon, RouteIcon, Trash2Icon } from "lucide-react";
+import { type ReactNode, useState } from "react";
 import { AppQueryKeys } from "@/api/AppQueryKeys";
+import { GameIcon } from "@/components/common/GameIcon";
+import { RouteProgress } from "@/components/route/RouteProgress";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import type { Bookmark, Bookmarks, SavedRoute } from "@/domain/bookmarks/Bookmarks";
 import { useAppClient } from "@/hooks/app/UseAppClient";
+import { useMeta } from "@/hooks/app/UseMeta";
 import { useBookmarks } from "@/hooks/bookmarks/UseBookmarks";
 import { routeBox, routeTitle } from "@/hooks/map/UseRoutes";
 import { useAppStoreCalm } from "@/store/AppStore";
 import { cn } from "@/utils/Cn";
 import { plural } from "@/utils/Format";
+import { LookMark } from "./LookPicker";
 import { SavedRouteMenu } from "./SavedRouteMenu";
 
-/** Bookmarks by group: show / hide on the map, go to, edit, move, delete; groups made, renamed, hidden. */
+/** A row's pen or bin: shown while the row is pointed at or in focus (user: hidden until hovered is fine). */
+function RowAction({ label, onClick, children }: { label: string; onClick: () => void; children: ReactNode }) {
+	return (
+		<button
+			type="button"
+			aria-label={label}
+			title={label}
+			onClick={onClick}
+			className="rounded p-0.5 text-muted-foreground opacity-0 group-focus-within/row:opacity-100 group-hover/row:opacity-100 hover:bg-background hover:text-foreground focus-visible:opacity-100"
+		>
+			{children}
+		</button>
+	);
+}
+
+/** Bookmarks by group: show / hide on the map, go to, edit (name, note, look), move, delete; groups made, edited
+ * (name and look), hidden. */
 export function BookmarksTab() {
 	const app = useAppClient();
 	const bookmarks = useBookmarks();
+	const standard = useMeta().data?.colours.bookmark ?? "#c8a45c";
 	const [picked, setPicked] = useState<Set<number>>(new Set());
 	// groups ticked: all their bookmarks are picked, and an empty one is deleted with Delete (user: no way to delete
 	// an empty group)
@@ -218,7 +231,7 @@ export function BookmarksTab() {
 				const folded = !!g.folded;
 				return (
 					<div key={g.name} className="flex flex-col">
-						<div className="flex items-center gap-1.5 border-b py-1">
+						<div className="group/row flex items-center gap-1.5 border-b py-1">
 							<Checkbox
 								checked={g.items.length ? g.items.every((b) => picked.has(b.id)) : pickedGroups.has(g.name)}
 								onCheckedChange={(v) => toggleGroupPick(g.name, v === true)}
@@ -232,18 +245,19 @@ export function BookmarksTab() {
 							>
 								{folded ? <ChevronRightIcon className="size-4" /> : <ChevronDownIcon className="size-4" />}
 							</button>
-							{/* a group holding routes: the path symbol before its eye too (user); the others keep the room */}
+							{/* a group holding routes: the path symbol before its eye too (user); a group with an icon of its
+							    own: that; the others none, the row closing up (user: no empty room) */}
 							{g.items.some((b) => b.route) ? (
-								<RouteIcon className="size-4 shrink-0 text-gold" aria-label="Routes" />
-							) : (
-								<span className="size-4 shrink-0" />
-							)}
+								<RouteIcon className="size-4 shrink-0" style={{ color: g.colour || undefined }} aria-label="Routes" />
+							) : g.icon ? (
+								<LookMark colour={g.colour || standard} icon={g.icon} plain={g.plain} size={14} />
+							) : null}
 							<button
 								type="button"
 								aria-label={g.hidden ? `Show ${g.name}` : `Hide ${g.name}`}
 								onClick={() => void app.toggleGroup(g.name).catch(fail)}
 							>
-								{g.hidden ? <EyeOffIcon className="size-4 text-muted-foreground" /> : <EyeIcon className="size-4" />}
+								{g.hidden ? <EyeOffIcon className="size-5 text-muted-foreground" /> : <EyeIcon className="size-5" />}
 							</button>
 							<button
 								type="button"
@@ -254,101 +268,125 @@ export function BookmarksTab() {
 							>
 								{g.name} <span className="font-normal text-muted-foreground">({g.items.length})</span>
 							</button>
-							<button
-								type="button"
-								aria-label={`Rename ${g.name}`}
+							{/* the pen: its name and look (user: icons and colours per group) */}
+							<RowAction
+								label={`Edit ${g.name}`}
 								onClick={() =>
-									s.ask({
-										title: "Rename group",
-										label: "New name:",
-										value: g.name,
-										onOk: (n) =>
-											void app
-												.renameGroup(g.name, n)
-												// a ticked group stays ticked under its new name (user)
-												.then(() =>
-													setPickedGroups((gs) =>
-														gs.has(g.name) ? new Set([...gs].filter((x) => x !== g.name).concat(n.trim())) : gs,
-													),
-												)
-												.catch(fail),
+									s.editGroup({
+										name: g.name,
+										colour: g.colour ?? "",
+										icon: g.icon ?? "",
+										plain: !!g.plain,
+										// a ticked group stays ticked under its new name (user)
+										onRenamed: (to) =>
+											setPickedGroups((gs) =>
+												gs.has(g.name) ? new Set([...gs].filter((x) => x !== g.name).concat(to)) : gs,
+											),
 									})
 								}
 							>
-								<PencilIcon className="size-3.5 text-muted-foreground" />
-							</button>
+								<GameIcon name="edit" className="size-4" />
+							</RowAction>
 						</div>
 						{!folded &&
-							g.items.map((b) => (
-								<div key={b.id} className="flex items-center gap-1.5 py-0.5 pl-1">
-									<Checkbox
-										checked={picked.has(b.id)}
-										onCheckedChange={(v) => toggle(b.id, v === true)}
-										aria-label={`Pick ${b.name}`}
-									/>
-									{/* a saved route: a path symbol before its eye, to tell it from a map's bookmark (user); the
-									    others keep the room, so the eyes line up */}
-									{b.route ? (
-										<RouteIcon className="size-3.5 shrink-0 text-gold" aria-label="Route" />
-									) : (
-										<span className="size-3.5 shrink-0" />
-									)}
-									<button
-										type="button"
-										aria-label={b.hidden ? `Show ${b.name}` : `Hide ${b.name}`}
-										onClick={() => void app.toggleBookmark(b.id).catch(fail)}
+							g.items.map((b) => {
+								const tracking = !!b.route && s.route?.saved === b.id && s.route.at !== undefined;
+								return (
+									<div
+										key={b.id}
+										className="group/row flex items-center gap-1.5 rounded py-0.5 pl-1 hover:bg-accent/60"
 									>
-										{b.shown ? (
-											<EyeIcon className="size-3.5" />
+										<Checkbox
+											checked={picked.has(b.id)}
+											onCheckedChange={(v) => toggle(b.id, v === true)}
+											aria-label={`Pick ${b.name}`}
+										/>
+										{/* a saved route: a path symbol before its eye, to tell it from a map's bookmark (user); a
+									    bookmark: its sign (banner's #51, liked by the user) in its look, its own or its group's */}
+										{b.route ? (
+											<RouteIcon
+												className={cn("size-3.5 shrink-0", tracking ? "text-route" : "text-gold")}
+												aria-label="Route"
+											/>
 										) : (
-											<EyeOffIcon className="size-3.5 text-muted-foreground" />
+											<LookMark
+												colour={b.colour || g.colour || standard}
+												icon={b.icon || g.icon}
+												plain={b.icon ? b.plain : g.plain}
+												size={14}
+											/>
 										)}
-									</button>
-									<button
-										type="button"
-										className={cn(
-											"flex-1 truncate text-left hover:text-gold",
-											b.route && s.routeLit === b.id && "text-gold",
-										)}
-										title={b.note || (b.route ? routeTitle(b.name, b.route) : b.name)}
-										onContextMenu={(e) => {
-											// a route's menu: track it, add maps, remove maps (user)
-											const route = b.route;
-											if (!route) return;
-											e.preventDefault();
-											setRouteMenu({ x: e.clientX, y: e.clientY, bookmark: { ...b, route } });
-										}}
-										onClick={async () => {
-											// a route: lit up as a selected bookmark is, the whole of it in view with room round it (user)
-											if (b.route) {
-												s.lightRoute(b.id);
-												return s.fitArea(routeBox(b.route));
+										<button
+											type="button"
+											aria-label={b.hidden ? `Show ${b.name}` : `Hide ${b.name}`}
+											onClick={() => void app.toggleBookmark(b.id).catch(fail)}
+										>
+											{b.shown ? (
+												<EyeIcon className="size-[18px]" />
+											) : (
+												<EyeOffIcon className="size-[18px] text-muted-foreground" />
+											)}
+										</button>
+										<button
+											type="button"
+											className={cn(
+												"flex-1 truncate text-left hover:text-gold",
+												b.route && s.routeLit === b.id && "text-gold",
+											)}
+											title={b.note || (b.route ? routeTitle(b.name, b.route) : b.name)}
+											onContextMenu={(e) => {
+												// a route's menu: track it, add maps, remove maps (user)
+												const route = b.route;
+												if (!route) return;
+												e.preventDefault();
+												setRouteMenu({ x: e.clientX, y: e.clientY, bookmark: { ...b, route } });
+											}}
+											onClick={async () => {
+												// a route: lit up as a selected bookmark is, the whole of it in view with room round it (user)
+												if (b.route) {
+													s.lightRoute(b.id);
+													return s.fitArea(routeBox(b.route));
+												}
+												s.flyTo(b.x, b.y, 1);
+												try {
+													await s.selectLoaded(app.getInfo("bookmark", b.id));
+												} catch (e) {
+													fail(e);
+												}
+											}}
+										>
+											{b.route ? routeTitle(b.name, b.route) : b.name}
+											{/* the route tracked: how far along it is (banner's #51, liked by the user) */}
+											{tracking && s.route?.at !== undefined && (
+												<RouteProgress path={s.route.path} at={s.route.at} bare />
+											)}
+										</button>
+										{/* the pen: its name, group, note and look (user: icons and colours per bookmark) */}
+										<RowAction
+											label={`Edit ${b.name}`}
+											onClick={() =>
+												s.editBookmark({
+													id: b.id,
+													x: b.x,
+													y: b.y,
+													name: b.name,
+													group: g.name,
+													note: b.note,
+													colour: b.colour ?? "",
+													icon: b.icon ?? "",
+													plain: !!b.plain,
+												})
 											}
-											s.flyTo(b.x, b.y, 1);
-											try {
-												await s.selectLoaded(app.getInfo("bookmark", b.id));
-											} catch (e) {
-												fail(e);
-											}
-										}}
-									>
-										{b.route ? routeTitle(b.name, b.route) : b.name}
-									</button>
-									<button
-										type="button"
-										aria-label={`Edit ${b.name}`}
-										onClick={() =>
-											s.editBookmark({ id: b.id, x: b.x, y: b.y, name: b.name, group: g.name, note: b.note })
-										}
-									>
-										<PencilIcon className="size-3.5 text-muted-foreground" />
-									</button>
-									{/* one at a time, without ticking it first (user: deleting needed the box or the pin) */}
-									<button type="button" aria-label={`Delete ${b.name}`} onClick={() => remove([b.id], b.name)}>
-										<Trash2Icon className="size-3.5 text-muted-foreground hover:text-destructive" />
-									</button>
-								</div>
-							))}
+										>
+											<GameIcon name="edit" className="size-4" />
+										</RowAction>
+										{/* one at a time, without ticking it first (user: deleting needed the box or the pin) */}
+										<RowAction label={`Delete ${b.name}`} onClick={() => remove([b.id], b.name)}>
+											<Trash2Icon className="size-3.5 hover:text-destructive" />
+										</RowAction>
+									</div>
+								);
+							})}
 					</div>
 				);
 			})}

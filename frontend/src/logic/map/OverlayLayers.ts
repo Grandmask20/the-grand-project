@@ -2,7 +2,7 @@ import type { LayerSpecification } from "maplibre-gl";
 import type { Meta } from "@/domain/app/Meta";
 import type { Geo } from "@/logic/Geo";
 import { findRing, visibility } from "./AtlasLayers";
-import { ringRadius, zoomAt } from "./Sizes";
+import { ringRadius, worldSize } from "./Sizes";
 
 /**
  * The layers of what the page draws over the tiles, each over a GeoJSON source of the same name (the source a layer
@@ -103,17 +103,43 @@ export const recentLayer = (meta: Meta, on: boolean): Spec => ({
 });
 
 /** The bookmarks, as dots a little above their spot. */
-export const bookmarkLayer = (geo: Geo, meta: Meta, on: boolean): Spec => ({
-	id: "bookmarks",
-	type: "circle",
+/** A bookmark pin's radius in screen px: `size` times the pin's atlas units, growing with the zoom as the map's
+ * icons do (user: the pins were tiny and didn't scale), from 3 px far out to twice its units close in. */
+const pinRadius = (geo: Geo, meta: Meta, size: number) => worldSize(geo, meta.bookmark_pin * size, 3 * size, 2);
+
+export const bookmarkLayer = (geo: Geo, meta: Meta, on: boolean, size = 1): Spec => {
+	return {
+		id: "bookmarks",
+		type: "circle",
+		source: "bookmarks",
+		// the pin: for a bookmark without an icon, or round its icon (not a symbol's, nor one without a ring)
+		filter: ["any", ["==", ["get", "icon"], ""], ["==", ["get", "ring"], true]],
+		layout: { visibility: visibility(on) },
+		paint: {
+			// (a pin with an icon: a ring of its colour round it, the icon inside: bookmarkIconLayer)
+			"circle-radius": pinRadius(geo, meta, size),
+			// its own colour, else its group's (BookmarkLayer), else the page's
+			"circle-color": ["coalesce", ["get", "colour"], meta.colours.bookmark],
+			"circle-stroke-color": "#000000",
+			"circle-stroke-width": 1.5,
+		},
+	};
+};
+
+/** The icons of bookmarks that have one (their own or their group's: user), on their pins. The pictures are the map
+ * icons' (MapSprites loads one when it is first asked for). */
+export const bookmarkIconLayer = (geo: Geo, meta: Meta, on: boolean, size = 1): Spec => ({
+	id: "bookmark-icons",
+	type: "symbol",
 	source: "bookmarks",
-	layout: { visibility: visibility(on) },
-	paint: {
-		"circle-radius": ["interpolate", ["linear"], ["zoom"], zoomAt(geo, 0.05), 3, zoomAt(geo, 2), 9],
-		"circle-color": meta.colours.bookmark,
-		"circle-stroke-color": "#000000",
-		"circle-stroke-width": 1.5,
-		"circle-translate": [0, -10],
+	filter: ["!=", ["get", "icon"], ""],
+	layout: {
+		visibility: visibility(on),
+		"icon-image": ["get", "icon"],
+		// the pictures are 64 px: 0.8 of the pin's width, growing with it
+		"icon-size": worldSize(geo, (1.6 * meta.bookmark_pin * size) / 64, (4.8 * size) / 64, 2),
+		"icon-allow-overlap": true,
+		"icon-ignore-placement": true,
 	},
 });
 

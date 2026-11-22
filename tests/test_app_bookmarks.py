@@ -132,7 +132,15 @@ def test_an_atlas_from_before_gets_ids_and_a_map_carries_its_bookmark(opened):
     node = next(n for n in range(len(s.V["nodes"])) if s.info("node", n).get("bookmark") is not None)
     info = s.info("node", node)
     # the bookmark's own name, group and note come with the map (no guess while the list loads: CodeRabbit)
-    assert info["bookmark_of"] == {"id": info["bookmark"], "name": "here", "group": "Boss", "note": "a note"}
+    assert info["bookmark_of"] == {
+        "id": info["bookmark"],
+        "name": "here",
+        "group": "Boss",
+        "note": "a note",
+        "colour": "",
+        "icon": "",
+        "plain": False,
+    }  # (and its look: an edit from the map keeps it)
     assert i >= 0
 
 
@@ -226,3 +234,79 @@ def test_a_route_change_made_for_another_atlas_is_refused(opened):
     with pytest.raises(StaleAtlas):
         s.set_bookmark_route(r, {"from": 1, "to": 2, "maps": 1, "legs": legs}, gen=s.generation + 1)
     s.set_bookmark_route(r, {"from": 1, "to": 2, "maps": 1, "legs": legs}, gen=s.generation)
+
+
+def test_a_bookmarks_look_is_kept_changed_and_cleared(opened):
+    s, path, pts = opened
+    i = s.add_bookmark(pts[3][0], pts[3][1], "boss", "Run", colour="#FF0000", icon="Breach")
+    b = s._bookmark(i)
+    assert (b["colour"], b["icon"]) == ("#ff0000", "Breach")
+    s.edit_bookmark(i, "boss", "Run", "")  # an edit that doesn't send its look keeps it
+    assert (s._bookmark(i)["colour"], s._bookmark(i)["icon"]) == ("#ff0000", "Breach")
+    s.edit_bookmark(i, "boss", "Run", "", colour="", icon="Ritual")  # "": none of its own
+    assert "colour" not in s._bookmark(i) and s._bookmark(i)["icon"] == "Ritual"
+    assert core.Atlas.load(path).bookmarks[-1]["icon"] == "Ritual"  # saved
+    row = next(b for g in s.bookmarks_payload()["groups"] for b in g["items"] if b["id"] == i)
+    assert row["icon"] == "Ritual" and "colour" not in row
+    for bad in ({"colour": "red"}, {"colour": "#12345"}, {"icon": "x" * 200}):
+        with pytest.raises(ValueError):
+            s.edit_bookmark(i, "boss", "Run", "", **bad)
+    assert s._bookmark(i)["icon"] == "Ritual"  # (a bad look changes nothing)
+
+
+def test_a_groups_look_is_saved_follows_a_rename_and_goes(opened):
+    s, path, pts = opened
+    s.add_bookmark(pts[3][0], pts[3][1], "boss", "Run")
+    s.style_group("Run", "#00ff00", "Delirium")
+    group = next(g for g in s.bookmarks_payload()["groups"] if g["name"] == "Run")
+    assert (group["colour"], group["icon"]) == ("#00ff00", "Delirium")
+    assert core.Atlas.load(path).group_looks == {"Run": {"colour": "#00ff00", "icon": "Delirium"}}
+    s.rename_group("Run", "Daily")
+    assert s.atlas.group_looks == {"Daily": {"colour": "#00ff00", "icon": "Delirium"}}
+    s.style_group("Daily", "", "")
+    assert s.atlas.group_looks == {}
+    with pytest.raises(ValueError):
+        s.style_group("No such group", "#00ff00", "")
+
+
+def test_a_look_is_a_hand_edit_undo_keeps():
+    assert "group_looks" in core.Atlas.HAND_EDITS and "group_looks" in core.Atlas.SAVED
+
+
+def test_a_gone_groups_look_goes_with_it(opened):
+    s, _path, pts = opened
+    i = s.add_bookmark(pts[3][0], pts[3][1], "boss", "Run")
+    s.style_group("Run", "#00ff00", "")
+    s.move_bookmarks([i], "Daily")  # its last bookmark left: the group is gone, and its look
+    assert "Run" not in s.groups() and s.atlas.group_looks == {}
+    s.new_group("Empty")
+    s.style_group("Empty", "#0000ff", "")
+    assert s.delete_groups(["Empty"]) == 1 and s.atlas.group_looks == {}
+
+
+def test_an_icon_can_have_no_border_and_a_symbol_is_an_icon(opened):
+    s, _path, pts = opened
+    i = s.add_bookmark(pts[3][0], pts[3][1], "boss", "Run", icon="Breach", plain=True)
+    assert s._bookmark(i)["plain"] is True
+    s.edit_bookmark(i, "boss", "Run", "")  # (kept when the edit doesn't say)
+    assert s._bookmark(i)["plain"] is True
+    s.edit_bookmark(i, "boss", "Run", "", icon="sym:triangle", plain=False)
+    assert s._bookmark(i)["icon"] == "sym:triangle" and "plain" not in s._bookmark(i)
+    s.edit_bookmark(i, "boss", "Run", "", icon="", plain=True)  # no icon: nothing to draw without a ring
+    assert "plain" not in s._bookmark(i)
+    s.style_group("Run", "", "Ritual", plain=True)
+    assert s.atlas.group_looks["Run"] == {"icon": "Ritual", "plain": True}
+    s.style_group("Run", "#ff0000", "", plain=True)
+    assert s.atlas.group_looks["Run"] == {"colour": "#ff0000"}
+
+
+def test_a_click_finds_a_pin_where_it_is_drawn(opened):
+    s, _path, pts = opened
+    x, y = pts[3]
+    i = s.add_bookmark(x, y, "boss", "Run")
+    # on the icon row (the default): above its map, the map itself still clickable
+    assert s.pick(x, y - 24, 1.0) == ("bookmark", i)
+    assert s.pick(x, y, 1.0) == ("node", 3)
+    # on the map node: the pin covers its map
+    s.settings.setdefault("style", {})["bookmark_at"] = "map node"
+    assert s.pick(x, y, 1.0) == ("bookmark", i)

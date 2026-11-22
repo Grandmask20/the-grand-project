@@ -18,6 +18,7 @@ import { useRoutes } from "@/hooks/map/UseRoutes";
 import { bookmarkOf, newBookmark } from "@/logic/BookmarkOf";
 import type { Point } from "@/logic/Geo";
 import { useAppStoreCalm } from "@/store/AppStore";
+import { deleteMapText } from "./SelectionBox";
 
 interface Props {
 	x: number;
@@ -29,7 +30,8 @@ interface Props {
 	onClose: () => void;
 }
 
-/** The right-click menu: bookmarks, screenshots of the spot, routes, landmark and city edits, debug marks. */
+/** The right-click menu: bookmarks, screenshots of the spot, routes, maps deleted or added, landmark and city edits,
+ * debug marks. */
 export function MapMenu({ x, y, at, hit, meta, debug, onClose }: Props) {
 	const app = useAppClient();
 	const queryClient = useQueryClient();
@@ -57,6 +59,18 @@ export function MapMenu({ x, y, at, hit, meta, debug, onClose }: Props) {
 	const run = (fn: () => Promise<unknown>) => () => {
 		fn().catch((e) => s.showError(e));
 	};
+	// a map deleted by hand (user: ghost maps from detection could not be taken away); its landmark goes with it
+	const deleteMap = () =>
+		hit?.kind === "node" &&
+		s.askConfirm({
+			title: "Delete map",
+			text: deleteMapText(hit),
+			yes: "Delete map",
+			danger: true,
+			onYes: run(() => app.editMap(hit.x, hit.y, "remove")),
+		});
+	// a map added by hand where the detector missed one (user), plain or with a landmark on it
+	const addKinds = ["Map", ...meta.landmark_kinds.filter((k) => k !== "Locked stronghold")];
 	const withNote = (title: string, fn: (note: string) => Promise<unknown>) => () =>
 		s.ask({
 			title: "Debug mark",
@@ -162,6 +176,33 @@ export function MapMenu({ x, y, at, hit, meta, debug, onClose }: Props) {
 								</DropdownMenuSubContent>
 							</DropdownMenuSub>
 						)}
+					</>
+				)}
+				{hit?.kind === "node" && !hit.removed && (
+					<>
+						<DropdownMenuSeparator />
+						<DropdownMenuItem variant="destructive" onSelect={deleteMap}>
+							Delete map
+						</DropdownMenuItem>
+					</>
+				)}
+				{/* on empty ground or a path only: an icon, a pin or a landmark stand on a map (refused: self review) */}
+				{(!hit || hit.kind === "path") && (
+					<>
+						<DropdownMenuSeparator />
+						<DropdownMenuSub>
+							<DropdownMenuSubTrigger>Add here</DropdownMenuSubTrigger>
+							<DropdownMenuSubContent>
+								{addKinds.map((k) => (
+									<DropdownMenuItem
+										key={k}
+										onSelect={run(() => app.editMap(at[0], at[1], "add", k === "Map" ? "" : k))}
+									>
+										{k}
+									</DropdownMenuItem>
+								))}
+							</DropdownMenuSubContent>
+						</DropdownMenuSub>
 					</>
 				)}
 				{hit?.kind === "node" && !lm && (

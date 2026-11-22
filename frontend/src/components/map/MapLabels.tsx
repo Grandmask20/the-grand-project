@@ -36,7 +36,9 @@ export function MapLabels() {
 			const canvas = map.getCanvas();
 			const w = canvas.clientWidth;
 			const h = canvas.clientHeight;
-			const want = ["landmarks", "bookmarks", "marks-point", "icons"].filter((id) => {
+			// (a bookmark drawn as its icon alone, a symbol or a picture without a ring, has no pin: its name from its
+			// icon's layer: app check)
+			const want = ["landmarks", "bookmarks", "bookmark-icons", "marks-point", "icons"].filter((id) => {
 				if (!map.getLayer(id) || map.getLayoutProperty(id, "visibility") === "none") return false;
 				if (id !== "icons") return true;
 				return iconPx(geo, info, map.getZoom(), Number(style.icon_size) || 1) >= ICON_LABEL_ZOOM_PX;
@@ -46,7 +48,7 @@ export function MapLabels() {
 			const cands = [];
 			for (const f of feats) {
 				if (f.geometry.type !== "Point") continue;
-				const layer = f.layer.id;
+				const layer = f.layer.id === "bookmark-icons" ? "bookmarks" : f.layer.id;
 				const p = f.properties ?? {};
 				// while replaying, items are only see-through until revealed: their names wait too
 				const rp = useAppStore.getState().replay;
@@ -65,7 +67,15 @@ export function MapLabels() {
 						priority: 3,
 					});
 				else if (layer === "bookmarks")
-					cands.push({ key, x: pt.x, y: pt.y - 14, text: `★ ${p.name}`, colour: meta.colours.bookmark, priority: 4 });
+					cands.push({
+						key,
+						x: pt.x,
+						y: pt.y - 14,
+						text: `★ ${p.name}`,
+						// in its look's colour, as its pin (its own, else its group's: BookmarkLayer)
+						colour: typeof p.colour === "string" && p.colour ? p.colour : meta.colours.bookmark,
+						priority: 4,
+					});
 				else if (layer === "marks-point")
 					cands.push({ key, x: pt.x, y: pt.y - 8, text: String(p.label), colour: "#ff66ff", priority: 5 });
 				else cands.push({ key, x: pt.x, y: pt.y - 12, text: String(p.label), colour: "#e8e8e8", priority: 1 });

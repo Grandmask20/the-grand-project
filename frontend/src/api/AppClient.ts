@@ -107,11 +107,18 @@ export function createAppClient(http: Http) {
 		listType: (type: string) => http.get<{ results: ResultRow[] }>("/api/list", { type }),
 		getSources: (x: number, y: number) => http.get<SourceShot[]>("/api/sources", { x, y }),
 		screenshotUrl: (name: string, w = 0) => http.url(`/api/screenshot/${encodeURIComponent(name)}`, { w }),
+		// a small picture of the ground around a spot (Find's rows): g the atlas it is for (the app sends none for
+		// another), v the map image's version (the browser keeps it a year)
+		cropUrl: (x: number, y: number, g: number, v: number) =>
+			http.url("/api/crop", { x: Math.round(x), y: Math.round(y), g, v }),
 
 		// hand edits
 		setLandmark: (x: number, y: number, kind: string, on: "landmark" | "map" = "landmark") =>
 			http.send<Ok>("POST", "/api/landmark", { x, y, kind, on }),
 		setCityType: (id: number, type: string | null) => http.send<Ok>("POST", "/api/city-type", { id, type }),
+		// a map deleted (a ghost map) or added by hand, with a landmark kind on it (City, Hall, Tower...)
+		editMap: (x: number, y: number, op: "remove" | "add", kind = "") =>
+			http.send<Ok>("POST", "/api/map-edit", { x, y, op, kind }),
 		lassoCount: (polygon: Point[]) => http.send<{ maps: number }>("POST", "/api/lasso", { polygon }),
 		setBiome: (polygon: Point[], biome: string) =>
 			http.send<{ maps: number }>("POST", "/api/biome", { polygon, biome }),
@@ -129,6 +136,8 @@ export function createAppClient(http: Http) {
 		newGroup: (name: string) => http.send<Ok>("POST", "/api/groups", { name }),
 		renameGroup: (old: string, name: string) => http.send<Ok>("POST", "/api/groups/rename", { old, new: name }),
 		toggleGroup: (name: string) => http.send<Ok>("POST", "/api/groups/toggle", { name }),
+		styleGroup: (name: string, colour: string, icon: string, plain: boolean) =>
+			http.send<Ok>("POST", "/api/groups/look", { name, colour, icon, plain }),
 		foldGroups: (names: string[], folded: boolean) => http.send<Ok>("POST", "/api/groups/fold", { names, folded }),
 		deleteGroups: (names: string[]) => http.send<{ deleted: number }>("POST", "/api/groups/delete", { names }),
 

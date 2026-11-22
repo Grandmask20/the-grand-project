@@ -1,5 +1,6 @@
-import { PencilIcon, RefreshCwIcon, Trash2Icon } from "lucide-react";
+import { Trash2Icon } from "lucide-react";
 import { useState } from "react";
+import { GameIcon } from "@/components/common/GameIcon";
 import { Button } from "@/components/ui/button";
 import {
 	DropdownMenu,
@@ -96,7 +97,7 @@ export function AtlasesTab() {
 							aria-label={`Rename ${a.name}`}
 							onClick={() => rename(a.json, a.name)}
 						>
-							<PencilIcon />
+							<GameIcon name="edit" className="size-4" />
 						</Button>
 						<Button
 							size="icon-sm"
@@ -107,7 +108,7 @@ export function AtlasesTab() {
 							disabled={state?.busy || a.numbers?.shots === 0}
 							onClick={() => s.askRecheck(a.json)}
 						>
-							<RefreshCwIcon />
+							<GameIcon name="refresh" className="size-4" />
 						</Button>
 						<Button
 							size="icon-sm"

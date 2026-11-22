@@ -33,6 +33,20 @@ describe("RevealWhileUsed", () => {
 		expect(useAppStore.getState().editing).toEqual([]);
 	});
 
+	it("opening or folding its section doesn't show its layer (only a setting used does)", () => {
+		render(
+			<RevealWhileUsed layer="Paths" view="2d">
+				<button type="button" data-fold>
+					Paths
+				</button>
+			</RevealWhileUsed>,
+		);
+		fireEvent.pointerDown(screen.getByRole("button", { name: "Paths" }));
+		fireEvent.keyDown(screen.getByRole("button", { name: "Paths" }), { key: "Enter" });
+		expect(useAppStore.getState().editing).toEqual([]);
+		fireEvent.pointerUp(window);
+	});
+
 	it("shows its layer while a dropdown in it is open (the list is outside the section)", () => {
 		render(
 			<RevealWhileUsed layer="Icons" view="2d">

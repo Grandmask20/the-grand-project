@@ -67,12 +67,14 @@ class Atlas:
         edges: Paths keyed by (node index, node index) -> {seen, could, confirmed}.
         landmarks: Merged landmarks {kind, x, y, n, conf, source}.
         bookmarks: {name, category, note, x, y} set in the viewer.
+        group_looks: {group: {"colour"?, "icon"?}} bookmark groups' own colour and icon (app.bookmarks).
         icons: Every icon (badge), merged across screenshots {name, x, y, bx, by, n, frames, score, source};
             (bx, by) is the map base under the icon's row.
         final: Atlas-wide clean-up result (atlas_finalize), or None.
         city_types: {x, y, type} cities whose type was set by hand.
         city_auto: {x, y, d: [..]} cached look-alike distances per city type.
         landmark_edits: {x, y, kind[, on]} set by hand in the viewer; kind "" = deleted.
+        map_edits: {x, y, op} maps deleted ("remove") or added ("add") by hand (app.model applies them).
         biome_edits: {"biome": "Vaal city"... or "" (none), "maps": [[x, y], ...]} lassoed by hand.
         biome_kept: {x, y, "biome" ("" = none)} maps whose biome a Re-check left as it was (app.recheck_choices).
         last_check: {"time", "version"} of the last whole-atlas Re-check, or None (none since 1.23).
@@ -92,11 +94,13 @@ class Atlas:
         # the id the next bookmark gets: one past every id this atlas has had, so a deleted one's id is never given
         # again (a page still holding it would act on the new bookmark: CodeRabbit)
         self.bookmark_next_uid = 0
+        self.group_looks: dict[str, dict] = {}  # {group: {colour?, icon?}} (app.bookmarks)
         self.icons: list[dict] = []  # every badge, merged across screenshots
         self.final: dict | None = None  # atlas-wide clean-up result (atlas_finalize)
         self.city_types: list[dict] = []  # {x,y,type} cities whose type was set by hand
         self.city_auto: list[dict] = []  # {x,y,d:[..]} cached look-alike distances per city type
         self.landmark_edits: list[dict] = []  # {x,y,kind[,on]} set by hand in the viewer; kind "" = deleted
+        self.map_edits: list[dict] = []  # {x,y,op} maps deleted ("remove") or added ("add") by hand
         self.biome_edits: list[
             dict
         ] = []  # {"biome": "Vaal city"... or "" (none), "maps": [[x, y], ...]} lassoed by hand
@@ -760,10 +764,12 @@ class Atlas:
         "landmarks",
         "bookmarks",
         "bookmark_next_uid",
+        "group_looks",
         "icons",
         "city_types",
         "city_auto",
         "landmark_edits",
+        "map_edits",
         "biome_edits",
         "biome_kept",
         "last_check",
@@ -771,7 +777,15 @@ class Atlas:
         "lock_scanned",
         "final",
     )
-    HAND_EDITS = ("bookmarks", "bookmark_next_uid", "city_types", "landmark_edits", "biome_edits")
+    HAND_EDITS = (
+        "bookmarks",
+        "bookmark_next_uid",
+        "group_looks",
+        "city_types",
+        "landmark_edits",
+        "map_edits",
+        "biome_edits",
+    )
 
     def to_json(self) -> dict:
         """Return the atlas as the dict saved in atlas.json.
@@ -813,10 +827,12 @@ class Atlas:
             "landmarks": self.landmarks,
             "bookmarks": self.bookmarks,
             "bookmark_next_uid": self.bookmark_next_uid,
+            "group_looks": self.group_looks,
             "icons": self.icons,
             "city_types": self.city_types,
             "city_auto": self.city_auto,
             "landmark_edits": self.landmark_edits,
+            "map_edits": self.map_edits,
             "biome_edits": self.biome_edits,
             "biome_kept": self.biome_kept,
             "last_check": self.last_check,
@@ -876,11 +892,13 @@ class Atlas:
         at.landmarks = d["landmarks"]
         at.bookmarks = d.get("bookmarks", [])
         at.bookmark_next_uid = int(d.get("bookmark_next_uid", 0))
+        at.group_looks = d.get("group_looks") or {}
         at.icons = d.get("icons", [])
         at.final = d.get("final")
         at.city_types = d.get("city_types", [])
         at.city_auto = d.get("city_auto", [])
         at.landmark_edits = d.get("landmark_edits", [])
+        at.map_edits = d.get("map_edits", [])
         at.biome_edits = d.get("biome_edits", [])
         at.biome_kept = d.get("biome_kept", [])
         at.last_check = d.get("last_check")

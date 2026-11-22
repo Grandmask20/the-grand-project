@@ -197,4 +197,39 @@ describe("MapMenu", () => {
 		useAppStore.getState().prompt?.onOk("n");
 		await waitFor(() => expect(useAppStore.getState().mode).toEqual({ kind: "debug-link", from: 12, note: "n" }));
 	});
+
+	it("on a map: delete it after asking (user: ghost maps)", async () => {
+		const { user, calls } = menu(nodeInfo, false, { "POST /api/map-edit": { ok: true } });
+		await user.click(screen.getByRole("menuitem", { name: "Delete map" }));
+		expect(useAppStore.getState().confirm?.text).toMatch(/^Delete map #12\?/);
+		useAppStore.getState().confirm?.onYes();
+		await waitFor(() =>
+			expect(calls.find((c) => c.path === "/api/map-edit")?.body).toEqual({ x: 440, y: 200, op: "remove", kind: "" }),
+		);
+	});
+
+	it("on empty ground: add a map there, plain or as a landmark (user)", async () => {
+		const { user, calls } = menu(null, false, { "POST /api/map-edit": { ok: true } });
+		expect(screen.queryByRole("menuitem", { name: "Delete map" })).toBeNull();
+		await sub(user, "Add here");
+		expect(await screen.findByRole("menuitem", { name: "Map" })).toBeInTheDocument();
+		await user.click(screen.getByRole("menuitem", { name: "Hall" }));
+		await waitFor(() =>
+			expect(calls.find((c) => c.path === "/api/map-edit")?.body).toEqual({ x: 1, y: 2, op: "add", kind: "Hall" }),
+		);
+	});
+
+	it("adds a map on a path, not on an icon or a pin (they stand on a map: self review)", () => {
+		const path: ItemInfo = { ...nodeInfo, kind: "path", id: 3, node: null };
+		const icon: ItemInfo = { ...nodeInfo, kind: "icon", id: 5, node: 12 };
+		const first = menu(path);
+		expect(screen.getByRole("menuitem", { name: "Add here" })).toBeInTheDocument();
+		first.unmount();
+		for (const hit of [icon, bookmark]) {
+			const view = menu(hit);
+			expect(screen.getByRole("menu")).toBeInTheDocument();
+			expect(screen.queryByRole("menuitem", { name: "Add here" })).toBeNull();
+			view.unmount();
+		}
+	});
 });

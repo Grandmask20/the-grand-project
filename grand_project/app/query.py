@@ -17,7 +17,7 @@ from grand_project import cities as atlas_cities
 from grand_project import core
 
 from .bookmarks import bm_group
-from .constants import POTENTIAL_TYPES
+from .constants import BOOKMARK_PIN_R, ICON_ROW_DY, POTENTIAL_TYPES
 from .icons import icon_aliases, icon_label, icon_name
 
 KINDS = ("node", "path", "landmark", "icon", "bookmark")
@@ -122,7 +122,8 @@ class QueryMixin:
 
         Returns:
             {"kind", "id", "title", "lines", "x", "y", plus "landmark_kind", "city_type", "removed", "group",
-            "name", "note", "node" where they apply}.
+            "name", "note", "node" where they apply; a map's "heading", "icons" [{"name", "label"}], "connected" (map
+            numbers) and "links" (its paths' lines)}.
 
         Raises:
             ValueError: When there is no such item.
@@ -147,8 +148,13 @@ class QueryMixin:
             # a map carrying a landmark is shown as that landmark (its lines below the map's)
             name = self.landmark_name(marks[0]) if marks else ""
             out["title"] = (f"{name} (map #{i})" if name else f"Map #{i}") + (f": {icons}" if icons else "")
+            by_you = n.get("origin") == "by you" or n.get("why") == "removed by you"
             lines += [
-                f"found in {n['seen']} of {n['could']} screenshot(s) that show it",
+                (
+                    "added by you (no screenshot found it)"
+                    if n.get("origin") == "by you"
+                    else f"found in {n['seen']} of {n['could']} screenshot(s) that show it"
+                ),
                 f"{len(deg)} path(s), {multi} confirmed (traced from both ends or in 2+ shots)",
                 {
                     "confirmed": "confirmed by several screenshots",
@@ -156,9 +162,13 @@ class QueryMixin:
                     "single": "only one screenshot shows it",
                     "disputed": "1 of 2 screenshots, kept: a path reaches it",
                     "doubtful": "doubtful: one screenshot, no icon, no path",
-                    "removed": "removed",
+                    "removed": "deleted by you" if n.get("why") == "removed by you" else "removed",
                 }.get(n["status"], n["status"]),
             ]
+            if by_you and n.get("origin") == "by you":
+                lines.pop()  # (not "confirmed by several screenshots": none found it)
+            out["removed"] = n["status"] == "removed"
+            out["added"] = n.get("origin") == "by you"
             if n.get("abyss"):
                 lines.append(
                     {"start": "Abyss chain: first map", "final": "Abyss chain: final map"}.get(
@@ -193,6 +203,21 @@ class QueryMixin:
                     "city_type": ct[0] if ct and ct[1] == "set" else None,
                 }
             out["node"] = i
+            # for the selection's box over the map (user's mockup): its heading without the icons (shown as
+            # pictures), its icons, the maps its paths lead to, and those paths' lines (lit up with it)
+            out["heading"] = f"{name} (map #{i})" if name else f"Map #{i}"
+            out["icons"] = [{"name": r, "label": icon_name(r)} for r in n.get("icons", [])]
+            # (not the paths to a removed map: the map doesn't draw them)
+            live = [p for p in deg if V["nodes"][p["b"] if p["a"] == i else p["a"]].get("status") != "removed"]
+            out["connected"] = sorted({p["b"] if p["a"] == i else p["a"] for p in live})
+            out["links"] = [
+                p.get("line")
+                or [
+                    [V["nodes"][p["a"]]["x"], V["nodes"][p["a"]]["y"]],
+                    [V["nodes"][p["b"]]["x"], V["nodes"][p["b"]]["y"]],
+                ]
+                for p in live
+            ]
         elif kind == "path":
             p = V["paths"][i]
             a, b = V["nodes"][p["a"]], V["nodes"][p["b"]]
@@ -241,7 +266,8 @@ class QueryMixin:
             lines.append(f"group: {bm_group(b)}")
             if b.get("note"):
                 lines.append(b["note"])
-            out.update(name=b["name"], group=bm_group(b), note=b.get("note", ""))
+            out.update(name=b["name"], group=bm_group(b), note=b.get("note", ""), colour=b.get("colour", ""),
+                       icon=b.get("icon", ""), plain=bool(b.get("plain")))  # fmt: skip
         x, y = self.item_pos(kind, i)
         lines.append(f"position {x:.0f}, {y:.0f}")
         out.update(lines=lines, x=x, y=y)
@@ -256,7 +282,15 @@ class QueryMixin:
             # CodeRabbit)
             if bm is not None:
                 b = self._bookmark(bm)
-                out["bookmark_of"] = {"id": bm, "name": b["name"], "group": bm_group(b), "note": b.get("note", "")}
+                out["bookmark_of"] = {
+                    "id": bm,
+                    "name": b["name"],
+                    "group": bm_group(b),
+                    "note": b.get("note", ""),
+                    "colour": b.get("colour", ""),
+                    "icon": b.get("icon", ""),
+                    "plain": bool(b.get("plain")),
+                }
             # a map with a landmark is named after it ("Vaal city", not "Map #12")
             named = ("landmark", lm["id"]) if lm else (kind, i)
             out["suggest"] = (
@@ -269,10 +303,15 @@ class QueryMixin:
         """Return a landmark's detail lines: how it was found, its city type's source, why it is this kind."""
         lm, D = self.V["landmarks"][i], self.D
         n_seen = lm.get("n", 0)  # (a landmark added by hand has no counts)
-        lines = [
-            f"found in {n_seen} of {lm.get('could', n_seen)} screenshot(s)",
-            f"confidence {lm.get('conf', 1.0):.2f}, detected by {lm.get('source', 'you')}",
-        ]
+        # one added by hand: no screenshot found it (it said "found in 1 of 1 screenshot(s)": app check)
+        lines = (
+            ["added by you"]
+            if lm.get("added")
+            else [
+                f"found in {n_seen} of {lm.get('could', n_seen)} screenshot(s)",
+                f"confidence {lm.get('conf', 1.0):.2f}, detected by {lm.get('source', 'you')}",
+            ]
+        )
         ct = D.get("city_type", {}).get(i)
         if ct:
             lines.append(
@@ -310,10 +349,13 @@ class QueryMixin:
         style = self.ui_settings()["style"]
         best, bd = None, 1e9
         if L.get("Bookmarks", True):
+            # a pin where the page draws it: on its spot or on the icon row above it, its size growing with the zoom
+            up = ICON_ROW_DY if style.get("bookmark_at", "icon") == "icon" else 0.0
+            r = max(4.0, BOOKMARK_PIN_R * float(style.get("bookmark_size", 1.0)) * min(z, 2.0)) + 4.0
             for i, b in self.bookmarks_by_id():
                 if self.bookmark_shown(b) and not b.get("route"):  # (a saved route has no pin to click)
-                    d = math.hypot((b["x"] - x) * z, (b["y"] - y) * z + 14)
-                    if d < 16 and d < bd:
+                    d = math.hypot((b["x"] - x) * z, (b["y"] - up - y) * z)
+                    if d < r and d < bd:
                         best, bd = ("bookmark", i), d
         if best:
             return best
@@ -390,37 +432,83 @@ class QueryMixin:
         return best
 
     # ------------------------------------------------------------------ Find
-    def _hit_rows(self, hits: list[tuple[str, int]], labels: list[str]) -> list[dict]:
-        """Turn hits into result rows: only near a city when that is ticked; ⌂ for icons near a city, ★ for
-        items with a bookmark on them.
+    def _hit_rows(self, hits: list[tuple[str, int]], notes: list[str] | None = None) -> list[dict]:
+        """Turn hits into result rows, each as the page names it (the Selected window's title, with no counts), with
+        its picture, the map it is on and that map's icons (user: rows like "icon  text", a map with all its icons).
+        Only near a city when that is ticked.
 
         Args:
             hits: (kind, index) pairs.
-            labels: One text per hit.
+            notes: A line under each one's name (None: where it is).
 
         Returns:
-            [{"kind", "id", "label", "x", "y"}].
+            [{"kind", "id", "label", "x", "y", "icon", "map", "icons", "note", "bookmarked", "at"}]: "icon" the raw
+            name of its picture (None: the page's own: a map's art, a bookmark's sign), "icons" [{"name", "label"}],
+            "at" the middle of the map it is on (its picture is cut there: the map node, not the icon above it; user),
+            None for a map itself, a bookmark, and a tower or what is on one (cut where it is).
         """
+        from .constants import PLACE_ICON
+
         near = self.ui_settings()["near_only"]
         nc = self.D.get("near_city", {})
         rows = []
-        for (kind, i), label in zip(hits, labels, strict=True):
+        for k, (kind, i) in enumerate(hits):
             v = self.item_node(kind, i)
             city = kind == "landmark" and "city" in str(self.V["landmarks"][i].get("kind", "")).lower()
             if near and not city and not self.near_city_text(v):
                 continue
+            x, y = self.item_pos(kind, i)
+            # a landmark's map too (item_node has none for it), for its map and icons (CodeRabbit)
+            if kind == "landmark":
+                v = self.D.get("landmark_node", {}).get(i)
+            icons = self.V["nodes"][v].get("icons", []) if v is not None and kind != "bookmark" else []
+            icon = None
+            if kind == "node":
+                label = f"Map #{i}"  # (its icons follow it as pictures, named in their tooltips)
+            elif kind == "landmark":
+                label = self.landmark_name(i)
+                kind_of = self.V["landmarks"][i]["kind"]
+                icon = PLACE_ICON.get(label.rstrip("?")) or PLACE_ICON.get(kind_of)
+            elif kind == "icon":
+                ic = self.V["icons"][i]
+                label, icon = icon_label(ic), ic["name"]
+            else:
+                b = self._bookmark(i)
+                label = b["name"]
+            note = notes[k] if notes and notes[k] else ""
+            if not note:
+                if kind == "bookmark":
+                    note = bm_group(self._bookmark(i))
+                elif kind != "node" and v is not None:
+                    note = f"on map #{v}"
+            at = None
+            tower = kind == "landmark" and "tower" in str(self.V["landmarks"][i].get("kind", "")).lower()
+            if kind in ("icon", "landmark") and v is not None and not tower and not self.V["nodes"][v].get("tower"):
+                at = [self.V["nodes"][v]["x"], self.V["nodes"][v]["y"]]
             t = nc.get(v)
             if t and kind == "icon":
-                label += f"   ⌂ {t[0]}" + ("" if t[1] == 0 else " +1")
-            x, y = self.item_pos(kind, i)
-            if kind != "bookmark" and self.bookmark_at(x, y) is not None:
-                label = "★ " + label
-            rows.append({"kind": kind, "id": i, "label": label, "x": x, "y": y})
+                note += f" · ⌂ {t[0]}" + ("" if t[1] == 0 else " +1")
+            rows.append(
+                {
+                    "kind": kind,
+                    "id": i,
+                    "label": label,
+                    "x": x,
+                    "y": y,
+                    "icon": icon,
+                    "map": v if kind != "bookmark" else None,
+                    "icons": [{"name": r, "label": icon_name(r)} for r in icons],
+                    "note": note,
+                    "bookmarked": kind != "bookmark" and self.bookmark_at(x, y) is not None,
+                    "at": at,
+                }
+            )
         return rows
 
     def search(self, q: str) -> dict:
         """Search the atlas: "x, y" goes there; else bookmarks (name, group, note), landmarks, icons (name or alias),
-        potential city / stronghold maps, and "#<n>" for map n.
+        maps by their icons, potential city / stronghold maps, and "#<n>" for map n. Loosely: words in any order, a
+        typo, letters left out (find_score); the best matches first.
 
         Args:
             q: The search text.
@@ -434,30 +522,47 @@ class QueryMixin:
         m = re.fullmatch(r"\s*(-?\d+(?:\.\d+)?)\s*[, ]\s*(-?\d+(?:\.\d+)?)\s*", q)
         if m:
             return {"goto": [float(m.group(1)), float(m.group(2))]}
-        hits, labels = [], []
+        m = re.fullmatch(r"#\s*(\d+)|map\s*#?\s*(\d+)", q)
+        if m:
+            n = int(m.group(1) or m.group(2))
+            # (not a removed map: it isn't drawn, as every other search leaves them out: self review)
+            live = n < len(self.V["nodes"]) and self.V["nodes"][n]["status"] != "removed"
+            return {"results": self._hit_rows([("node", n)]) if live else []}
+        found: dict[tuple[str, int], tuple[float, int, str]] = {}  # hit: (score, order, note), each hit once
+
+        def add(score: float | None, hit: tuple[str, int], note: str = "") -> None:
+            if score is not None and (hit not in found or score > found[hit][0]):
+                found[hit] = (score, found[hit][1] if hit in found else len(found), note)
+
         for i, b in self.bookmarks_by_id():
-            if q in f"{b['name']} {bm_group(b)} {b.get('note', '')}".lower():
-                hits.append(("bookmark", i))
-                labels.append(f"[bookmark] {b['name']}  ({bm_group(b)})")
+            add(find_score(q, b["name"], f"{bm_group(b)} {b.get('note', '')}"), ("bookmark", i))
         for i, lm in enumerate(self.V["landmarks"]):
-            if q in self.landmark_name(i).lower() and not lm["status"].startswith("removed"):
-                hits.append(("landmark", i))
-                labels.append(f"{self.landmark_name(i)}  (seen {lm.get('n', 1)}x)")  # (one added by hand has no count)
+            if not lm["status"].startswith("removed"):
+                add(find_score(q, self.landmark_name(i)), ("landmark", i))
+        # each icon name scored once (an atlas has thousands of icons and maps but a few dozen names: self review)
+        scores: dict[tuple[str, str], float | None] = {}
+
+        def scored(name: str, raw: str) -> float | None:
+            if (name, raw) not in scores:
+                scores[name, raw] = find_score(q, name, icon_aliases(raw))
+            return scores[name, raw]
+
         for i, ic in enumerate(self.V["icons"]):
-            nice = icon_label(ic)
-            if q in nice.lower() or q in icon_aliases(ic["name"]):
-                hits.append(("icon", i))
-                labels.append(f"{nice}  (seen {ic['n']}x)")
-        if len(q) >= 4 and q in "potential city map potential stronghold map":
-            for v, (lab, st) in self.D.get("potential", {}).items():
-                if st and q in _pkind(lab).lower():
-                    hits.append(("node", v))
-                    labels.append(self.potential_text(v))
-        m = re.fullmatch(r"#(\d+)", q)
-        if m and int(m.group(1)) < len(self.V["nodes"]):
-            hits.append(("node", int(m.group(1))))
-            labels.append(f"Map #{m.group(1)}")
-        return {"results": self._hit_rows(hits, labels)}
+            add(scored(icon_label(ic), ic["name"]), ("icon", i))
+        # a map by its icons (user: "abyss" with Maps on found nothing: only the icons were searched)
+        potential = self.D.get("potential", {})
+        for v, n in enumerate(self.V["nodes"]):
+            if n["status"] == "removed":
+                continue
+            for raw in n.get("icons", []):
+                score = scored(icon_name(raw), raw)
+                if score is not None:
+                    add(score, ("node", v), self.potential_text(v) if potential.get(v, ("", 0))[1] else "")
+        for v, (lab, st) in potential.items():
+            if st:
+                add(find_score(q, _pkind(lab)) if len(q) >= 4 else None, ("node", v), self.potential_text(v))
+        best = sorted(found.items(), key=lambda f: (-f[1][0], f[1][1]))
+        return {"results": self._hit_rows([h for h, _f in best], [f[2] for _h, f in best])}
 
     def list_type(self, label: str) -> list[dict]:
         """List every map / place of one type (a type row clicked in Find).
@@ -468,29 +573,31 @@ class QueryMixin:
         Returns:
             Result rows.
         """
-        hits, labels = [], []
+        hits, notes = [], []
         D = self.D
         if label in POTENTIAL_TYPES:
             for v, (lab, st) in sorted(D.get("potential", {}).items(), key=lambda t: (t[1][0], t[1][1])):
                 if st and _pkind(lab) == label:
                     hits.append(("node", v))
-                    labels.append(self.potential_text(v))
+                    notes.append(self.potential_text(v))
         elif label.endswith(" city"):
             for i, (t, how) in D.get("city_type", {}).items():
                 if f"{t} city" == label:
                     hits.append(("landmark", i))
-                    labels.append(f"{self.landmark_name(i)}  ({'set by hand' if how == 'set' else how})")
+                    v = D.get("landmark_node", {}).get(i)
+                    where = f"on map #{v} · " if v is not None else ""
+                    notes.append(where + ("type set by hand" if how == "set" else f"type from its {how}"))
         elif label in D.get("place_types", []):
             for i, lm in enumerate(self.V["landmarks"]):
                 if lm["kind"] == label and not lm["status"].startswith("removed"):
                     hits.append(("landmark", i))
-                    labels.append(f"{lm['kind']}  (seen {lm['n']}x)")
+                    notes.append("")
         else:
             for i, ic in enumerate(self.V["icons"]):
                 if icon_label(ic) == label:
                     hits.append(("icon", i))
-                    labels.append(f"{label}  (seen {ic['n']}x)")
-        return self._hit_rows(hits, labels)
+                    notes.append("")
+        return self._hit_rows(hits, notes)
 
     def types(self) -> dict:
         """Return Find's type list: "Places" and "Map icons", with counts (only near a city when ticked), the
@@ -625,3 +732,75 @@ def _pkind(label: str) -> str:
         "Potential stronghold map" or "Potential city map".
     """
     return "Potential stronghold map" if label == "Breach stronghold" else "Potential city map"
+
+
+def _words(text: str) -> list[str]:
+    """The words of a text, lower case, without punctuation ("Map #12: Breach" -> map, 12, breach); any letters
+    (a bookmark named "東京" is one word: CodeRabbit)."""
+    return re.findall(r"[^\W_]+", text.lower())
+
+
+def _close(a: str, b: str) -> bool:
+    """Whether two words are the same but for a typo or two (4+ letters: a short word must be right)."""
+    from difflib import SequenceMatcher
+
+    return len(a) >= 4 and SequenceMatcher(None, a, b).ratio() >= 0.8
+
+
+def find_score(q: str, name: str, more: str = "") -> float | None:
+    """How well Find's text matches a thing, loosely (user: the search was not fuzzy): None for no match, else higher
+    for better. In its name the whole text, then its words in any order (each the start of a word, or in one), then
+    words with a typo, then its letters in order close together ("abys dep" and "abydep" find "Abyssal Depths");
+    in its other words (aliases, a bookmark's group or note) the same, lower.
+
+    Args:
+        q: The search text, lower case.
+        name: The thing's name.
+        more: Its other words.
+
+    Returns:
+        The score, or None.
+    """
+    best = None
+    for text, weight in ((name, 0), (more, -15)):
+        t = text.lower()
+        if not t.strip():
+            continue
+        words = _words(t)
+        qw = _words(q)
+        # the text as typed first, whatever it is made of (punctuation only too)
+        if t.strip() == q:
+            score = 110
+        elif q in t:
+            score = 100 if t.startswith(q) else 90
+        elif not qw:
+            score = None
+        elif all(any(w.startswith(x) for w in words) for x in qw):
+            score = 80
+        elif all(any(x in w for w in words) for x in qw):
+            score = 70
+        elif all(any(w.startswith(x) or x in w or _close(x, w) for w in words) for x in qw):
+            score = 60
+        else:
+            score = _in_order(q.replace(" ", ""), "".join(words))
+        if score is not None and (best is None or score + weight > best):
+            best = score + weight
+    return best
+
+
+def _in_order(q: str, t: str) -> float | None:
+    """q's letters in t in order, close together (3+ letters, the span at most twice q's length): 40, or None."""
+    if len(q) < 3:
+        return None
+    start = t.find(q[0])
+    while start >= 0:
+        k, j = 0, start
+        # (no further than a match may reach: a long note costs no more: CodeRabbit)
+        while j < len(t) and k < len(q) and j - start < 2 * len(q):
+            if t[j] == q[k]:
+                k += 1
+            j += 1
+        if k == len(q) and j - start <= 2 * len(q):
+            return 40.0
+        start = t.find(q[0], start + 1)
+    return None

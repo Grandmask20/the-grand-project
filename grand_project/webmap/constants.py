@@ -11,6 +11,11 @@ WEBMAP_JPEG_QUALITY = 85  # a 256 px terrain tile is ~25 KB at 85; PNG would be 
 WEBMAP_MVT_EXTENT = 4096  # tile coordinate range (the MVT default)
 WEBMAP_MVT_BUFFER = 128  # extent units kept around each tile, so lines and dots crossing a tile edge draw whole
 
+# Find's rows: a small picture of the ground around each map (the map node itself, user's mockup): this many atlas
+# units each way from the map's middle (a map node's radius is ~8), this many px across.
+WEBMAP_CROP_UNITS = 22.0
+WEBMAP_CROP_PX = 64
+
 # How far past the sharpest tiles the page lets the user zoom in (MapLibre stretches the last level).
 WEBMAP_OVERZOOM = 1.5
 

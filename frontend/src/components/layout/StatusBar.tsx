@@ -11,7 +11,7 @@ export function StatusBar({ connected }: { connected: boolean }) {
 	const hint = modeHint(mode);
 
 	return (
-		<footer className="flex h-7 shrink-0 items-center gap-4 border-t bg-card px-3 font-mono text-xs text-muted-foreground">
+		<footer className="flex h-7 shrink-0 items-center gap-4 border-t border-[var(--tab-edge)] poe-grain px-3 font-mono text-xs text-muted-foreground">
 			{!connected && <span className="text-destructive">not connected to the app</span>}
 			<span className="truncate text-foreground">{hint || state?.status}</span>
 			<span className="flex-1" />

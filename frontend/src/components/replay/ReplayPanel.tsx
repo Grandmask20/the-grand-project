@@ -248,28 +248,20 @@ export function ReplayPanel({ meta }: { meta: Meta }) {
 	);
 
 	const num = (label: string, key: "length" | "per_step", lo: number, hi: number) => (
-		<div className="flex items-center gap-1.5 text-xs">
-			<span className="text-muted-foreground">{label}</span>
-			<Input
-				aria-label={label}
-				type="number"
-				min={lo}
-				max={hi}
-				defaultValue={st[key]}
-				key={`${key}-${st[key]}`}
-				disabled={replay.recording}
-				className="h-7 w-16"
-				onBlur={(e) => {
-					const v = Math.min(hi, Math.max(lo, Number(e.target.value) || st[key]));
-					if (v !== st[key]) void change({ [key]: key === "per_step" ? Math.round(v) : v });
-				}}
-			/>
-		</div>
+		<NumberSetting
+			label={label}
+			value={st[key]}
+			lo={lo}
+			hi={hi}
+			whole={key === "per_step"}
+			disabled={replay.recording}
+			onCommit={(v) => void change({ [key]: v })}
+		/>
 	);
 
 	return (
 		// under the map, not over it (user: the panel hid the map); the map gets the rest of the height
-		<div className="z-20 flex shrink-0 flex-col gap-2 border-t bg-card p-3">
+		<div className="poe-panel z-20 flex shrink-0 flex-col gap-2 p-3">
 			<div className="flex items-center gap-2">
 				{/* start, a step back, play, a step on, the end (user: there was no jump to the start) */}
 				<Button
@@ -386,6 +378,84 @@ export function ReplayPanel({ meta }: { meta: Meta }) {
 					</span>
 				)}
 			</div>
+		</div>
+	);
+}
+
+/** A moment after the last key before a number typed is used. */
+const NUMBER_SETTLE_MS = 500;
+
+/**
+ * A number setting typed in a box: used a moment after you stop typing, at once on Enter or on leaving the box (user:
+ * the timelapse's length only changed once the box lost focus, Enter did nothing), kept within lo..hi; shows the
+ * setting as it is again when the app changes it (unless being typed in).
+ */
+export function NumberSetting({
+	label,
+	value,
+	lo,
+	hi,
+	whole = false,
+	disabled = false,
+	onCommit,
+}: {
+	label: string;
+	value: number;
+	lo: number;
+	hi: number;
+	whole?: boolean;
+	disabled?: boolean;
+	onCommit: (v: number) => void;
+}) {
+	const [text, setText] = useState(String(value));
+	const typing = useRef(false);
+	useEffect(() => {
+		if (!typing.current) setText(String(value));
+	}, [value]);
+	// Enter or leaving the box: what was typed, kept within its range (an empty or wrong box goes back)
+	const commit = (t: string) => {
+		typing.current = false;
+		const n = Number(t);
+		if (t.trim() === "" || !Number.isFinite(n)) return setText(String(value));
+		const v = Math.min(hi, Math.max(lo, whole ? Math.round(n) : n));
+		setText(String(v));
+		if (v !== value) onCommit(v);
+	};
+	// typing paused: used only when it is already a number in range; the box is left as typed (a half-typed "2" on
+	// the way to "20" was set to the lowest and written over: self review)
+	const settle = (t: string) => {
+		const n = Number(t);
+		const v = whole ? Math.round(n) : n;
+		if (t.trim() !== "" && Number.isFinite(n) && v >= lo && v <= hi && v !== value) onCommit(v);
+	};
+	// (the one as it is then: the setting may have changed meanwhile)
+	const latest = useRef(settle);
+	latest.current = settle;
+	useEffect(() => {
+		if (!typing.current) return;
+		const t = setTimeout(() => latest.current(text), NUMBER_SETTLE_MS);
+		return () => clearTimeout(t);
+	}, [text]);
+	return (
+		<div className="flex items-center gap-1.5 text-xs">
+			<span className="text-muted-foreground">{label}</span>
+			<Input
+				aria-label={label}
+				type="number"
+				min={lo}
+				max={hi}
+				value={text}
+				disabled={disabled}
+				className="h-7 w-20 px-1.5"
+				onChange={(e) => {
+					typing.current = true;
+					setText(e.target.value);
+				}}
+				onKeyDown={(e) => {
+					if (e.key === "Enter") commit(text);
+				}}
+				onBlur={() => typing.current && commit(text)}
+			/>
 		</div>
 	);
 }

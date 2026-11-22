@@ -34,14 +34,15 @@ export function SelectionLayers() {
 		() => (selected ? collection([point(geo.toLngLat(selected.x, selected.y))]) : EMPTY),
 		[geo, selected],
 	);
-	// a selected path: the whole path lit up, not a ring where it was clicked (as the old window)
-	const path = useMemo(
-		() =>
+	// a selected path: the whole path lit up, not a ring where it was clicked (as the old window); a selected map: the
+	// paths that connect to it (user: "it could highlight nearby paths which connect to it")
+	const path = useMemo(() => {
+		const lines =
 			selected?.kind === "path" && selected.line?.length
-				? collection([line(selected.line.map(([x, y]) => geo.toLngLat(x, y)))])
-				: EMPTY,
-		[geo, selected],
-	);
+				? [selected.line]
+				: (selected?.links ?? []).filter((l) => l.length > 1);
+		return lines.length ? collection(lines.map((l) => line(l.map(([x, y]) => geo.toLngLat(x, y))))) : EMPTY;
+	}, [geo, selected]);
 	const hits = useMemo(
 		() => collection(results.slice(0, 2000).map((r) => point(geo.toLngLat(r.x, r.y)))),
 		[geo, results],

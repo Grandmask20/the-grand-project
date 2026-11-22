@@ -1,5 +1,5 @@
 import { useQueryClient } from "@tanstack/react-query";
-import { ClapperboardIcon, LassoIcon, MenuIcon, RouteIcon, Undo2Icon, XIcon } from "lucide-react";
+import { Undo2Icon } from "lucide-react";
 import { AppQueryKeys } from "@/api/AppQueryKeys";
 import { sameAtlas } from "@/api/Http";
 import tablet from "@/assets/tablet.png";
@@ -19,6 +19,7 @@ import { useAppState } from "@/hooks/app/UseAppState";
 import { useAtlasActions } from "@/hooks/atlas/UseAtlasActions";
 import { useAtlases } from "@/hooks/atlas/UseAtlases";
 import { useAppStoreCalm } from "@/store/AppStore";
+import { MapTools } from "./MapTools";
 import { UpdateButton } from "./UpdateButton";
 
 /** The File and Atlas menus, and the buttons used most (undo, city biome lasso, replay). */
@@ -56,20 +57,6 @@ export function TopBar() {
 			.catch(fail);
 	};
 
-	const openReplay = async () => {
-		if (s.replay) {
-			s.setReplay(null);
-			await app.closeReplay().catch(fail);
-			return;
-		}
-		try {
-			const plan = await app.openReplay();
-			s.setReplay({ plan, pos: plan.n_steps, playing: false, recording: false });
-		} catch (e) {
-			fail(e);
-		}
-	};
-
 	const undo = () =>
 		s.askConfirm({
 			title: "Undo last add",
@@ -79,16 +66,20 @@ export function TopBar() {
 		});
 
 	return (
-		<header className="flex h-11 shrink-0 items-center gap-1.5 border-b bg-card px-2">
-			<span className="mr-2 flex shrink-0 items-center gap-1.5 font-semibold tracking-wide whitespace-nowrap text-gold">
-				{/* the in-game tablet the program is named after (user) */}
-				<img src={tablet} alt="" className="size-7" />
+		// its bottom edge the bar the map tools' stash tabs stand on (user's design: PoE's stash tabs), textured as they
+		// are; on the panels' dark grain (Theme.css .poe-header)
+		<header className="poe-header flex h-11 shrink-0 items-center gap-1.5 px-2 shadow-[0_1px_0_rgb(0_0_0/0.8)]">
+			{/* its name as the game titles a tablet (user's mock-up): one line in the unique items' copper frame, the
+			    in-game tablet the program is named after inside it */}
+			<span className="poe-title mr-2 shrink-0">
+				<img src={tablet} alt="" className="size-6" />
 				The Grand Project
 			</span>
 			<DropdownMenu>
 				<DropdownMenuTrigger asChild>
 					<Button size="sm" variant="ghost">
-						<MenuIcon />
+						{/* the game's own menu button (its HUD's: user) */}
+						<span className="poe-hamburger" aria-hidden="true" />
 						File
 					</Button>
 				</DropdownMenuTrigger>
@@ -190,42 +181,11 @@ export function TopBar() {
 				<Undo2Icon />
 				Undo
 			</Button>
-			{/* on: the button ends it (user: only Esc did, nothing on screen said so); none while the timelapse is open */}
-			<Button
-				size="sm"
-				variant={s.mode.kind === "lasso" ? "default" : "ghost"}
-				disabled={!open || !!s.replay}
-				onClick={() => s.setMode(s.mode.kind === "lasso" ? { kind: "normal" } : { kind: "lasso" })}
-				title="Set the biome of maps (a city type, a Breach stronghold, or none): draw around them"
-			>
-				{s.mode.kind === "lasso" ? <XIcon /> : <LassoIcon />}
-				{/* (not "City biome": strongholds aren't cities, user) */}
-				{s.mode.kind === "lasso" ? "End biome select" : "Biome select"}
-			</Button>
-			<Button
-				size="sm"
-				variant={s.replay ? "default" : "ghost"}
-				disabled={!state?.atlas?.shots}
-				onClick={() => void openReplay()}
-				title="Replay: the atlas being made, as a timelapse"
-			>
-				<ClapperboardIcon />
-				Replay
-			</Button>
-			{/* a route between two maps you click: track it, or save it with the bookmarks (user) */}
-			<Button
-				size="sm"
-				variant={s.mode.kind === "route" ? "default" : "ghost"}
-				disabled={!state?.atlas || !!s.replay}
-				onClick={() => s.setMode(s.mode.kind === "route" ? { kind: "normal" } : { kind: "route", from: null })}
-				title="Route: click the map it starts from, then the one it goes to"
-			>
-				{s.mode.kind === "route" ? <XIcon /> : <RouteIcon />}
-				{s.mode.kind === "route" ? "End route" : "Route"}
-			</Button>
+			{/* what a click on the map does (Biome select and Route were buttons of their own: user's design) */}
+			<MapTools />
 			<span className="flex-1" />
 			{state?.atlas && (
-				<span className="truncate text-xs text-muted-foreground" title={state.atlas.path}>
+				<span className="truncate text-xs text-muted-foreground max-[1500px]:hidden" title={state.atlas.path}>
 					{state.atlas.maps} maps · {state.atlas.icons} icons · {state.atlas.landmarks} landmarks · {state.atlas.shots}{" "}
 					screenshots
 				</span>

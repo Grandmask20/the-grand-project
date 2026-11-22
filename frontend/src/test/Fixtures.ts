@@ -114,6 +114,9 @@ export const meta: Meta = {
 	recent_fade: 5,
 	icon_units: 26,
 	icon_min_px: 10,
+	bookmark_pin: 11,
+	icon_row_dy: 24,
+	bookmark_ats: ["icon", "map node"],
 };
 
 export const types: TypeList = {

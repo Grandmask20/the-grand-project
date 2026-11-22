@@ -605,6 +605,8 @@ _WORDS = {
     "icon_style": "icon style",
     "map_size": "map size",
     "map_style": "map style",
+    "bookmark_size": "bookmark size",
+    "bookmark_at": "bookmarks sit on the",
     "age_tint": "colour by",
     "side_width": "side panel width",
 }

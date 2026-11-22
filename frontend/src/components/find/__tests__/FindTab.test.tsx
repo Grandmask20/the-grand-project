@@ -44,7 +44,7 @@ describe("FindTab", () => {
 			"GET /api/types": types,
 			"PATCH /api/settings": (body: unknown) => ({ ...state.settings, ...(body as object) }), // the app answers with all of them
 		});
-		await user.click(screen.getByRole("checkbox", { name: "only what 2+ screenshots show" }));
+		await user.click(screen.getByRole("switch", { name: "only what 2+ screenshots show" }));
 		await waitFor(() => expect(calls.find((c) => c.method === "PATCH")?.body).toEqual({ multi_only: true }));
 	});
 });

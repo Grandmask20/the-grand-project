@@ -727,6 +727,12 @@ class Handler(BaseHTTPRequestHandler):
         """A ground tile."""
         self._bytes(self.S.terrain_tile(int(z), int(x), int(y), self._still_connected), "image/jpeg")
 
+    @route("GET", "/api/crop")
+    def get_crop(self, q) -> None:
+        """A small picture of the ground around a spot (Find's rows), for the atlas of generation `g` only."""
+        data = self.S.crop_jpeg(_num(q, "x"), _num(q, "y"), _num(q, "g", -1, int))
+        self._bytes(data, "image/jpeg")
+
     @route("GET", r"/api/tiles/vector/(?P<z>\d+)/(?P<x>\d+)/(?P<y>\d+)\.pbf")
     def get_vector_tile(self, q, z, x, y) -> None:
         """A vector tile."""
@@ -806,6 +812,13 @@ class Handler(BaseHTTPRequestHandler):
         self.S.set_landmark(float(b["x"]), float(b["y"]), b.get("kind", ""), b.get("on", "landmark"))
         self._json({"ok": True})
 
+    @route("POST", "/api/map-edit")
+    def post_map_edit(self, q) -> None:
+        """Delete the map at a spot, or add one there (with a landmark kind)."""
+        b = self._body()
+        self.S.edit_map(float(b["x"]), float(b["y"]), str(b.get("op", "")), str(b.get("kind") or ""))
+        self._json({"ok": True})
+
     @route("POST", "/api/city-type")
     def post_city_type(self, q) -> None:
         """Set a city's type (null: automatic)."""
@@ -837,7 +850,8 @@ class Handler(BaseHTTPRequestHandler):
         """Add a bookmark."""
         b = self._body()
         i = self.S.add_bookmark(float(b["x"]), float(b["y"]), b.get("name", ""), b.get("group", "Other"),
-                                b.get("note", ""), gen=self._req_gen, route=b.get("route"))  # fmt: skip
+                                b.get("note", ""), gen=self._req_gen, route=b.get("route"),
+                                colour=b.get("colour"), icon=b.get("icon"), plain=bool(b.get("plain")))  # fmt: skip
         if i < 0:
             raise ApiError("there is already a bookmark on that spot", 409)
         self._json({"id": i})
@@ -846,7 +860,8 @@ class Handler(BaseHTTPRequestHandler):
     def patch_bookmark(self, q, i) -> None:
         """Edit a bookmark."""
         b = self._body()
-        self.S.edit_bookmark(int(i), b.get("name", ""), b.get("group", "Other"), b.get("note", ""))
+        self.S.edit_bookmark(int(i), b.get("name", ""), b.get("group", "Other"), b.get("note", ""),
+                             b.get("colour"), b.get("icon"), b.get("plain"))  # fmt: skip
         self._json({"ok": True})
 
     @route("POST", "/api/bookmarks/route")
@@ -895,6 +910,13 @@ class Handler(BaseHTTPRequestHandler):
         """Rename a group."""
         b = self._body()
         self.S.rename_group(b["old"], b["new"])
+        self._json({"ok": True})
+
+    @route("POST", "/api/groups/look")
+    def post_group_look(self, q) -> None:
+        """Give a group its own colour and icon ("" for none)."""
+        b = self._body()
+        self.S.style_group(str(b.get("name", "")), b.get("colour"), b.get("icon"), bool(b.get("plain")))
         self._json({"ok": True})
 
     @route("POST", "/api/groups/delete")
@@ -1073,6 +1095,10 @@ def meta() -> dict:
         "recent_fade": C.RECENT_FADE,
         "icon_units": W.WEBMAP_ICON_UNITS,
         "icon_min_px": W.WEBMAP_ICON_MIN_PX,
+        # bookmark pins: radius at size 1, and how far above its spot a pin "on the icon" sits (atlas units)
+        "bookmark_pin": C.BOOKMARK_PIN_R,
+        "icon_row_dy": C.ICON_ROW_DY,
+        "bookmark_ats": list(C.BOOKMARK_ATS),
     }
 
 
