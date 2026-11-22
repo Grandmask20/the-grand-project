@@ -21,4 +21,22 @@ describe("QuestionDialog", () => {
 		await waitFor(() => expect(calls.find((c) => c.path === "/api/questions/5")?.body).toEqual({ yes: true }));
 		await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
 	});
+
+	it("shows a question's own title and buttons (Fix seams after a failed add)", async () => {
+		const { user, calls, queryClient } = renderWithApp(<QuestionDialog />, { "POST /api/questions/6": { ok: true } });
+		queryClient.setQueryData<AppState>(AppQueryKeys.state, {
+			...state,
+			questions: [
+				{
+					id: 6,
+					question: "Adding didn't finish: ...",
+					preview: null,
+					labels: { title: "Fix seams", yes: "Fix seams anyway", no: "Cancel" },
+				},
+			],
+		});
+		expect(await screen.findByText("Fix seams")).toBeInTheDocument();
+		await user.click(screen.getByRole("button", { name: "Cancel" }));
+		await waitFor(() => expect(calls.find((c) => c.path === "/api/questions/6")?.body).toEqual({ yes: false }));
+	});
 });

@@ -57,6 +57,12 @@ export function ReplayPanel({ meta }: { meta: Meta }) {
 	const exporting = useRef<{ cancel: boolean } | null>(null);
 	const [exportInfo, setExportInfo] = useState("");
 	const [busy, setBusy] = useState(false); // a frame export runs: the position is its own (CodeRabbit)
+	// settings changes, sent one after another (each answer then lands in order: CodeRabbit), and how many are still
+	// on their way: no recording or export starts until they are done (an answer reset the panel while the recorder
+	// ran: CodeRabbit)
+	const queue = useRef<Promise<void>>(Promise.resolve());
+	const [pending, setPending] = useState(0);
+	const pendingNow = useRef(0);
 
 	// playback: move on, move the camera
 	// biome-ignore lint/correctness/useExhaustiveDependencies: restarted only when play starts / stops
@@ -80,6 +86,14 @@ export function ReplayPanel({ meta }: { meta: Meta }) {
 		raf = requestAnimationFrame(loop);
 		return () => cancelAnimationFrame(raf);
 	}, [replay?.playing, map, geo, frames.data]);
+
+	// whatever closes the timelapse (its X, the Timelapse tab, another atlas opened) or takes the panel away: a
+	// recording stops and an export is cancelled (the tab's close left both running: CodeRabbit)
+	const open = !!replay;
+	useEffect(() => {
+		if (!open) endCapture(recorder.current, exporting.current);
+	}, [open]);
+	useEffect(() => () => endCapture(recorder.current, exporting.current), []);
 
 	if (!replay) return null;
 	const { plan, pos } = replay;
@@ -108,13 +122,33 @@ export function ReplayPanel({ meta }: { meta: Meta }) {
 		moveCamera(p, 1);
 	};
 
-	const change = async (c: Partial<ReplaySettings>) => {
-		try {
-			const next = await app.setReplay(c);
-			setReplay({ plan: next, pos: 0, playing: false, recording: false });
-		} catch (e) {
-			showError(e);
-		}
+	// one after another, so the last answer shown is the last change's, and a change that fails leaves the one before
+	// it shown (an older answer arriving last showed its settings; with only the newest kept, a failing newer change
+	// dropped an older one that had worked: CodeRabbit). None once the timelapse is closed (one opened it again).
+	// (whether the app took it: a number box shows the setting again after a refusal)
+	const change = (c: Partial<ReplaySettings>): Promise<boolean> => {
+		const counted = (d: number) => {
+			pendingNow.current += d;
+			setPending(pendingNow.current);
+		};
+		counted(1);
+		const run = queue.current.then(async () => {
+			// (none sent while a recording or an export runs: they keep the plan they started with)
+			if (!useAppStore.getState().replay || useAppStore.getState().replay?.recording) return false;
+			try {
+				const next = await app.setReplay(c);
+				if (useAppStore.getState().replay) setReplay({ plan: next, pos: 0, playing: false, recording: false });
+				return true;
+			} catch (e) {
+				showError(e);
+				return false;
+			}
+		});
+		queue.current = run.then(
+			() => counted(-1),
+			() => counted(-1),
+		);
+		return run;
 	};
 
 	const play = () => {
@@ -129,7 +163,7 @@ export function ReplayPanel({ meta }: { meta: Meta }) {
 	 * GIF export did. The last frame stays up for 2 s.
 	 */
 	const exportReplay = async (kind: ExportKind) => {
-		if (!map || !geo || !frames.data || exporting.current) return;
+		if (!map || !geo || !frames.data || exporting.current || pendingNow.current) return;
 		const fps = kind === "gif" ? GIF_FPS : VIDEO_FPS;
 		const n = Math.max(2, Math.round(st.length * fps));
 		const count = kind === "gif" ? Math.min(GIF_MAX_FRAMES, n) : n;
@@ -147,9 +181,12 @@ export function ReplayPanel({ meta }: { meta: Meta }) {
 		exporting.current = job;
 		setBusy(true);
 		patch({ recording: true, playing: false });
-		// it stops when the atlas or the map changes under it (it kept drawing the old map and threw: CodeRabbit)
+		// it stops when the atlas or the map changes under it (it kept drawing the old map and threw: CodeRabbit), or
+		// the timelapse it was made from is no longer the one open: checked here each time, not only by the cancel
+		// the panel sets when it closes (an export finishing before that still downloaded: CodeRabbit)
 		const still = sameAtlas();
-		const live = () => !job.cancel && still() && useAppStore.getState().map === map;
+		const live = () =>
+			!job.cancel && still() && useAppStore.getState().map === map && useAppStore.getState().replay?.plan === plan;
 		const frameMs = (st.length * 1000) / count;
 		const k = ease(meta, st.smoothing, frameMs / 1000);
 		try {
@@ -184,7 +221,8 @@ export function ReplayPanel({ meta }: { meta: Meta }) {
 			exporting.current = null;
 			setBusy(false);
 			setExportInfo("");
-			if (still()) patch({ recording: false });
+			// (only for its own timelapse: a new one opened meanwhile had its recording flag cleared: CodeRabbit)
+			if (still() && useAppStore.getState().replay?.plan === plan) patch({ recording: false });
 		}
 	};
 
@@ -194,7 +232,7 @@ export function ReplayPanel({ meta }: { meta: Meta }) {
 	};
 
 	const record = () => {
-		if (!map) return;
+		if (!map || pendingNow.current) return;
 		if (recorder.current) {
 			recorder.current.stop();
 			return;
@@ -219,9 +257,7 @@ export function ReplayPanel({ meta }: { meta: Meta }) {
 	};
 
 	const close = async () => {
-		recorder.current?.stop();
-		if (exporting.current) exporting.current.cancel = true;
-		setReplay(null);
+		setReplay(null); // (a recording and an export end with it: above)
 		await app.closeReplay().catch(showError);
 	};
 
@@ -248,28 +284,20 @@ export function ReplayPanel({ meta }: { meta: Meta }) {
 	);
 
 	const num = (label: string, key: "length" | "per_step", lo: number, hi: number) => (
-		<div className="flex items-center gap-1.5 text-xs">
-			<span className="text-muted-foreground">{label}</span>
-			<Input
-				aria-label={label}
-				type="number"
-				min={lo}
-				max={hi}
-				defaultValue={st[key]}
-				key={`${key}-${st[key]}`}
-				disabled={replay.recording}
-				className="h-7 w-16"
-				onBlur={(e) => {
-					const v = Math.min(hi, Math.max(lo, Number(e.target.value) || st[key]));
-					if (v !== st[key]) void change({ [key]: key === "per_step" ? Math.round(v) : v });
-				}}
-			/>
-		</div>
+		<NumberSetting
+			label={label}
+			value={st[key]}
+			lo={lo}
+			hi={hi}
+			whole={key === "per_step"}
+			disabled={replay.recording}
+			onCommit={(v) => change({ [key]: v })}
+		/>
 	);
 
 	return (
 		// under the map, not over it (user: the panel hid the map); the map gets the rest of the height
-		<div className="z-20 flex shrink-0 flex-col gap-2 border-t bg-card p-3">
+		<div className="poe-panel z-20 flex shrink-0 flex-col gap-2 p-3">
 			<div className="flex items-center gap-2">
 				{/* start, a step back, play, a step on, the end (user: there was no jump to the start) */}
 				<Button
@@ -333,7 +361,12 @@ export function ReplayPanel({ meta }: { meta: Meta }) {
 					// one Export with both kinds (user: the old window exported GIFs, the page only recorded video)
 					<DropdownMenu>
 						<DropdownMenuTrigger asChild>
-							<Button size="xs" variant="outline">
+							<Button
+								size="xs"
+								variant="outline"
+								disabled={pending > 0}
+								title={pending > 0 ? "Wait until the settings changed are saved" : undefined}
+							>
 								<DownloadIcon />
 								Export
 							</Button>
@@ -386,6 +419,130 @@ export function ReplayPanel({ meta }: { meta: Meta }) {
 					</span>
 				)}
 			</div>
+		</div>
+	);
+}
+
+/** A moment after the last key before a number typed is used. */
+const NUMBER_SETTLE_MS = 500;
+
+/** Stop a screen recording still running and cancel a frame export (each only once: a stopped recorder throws). */
+function endCapture(recorder: MediaRecorder | null, exporting: { cancel: boolean } | null) {
+	if (recorder?.state === "recording") recorder.stop();
+	if (exporting) exporting.cancel = true;
+}
+
+/**
+ * A number setting typed in a box: used a moment after you stop typing, at once on Enter or on leaving the box (user:
+ * the timelapse's length only changed once the box lost focus, Enter did nothing), kept within lo..hi; shows the
+ * setting as it is again when the app changes it (unless being typed in).
+ */
+export function NumberSetting({
+	label,
+	value,
+	lo,
+	hi,
+	whole = false,
+	disabled = false,
+	onCommit,
+}: {
+	label: string;
+	value: number;
+	lo: number;
+	hi: number;
+	whole?: boolean;
+	disabled?: boolean;
+	/** Use a value; it may answer whether it was taken (refused: the box shows the setting again). */
+	onCommit: (v: number) => Promise<boolean> | undefined;
+}) {
+	const [text, setText] = useState(String(value));
+	const typing = useRef(false);
+	const edits = useRef(0); // keys typed: a refusal answered after newer typing leaves the box as typed
+	const current = useRef(value);
+	current.current = value;
+	// the last value sent while still on its way, with its own ticket: a new one is compared with it, not the setting
+	// in use (typed back to the setting while another was on its way, it was never sent and the other won), and only
+	// its own answer clears it (an earlier send of the same number cleared it too soon: CodeRabbit)
+	const sent = useRef<{ ticket: number; value: number } | null>(null);
+	const tickets = useRef(0);
+	const timer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined); // a value still settling
+	const off = useRef(disabled);
+	off.current = disabled;
+	useEffect(() => {
+		if (!typing.current) setText(String(value));
+	}, [value]);
+	// disabled (a recording started): a value still settling is dropped and the box shows the setting (it was sent
+	// anyway and reset the replay: CodeRabbit)
+	useEffect(() => {
+		if (!disabled) return;
+		clearTimeout(timer.current);
+		typing.current = false;
+		setText(String(value));
+	}, [disabled, value]);
+	// Enter or leaving the box: what was typed, kept within its range (an empty or wrong box goes back)
+	const commit = (t: string) => {
+		clearTimeout(timer.current); // (sent now: not again once it would have settled)
+		typing.current = false;
+		if (off.current) return setText(String(value));
+		const n = Number(t);
+		if (t.trim() === "" || !Number.isFinite(n)) return setText(String(value));
+		const v = Math.min(hi, Math.max(lo, whole ? Math.round(n) : n));
+		setText(String(v));
+		if (v !== (sent.current?.value ?? value)) send(v);
+	};
+	// a value used; refused, and nothing typed since, the box shows the setting in use again (it kept the refused
+	// number while the replay used the old one: CodeRabbit)
+	const send = (v: number) => {
+		const at = edits.current;
+		const answer = onCommit(v);
+		if (answer) {
+			const ticket = ++tickets.current;
+			sent.current = { ticket, value: v };
+			void answer.then((ok) => {
+				if (sent.current?.ticket === ticket) sent.current = null;
+				if (ok || edits.current !== at) return;
+				typing.current = false;
+				setText(String(current.current));
+			});
+		}
+	};
+	// typing paused: used only when it is already a number in range; the box is left as typed (a half-typed "2" on
+	// the way to "20" was set to the lowest and written over: self review)
+	const settle = (t: string) => {
+		if (off.current) return;
+		const n = Number(t);
+		const v = whole ? Math.round(n) : n;
+		if (t.trim() !== "" && Number.isFinite(n) && v >= lo && v <= hi && v !== (sent.current?.value ?? value)) send(v);
+	};
+	// (the one as it is then: the setting may have changed meanwhile)
+	const latest = useRef(settle);
+	latest.current = settle;
+	useEffect(() => {
+		if (!typing.current) return;
+		timer.current = setTimeout(() => latest.current(text), NUMBER_SETTLE_MS);
+		return () => clearTimeout(timer.current);
+	}, [text]);
+	return (
+		<div className="flex items-center gap-1.5 text-xs">
+			<span className="text-muted-foreground">{label}</span>
+			<Input
+				aria-label={label}
+				type="number"
+				min={lo}
+				max={hi}
+				value={text}
+				disabled={disabled}
+				className="h-7 w-20 px-1.5"
+				onChange={(e) => {
+					typing.current = true;
+					edits.current++;
+					setText(e.target.value);
+				}}
+				onKeyDown={(e) => {
+					if (e.key === "Enter") commit(text);
+				}}
+				onBlur={() => typing.current && commit(text)}
+			/>
 		</div>
 	);
 }

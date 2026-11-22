@@ -28,7 +28,7 @@ export function MapNotes() {
 	return (
 		<div className="pointer-events-none absolute top-2 left-1/2 z-30 flex w-max max-w-[80%] -translate-x-1/2 flex-col items-center gap-1.5">
 			{mode.kind !== "normal" && !asking && (
-				<div className="pointer-events-auto flex items-center gap-3 rounded-md border border-gold/60 bg-card/95 px-3 py-1.5 text-sm text-gold shadow">
+				<div className="pointer-events-auto flex items-center gap-3 poe-panel poe-panel-sm px-3 py-1.5 text-sm text-gold shadow">
 					<span>{modeHint(mode)}</span>
 					<button
 						type="button"
@@ -41,14 +41,14 @@ export function MapNotes() {
 				</div>
 			)}
 			{view && VIEW_NOTES[view] && (
-				<div role="status" className="max-w-xl rounded-md border border-gold bg-card px-4 py-3 text-base shadow-lg">
+				<div role="status" className="max-w-xl poe-panel px-4 py-3 text-base shadow-lg">
 					{VIEW_NOTES[view]}
 				</div>
 			)}
 			{tab === "bookmarks" && settings && !layerOn(settings, "Bookmarks") && (
 				<div
 					role="status"
-					className="pointer-events-auto flex items-center gap-3 rounded-md border bg-card/95 px-3 py-1.5 text-sm shadow"
+					className="pointer-events-auto flex items-center gap-3 poe-panel poe-panel-sm px-3 py-1.5 text-sm shadow"
 				>
 					Bookmarks are currently hidden
 					<button

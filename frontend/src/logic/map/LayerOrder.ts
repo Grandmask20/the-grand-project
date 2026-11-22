@@ -37,6 +37,7 @@ export const LAYER_ORDER = [
 	"paths-3d-gl",
 	"icons-3d-gl",
 	"bookmarks",
+	"bookmark-icons",
 	"marks-line",
 	"marks-dashed",
 	"marks-point",

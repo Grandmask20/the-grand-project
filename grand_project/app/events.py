@@ -39,12 +39,18 @@ class Events:
         self._logs: dict[str, deque] = {"": deque(maxlen=LOG_KEEP)}
         self.history: deque = deque(maxlen=EVENT_HISTORY)  # recent events, for a page that reconnects
         self.progress: str | None = None
-        # progress steps already written to the log: (atlas log, step with its numbers left out) -> its tenth; per step,
-        # so two jobs reporting at once (adding and Fix seams) don't each write every line, and per atlas, so the same
-        # step in another atlas's job still reaches that atlas's log (CodeRabbit)
-        self._progress_logged: dict[tuple[str, str], int | None] = {}
+        self._progress_by: dict[str, str] = {}  # each job's own progress (set_progress's owner)
+        # one progress change at a time, published in the order made (two jobs ending together could publish the
+        # older box last: CodeRabbit); a lock of its own, publish takes _lock
+        self._progress_lock = threading.Lock()
+        # progress steps already written to the log: (job, atlas log, step with its numbers left out) -> its tenth; per
+        # step, so two jobs reporting at once (adding and Fix seams) don't each write every line, per atlas, so the
+        # same step in another atlas's job still reaches that atlas's log (CodeRabbit), and per job, so one ending
+        # forgets only its own (one ending wrote the other's step again: self review)
+        self._progress_logged: dict[tuple[str, str, str], int | None] = {}
         self.status = ""
         self._questions: dict[int, dict] = {}
+        self.closing = False  # the app is closing: no question is asked any more (end_questions)
 
     # ------------------------------------------------------------------ publishing
     def publish(self, kind: str, data=None) -> None:
@@ -87,29 +93,43 @@ class Events:
         self._logs.setdefault(scope, deque(maxlen=LOG_KEEP)).append(line)
         self.publish("log", {"scope": scope, "line": line})
 
-    def set_progress(self, text: str | None, scope: str | None = None) -> None:
-        """Show (or clear, with None) the progress box.
+    def set_progress(self, text: str | None, scope: str | None = None, owner: str = "job") -> None:
+        """Show (or clear, with None) a job's line in the progress box.
+
+        Each job has its own line: adding, the map image build and Fix seams can run at once, and one clearing the
+        box when it ended took another's line away (the map image build ending blanked adding's: GPT audit).
 
         Args:
             text: What is being done, or None when done.
             scope: The atlas log its line goes in (a background job's own, captured when it started), else the open
                 one's.
+            owner: Whose line: "job" (the worker: adding, Re-check, Undo...), "map<n>" (map image build n),
+                "seams" (Fix seams).
         """
-        self.progress = text
-        self.publish("progress", text)
-        self._log_progress(text, scope)
+        with self._progress_lock:
+            with self._lock:
+                if text is None:
+                    self._progress_by.pop(owner, None)
+                else:
+                    self._progress_by[owner] = text
+                shown = " · ".join(self._progress_by.values()) or None
+                self.progress = shown
+            self.publish("progress", shown)
+        self._log_progress(text, scope, owner)
 
-    def _log_progress(self, text: str | None, scope: str | None) -> None:
+    def _log_progress(self, text: str | None, scope: str | None, owner: str = "job") -> None:
         """Write a progress line to the log when a new step starts, and every 10% of a counted one ("fixing seams
         120 / 500"): what runs is in the log, not only in the progress box (user: "it should list ongoing processes").
 
         Args:
             text: The progress text, or None when it ended (how it ended its caller logs: done, stopped, failed).
             scope: The atlas log to write in (see set_progress).
+            owner: The job (see set_progress).
         """
         if text is None:
             with self._lock:
-                self._progress_logged.clear()
+                for key in [k for k in self._progress_logged if k[0] == owner]:
+                    del self._progress_logged[key]
             return
         task = re.sub(r"\S*\d\S*", "#", text)  # the step without its numbers (and file names, which have digits)
         m = re.search(r"(\d+)\s*/\s*(\d+)", text)
@@ -118,7 +138,7 @@ class Events:
             # the atlas log looked up once, for the "already written" record and the line: looked up again by log(),
             # an atlas switch between wrote the line into the other atlas's log (CodeRabbit)
             scope = self.scope if scope is None else scope
-            key = (scope, task)
+            key = (owner, scope, task)
             if key in self._progress_logged and self._progress_logged[key] == tenth:
                 return
             if len(self._progress_logged) > 200:  # steps with names in them (one per screenshot)
@@ -158,7 +178,9 @@ class Events:
                 self._listeners.remove(q)
 
     # ------------------------------------------------------------------ questions
-    def ask(self, question: str, preview: dict | None = None, timeout: float | None = None) -> bool:
+    def ask(
+        self, question: str, preview: dict | None = None, timeout: float | None = None, labels: dict | None = None
+    ) -> bool:
         """Ask the browser a yes / no question and wait for the answer (from a background thread).
 
         With no page open the answer is No (nothing is added that nobody saw).
@@ -167,52 +189,127 @@ class Events:
             question: The question text.
             preview: Optional {"picture" (id), "box" [x0, y0, x1, y1]} of where a screenshot would go.
             timeout: Seconds to wait at most (None: until answered).
+            labels: {"title", "yes", "no"}: the box's title and buttons (default: a screenshot check, Yes / No).
 
         Returns:
             The answer.
         """
-        with self._lock:
-            if not self._listeners:
-                LOG.info(f"no page open to ask: {question!r} -> no")
-                return False
         qid = next(self._ids)
-        box = {"id": qid, "question": question, "preview": preview, "event": threading.Event(), "answer": False}
+        box = {
+            "id": qid,
+            "question": question,
+            "preview": preview,
+            "labels": labels,
+            "event": threading.Event(),
+            "answer": False,
+        }
+        # checked and registered in one step: in two, a close between them (end_questions) missed this question,
+        # which then waited for an answer nobody could give (self review)
         with self._lock:
+            if not self._listeners or self.closing:
+                LOG.info(f"no page open to ask (or closing): {question!r} -> no")
+                return False
             self._questions[qid] = box
-        self.publish("question", {"id": qid, "question": question, "preview": preview})
+        self.publish("question", {"id": qid, "question": question, "preview": preview, "labels": labels})
         box["event"].wait(timeout)
         with self._lock:
             self._questions.pop(qid, None)
         self.publish("answered", {"id": qid})
         return bool(box["answer"])
 
-    def answer(self, qid: int, yes: bool) -> bool:
+    def ask_choices(self, question: str, choices: dict, labels: dict | None = None) -> list[str] | None:
+        """Ask the browser to tick some of a list of choices and wait (from a background thread). Unlike ask, it
+        waits for a page when none is open: the question is shown by the next one (open_questions).
+
+        Args:
+            question: The text above the choices.
+            choices: {"groups": [{"id", "name", "count", "items", "ticked"}], ...} as the page shows them.
+            labels: {"title", "yes"}: the box's title and its button.
+
+        Returns:
+            The ids ticked, or None when the app closes first (end_questions).
+        """
+        qid = next(self._ids)
+        allowed = {g["id"] for g in choices.get("groups", [])}
+        box = {
+            "id": qid,
+            "question": question,
+            "preview": None,
+            "labels": labels,
+            "choices": choices,
+            "allowed": allowed,
+            "event": threading.Event(),
+            "answer": False,
+            "picked": None,
+        }
+        with self._lock:  # (registered in the closing check's step: see ask)
+            if self.closing:
+                return None
+            self._questions[qid] = box
+        self.publish(
+            "question", {"id": qid, "question": question, "preview": None, "labels": labels, "choices": choices}
+        )
+        box["event"].wait()
+        with self._lock:
+            self._questions.pop(qid, None)
+        self.publish("answered", {"id": qid})
+        return box["picked"] if box["answer"] else None
+
+    def answer(self, qid: int, yes: bool, picked: list | None = None) -> bool:
         """Answer an open question.
 
         Args:
             qid: The question's id.
             yes: The answer.
+            picked: For a question with choices (ask_choices), the ids ticked (others are left out).
 
         Returns:
             False when no such question is open.
         """
-        with self._lock:
+        with self._lock:  # (with the closing check: a Yes coming in as the app closes never undoes its No: CodeRabbit)
             box = self._questions.get(qid)
-        if box is None:
-            return False
-        box["answer"] = bool(yes)
-        box["event"].set()
+            if box is None or self.closing:
+                return False
+            if "choices" in box:
+                if not yes or not isinstance(picked, list):
+                    return False  # (answered only by its button, with the ticks: no plain No)
+                box["picked"] = [g for g in picked if isinstance(g, str) and g in box["allowed"]]
+            box["answer"] = bool(yes)
+            box["event"].set()
         return True
+
+    def end_questions(self) -> int:
+        """The app is closing: every open question is answered No, and none is asked any more. A job waiting for an
+        answer ends instead of holding the close up until nobody answers (GPT audit). (While the app runs, a question
+        stays open until answered: a page opened later shows it again.)
+
+        Returns:
+            How many were open.
+        """
+        with self._lock:  # (answered in the same step as closing: see answer)
+            self.closing = True
+            boxes = list(self._questions.values())
+            for box in boxes:
+                box["answer"] = False
+                box["event"].set()
+        return len(boxes)
 
     def open_questions(self) -> list[dict]:
         """Return the questions waiting for an answer (a page opened while one is waiting shows it).
 
         Returns:
-            [{"id", "question", "preview"}].
+            [{"id", "question", "preview", "labels"[, "choices"]}].
         """
         with self._lock:
             return [
-                {"id": b["id"], "question": b["question"], "preview": b["preview"]} for b in self._questions.values()
+                {
+                    "id": b["id"],
+                    "question": b["question"],
+                    "preview": b["preview"],
+                    "labels": b["labels"],
+                    **({"choices": b["choices"]} if "choices" in b else {}),
+                }
+                for b in self._questions.values()
             ]
 
 

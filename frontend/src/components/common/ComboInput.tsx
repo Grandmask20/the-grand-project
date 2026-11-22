@@ -66,7 +66,7 @@ export function ComboInput({ id, value, onChange, options, placeholder }: Props)
 				<ChevronDownIcon className="size-4" />
 			</button>
 			{open && shown.length > 0 && (
-				<ul className="absolute z-50 mt-1 max-h-56 w-full overflow-y-auto rounded-md border bg-popover py-1 shadow-lg">
+				<ul className="absolute z-50 mt-1 max-h-56 w-full overflow-y-auto poe-panel poe-panel-sm py-1 shadow-lg">
 					{shown.map((o) => (
 						<li key={o}>
 							<button

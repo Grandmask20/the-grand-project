@@ -75,10 +75,8 @@ export function LayerToggles() {
 							aria-label={r.label}
 							title={r.label}
 							onClick={() => update.mutate({ layers: r.next })}
-							className={cn(
-								"truncate rounded border px-1.5 py-1 text-xs",
-								r.pressed ? "border-gold/70 bg-accent text-foreground" : "text-muted-foreground hover:bg-accent/50",
-							)}
+							// the game's buttons (user): green on, grey off
+							className={cn("poe-btn poe-btn-xs truncate", r.pressed ? "poe-btn-green" : "poe-btn-red")}
 						>
 							<RoutesLabel r={r} />
 						</button>
@@ -91,10 +89,7 @@ export function LayerToggles() {
 						type="button"
 						aria-pressed={on}
 						onClick={() => update.mutate({ layers: { [key]: !on } })}
-						className={cn(
-							"rounded border px-1.5 py-1 text-xs",
-							on ? "border-gold/70 bg-accent text-foreground" : "text-muted-foreground hover:bg-accent/50",
-						)}
+						className={cn("poe-btn poe-btn-xs truncate", on && "poe-btn-green", !on && "text-[#bfb08a]")}
 					>
 						{label}
 					</button>

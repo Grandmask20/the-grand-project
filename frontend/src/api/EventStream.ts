@@ -143,10 +143,17 @@ export function createEventHandler(queryClient: QueryClient) {
 	};
 }
 
-/** Listens to the app's events until stopped; the browser reconnects by itself, and the state is fetched again. */
-export function connectEvents(url: string, onEvent: (kind: EventKind, data: unknown) => void, onOpen: () => void) {
+/** Listens to the app's events until stopped; the browser reconnects by itself, and the state is fetched again.
+ * onError: the stream dropped (the app closed, or is restarting): it is reconnecting. */
+export function connectEvents(
+	url: string,
+	onEvent: (kind: EventKind, data: unknown) => void,
+	onOpen: () => void,
+	onError: () => void = () => {},
+) {
 	const source = new EventSource(url);
 	source.onopen = onOpen;
+	source.onerror = onError;
 	for (const kind of EVENT_KINDS) {
 		source.addEventListener(kind, (ev) => {
 			const msg = ev as MessageEvent<string>;

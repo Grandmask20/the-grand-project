@@ -767,3 +767,8 @@ ICON_NOT_A_CLASS = frozenset({"Unidentified"})
 # art: the picture inside the rim), from poe2db (tools/import_poe2db_art.py)
 ICON_ART_DIR = rc_paths.ref("poe2db_icons")
 ICON_ART_FILES = {"ExpeditionShip": "ship_button.png"}  # pictures of types that have no poe2db art (references/)
+
+DETECT_DIGEST_MEMO = 20000  # screenshot hashes kept in memory (builder.file_digest), then forgotten
+# bytes read from the start of a saved detection to tell its detector, version and time (builder.cache_head): those
+# fields come first (name, path, sha256, detector, models, version, detected_at: ~400 bytes with a long path)
+CACHE_HEAD_BYTES = 2048

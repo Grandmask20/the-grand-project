@@ -408,8 +408,8 @@ def city_types(atlas, cities: list[dict], compute_missing=True) -> list[tuple[st
     return [o if o else ("", "") for o in out]
 
 
-def set_type(atlas, x: float, y: float, typ: str | None) -> None:
-    """Store (or with typ None / "" forget) a hand-set type for the city at x, y.
+def set_type(atlas, x: float, y: float, typ: str | None, by: str | None = None) -> None:
+    """Store (or with typ None / "" forget) a set type for the city at x, y.
 
     Any stored type within SAME_CITY of (x, y) is replaced.
 
@@ -418,10 +418,11 @@ def set_type(atlas, x: float, y: float, typ: str | None) -> None:
         x: x of the city in atlas units.
         y: y of the city in atlas units.
         typ: "Ezomyte", "Vaal" or "Faridun"; None or "" to forget.
+        by: What set it, when not your hand ("biome": a city biome painted over it, taken back when it goes).
     """
     atlas.city_types = [c for c in atlas.city_types if np.hypot(c["x"] - x, c["y"] - y) >= SAME_CITY]
     if typ:
-        atlas.city_types.append({"x": round(x, 1), "y": round(y, 1), "type": typ})
+        atlas.city_types.append({"x": round(x, 1), "y": round(y, 1), "type": typ, **({"by": by} if by else {})})
 
 
 def ground_sampler(canvas: np.ndarray, weight: np.ndarray, origin, radius: float = 70.0):
@@ -1113,7 +1114,7 @@ def near_city(
     return out
 
 
-def biomes(atlas, V: dict, ground=None) -> dict:
+def biomes(atlas, V: dict, ground=None, kept: bool = True) -> dict:
     """Work out the city / stronghold biomes of an atlas (the app's model and map use it).
 
     In order (as the old window did: add_locks, rebuild_cities, apply_biome_edits): locked Breach
@@ -1124,6 +1125,7 @@ def biomes(atlas, V: dict, ground=None) -> dict:
         atlas: The atlas.
         V: Its view model (app.model.view_model); not changed.
         ground: ground_sampler of the map image, or None (biomes then ignore the look of the ground).
+        kept: Apply the biomes a Re-check left as they were (atlas.biome_kept); False: as a Re-check works them out.
 
     Returns:
         {"potential": map node index -> (biome label, steps), "landmarks": the landmarks with a stronghold added for
@@ -1181,10 +1183,21 @@ def biomes(atlas, V: dict, ground=None) -> dict:
     blocked = blocked_maps(V["nodes"], V["icons"], live, icon_node)
     potential = potential_maps(V["nodes"], V["paths"], src, ground=ground, blocked=blocked) if src else {}
     edits = getattr(atlas, "biome_edits", []) or []
-    if edits and V["nodes"]:  # the hand-drawn biomes win: each stored map position -> every map node within 20 units
+    # biomes a Re-check left as they were (you unticked Biomes: app.recheck_choices), each on its map's spot; the
+    # hand-drawn ones go on top
+    held = (getattr(atlas, "biome_kept", []) or []) if kept else []
+    if (edits or held) and V["nodes"]:  # each stored map position -> every map node within 20 units
         from scipy.spatial import cKDTree
 
         tree = cKDTree(np.array([[n["x"], n["y"]] for n in V["nodes"]], float))
+        for k in held:
+            for i in tree.query_ball_point([k["x"], k["y"]], 20.0):
+                if V["nodes"][int(i)].get("status") == "removed":
+                    continue
+                if k["biome"]:
+                    potential[int(i)] = (k["biome"], 0)
+                else:
+                    potential.pop(int(i), None)
         for e in edits:
             for q in e["maps"]:
                 # all of them: of two map nodes on one spot (a map seen twice) only one took the edit, and the other

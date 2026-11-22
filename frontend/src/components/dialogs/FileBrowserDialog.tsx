@@ -7,7 +7,7 @@ import {
 	FolderOpenIcon,
 	HomeIcon,
 } from "lucide-react";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
@@ -32,6 +32,9 @@ export function FileBrowserDialog() {
 	const close = useAppStore((s) => s.pickFiles);
 	const [path, setPath] = useState<string | null>(null);
 	const [typed, setTyped] = useState("");
+	// typed in the folder box since a folder was last asked for: a listing coming in then leaves the box as typed (the
+	// start folder's listing, late, wrote over a path being typed, and Enter opened the start folder again: CI)
+	const edited = useRef(false);
 	const [chosen, setChosen] = useState<string[]>([]);
 	const [name, setName] = useState("");
 	const listing = useFolder(pick ? path : null, !pick?.folders || !!pick?.save);
@@ -41,12 +44,13 @@ export function FileBrowserDialog() {
 	useEffect(() => {
 		if (!pick) return;
 		setPath(pick.start ?? "");
+		edited.current = false;
 		setChosen([]);
 		setName(pick.save ?? "");
 	}, [pick]);
 
 	useEffect(() => {
-		if (listing.data) setTyped(listing.data.path);
+		if (listing.data && !edited.current) setTyped(listing.data.path);
 	}, [listing.data]);
 
 	if (!pick) return null;
@@ -54,6 +58,7 @@ export function FileBrowserDialog() {
 	const sep = here.includes("\\") ? "\\" : "/";
 	const join = (dir: string, n: string) => (dir.endsWith(sep) ? `${dir}${n}` : `${dir}${sep}${n}`);
 	const go = (p: string) => {
+		edited.current = false;
 		setPath(p);
 		setChosen([]); // a folder picked in another folder is not what Choose should return (CodeRabbit)
 	};
@@ -104,7 +109,10 @@ export function FileBrowserDialog() {
 					<Input
 						aria-label="Folder"
 						value={typed}
-						onChange={(e) => setTyped(e.target.value)}
+						onChange={(e) => {
+							edited.current = true;
+							setTyped(e.target.value);
+						}}
 						onKeyDown={(e) => e.key === "Enter" && go(typed)}
 						className="font-mono text-xs"
 					/>

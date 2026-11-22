@@ -18,6 +18,7 @@ import { useRoutes } from "@/hooks/map/UseRoutes";
 import { bookmarkOf, newBookmark } from "@/logic/BookmarkOf";
 import type { Point } from "@/logic/Geo";
 import { useAppStoreCalm } from "@/store/AppStore";
+import { deleteMapText } from "./SelectionBox";
 
 interface Props {
 	x: number;
@@ -29,7 +30,8 @@ interface Props {
 	onClose: () => void;
 }
 
-/** The right-click menu: bookmarks, screenshots of the spot, routes, landmark and city edits, debug marks. */
+/** The right-click menu: bookmarks, screenshots of the spot, routes, maps deleted or added, landmark and city edits,
+ * debug marks. */
 export function MapMenu({ x, y, at, hit, meta, debug, onClose }: Props) {
 	const app = useAppClient();
 	const queryClient = useQueryClient();
@@ -40,10 +42,35 @@ export function MapMenu({ x, y, at, hit, meta, debug, onClose }: Props) {
 	// the bookmark this is, or the one on this map (user: a bookmarked map offered to bookmark it again, and had no
 	// way to remove it)
 	const mark = bookmarkOf(hit);
+	// the landmark this is, or the one on this map: a click on a landmark selects its map, whose menu could only
+	// make it a landmark, never back (user: false Cities that couldn't be made normal maps)
+	const lm = hit?.kind === "landmark" ? hit : (hit?.on_landmark ?? null);
+	const removed = hit?.kind === "landmark" && !!hit.removed;
+	const deleteLandmark = (what: string) =>
+		lm &&
+		s.askConfirm({
+			title: what,
+			text: `Make this ${lm.title} a normal map? (Kept in the atlas: Layers > Removed shows it; right-click it to bring it back.)`,
+			yes: "Normal map",
+			danger: true,
+			onYes: run(() => app.setLandmark(lm.x, lm.y, "")),
+		});
 
 	const run = (fn: () => Promise<unknown>) => () => {
 		fn().catch((e) => s.showError(e));
 	};
+	// a map deleted by hand (user: ghost maps from detection could not be taken away); its landmark goes with it
+	const deleteMap = () =>
+		hit?.kind === "node" &&
+		s.askConfirm({
+			title: "Delete map",
+			text: deleteMapText(hit),
+			yes: "Delete map",
+			danger: true,
+			onYes: run(() => app.editMap(hit.x, hit.y, "remove")),
+		});
+	// a map added by hand where the detector missed one (user), plain or with a landmark on it
+	const addKinds = ["Map", ...meta.landmark_kinds.filter((k) => k !== "Locked stronghold")];
 	const withNote = (title: string, fn: (note: string) => Promise<unknown>) => () =>
 		s.ask({
 			title: "Debug mark",
@@ -105,58 +132,80 @@ export function MapMenu({ x, y, at, hit, meta, debug, onClose }: Props) {
 						<DropdownMenuItem onSelect={() => routes.routeTo(node)}>Route here</DropdownMenuItem>
 					</>
 				)}
-				{hit?.kind === "landmark" && (
+				{lm && (
 					<>
 						<DropdownMenuSeparator />
 						<DropdownMenuSub>
-							<DropdownMenuSubTrigger>Change to</DropdownMenuSubTrigger>
+							<DropdownMenuSubTrigger>{hit?.kind === "node" ? "This map is a…" : "Change to"}</DropdownMenuSubTrigger>
 							<DropdownMenuSubContent>
 								{meta.landmark_kinds.map((k) => (
-									<DropdownMenuItem key={k} onSelect={run(() => app.setLandmark(hit.x, hit.y, k))}>
-										{k === hit.landmark_kind ? `● ${k}` : k}
+									<DropdownMenuItem key={k} onSelect={run(() => app.setLandmark(lm.x, lm.y, k))}>
+										{k === lm.landmark_kind && !removed ? `● ${k}` : k}
 									</DropdownMenuItem>
 								))}
+								{!removed && (
+									<>
+										<DropdownMenuSeparator />
+										<DropdownMenuItem onSelect={() => deleteLandmark("Normal map")}>Normal map</DropdownMenuItem>
+									</>
+								)}
 							</DropdownMenuSubContent>
 						</DropdownMenuSub>
-						{hit.removed ? (
-							<DropdownMenuItem onSelect={run(() => app.setLandmark(hit.x, hit.y, hit.landmark_kind ?? "City"))}>
+						{removed ? (
+							<DropdownMenuItem onSelect={run(() => app.setLandmark(lm.x, lm.y, lm.landmark_kind ?? "City"))}>
 								Restore landmark
 							</DropdownMenuItem>
 						) : (
-							<DropdownMenuItem
-								variant="destructive"
-								onSelect={() =>
-									s.askConfirm({
-										title: "Delete landmark",
-										text: `Delete this ${hit.title}? (Kept in the atlas: Layers > Removed shows it; right-click it to bring it back.)`,
-										yes: "Delete",
-										danger: true,
-										onYes: run(() => app.setLandmark(hit.x, hit.y, "")),
-									})
-								}
-							>
+							<DropdownMenuItem variant="destructive" onSelect={() => deleteLandmark("Delete landmark")}>
 								Delete landmark
 							</DropdownMenuItem>
 						)}
-						{hit.landmark_kind === "City" && (
+						{lm.landmark_kind === "City" && !removed && (
 							<DropdownMenuSub>
 								<DropdownMenuSubTrigger>City type</DropdownMenuSubTrigger>
 								<DropdownMenuSubContent>
 									{meta.city_types.map((t) => (
-										<DropdownMenuItem key={t} onSelect={run(() => app.setCityType(hit.id, t))}>
-											{hit.city_type === t ? `● ${t}` : t}
+										<DropdownMenuItem key={t} onSelect={run(() => app.setCityType(lm.id, t))}>
+											{lm.city_type === t ? `● ${t}` : t}
 										</DropdownMenuItem>
 									))}
 									<DropdownMenuSeparator />
-									<DropdownMenuItem onSelect={run(() => app.setCityType(hit.id, null))}>
-										{hit.city_type ? "Automatic" : "● Automatic"}
+									<DropdownMenuItem onSelect={run(() => app.setCityType(lm.id, null))}>
+										{lm.city_type ? "Automatic" : "● Automatic"}
 									</DropdownMenuItem>
 								</DropdownMenuSubContent>
 							</DropdownMenuSub>
 						)}
 					</>
 				)}
-				{hit?.kind === "node" && (
+				{hit?.kind === "node" && !hit.removed && (
+					<>
+						<DropdownMenuSeparator />
+						<DropdownMenuItem variant="destructive" onSelect={deleteMap}>
+							Delete map
+						</DropdownMenuItem>
+					</>
+				)}
+				{/* on empty ground or a path only: an icon, a pin or a landmark stand on a map (refused: self review) */}
+				{(!hit || hit.kind === "path") && (
+					<>
+						<DropdownMenuSeparator />
+						<DropdownMenuSub>
+							<DropdownMenuSubTrigger>Add here</DropdownMenuSubTrigger>
+							<DropdownMenuSubContent>
+								{addKinds.map((k) => (
+									<DropdownMenuItem
+										key={k}
+										onSelect={run(() => app.editMap(at[0], at[1], "add", k === "Map" ? "" : k))}
+									>
+										{k}
+									</DropdownMenuItem>
+								))}
+							</DropdownMenuSubContent>
+						</DropdownMenuSub>
+					</>
+				)}
+				{hit?.kind === "node" && !lm && (
 					<>
 						<DropdownMenuSeparator />
 						<DropdownMenuSub>

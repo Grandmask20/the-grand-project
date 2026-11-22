@@ -15,6 +15,13 @@ describe("BookmarksTab", () => {
 		expect(screen.getByRole("button", { name: "Show Farm" })).toBeInTheDocument(); // a hidden group
 	});
 
+	it("a row's pen shows while pointed at, and always on a touch screen (user: hidden until hovered; CodeRabbit)", async () => {
+		renderWithApp(<BookmarksTab />, { "GET /api/bookmarks": bookmarks });
+		const pen = await screen.findByRole("button", { name: "Edit Farm" });
+		expect(pen).toHaveClass("can-hover:opacity-0", "group-hover/row:opacity-100");
+		expect(pen).not.toHaveClass("opacity-0");
+	});
+
 	it("hides a bookmark with its eye", async () => {
 		const { user, calls } = renderWithApp(<BookmarksTab />, {
 			"GET /api/bookmarks": bookmarks,

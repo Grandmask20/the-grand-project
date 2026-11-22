@@ -1,13 +1,23 @@
-import type { ReactNode } from "react";
+import { ChevronDownIcon, ChevronRightIcon } from "lucide-react";
+import { type ReactNode, useState } from "react";
 import { cn } from "@/utils/Cn";
 
-/** A titled part of a side panel tab. */
+/**
+ * A titled part of a side panel tab. `foldable`: a row that folds away (the View tab's sections, from banner's #51,
+ * liked by the user): its title folds it and opens it again, and folded it shows its `summary` (what is set in it).
+ * Open or not is its own, or `open` / `onToggle` when kept elsewhere (the View tab keeps it in the store, so a
+ * section stays as left while the tab is closed).
+ */
 export function Section({
 	title,
 	children,
 	className,
 	actions,
 	locked = false,
+	foldable = false,
+	summary,
+	open,
+	onToggle,
 }: {
 	title: string;
 	children: ReactNode;
@@ -15,21 +25,60 @@ export function Section({
 	actions?: ReactNode;
 	/** Shown greyed out and not usable (e.g. view settings while the timelapse is open). */
 	locked?: boolean;
+	foldable?: boolean;
+	summary?: string;
+	open?: boolean;
+	onToggle?: () => void;
 }) {
+	const [own, setOwn] = useState(false);
+	const isOpen = open ?? own;
+	const toggle = onToggle ?? (() => setOwn(!own));
+	const body = (
+		<div className={cn("flex flex-col gap-2", locked && "pointer-events-none opacity-45")} inert={locked}>
+			{children}
+		</div>
+	);
+	// (locked with the rest: its buttons stayed usable, CodeRabbit)
+	const extra = actions && (
+		<div className={cn(locked && "pointer-events-none opacity-45")} inert={locked}>
+			{actions}
+		</div>
+	);
+
+	if (foldable) {
+		const Chevron = isOpen ? ChevronDownIcon : ChevronRightIcon;
+		return (
+			<section className={cn("border-b", className)} aria-disabled={locked || undefined}>
+				<div className="flex items-center gap-2">
+					<h3 className="min-w-0 flex-1">
+						<button
+							type="button"
+							data-fold
+							aria-expanded={isOpen}
+							onClick={toggle}
+							className="flex h-10 w-full items-center gap-2 rounded px-1 text-left text-sm font-semibold hover:bg-accent hover:text-gold"
+						>
+							<Chevron className="size-4 shrink-0 text-muted-foreground" aria-hidden />
+							<span className="shrink-0">{title}</span>
+							{!isOpen && summary && (
+								<span className="ml-auto truncate text-xs font-normal text-muted-foreground">{summary}</span>
+							)}
+						</button>
+					</h3>
+					{isOpen && extra}
+				</div>
+				{isOpen && <div className="pt-1 pb-4 pl-7">{body}</div>}
+			</section>
+		);
+	}
+
 	return (
 		<section className={cn("flex flex-col gap-2", className)} aria-disabled={locked || undefined}>
 			<div className="flex items-center justify-between gap-2">
 				<h3 className="text-xs font-semibold tracking-wide text-gold uppercase">{title}</h3>
-				{actions && (
-					// (locked with the rest: its buttons stayed usable, CodeRabbit)
-					<div className={cn(locked && "pointer-events-none opacity-45")} inert={locked}>
-						{actions}
-					</div>
-				)}
+				{extra}
 			</div>
-			<div className={cn("flex flex-col gap-2", locked && "pointer-events-none opacity-45")} inert={locked}>
-				{children}
-			</div>
+			{body}
 		</section>
 	);
 }

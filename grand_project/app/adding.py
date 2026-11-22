@@ -19,6 +19,7 @@ import cv2
 import numpy as np
 
 from grand_project import builder, core
+from grand_project import cities as atlas_cities
 from grand_project import finalize as atlas_finalize
 from grand_project import logs as atlas_log
 from grand_project import paths as rc_paths
@@ -26,6 +27,8 @@ from grand_project.core import islands
 from grand_project.core.geometry import apply as apply_affine
 from grand_project.core.register import mutual_pairs
 
+from . import recheck_choices
+from .atlaslock import atlas_edit, atlas_switch
 from .constants import (
     DETECT_LOG_EVERY,
     PICTURE_SIDE,
@@ -34,11 +37,17 @@ from .constants import (
     PREVIEW_NEAR,
     RECENT_FADE,
     RECENT_KEEP,
+    RECHECK_CLEAN_S,
+    RECHECK_DETECT_S,
+    RECHECK_TIMING_MIN,
     UNDO_KEEP,
+    VERSION,
     WATCH_BATCH,
     WEAK_INLIERS,
     WEAK_NCC,
 )
+from .icons import icon_label
+from .model import view_model
 
 LOG = atlas_log.get("app")
 
@@ -93,6 +102,10 @@ class AddingMixin:
             start: Start the worker (tests run jobs with run_job on their own thread).
         """
         self._jobs: queue.Queue = queue.Queue()
+        # held while a job is queued, and while an atlas switch checks that none is (taken inside the session lock,
+        # never around it): a job admitted between that check and the switch ran on no atlas / the next one, the
+        # worker then dropped it (CodeRabbit). Apart from the session lock, which a running job holds for long.
+        self._admit = threading.RLock()
         self._busy = False
         self._pictures: dict[int, bytes] = {}
         self._picture_ids = itertools.count(1)
@@ -142,11 +155,21 @@ class AddingMixin:
             mode: "manual", "watch", "recheck_all", "undo", ("drop", x, y) or ("retry", indices or None).
             gen: The atlas generation it is for (None: the open one); the worker skips it once another is open.
         """
+        with self._admit:
+            queued = self._admit_job(paths, mode, gen)
+        if queued:
+            self.events.publish("busy", True)
+
+    def _admit_job(self, paths, mode, gen: int | None) -> bool:
+        """Put a job in the queue (with _admit held: see _init_adding); False when closing."""
         if self._closing:
             self.events.log(f"closing: {len(paths) or 'a'} job(s) not started")
-            return
+            return False
+        if gen is None:  # the page request's atlas when it is one, else the open one: a request made just before a
+            # switch is skipped by the worker, never run on the atlas opened after it (CodeRabbit)
+            gen = self._lock.expected()
         self._jobs.put((list(paths), mode, self.generation if gen is None else gen))
-        self.events.publish("busy", True)
+        return True
 
     def _drop_queued_jobs(self) -> None:
         """Forget jobs that have not started."""
@@ -193,6 +216,7 @@ class AddingMixin:
         Raises:
             ValueError: With no atlas open, or the detector database missing.
         """
+        self._lock.refuse_stale()  # (made for another atlas: refused at once, see _queue_job)
         if not self.atlas or not self.path:
             raise ValueError("open or create an atlas first")
         self.detector_ready()
@@ -213,6 +237,7 @@ class AddingMixin:
         Raises:
             ValueError: With no atlas open, or the detector database missing.
         """
+        self._lock.refuse_stale()  # (made for another atlas: refused at once, see _queue_job)
         if not self.atlas or not self.path:
             raise ValueError("open or create an atlas first")
         self.detector_ready()
@@ -224,10 +249,31 @@ class AddingMixin:
         Raises:
             ValueError: With no screenshots.
         """
+        self._lock.refuse_stale()  # (made for another atlas: refused at once, see _queue_job)
         if not self.atlas or not self.atlas.frames:
             raise ValueError("no screenshots to re-check")
         self._queue_job([], "recheck_all")
 
+    @atlas_switch
+    def recheck_atlas(self, p) -> None:
+        """Re-check an atlas from its card in the Atlases tab: opened first when another one is open, and its Re-check
+        queued in the same step (the switch lock held throughout: another tab's switch can't come between, and the job
+        is tagged with the atlas opened here, not the one the page saw).
+
+        Args:
+            p: Its atlas .json file.
+
+        Raises:
+            ValueError: When it can't be opened (work running, unreadable) or has no screenshots.
+        """
+        p = Path(p)
+        if self.path is None or p.resolve() != self.path.resolve():
+            self.open_atlas(p)
+        if not self.atlas or not self.atlas.frames:
+            raise ValueError("no screenshots to re-check")
+        self._queue_job([], "recheck_all", gen=self.generation)
+
+    @atlas_edit
     def undo_last(self) -> list[str]:
         """Remove the screenshots added last (an "undo" job).
 
@@ -245,6 +291,7 @@ class AddingMixin:
         self._queue_job([], "undo")
         return names
 
+    @atlas_edit
     def retry_waiting(self, indices: list[int] | None = None) -> int:
         """Search again for waiting screenshots (all, or those at these places in the waiting list).
 
@@ -442,14 +489,9 @@ class AddingMixin:
         # the session lock is let go while the question is open (the job holds it): the page's requests that need it
         # (new tiles, the ground just pasted) waited until the answer, minutes maybe. The job's atlas stays this
         # atlas: another can't be opened while it runs (working()).
-        try:
-            self._lock.release()
-        except RuntimeError:  # not held (a job run outside the lock)
+        # (all of its levels: AtlasLock.let_go; nothing to let go when it isn't held)
+        with self._lock.let_go():
             return self.events.ask(question, preview=preview)
-        try:
-            return self.events.ask(question, preview=preview)
-        finally:
-            self._lock.acquire()
 
     # ------------------------------------------------------------------ the worker
     def _tally(self) -> dict[str, int]:
@@ -515,6 +557,7 @@ class AddingMixin:
             except Exception as e:
                 LOG.exception(f"adding failed ({mode}): {paths}")
                 self.events.log(f"adding failed: {e}")
+                self._note_seams_trouble(f"adding failed: {e}")  # (a queued Fix seams asks first)
                 if mode == "watch" and self.owns(gen):
                     self._watch_failed([str(p) for p in paths])
             finally:
@@ -525,6 +568,12 @@ class AddingMixin:
                 if not self._busy:
                     self.scan_locks()
                     self.events.publish("busy", False)
+                    try:  # (one queued while this ran: fix_seams). Never the worker's end: a failure here
+                        # left the queued screenshots with no one to add them (CodeRabbit)
+                        self._start_waiting_seams()
+                    except Exception as e:
+                        LOG.exception("starting the queued Fix seams failed")
+                        self.events.log(f"Fix seams could not start: {e}")
 
     def _cache_dir(self) -> Path:
         """Return the detection cache folder of the open atlas (<stem>_frames next to it).
@@ -578,6 +627,7 @@ class AddingMixin:
             except Exception as e:
                 LOG.exception(f"{p.name}: detection failed")
                 self.events.log(f"{p.name}: detection failed: {e}")
+                self._note_seams_trouble(f"{p.name} could not be read: {e}")
                 failed.append(str(p))
         return frames, failed
 
@@ -643,24 +693,234 @@ class AddingMixin:
         self._after_placed(mode, added, refused)
 
     def _run_recheck(self) -> None:
-        """Detect again screenshots detected by an older detector, then re-check the whole atlas."""
+        """Detect again screenshots detected by an older detector, re-check the whole atlas, then ask which of the
+        changes to take: the groups you leave unticked stay as they were (app.recheck_choices).
+
+        The open atlas's record is taken once: the box's wait lets the session lock go, and the result is applied
+        only while that atlas is still the open one (owns; another can't be opened while the job runs, but the job
+        doesn't lean on that alone: AGENTS.md)."""
+        rec = self.opened
+        atlas, path = rec.atlas, rec.path
         stale = [
             Path(f["path"])
-            for f in self.atlas.frames
-            if Path(f["path"]).exists() and not builder.is_cached(Path(f["path"]), self._cache_dir())
+            for f in atlas.frames
+            if Path(f["path"]).exists()
+            and not builder.is_cached(Path(f["path"]), path.with_name(path.stem + "_frames"))
         ]
+        t0 = time.monotonic()
         if stale:
             self.events.log(
                 f"Re-check: {len(stale)} screenshot(s) were detected by an older detector: detecting them again"
             )
             self._detect(stale, "detecting again")
+        t1 = time.monotonic()
         self.events.set_progress("re-checking the whole atlas")
         with self._lock:
-            self.atlas.rebuild_icons(builder.cached_frames(self.path, self.atlas.frames))
-            atlas_finalize.finalize(self.atlas, log=self.events.log)
-            self.atlas.save(self.path)
+            if not self.owns(rec):
+                self._done("Re-check stopped: another atlas was opened")
+                return
+            # the candidate is made aside: the atlas keeps its result and its icon list until you apply (a save
+            # meanwhile - a bookmark, an edit - or a failure listing the changes wrote it unapproved: CodeRabbit).
+            # (The clean-up makes a new result and icon list and never changes the old ones: no copies needed.)
+            old, old_icons = atlas.final, atlas.icons
+            try:
+                atlas.rebuild_icons(builder.cached_frames(path, atlas.frames))
+                atlas_finalize.finalize(atlas, log=self.events.log)
+                new, new_icons = atlas.final, atlas.icons
+            finally:
+                atlas.final, atlas.icons = old, old_icons
+            self._note_timing(len(stale), t1 - t0, len(atlas.frames), time.monotonic() - t1)
+            listed = None
+            if old is not None:
+                self.events.set_progress("listing what the re-check changed")
+                listed = recheck_choices.changes(
+                    old,
+                    new,
+                    self._biomes_of(atlas, old, kept=True),
+                    self._biomes_of(atlas, new, kept=False),
+                    icon_label,
+                )
+            if listed is None or not any(g["count"] for g in listed.values()):
+                # (nothing to choose from: only its numbers can differ)
+                atlas.final, atlas.icons = new, new_icons
+                atlas.last_check = self._check_record()
+                atlas.save(path)
+                done = "whole atlas re-checked" + (": nothing changed" if listed is not None else "")
+        if listed is None or not any(g["count"] for g in listed.values()):
+            self.rebuild_model()
+            self._done(done)
+            return
+        picked = self._ask_recheck(listed)
+        if picked is None:  # (the app is closing: nothing is changed)
+            self._done("Re-check not applied: the app closed before you chose what to update")
+            return
+        self.events.set_progress("updating what you ticked")
+        with self._lock:
+            if not self.owns(rec):  # (the result is for the atlas the box was about)
+                self._done("Re-check not applied: another atlas was opened")
+                return
+            cur = atlas.final  # (as it is now: the one you saw while choosing)
+            merged = recheck_choices.merge(cur, new, set(picked))
+            if "biomes" in picked:
+                atlas.biome_kept = []  # (the biomes as the re-check works them out)
+            else:
+                atlas.biome_kept = recheck_choices.kept_biomes(
+                    merged,
+                    cur,
+                    self._biomes_of(atlas, merged, kept=True),
+                    self._biomes_of(atlas, cur, kept=True),
+                    atlas.biome_kept,
+                )
+            atlas.final = merged
+            if "icons" in picked:
+                atlas.icons = new_icons  # (the icons as the re-check merged them: kept as before when unticked)
+            atlas.last_check = self._check_record()
+            atlas.save(path)
         self.rebuild_model()
-        self._done("whole atlas re-checked")
+        took = [recheck_choices.GROUP_NAMES[g].lower() for g in recheck_choices.GROUPS if g in picked]
+        left = [
+            recheck_choices.GROUP_NAMES[g].lower()
+            for g in recheck_choices.GROUPS
+            if g not in picked and listed[g]["count"]
+        ]
+        msg = "whole atlas re-checked: " + (f"updated {', '.join(took)}" if took else "nothing updated")
+        if left:
+            msg += f"; kept as before: {', '.join(left)}"
+        self._done(msg)
+
+    @staticmethod
+    def _check_record() -> dict:
+        """When and on which version the whole atlas was re-checked (atlas.last_check: the Re-check prompt says)."""
+        return {"time": round(time.time(), 1), "version": VERSION}
+
+    def _note_timing(self, detected: int, detect_s: float, shots: int, clean_s: float) -> None:
+        """Keep how long a Re-check's steps took per screenshot on this computer (the next prompt's estimate)."""
+        t = dict(self.settings.get("recheck_timing") or {})
+        if detected >= RECHECK_TIMING_MIN:
+            t["detect_s"] = round(detect_s / detected, 2)
+        if shots >= RECHECK_TIMING_MIN:
+            t["clean_s"] = round(clean_s / shots, 3)
+        if t:
+            self.set_setting("recheck_timing", t)
+
+    def recheck_info(self, p=None) -> dict:
+        """What the Re-check prompt says about an atlas: when it was last re-checked, when and on which version its
+        screenshots were detected (in groups), how many will be detected again and about how long it takes.
+
+        Args:
+            p: Its atlas .json file (None: the open one). Another atlas is read from its file, not opened.
+
+        Returns:
+            {"last_check": {"time", "version"} or None, "shots", "detect", "missing", "estimate_s", "groups":
+            [{"version" (None: before 1.23), "fresh", "count", "newest", "oldest"}] (newest first)}.
+
+        Raises:
+            ValueError: When the file can't be read.
+        """
+        rec = self.opened  # (one record: never the session lock, a job holds it for minutes - self review)
+        if p is None or (rec.path is not None and Path(p).resolve() == rec.path.resolve()):
+            atlas, path = rec.atlas, rec.path
+            if atlas is None:
+                raise ValueError("no atlas open")
+            frames = list(atlas.frames)  # (a copy of the list: placing screenshots appends to it meanwhile)
+            last = atlas.last_check
+        else:
+            path = Path(p)
+            try:
+                atlas = core.Atlas.load(path)
+            except Exception as e:
+                raise ValueError(f"could not read {path}: {e}") from e
+            frames, last = atlas.frames, atlas.last_check
+        cache_dir = path.with_name(path.stem + "_frames")
+        groups: dict[tuple, dict] = {}
+        detect = missing = 0
+        for f in frames:
+            here = Path(f["path"]).exists()
+            head = builder.cache_head(cache_dir, f["sha"]) if f.get("sha") else None
+            if head is None or not head["fresh"]:
+                if here:
+                    detect += 1  # (a detection gone or from an older detector: detected again)
+                else:
+                    missing += 1  # (its screenshot is gone: its old detection is used as it is)
+            if head is None:
+                continue
+            g = groups.setdefault(
+                (head["version"], head["fresh"]),
+                {"version": head["version"], "fresh": head["fresh"], "count": 0, "newest": 0.0, "oldest": 1e18},
+            )
+            g["count"] += 1
+            g["newest"] = max(g["newest"], head["time"])
+            g["oldest"] = min(g["oldest"], head["time"])
+        t = self.settings.get("recheck_timing") or {}
+        estimate = detect * float(t.get("detect_s", RECHECK_DETECT_S)) + len(frames) * float(
+            t.get("clean_s", RECHECK_CLEAN_S)
+        )
+        return {
+            "last_check": last,
+            "shots": len(frames),
+            "detect": detect,
+            "missing": missing,
+            "estimate_s": round(estimate),
+            "groups": sorted(groups.values(), key=lambda g: -g["newest"]),
+        }
+
+    def _biomes_of(self, atlas, final: dict, kept: bool) -> dict:
+        """Each map's biome in an atlas-wide result (held under the session lock).
+
+        Args:
+            atlas: The atlas (the record the job took).
+            final: An atlas-wide result (atlas.final is set to it while they are worked out, then put back).
+            kept: Apply the biomes a Re-check left as they were (cities.biomes).
+
+        Returns:
+            {map node index: biome}.
+        """
+        saved = atlas.final
+        atlas.final = final
+        try:
+            found = atlas_cities.biomes(atlas, view_model(atlas), ground=self.ground(), kept=kept)
+        finally:
+            atlas.final = saved
+        return recheck_choices.biome_labels(found["potential"])
+
+    def _ask_recheck(self, listed: dict) -> list[str] | None:
+        """Ask the page which of the re-check's changes to take, and remember your ticks (for every atlas).
+
+        Args:
+            listed: recheck_choices.changes.
+
+        Returns:
+            The groups ticked, or None when the app closes first.
+        """
+        ticks = self.ui_settings()["recheck_update"]
+        groups = [
+            {
+                "id": g,
+                "name": recheck_choices.GROUP_NAMES[g],
+                "count": listed[g]["count"],
+                "added": listed[g]["added"],
+                "removed": listed[g]["removed"],
+                "changed": listed[g]["changed"],
+                "items": listed[g]["items"],
+                "ticked": bool(ticks.get(g, True)) and listed[g]["count"] > 0,
+            }
+            for g in recheck_choices.GROUPS
+        ]
+        for g in groups:
+            if g["count"]:
+                self.events.log(f"Re-check: {g['name'].lower()}: {g['count']} change(s)")
+        self.events.set_progress("Re-check: choose what to update")
+        with self._lock.let_go():  # (as _ask: the page's requests go on while the box is open)
+            picked = self.events.ask_choices(
+                "Here are the map changes. Choose which to keep: a group left unticked stays as it was before, on "
+                "the maps it was on.",
+                {"groups": groups},
+                labels={"title": "Re-check atlas has finished", "yes": "Apply"},
+            )
+        if picked is not None:
+            changed = {g["id"]: g["id"] in picked for g in groups if g["count"]}
+            self.set_setting("recheck_update", {**ticks, **changed})
+        return picked
 
     def _done(self, msg: str) -> None:
         """Tell the page a job finished.
@@ -758,16 +1018,17 @@ class AddingMixin:
         self.recent_pick = None
 
     def _run_undo(self) -> None:
-        """Put the atlas back to its snapshot from before the last add, keeping the bookmarks."""
+        """Put the atlas back to its snapshot from before the last add, all of it but your hand edits (bookmarks,
+        city types, landmark and biome edits: Atlas.HAND_EDITS), which stay as they are now."""
         entry = self._undo[-1]
         self.events.set_progress("undoing the last add")
         with self._lock:
             old = core.Atlas.load(entry["file"])  # (raises: the entry stays, Undo can be tried again: CodeRabbit)
             self._undo.pop()
-            keep_bookmarks = self.atlas.bookmarks
-            for attr in ("nodes", "edges", "landmarks", "frames", "icons", "final"):
-                setattr(self.atlas, attr, getattr(old, attr))
-            self.atlas.bookmarks = keep_bookmarks
+            self._lock_rev = getattr(self, "_lock_rev", 0) + 1  # (a stronghold search running now is out of date)
+            for attr in core.Atlas.SAVED:
+                if attr not in core.Atlas.HAND_EDITS:
+                    setattr(self.atlas, attr, getattr(old, attr))
             self.atlas.save(self.path)
         with contextlib.suppress(OSError):
             Path(entry["file"]).unlink()

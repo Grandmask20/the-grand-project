@@ -8,14 +8,14 @@ describe("pageChanges", () => {
 		const before = useAppStore.getState();
 		const after = {
 			...before,
-			tab: "bookmarks",
+			tab: "find", // (the page starts on Bookmarks: user)
 			mode: { kind: "bookmark" as const },
 			selected: nodeInfo,
 			error: "no maps inside the lasso",
 		};
 		// in plain words, no ids (user: the log has to make sense to players)
 		expect(pageChanges(after, before)).toEqual([
-			"Opened the Bookmarks tab",
+			"Opened the Find tab",
 			"Add bookmark started",
 			"Selected Map #12: Breach",
 			"Error shown: no maps inside the lasso",

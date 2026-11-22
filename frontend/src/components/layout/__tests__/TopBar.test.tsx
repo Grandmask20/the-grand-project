@@ -1,6 +1,8 @@
 import { act, screen, waitFor } from "@testing-library/react";
 import { afterEach, describe, expect, it } from "vitest";
+import { setAtlasGen } from "@/api/Http";
 import { TopBar } from "@/components/layout/TopBar";
+import { TimelapseTab } from "@/components/replay/TimelapseTab";
 import { useAppStore } from "@/store/AppStore";
 import { atlases, state } from "@/test/Fixtures";
 import { renderWithApp, resetStore } from "@/test/RenderWithApp";
@@ -45,18 +47,25 @@ describe("TopBar", () => {
 		expect(screen.getByRole("button", { name: "Undo" })).toBeDisabled();
 	});
 
-	it("Biome select switches the lasso on, and says End while on (user: only Esc ended it)", async () => {
+	it("the map tools: a tab starts its tool, lit while on; clicked again (or Select) it ends (user's design)", async () => {
 		const { user } = renderWithApp(<TopBar />, { "GET /api/atlases": atlases });
-		await user.click(screen.getByRole("button", { name: "Biome select" }));
+		expect(screen.getByRole("button", { name: "Select" })).toHaveAttribute("aria-pressed", "true");
+		await user.click(screen.getByRole("button", { name: "Biome" }));
 		expect(useAppStore.getState().mode).toEqual({ kind: "lasso" });
-		await user.click(screen.getByRole("button", { name: "End biome select" }));
+		expect(screen.getByRole("button", { name: "Biome" })).toHaveAttribute("aria-pressed", "true");
+		expect(screen.getByRole("button", { name: "Select" })).toHaveAttribute("aria-pressed", "false");
+		await user.click(screen.getByRole("button", { name: "Biome" }));
+		expect(useAppStore.getState().mode).toEqual({ kind: "normal" });
+		await user.click(screen.getByRole("button", { name: "I'm here" }));
+		expect(useAppStore.getState().mode).toEqual({ kind: "player" });
+		await user.click(screen.getByRole("button", { name: "Select" }));
 		expect(useAppStore.getState().mode).toEqual({ kind: "normal" });
 	});
 
 	it("no map mode while the timelapse is open: opening it ends one, and Route can't start in it", async () => {
 		const { user } = renderWithApp(<TopBar />, { "GET /api/atlases": atlases });
 		await user.click(screen.getByRole("button", { name: "Route" }));
-		expect(screen.getByRole("button", { name: "End route" })).toBeInTheDocument();
+		expect(screen.getByRole("button", { name: "Route" })).toHaveAttribute("aria-pressed", "true");
 		act(() => useAppStore.getState().setReplay({} as never));
 		expect(useAppStore.getState().mode).toEqual({ kind: "normal" });
 		expect(screen.getByRole("button", { name: "Route" })).toBeDisabled();
@@ -64,31 +73,67 @@ describe("TopBar", () => {
 		expect(useAppStore.getState().mode).toEqual({ kind: "normal" });
 	});
 
-	it("replay opens at its end, and closes again", async () => {
-		const { user, calls } = renderWithApp(<TopBar />, {
-			"GET /api/atlases": atlases,
-			"POST /api/replay/open": plan,
-			"POST /api/replay/close": { ok: true },
-		});
-		await user.click(screen.getByRole("button", { name: "Replay" }));
-		await waitFor(() => expect(useAppStore.getState().replay).toMatchObject({ pos: 4, playing: false }));
-		await user.click(screen.getByRole("button", { name: "Replay" }));
-		expect(useAppStore.getState().replay).toBeNull();
-		await waitFor(() => expect(calls.some((c) => c.path === "/api/replay/close")).toBe(true));
-	});
-
-	it("no replay for an atlas without screenshots", () => {
-		renderWithApp(<TopBar />, {
-			"GET /api/state": { ...state, atlas: state.atlas && { ...state.atlas, shots: 0 } },
-			"GET /api/atlases": atlases,
-		});
-		expect(screen.getByRole("button", { name: "Replay" })).toBeDisabled();
-	});
-
 	it("quitting asks first", async () => {
 		const { user } = renderWithApp(<TopBar />, { "GET /api/atlases": atlases });
 		await user.click(screen.getByRole("button", { name: "File" }));
 		await user.click(await screen.findByRole("menuitem", { name: "Quit the app" }));
 		expect(useAppStore.getState().confirm?.title).toBe("Quit");
+	});
+
+	it("Fix seams during adding asks to queue it, only for the atlas it was asked for", async () => {
+		// (CodeRabbit: the box and its Queue acted on an atlas opened meanwhile)
+		setAtlasGen(1);
+		let switchFirst = false;
+		const { user, calls } = renderWithApp(<TopBar />, {
+			"GET /api/atlases": atlases,
+			"POST /api/seams": (b: unknown) => {
+				if (switchFirst) setAtlasGen(2);
+				return (b as { after_adding: boolean }).after_adding
+					? { ok: true, adding: false, queued: true }
+					: { ok: false, adding: true, queued: false };
+			},
+		});
+		await user.click(screen.getByRole("button", { name: "File" }));
+		await user.click(await screen.findByRole("menuitem", { name: "Fix seams (clean map)" }));
+		await waitFor(() => expect(useAppStore.getState().confirm?.yes).toBe("Queue"));
+		useAppStore.getState().confirm?.onYes();
+		await waitFor(() => expect(calls.filter((c) => c.path === "/api/seams")).toHaveLength(2));
+		act(() => useAppStore.getState().askConfirm(null));
+		switchFirst = true; // another atlas opens while it is asked
+		await user.click(screen.getByRole("button", { name: "File" }));
+		await user.click(await screen.findByRole("menuitem", { name: "Fix seams (clean map)" }));
+		await waitFor(() => expect(calls.filter((c) => c.path === "/api/seams")).toHaveLength(3));
+		expect(useAppStore.getState().confirm).toBeNull(); // (no box for the atlas before)
+	});
+
+	it("Replay left the top bar: the Timelapse tab on the map opens it at its end, and closes it (user)", async () => {
+		renderWithApp(<TopBar />, { "GET /api/atlases": atlases });
+		expect(screen.queryByRole("button", { name: "Replay" })).not.toBeInTheDocument();
+	});
+});
+
+describe("TimelapseTab", () => {
+	afterEach(resetStore);
+
+	it("opens the timelapse at its end, lit while open, and closes it again", async () => {
+		const { user, calls } = renderWithApp(<TimelapseTab />, {
+			"POST /api/replay/open": plan,
+			"POST /api/replay/close": { ok: true },
+		});
+		const tab = screen.getByRole("button", { name: /Timelapse/ });
+		expect(tab).toHaveAttribute("aria-pressed", "false");
+		await user.click(tab);
+		await waitFor(() => expect(useAppStore.getState().replay).toMatchObject({ pos: 4, playing: false }));
+		expect(tab).toHaveAttribute("aria-pressed", "true");
+		await user.click(tab);
+		expect(useAppStore.getState().replay).toBeNull();
+		await waitFor(() => expect(calls.some((c) => c.path === "/api/replay/close")).toBe(true));
+	});
+
+	it("none for an atlas without screenshots", () => {
+		renderWithApp(<TimelapseTab />, {
+			"GET /api/state": { ...state, atlas: state.atlas && { ...state.atlas, shots: 0 } },
+		});
+		expect(screen.queryByRole("button", { name: /Timelapse/ })).not.toBeInTheDocument();
 	});
 });

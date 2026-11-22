@@ -21,6 +21,7 @@ from grand_project import cities, core
 from grand_project.app import adding as adding_mod
 from grand_project.app import mapimage, replay_data
 from grand_project.app import server as S
+from grand_project.app.events import StaleAtlas
 from grand_project.app.server import AppServer
 from grand_project.app.session import AtlasSession
 from tests.test_app_server import call
@@ -105,6 +106,10 @@ def test_nothing_of_a_shows_while_b_is_being_loaded(session, two, monkeypatch):
     a, b = two
     session.open_atlas(a)
     assert any(f["corners"] for f in session.frames_payload()["frames"])
+    # A's locked-stronghold search ends with a model rebuild: started just before the switch, it built B's model
+    # before B's own first rebuild was seen (flaky on a slow CI machine), so it is waited for
+    if getattr(session, "_lock_thread", None):
+        session._lock_thread.join(10)
     seen = []
     real = session.rebuild_model
 
@@ -485,3 +490,376 @@ def test_the_open_atlas_is_one_record(session, two):
     assert any("switched to atlas" in line for line in session.events._logs[job.scope])  # (in A's own log)
     session.close()
     assert session.opened.atlas is None and session.events.scope == "" and session.state()["log_scope"] == ""
+
+
+def test_a_stop_while_the_clean_map_loads_leaves_it_out(session, two, fake_seams, monkeypatch):
+    # (GPT audit: Stop only reached a live process; once it had ended, the clean map being loaded went in anyway)
+    a, _b = two
+    session.open_atlas(a)
+    before = session.terrain[0].copy()
+    real = mapimage.np.load
+
+    def load_then_stop(*args, **kw):
+        session.stop_seams()  # pressed while the finished process's result is read
+        return real(*args, **kw)
+
+    monkeypatch.setattr(mapimage.np, "load", load_then_stop)
+    session.fix_seams()
+    fake_seams.release.set()
+    assert wait_until(lambda: session._seams_proc is None)
+    assert np.array_equal(session.terrain[0], before) and session.labels is None
+
+
+def test_fix_seams_waits_for_adding_when_queued_and_stop_takes_it_off(session, two, fake_seams):
+    # (you: Fix seams doesn't start while adding runs; the page asks to cancel, or queue it after adding)
+    a, _b = two
+    session.open_atlas(a)
+    session._jobs.put(([], "recheck_all", session.generation))  # (adding runs)
+    assert session.fix_seams() == "adding" and not session.seams_running()
+    assert session.fix_seams(after_adding=True) == "queued" and session.state()["seams"]
+    session.stop_seams()  # Stop takes it off the queue
+    assert not session.state()["seams"]
+    assert session.fix_seams(after_adding=True) == "queued"
+    session._jobs.get()
+    session._jobs.task_done()  # adding is done: the worker starts what was queued
+    session._start_waiting_seams()
+    assert session.seams_running()
+    fake_seams.release.set()
+    assert wait_until(lambda: session._seams_proc is None)
+
+
+def test_a_queued_fix_seams_is_dropped_for_another_atlas(session, two, fake_seams):
+    a, b = two
+    session.open_atlas(a)
+    session._jobs.put(([], "recheck_all", session.generation))
+    assert session.fix_seams(after_adding=True) == "queued"
+    session._jobs.get()
+    session._jobs.task_done()
+    session.open_atlas(b)  # (opening waits for adding: it takes the queued one off as it switches)
+    session._start_waiting_seams()
+    assert not session.seams_running() and not session.state()["seams"]
+
+
+def test_each_job_has_its_own_progress_line(session):
+    # (GPT audit: the map image build ending blanked adding's progress)
+    ev = session.events
+    ev.set_progress("adding 1 / 4")
+    ev.set_progress("building the map image", owner="map")
+    assert ev.progress == "adding 1 / 4 · building the map image"
+    ev.set_progress(None, owner="map")
+    assert ev.progress == "adding 1 / 4"
+    ev.set_progress(None)
+    assert ev.progress is None
+
+
+@pytest.mark.parametrize("anyway", [True, False], ids=["fix-seams-anyway", "cancel"])
+def test_a_queued_fix_seams_asks_first_when_adding_failed(session, two, fake_seams, monkeypatch, anyway):
+    # (you: it starts only when adding finishes; failed, it says why and asks: Cancel or Fix seams anyway)
+    a, _b = two
+    session.open_atlas(a)
+    asked = []
+    monkeypatch.setattr(session.events, "ask", lambda q, **kw: (asked.append((q, kw.get("labels"))), anyway)[1])
+    session._jobs.put(([], "recheck_all", session.generation))
+    assert session.fix_seams(after_adding=True) == "queued"
+    session._note_seams_trouble("adding failed: disk full")  # (the job failed)
+    session._jobs.get()
+    session._jobs.task_done()
+    session._start_waiting_seams()
+    assert wait_until(lambda: not session._seams_asking and asked)
+    question, labels = asked[0]
+    assert "disk full" in question and labels == {"title": "Fix seams", "yes": "Fix seams anyway", "no": "Cancel"}
+    if anyway:
+        assert wait_until(session.seams_running)
+        fake_seams.release.set()
+        assert wait_until(lambda: session._seams_proc is None)
+    else:
+        assert not session.seams_running() and not session.state()["seams"]
+
+
+def test_a_stop_while_it_asks_leaves_fix_seams_off(session, two, fake_seams, monkeypatch):
+    a, _b = two
+    session.open_atlas(a)
+    answer = threading.Event()
+    monkeypatch.setattr(session.events, "ask", lambda q, **kw: answer.wait(5))
+    session._jobs.put(([], "recheck_all", session.generation))
+    session.fix_seams(after_adding=True)
+    session._note_seams_trouble("x.png could not be read: damaged")
+    session._jobs.get()
+    session._jobs.task_done()
+    session._start_waiting_seams()
+    assert wait_until(lambda: session._seams_asking)
+    session.stop_seams()  # Stop while the question is open
+    answer.set()  # then "Fix seams anyway"
+    assert wait_until(lambda: not session._seams_asking)
+    assert not session.seams_running() and not session.state()["seams"]
+
+
+def test_page_requests_made_for_the_atlas_before_are_refused(session, two):
+    # (CodeRabbit: adding, placing, Re-check, auto-add and close didn't check the request's atlas)
+    a, b = two
+    session.open_atlas(a)
+    old = session.generation
+    shot = session.atlas.frames[0]["path"]
+    session.open_atlas(b)
+    watching = session._watch_on
+    for act in (
+        lambda: session.add_screenshots([shot]),
+        lambda: session.place_by_hand(shot, 1.0, 2.0),
+        lambda: session.recheck_all(),
+        lambda: session.set_watch(not watching),
+        lambda: session.set_watch_folder(None),
+        lambda: session.close(),
+    ):
+        with session._lock.expect(old), pytest.raises(StaleAtlas):
+            act()
+    assert session._jobs.unfinished_tasks == 0 and session._watch_on == watching and session.path is not None
+
+
+def test_a_job_queued_by_a_request_carries_the_request_s_atlas(session, two):
+    # (the safety net: a switch right after the check still never runs it on the next atlas)
+    a, _b = two
+    session.open_atlas(a)
+    gen = session.generation
+    with session._lock.expect(gen):
+        session._queue_job([], "recheck_all")
+    assert session._jobs.queue[-1][2] == gen
+    session._queue_job([], "recheck_all")  # (the app's own work: the open atlas)
+    assert session._jobs.queue[-1][2] == session.generation
+
+
+def test_a_stop_just_before_the_queued_start_is_kept(session, two, fake_seams):
+    # (CodeRabbit: the queue was cleared before the start was claimed; a Stop in between was lost)
+    a, _b = two
+    session.open_atlas(a)
+    session._jobs.put(([], "recheck_all", session.generation))
+    session.fix_seams(after_adding=True)
+    token = session._seams_waiting["token"]
+    session._jobs.get()
+    session._jobs.task_done()
+    session.stop_seams()  # (between adding ending and the start being claimed)
+    session._start_queued_seams(token)
+    assert not session.seams_running() and not session.state()["seams"]
+
+
+def test_an_old_answer_never_cancels_a_newer_queued_fix_seams(session, two, fake_seams, monkeypatch):
+    # (CodeRabbit: Cancel on the box of a request Stop took off removed the one queued after it)
+    a, _b = two
+    session.open_atlas(a)
+    answer = threading.Event()
+    monkeypatch.setattr(session.events, "ask", lambda q, **kw: (answer.wait(5), False)[1])  # (Cancel)
+    session._jobs.put(([], "recheck_all", session.generation))
+    session.fix_seams(after_adding=True)
+    session._note_seams_trouble("adding failed: x")
+    session._jobs.get()
+    session._jobs.task_done()
+    session._start_waiting_seams()
+    assert wait_until(lambda: session._seams_asking)
+    session.stop_seams()  # the first request taken off...
+    session._jobs.put(([], "recheck_all", session.generation))
+    assert session.fix_seams(after_adding=True) == "queued"  # ...and a second one queued
+    second = session._seams_waiting["token"]
+    answer.set()  # then Cancel on the first one's box
+    assert wait_until(lambda: not session._seams_asking)
+    assert session._seams_waiting is not None and session._seams_waiting["token"] == second
+    session._jobs.get()
+    session._jobs.task_done()
+
+
+def test_another_atlas_never_inherits_a_queued_fix_seams(session, two):
+    # (CodeRabbit: one left from the atlas before made a request for this one report "queued", unrecorded)
+    a, b = two
+    session.open_atlas(a)
+    session._seams_waiting = {"gen": session.generation, "token": 99}  # (as if left behind)
+    session.open_atlas(b)
+    assert session._seams_waiting is None and not session.state()["seams"]
+    session._jobs.put(([], "recheck_all", session.generation))
+    assert session.fix_seams(after_adding=True) == "queued"
+    assert session._seams_waiting["gen"] == session.generation
+    session._jobs.get()
+    session._jobs.task_done()
+
+
+def test_a_page_log_line_made_for_the_atlas_before_is_refused(session, two):
+    # (CodeRabbit: checked first and written later, a switch in between put the line in the next atlas's log)
+    a, b = two
+    session.open_atlas(a)
+    old = session.generation
+    session.open_atlas(b)
+    srv = AppServer(session, port=0)
+    threading.Thread(target=srv.serve_forever, daemon=True).start()
+    try:
+        status, _h, _b = call(srv, "/api/log", "POST", {"lines": ["clicked a map of A"]}, {"X-Atlas-Gen": str(old)})
+        assert status == 409
+        assert not any("clicked a map of A" in line for line in session.events.log_lines)
+        status, _h, _b = call(srv, "/api/log", "POST", {"lines": ["clicked a map of B"]},
+                              {"X-Atlas-Gen": str(session.generation)})  # fmt: skip
+        assert status == 200 and any("clicked a map of B" in line for line in session.events.log_lines)
+    finally:
+        srv.stopping = True
+        srv.shutdown()
+        srv.server_close()
+
+
+def test_a_quick_atlas_action_waits_for_a_switch_going_on(session, two):
+    # (the switch lock: a check and its change can't be split by opening another atlas)
+    a, _b = two
+    session.open_atlas(a)
+    order = []
+    with session._lock.switching():  # (a switch going on)
+        t = threading.Thread(target=lambda: (session.set_watch(False), order.append("watch off")))
+        t.start()
+        time.sleep(0.2)
+        order.append("switch done")
+    t.join(5)
+    assert order == ["switch done", "watch off"]
+
+
+def test_failures_while_the_box_is_open_are_asked_before_fix_seams_starts(session, two, fake_seams, monkeypatch):
+    # (CodeRabbit: a Yes started it without showing the failures that came in while the box was open)
+    a, _b = two
+    session.open_atlas(a)
+    asked = []
+
+    def ask(q, **kw):
+        asked.append(q)
+        if len(asked) == 1:
+            session._note_seams_trouble("b.png could not be read: damaged")  # (another add fails meanwhile)
+        return True
+
+    monkeypatch.setattr(session.events, "ask", ask)
+    session._jobs.put(([], "recheck_all", session.generation))
+    session.fix_seams(after_adding=True)
+    session._note_seams_trouble("a.png could not be read: damaged")
+    session._jobs.get()
+    session._jobs.task_done()
+    session._start_waiting_seams()
+    assert wait_until(session.seams_running)
+    assert len(asked) == 2 and "a.png" in asked[0] and "b.png" in asked[1] and "a.png" not in asked[1]
+    fake_seams.release.set()
+    assert wait_until(lambda: session._seams_proc is None)
+
+
+def test_an_undo_during_the_stronghold_search_drops_its_result(session, two, monkeypatch):
+    # (CodeRabbit: the search's result put back the strongholds of the screenshots Undo took away)
+    a, _b = two
+    if getattr(session, "_lock_thread", None):
+        session._lock_thread.join(10)
+    session.open_atlas(a)
+    if getattr(session, "_lock_thread", None):
+        session._lock_thread.join(10)
+    release, started, calls = threading.Event(), threading.Event(), []
+
+    def find_locks(atlas, todo):
+        calls.append([f["name"] for f in todo])
+        if len(calls) == 1:
+            started.set()
+            release.wait(10)
+            return [(500.0, 500.0)]  # (a hand icon in a screenshot Undo takes away)
+        return []
+
+    monkeypatch.setattr(cities, "find_locks", find_locks)
+    with session._lock:
+        session.atlas.lock_scanned = []
+    session.scan_locks()
+    assert started.wait(5)
+    with session._lock:  # (what Undo does: the atlas as before, the search out of date)
+        session._lock_rev = getattr(session, "_lock_rev", 0) + 1
+    release.set()
+    assert wait_until(lambda: len(calls) >= 2)  # (searched again, the screenshots as they are now)
+    if getattr(session, "_lock_thread", None):
+        session._lock_thread.join(10)
+    assert not any(abs(k["x"] - 500.0) < 1 for k in session.atlas.locks)
+
+
+def test_a_job_queued_while_closing_keeps_its_atlas_open(session, two, monkeypatch):
+    # (CodeRabbit: a job admitted after Close's first check had its atlas closed under it)
+    a, _b = two
+    session.open_atlas(a)
+    real_save = session.save
+
+    def save_then_add():
+        real_save()
+        session._queue_job([], "recheck_all")  # (an add comes in while Close saves)
+
+    monkeypatch.setattr(session, "save", save_then_add)
+    with pytest.raises(ValueError, match="being added"):
+        session.close()
+    assert session.path == a and session._jobs.queue[-1][2] == session.generation
+    session._jobs.get()
+    session._jobs.task_done()
+
+
+def test_an_older_map_image_build_never_replaces_a_newer_image(session, two):
+    # (CodeRabbit: a build still running put its plain image in after the clean map; Fix seams retires builds)
+    a, _b = two
+    session.open_atlas(a)
+    canvas, weight, origin = session.terrain
+    session._terrain_job += 1  # (a newer build, or a clean map put in)
+    assert session.set_terrain(canvas, weight, origin, save=False, job=session._terrain_job - 1) is False
+    assert session.set_terrain(canvas, weight, origin, save=False, job=session._terrain_job) is True
+
+
+def test_the_worker_goes_on_when_the_queued_fix_seams_cannot_start(two, monkeypatch, quiet_locks):
+    # (CodeRabbit: a failure starting the queued Fix seams ended the worker; screenshots queued after were never added)
+    s = AtlasSession(settings={}, worker=True)
+    try:
+        a, _b = two
+        s.open_atlas(a)
+        ran = []
+        monkeypatch.setattr(s, "run_job", lambda paths, mode: ran.append(mode))
+        monkeypatch.setattr(s, "_start_waiting_seams", lambda: (_ for _ in ()).throw(RuntimeError("no thread")))
+        s._queue_job([], "recheck_all")
+        assert wait_until(lambda: len(ran) == 1 and not s.working())
+        s._queue_job([], "recheck_all")
+        assert wait_until(lambda: len(ran) == 2)
+    finally:
+        s.shutdown()
+
+
+def test_the_queued_start_waits_while_a_box_is_open_or_failures_wait(session, two, fake_seams):
+    # (CodeRabbit: the claim started it past an open "adding didn't finish" box, or without asking about a failure)
+    a, _b = two
+    session.open_atlas(a)
+    session._jobs.put(([], "recheck_all", session.generation))
+    session.fix_seams(after_adding=True)
+    token = session._seams_waiting["token"]
+    session._jobs.get()
+    session._jobs.task_done()
+    session._seams_asking = True  # (a box is open)
+    assert session.fix_seams(after_adding=True, claim=token) == "queued" and not session.seams_running()
+    session._seams_asking = False
+    session._note_seams_trouble("x.png could not be read")  # (a failure waits to be asked about)
+    assert session.fix_seams(after_adding=True, claim=token) == "queued" and not session.seams_running()
+    session._seams_trouble = []
+    assert session.fix_seams(after_adding=True, claim=token) == "started"
+    fake_seams.release.set()
+    assert wait_until(lambda: session._seams_proc is None)
+
+
+def test_the_cached_map_image_carries_its_build(session, two, monkeypatch):
+    # (CodeRabbit: the cached image had no build number, so a clean map put in meanwhile could be replaced)
+    a, _b = two
+    session.open_atlas(a)
+    got = []
+    real = session.set_terrain
+    monkeypatch.setattr(session, "set_terrain", lambda *args, **kw: (got.append(kw.get("job")), real(*args, **kw))[1])
+    session.load_terrain(background=False)
+    assert got and got[0] == session._terrain_job
+
+
+def test_a_second_fix_seams_request_never_skips_an_open_box(session, two, fake_seams):
+    # (CodeRabbit: a second request while "adding didn't finish" was open started it past the box's Cancel)
+    a, _b = two
+    session.open_atlas(a)
+    session._jobs.put(([], "recheck_all", session.generation))
+    session.fix_seams(after_adding=True)
+    session._jobs.get()
+    session._jobs.task_done()
+    session._seams_asking = True  # (its box is open, adding is done)
+    assert session.fix_seams(after_adding=True) == "queued" and not session.seams_running()
+    assert session.fix_seams() == "queued" and not session.seams_running()
+    session._seams_asking = False
+    session._seams_waiting = None  # (answered Cancel)
+    assert session.fix_seams() == "started"  # (none queued: at once, as before)
+    fake_seams.release.set()
+    assert wait_until(lambda: session._seams_proc is None)

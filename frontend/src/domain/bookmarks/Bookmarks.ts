@@ -8,6 +8,12 @@ export interface BookmarkGroup {
 	hidden: boolean;
 	/** Folded shut in the Bookmarks tab (kept per atlas). */
 	folded?: boolean;
+	/** Its own look: a colour ("#rrggbb") and an icon (a map icon's or place's raw name); its bookmarks without one of
+	 * their own take it. */
+	colour?: string;
+	icon?: string;
+	/** Its icon without a ring of its colour. */
+	plain?: boolean;
 	items: Bookmark[];
 }
 
@@ -37,6 +43,10 @@ export interface Bookmark {
 	created: string;
 	hidden: boolean;
 	shown: boolean;
+	/** Its own look (none: its group's, then the page's); `plain`: its icon without a ring. */
+	colour?: string;
+	icon?: string;
+	plain?: boolean;
 	/** A saved route (Route in the top bar, Save route): no pin, its line on the map. */
 	route?: SavedRoute;
 }
@@ -48,4 +58,8 @@ export interface BookmarkDraft {
 	group: string;
 	note: string;
 	route?: SavedRoute;
+	/** Its own look ("": none); left out, an edit keeps it as it is. */
+	colour?: string;
+	icon?: string;
+	plain?: boolean;
 }

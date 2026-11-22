@@ -7,6 +7,9 @@ const HeldBySection = createContext<string | null>(null);
 
 const isPicker = (t: EventTarget) => t instanceof HTMLInputElement && t.type === "color";
 
+/** A section's fold title (Section foldable): opening or folding it uses no setting, so its layer doesn't show. */
+const isFold = (t: EventTarget) => t instanceof Element && t.closest("[data-fold]") !== null;
+
 /** Let go of what a ref holds, once. */
 function letGo(r: { current: (() => void) | null }) {
 	r.current?.();
@@ -55,7 +58,7 @@ export function RevealWhileUsed({ layer, view, children }: { layer: string; view
 			<div
 				className="contents"
 				onPointerDownCapture={(e) => {
-					if (isPicker(e.target)) return; // (held while its picker is open, below)
+					if (isPicker(e.target) || isFold(e.target)) return; // (a picker: held while open, below)
 					letGo(press);
 					const release = hold(held);
 					// one end for both ways a press ends, which takes both listeners off (one stayed: CodeRabbit)
@@ -71,7 +74,7 @@ export function RevealWhileUsed({ layer, view, children }: { layer: string; view
 				}}
 				// the keyboard too (Space on a box, arrows on a slider: CodeRabbit)
 				onKeyDownCapture={(e) => {
-					if (CHANGE_KEYS.has(e.key) && !key.current) key.current = hold(held);
+					if (CHANGE_KEYS.has(e.key) && !key.current && !isFold(e.target)) key.current = hold(held);
 				}}
 				onKeyUpCapture={() => letGo(key)}
 				// a colour picker: open from its click until it closes (the browser's own "change": React's onChange

@@ -4,6 +4,7 @@ import type { WatchState } from "@/domain/adding/WatchState";
 import type { AppState } from "@/domain/app/AppState";
 import type { Meta, ReplaySettings } from "@/domain/app/Meta";
 import type { Parts } from "@/domain/app/Parts";
+import type { RecheckInfo } from "@/domain/app/RecheckInfo";
 import type { SettingsChange, UiSettings } from "@/domain/app/UiSettings";
 import type { UpdateStatus } from "@/domain/app/Update";
 import type { AtlasCard } from "@/domain/atlas/AtlasCard";
@@ -39,7 +40,8 @@ export function createAppClient(http: Http) {
 		setUpdateAuto: (on: boolean) => http.send<UpdateStatus>("POST", "/api/update/auto", { on }),
 		getSettings: () => http.get<UiSettings>("/api/settings"),
 		updateSettings: (change: SettingsChange) => http.send<UiSettings>("PATCH", "/api/settings", change),
-		answer: (id: number, yes: boolean) => http.send<Ok>("POST", `/api/questions/${id}`, { yes }),
+		answer: (id: number, yes: boolean, picked?: string[]) =>
+			http.send<Ok>("POST", `/api/questions/${id}`, picked ? { yes, picked } : { yes }),
 		quit: () => http.send<Ok>("POST", "/api/quit"),
 		log: (lines: string[]) => http.send<Ok>("POST", "/api/log", { lines }),
 		eventsUrl: () => http.url("/api/events"),
@@ -52,6 +54,10 @@ export function createAppClient(http: Http) {
 		forgetAtlas: (json: string) => http.send<Ok>("POST", "/api/atlases/forget", { json }),
 		deleteAtlas: (json: string) => http.send<{ failed: string[] }>("POST", "/api/atlases/delete", { json }),
 		openAtlas: (path: string) => http.send<AtlasSummary>("POST", "/api/atlas/open", { path }),
+		/** Re-check an atlas (opened first when another one is open). */
+		recheckAtlas: (path: string) => http.send<Ok>("POST", "/api/atlas/recheck-file", { path }),
+		/** What the Re-check prompt says about an atlas (read, not opened). */
+		recheckInfo: (path: string) => http.get<RecheckInfo>("/api/atlas/recheck-info", { path }),
 		newAtlas: (path: string) => http.send<AtlasSummary>("POST", "/api/atlas/new", { path }),
 		openFolder: (folder: string) => http.send<FolderOpened>("POST", "/api/atlas/folder", { folder }),
 		createFromFolder: (folder: string) => http.send<{ adding: number }>("POST", "/api/atlas/folder/create", { folder }),
@@ -59,7 +65,9 @@ export function createAppClient(http: Http) {
 		closeAtlas: () => http.send<Ok>("POST", "/api/atlas/close"),
 		exportPngs: () => http.send<{ files: string[] }>("POST", "/api/atlas/export"),
 		recheck: () => http.send<Ok>("POST", "/api/atlas/recheck"),
-		fixSeams: () => http.send<Ok>("POST", "/api/seams"),
+		/** Fix seams; while adding runs it isn't started ({adding}), or is queued after it (afterAdding). */
+		fixSeams: (afterAdding = false) =>
+			http.send<Ok & { adding: boolean; queued: boolean }>("POST", "/api/seams", { after_adding: afterAdding }),
 		stopSeams: () => http.send<Ok>("DELETE", "/api/seams"),
 		listDir: (path: string, files = true) => http.get<FsListing>("/api/fs", { path, files: files ? 1 : 0 }),
 		upload: (file: File) => http.upload<{ path: string }>("/api/upload", file, file.name),
@@ -99,11 +107,18 @@ export function createAppClient(http: Http) {
 		listType: (type: string) => http.get<{ results: ResultRow[] }>("/api/list", { type }),
 		getSources: (x: number, y: number) => http.get<SourceShot[]>("/api/sources", { x, y }),
 		screenshotUrl: (name: string, w = 0) => http.url(`/api/screenshot/${encodeURIComponent(name)}`, { w }),
+		// a small picture of the ground around a spot (Find's rows): g the atlas it is for (the app sends none for
+		// another), v the map image's version (the browser keeps it a year)
+		cropUrl: (x: number, y: number, g: number, v: number) =>
+			http.url("/api/crop", { x: Math.round(x), y: Math.round(y), g, v }),
 
 		// hand edits
 		setLandmark: (x: number, y: number, kind: string, on: "landmark" | "map" = "landmark") =>
 			http.send<Ok>("POST", "/api/landmark", { x, y, kind, on }),
 		setCityType: (id: number, type: string | null) => http.send<Ok>("POST", "/api/city-type", { id, type }),
+		// a map deleted (a ghost map) or added by hand, with a landmark kind on it (City, Hall, Tower...)
+		editMap: (x: number, y: number, op: "remove" | "add", kind = "") =>
+			http.send<Ok>("POST", "/api/map-edit", { x, y, op, kind }),
 		lassoCount: (polygon: Point[]) => http.send<{ maps: number }>("POST", "/api/lasso", { polygon }),
 		setBiome: (polygon: Point[], biome: string) =>
 			http.send<{ maps: number }>("POST", "/api/biome", { polygon, biome }),
@@ -121,6 +136,8 @@ export function createAppClient(http: Http) {
 		newGroup: (name: string) => http.send<Ok>("POST", "/api/groups", { name }),
 		renameGroup: (old: string, name: string) => http.send<Ok>("POST", "/api/groups/rename", { old, new: name }),
 		toggleGroup: (name: string) => http.send<Ok>("POST", "/api/groups/toggle", { name }),
+		styleGroup: (name: string, colour: string, icon: string, plain: boolean) =>
+			http.send<Ok>("POST", "/api/groups/look", { name, colour, icon, plain }),
 		foldGroups: (names: string[], folded: boolean) => http.send<Ok>("POST", "/api/groups/fold", { names, folded }),
 		deleteGroups: (names: string[]) => http.send<{ deleted: number }>("POST", "/api/groups/delete", { names }),
 

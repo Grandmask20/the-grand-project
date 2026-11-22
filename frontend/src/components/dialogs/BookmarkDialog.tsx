@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { LookPicker } from "@/components/bookmarks/LookPicker";
 import { ComboInput } from "@/components/common/ComboInput";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
@@ -10,35 +11,58 @@ import { useMeta } from "@/hooks/app/UseMeta";
 import { useBookmarks } from "@/hooks/bookmarks/UseBookmarks";
 import { useAppStore } from "@/store/AppStore";
 
-/** Adds or edits a bookmark: name, group, note. */
+/** Adds or edits a bookmark: name, group, note, and its look (a colour and an icon; none: its group's). */
 export function BookmarkDialog() {
 	const app = useAppClient();
 	const edit = useAppStore((s) => s.bookmarkEdit);
 	const close = useAppStore((s) => s.editBookmark);
 	const showError = useAppStore((s) => s.showError);
 	const meta = useMeta().data;
-	const groups = useBookmarks(!!edit).data?.groups.map((g) => g.name) ?? [];
+	const listed = useBookmarks(!!edit).data?.groups ?? [];
+	const groups = listed.map((g) => g.name);
 	const [name, setName] = useState("");
 	const [group, setGroup] = useState("Other");
 	const [note, setNote] = useState("");
 	const [error, setError] = useState("");
+	// its look: sent only once known (the edit came with it) or picked here, so an edit that didn't know it (an
+	// older page's) never wipes it
+	const [colour, setColour] = useState<string | null>(null);
+	const [icon, setIcon] = useState<string | null>(null);
+	const [plain, setPlain] = useState<boolean | null>(null);
 
 	useEffect(() => {
 		setName(edit?.name ?? "");
 		setGroup(edit?.group ?? "Other");
 		setNote(edit?.note ?? "");
+		setColour(edit?.colour ?? (edit?.id === null ? "" : null));
+		setIcon(edit?.icon ?? (edit?.id === null ? "" : null));
+		setPlain(edit?.plain ?? (edit?.id === null || edit?.icon !== undefined ? false : null));
 		setError("");
 	}, [edit]);
 
 	if (!edit) return null;
 	const options = [...new Set([...groups, ...(meta?.categories ?? [])])];
+	// none of its own: its group's look, else the page's bookmark colour
+	const inGroup = listed.find((g) => g.name === group.trim());
+	const fallback = {
+		colour: inGroup?.colour || (meta?.colours.bookmark ?? "#c8a45c"),
+		icon: inGroup?.icon,
+		plain: inGroup?.plain,
+		from: inGroup?.colour || inGroup?.icon ? "the group's" : "standard",
+	};
+	const look = {
+		...(colour !== null ? { colour } : {}),
+		...(icon !== null ? { icon } : {}),
+		...(plain !== null ? { plain } : {}),
+	};
 
 	const save = async () => {
 		if (!name.trim()) return setError("A bookmark needs a name.");
 		try {
 			const mine = edit;
-			if (edit.id === null) await app.addBookmark({ x: edit.x, y: edit.y, name, group, note, route: edit.route });
-			else await app.editBookmark(edit.id, { name, group, note });
+			if (edit.id === null)
+				await app.addBookmark({ x: edit.x, y: edit.y, name, group, note, route: edit.route, ...look });
+			else await app.editBookmark(edit.id, { name, group, note, ...look });
 			// closed only if this is still the bookmark being edited (cancelled and another opened meanwhile: kept)
 			if (useAppStore.getState().bookmarkEdit === mine) close(null);
 		} catch (e) {
@@ -72,6 +96,15 @@ export function BookmarkDialog() {
 						<Label htmlFor="bm-note">Note</Label>
 						<Textarea id="bm-note" value={note} onChange={(e) => setNote(e.target.value)} />
 					</div>
+					<LookPicker
+						colour={colour ?? ""}
+						icon={icon ?? ""}
+						plain={plain ?? false}
+						onColour={setColour}
+						onIcon={setIcon}
+						onPlain={setPlain}
+						fallback={fallback}
+					/>
 					<p className="text-xs text-muted-foreground">
 						at {edit.x.toFixed(0)}, {edit.y.toFixed(0)}
 					</p>
