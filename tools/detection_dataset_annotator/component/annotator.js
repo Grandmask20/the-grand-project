@@ -139,6 +139,8 @@ class Annotator {
     this.showAllChips = false;
     this.seq = 0;
     this.sentSeq = 0;
+    this.activeMs = 0; // review time not sent yet (constants.ANNOTATOR_IDLE_MS: gaps longer than that are not counted)
+    this.lastInput = 0;
     this.autosaveTimer = null;
     this.destroyTimer = null;
     this.newId = 0;
@@ -189,6 +191,8 @@ class Annotator {
       this.fitted = false;
       this.seq = 0;
       this.sentSeq = 0;
+      this.activeMs = 0;
+      this.lastInput = 0;
     }
     if (this.img.dataset.src !== data.image_url) {
       this.img.dataset.src = data.image_url ?? "";
@@ -221,6 +225,21 @@ class Annotator {
     INSTANCES.delete(this.root);
   }
 
+  // The review timer: the time between a reviewer's key and pointer events counts, unless they were further apart
+  // than the idle cutoff (the reviewer was away). The page adds it to the screenshot's review log.
+  noteInput() {
+    const now = Date.now();
+    const idle = this.data?.idle_ms ?? 60000;
+    if (this.lastInput && now - this.lastInput <= idle) this.activeMs += now - this.lastInput;
+    this.lastInput = now;
+  }
+
+  takeActiveMs() {
+    const ms = Math.round(this.activeMs);
+    this.activeMs = 0;
+    return ms;
+  }
+
   payload() {
     // During a drag the boxes are only on their way: the last committed ones are sent (an autosave timer can fire
     // mid-drag, and a cancelled drag puts them back exactly as sent).
@@ -229,6 +248,7 @@ class Annotator {
       image_key: this.data.image_key,
       revision: this.data.revision,
       seq: this.seq,
+      active_ms: this.takeActiveMs(),
       boxes: boxes.map(({ id, label, x, y, w, h }) => ({
         id,
         label,
@@ -250,6 +270,7 @@ class Annotator {
   flushAutosave() {
     clearTimeout(this.autosaveTimer);
     this.autosaveTimer = null;
+    // review time alone is sent with the next change or action, never on its own (no save without a change)
     if (!this.data || this.seq === this.sentSeq || !this.setStateValue) return;
     this.sentSeq = this.seq;
     this.setStateValue("edit", this.payload());
@@ -360,6 +381,10 @@ class Annotator {
 
   listen() {
     const viewport = this.viewport;
+    for (const type of ["pointerdown", "pointermove", "wheel"]) {
+      this.on(viewport, type, () => this.noteInput(), { passive: true });
+    }
+    this.on(document, "keydown", () => this.active && this.noteInput(), true);
     this.on(viewport, "pointerdown", (event) => this.pointerDown(event));
     this.on(viewport, "pointermove", (event) => this.pointerMove(event));
     this.on(viewport, "pointerup", (event) => this.pointerUp(event));

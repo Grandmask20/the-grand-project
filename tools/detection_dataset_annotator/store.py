@@ -9,6 +9,8 @@ it takes milliseconds however many screenshots are detected, and each detection 
   queue.
 - ``annotations``: one row per box. ``WITHOUT ROWID`` with the key ``(image_key, ord)`` keeps a screenshot's boxes
   together on disk, so loading or replacing them touches a few pages, however large the dataset grows.
+- ``prelabels``: the boxes a reviewer is first shown (``annotations``' columns): written by detection, truth seeding
+  and model pre-labels, never by an edit, so ``effort.py`` can count what the review changed.
 - ``meta``: the discovery roots and the detection options, as JSON.
 
 The database runs in WAL mode, so the editor reads and writes while a detection run writes. Every write is one short
@@ -77,6 +79,21 @@ _SCHEMA = (
         UNIQUE (image_key, id)
     ) WITHOUT ROWID""",
     "CREATE INDEX annotations_label ON annotations(label)",
+    """CREATE TABLE prelabels (
+        image_key TEXT NOT NULL REFERENCES images(key) ON DELETE CASCADE,
+        ord INTEGER NOT NULL,
+        id TEXT NOT NULL,
+        label TEXT NOT NULL,
+        x REAL,
+        y REAL,
+        w REAL,
+        h REAL,
+        area REAL,
+        iscrowd INTEGER NOT NULL DEFAULT 0,
+        source TEXT,
+        score REAL,
+        PRIMARY KEY (image_key, ord)
+    ) WITHOUT ROWID""",
 )
 
 _RESULT_COLUMNS = ("detector", "width", "height", "detector_width", "detector_height", "error")
@@ -112,6 +129,11 @@ _INSERT_ANNOTATION = (
     f"INSERT INTO annotations (image_key, ord, {', '.join(_ANNOTATION_COLUMNS)}) "
     f"VALUES ({', '.join('?' * (len(_ANNOTATION_COLUMNS) + 2))})"
 )
+_TABLES = tuple(statement.split()[2] for statement in _SCHEMA if statement.startswith("CREATE TABLE"))
+"""The store's tables, as ``_SCHEMA`` creates them (an opened store must have them all)."""
+
+_INSERT_PRELABEL = _INSERT_ANNOTATION.replace("INSERT INTO annotations", "INSERT INTO prelabels")
+_SELECT_PRELABELS = f"SELECT {', '.join(_ANNOTATION_COLUMNS)} FROM prelabels"
 
 # The distinct labels by a skip scan of the label index: one seek per label in use (about 90), where SELECT DISTINCT
 # reads every box (180,000 after one detection run). The editor asks for them on every page update.
@@ -208,6 +230,10 @@ def _extra(item: Mapping[str, Any]) -> str:
     return json.dumps({name: value for name, value in item.items() if name not in _ITEM_FIELDS})
 
 
+class StoreLayoutError(sqlite3.DatabaseError):
+    """A review store whose tables an older annotator made (``ReviewStore.open`` refuses it)."""
+
+
 class ReviewStore:
     """The review state of one output folder. Open it with ``ReviewStore.open``; close it (or ``with``) when done."""
 
@@ -224,6 +250,7 @@ class ReviewStore:
 
         Raises:
             sqlite3.Error: The file is not a database, or is locked for longer than ``ANNOTATOR_STORE_BUSY_S``.
+            StoreLayoutError: An older annotator built it (a ``sqlite3.Error`` too).
         """
         path.parent.mkdir(parents=True, exist_ok=True)
         # isolation_level=None: no implicit transactions; _write() and _read() say where each one starts and ends.
@@ -256,6 +283,7 @@ class ReviewStore:
     def _initialise(self, input_roots: list[str]) -> None:
         """Create the schema when the file is new (``PRAGMA user_version`` 0)."""
         if self._version():
+            self._check_tables()
             return  # the usual case, without taking the write lock
         with self._write():
             if self._version():
@@ -265,6 +293,21 @@ class ReviewStore:
             self._set_meta("input_roots", input_roots)
             self._set_meta("settings", DetectionOptions().as_settings())
             self._db.execute(f"PRAGMA user_version = {int(K.ANNOTATOR_STORE_CREATED)}")
+
+    def _check_tables(self) -> None:
+        """Refuse a store an older annotator built: its tables lack ones this one writes (a new store is built
+        instead, no migration: the split ledger gives every screenshot its split back).
+
+        Raises:
+            StoreLayoutError: a table is missing.
+        """
+        have = {name for (name,) in self._db.execute("SELECT name FROM sqlite_master WHERE type = 'table'")}
+        missing = [name for name in _TABLES if name not in have]
+        if missing:
+            raise StoreLayoutError(
+                f"{self.path} was built by an older annotator (no {', '.join(missing)} table): build a new store in "
+                "a new folder (python -m tools.detection_dataset_annotator.build_store --output-dir NEW) and open that"
+            )
 
     # ---- transactions --------------------------------------------------------------------------------------------
 
@@ -338,6 +381,39 @@ class ReviewStore:
                     position += 1
         return added, len(rows) - added
 
+    def paths(self) -> dict[str, str]:
+        """Image key -> screenshot path, in queue order (no boxes read)."""
+        return dict(self._db.execute("SELECT key, path FROM images ORDER BY position"))
+
+    def remove_unreviewed(self, keys: Iterable[str]) -> list[str]:
+        """Remove the listed screenshots that are not reviewed, with their boxes, in one write (a review saved
+        meanwhile keeps its screenshot).
+
+        Returns:
+            The keys removed.
+        """
+        removed = []
+        with self._write():
+            for key in dict.fromkeys(keys):
+                if self._db.execute("DELETE FROM images WHERE key = ? AND reviewed = 0", (key,)).rowcount:
+                    removed.append(key)
+        return removed
+
+    def backup(self, target: Path) -> None:
+        """Copy the store to ``target`` (SQLite's online backup: one consistent moment, while others keep writing).
+
+        Raises:
+            FileExistsError: ``target`` exists.
+        """
+        target.parent.mkdir(parents=True, exist_ok=True)
+        if target.exists():
+            raise FileExistsError(target)
+        copy = sqlite3.connect(str(target))
+        try:
+            self._db.backup(copy)
+        finally:
+            copy.close()
+
     def queue(self) -> list[QueueEntry]:
         """Every screenshot in queue order, without boxes."""
         rows = self._db.execute("SELECT key, source, detected, reviewed, guesses FROM images ORDER BY position")
@@ -389,19 +465,16 @@ class ReviewStore:
         """Image key -> split, for the screenshots that have one."""
         return dict(self._db.execute("SELECT key, split FROM images WHERE split IS NOT NULL"))
 
-    def claim_splits(self, splits: Mapping[str, str], *, overwrite: Iterable[str] = ()) -> dict[str, str]:
-        """Give screenshots their split where they have none yet (the ``overwrite`` ones always: pinned to a split),
-        in one write, so two exports at once cannot give one screenshot two splits. A split is kept: later exports
-        never move a screenshot to another split.
+    def claim_splits(self, splits: Mapping[str, str]) -> dict[str, str]:
+        """Give screenshots their split where they have none yet, in one write, so two exports at once cannot give
+        one screenshot two splits. A split is kept: nothing here moves a screenshot to another split.
 
         Returns:
             Image key -> split as the store now has it, for every key of ``splits`` still in the store.
         """
-        always = set(overwrite)
         with self._write():
             for key, split in splits.items():
-                guard = "" if key in always else " AND split IS NULL"
-                self._db.execute(f"UPDATE images SET split = ? WHERE key = ?{guard}", (split, key))
+                self._db.execute("UPDATE images SET split = ? WHERE key = ? AND split IS NULL", (split, key))
             stored = dict(self._db.execute("SELECT key, split FROM images WHERE split IS NOT NULL"))
         return {key: stored[key] for key in splits if key in stored}
 
@@ -414,11 +487,27 @@ class ReviewStore:
         *,
         annotations: Iterable[Mapping[str, Any]] | None = None,
         reviewed: bool | None = None,
+        extra: Mapping[str, Any] | None = None,
+        prelabel: bool = False,
+        untouched: bool = False,
     ) -> bool:
-        """Save a screenshot's edited boxes and/or its review flag, if it is still at detection ``revision``.
+        """Save a screenshot's edited boxes, its review flag and/or fields of ``extra``, if it is still at detection
+        ``revision``.
 
         A detection rerun since the editor showed the screenshot raises its revision: then nothing is saved and
         False is returned, so late edits never overwrite the new detections. Boxes without a (unique) id get one.
+
+        Args:
+            key: the screenshot.
+            revision: the detection revision the change was made against.
+            annotations: its new boxes.
+            reviewed: its new review flag.
+            extra: fields merged into ``extra`` (None removes one): a truth mark, a pre-label's arm, the review log.
+            prelabel: the boxes are new pre-labels (truth seeding, model pre-labels), not an edit: they also replace
+                the snapshot the review is measured against (``prelabels``).
+            untouched: save only while nobody reviewed or edited the screenshot (unreviewed, its boxes still its
+                pre-labels), checked in the same write: a model pass running beside the page never overwrites a review
+                in progress.
         """
         with self._write():
             row = self._db.execute(
@@ -426,13 +515,39 @@ class ReviewStore:
             ).fetchone()
             if row is None or row[0] != revision:
                 return False
+            if untouched and not self._untouched(key):
+                return False
             if annotations is not None:
                 numbered, counter = _numbered(annotations, row[1])
                 self._replace_annotations(key, numbered)
+                if prelabel:
+                    self._replace_prelabels(key, numbered)
                 self._db.execute("UPDATE images SET next_annotation_id = ? WHERE key = ?", (counter, key))
             if reviewed is not None:
                 self._db.execute("UPDATE images SET reviewed = ? WHERE key = ?", (reviewed, key))
+            if extra:
+                (stored,) = self._db.execute("SELECT extra FROM images WHERE key = ?", (key,)).fetchone()
+                merged = json.loads(stored)
+                for name, value in extra.items():
+                    if value is None:
+                        merged.pop(name, None)
+                    else:
+                        merged[name] = value
+                self._db.execute("UPDATE images SET extra = ? WHERE key = ?", (json.dumps(merged), key))
         return True
+
+    def _untouched(self, key: str) -> bool:
+        """Whether a screenshot is unreviewed and its boxes are still its pre-labels (inside a write)."""
+        if self._db.execute("SELECT reviewed FROM images WHERE key = ?", (key,)).fetchone()[0]:
+            return False
+        query = f"SELECT {', '.join(_ANNOTATION_COLUMNS)} FROM {{}} WHERE image_key = ? ORDER BY ord"
+        boxes = self._db.execute(query.format("annotations"), (key,)).fetchall()
+        return boxes == self._db.execute(query.format("prelabels"), (key,)).fetchall()
+
+    def prelabels(self, key: str) -> list[dict[str, Any]]:
+        """The boxes the screenshot was first shown with (its last detection, truth seeding or model pre-labels)."""
+        rows = self._db.execute(f"{_SELECT_PRELABELS} WHERE image_key = ? ORDER BY ord", (key,))
+        return [_annotation(row) for row in rows]
 
     # ---- detection -----------------------------------------------------------------------------------------------
 
@@ -483,6 +598,7 @@ class ReviewStore:
                 ),
             )
             self._replace_annotations(key, annotations)
+            self._replace_prelabels(key, annotations)
         return True
 
     def record_failure(self, key: str, error: str, *, force: bool) -> None:
@@ -511,6 +627,12 @@ class ReviewStore:
         """Insert boxes that all have unique ids (``_numbered``), in their order."""
         self._db.executemany(
             _INSERT_ANNOTATION, (_annotation_row(key, ord_, annotation) for ord_, annotation in enumerate(annotations))
+        )
+
+    def _replace_prelabels(self, key: str, annotations: list[dict[str, Any]]) -> None:
+        self._db.execute("DELETE FROM prelabels WHERE image_key = ?", (key,))
+        self._db.executemany(
+            _INSERT_PRELABEL, (_annotation_row(key, ord_, annotation) for ord_, annotation in enumerate(annotations))
         )
 
     def _replace_annotations(self, key: str, annotations: list[dict[str, Any]]) -> None:

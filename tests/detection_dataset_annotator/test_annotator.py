@@ -21,6 +21,7 @@ from tools.detection_dataset_annotator import (
     DetectionOptions,
     ReviewStore,
     apply_editor_boxes,
+    copies,
     decode_image,
     detection_annotations,
     discover_images,
@@ -28,7 +29,7 @@ from tools.detection_dataset_annotator import (
     editor_image_url,
     editor_payload_matches,
     ensure_annotation_ids,
-    export_dataset,
+    file_hash,
     image_key,
     label_names,
     label_palette,
@@ -38,6 +39,9 @@ from tools.detection_dataset_annotator import (
 )
 from tools.detection_dataset_annotator import constants as K
 from tools.detection_dataset_annotator import export as export_module
+from tools.detection_dataset_annotator.export import export_dataset
+from tools.detection_dataset_annotator.split_ledger import read_ledger
+from tools.detection_dataset_annotator.state import discovery_order
 
 
 def test_editor_edits_map_back_by_stable_id() -> None:
@@ -283,10 +287,41 @@ def test_discovery_finds_images_once(tmp_path: Path) -> None:
     """Discovery finds images recursively, without duplicates, under folders and single-file roots."""
     (tmp_path / "shots" / "deep").mkdir(parents=True)
     for name in ("shots/a.png", "shots/deep/b.JPG", "shots/notes.txt"):
-        (tmp_path / name).write_bytes(b"x")
+        (tmp_path / name).write_bytes(name.encode())
     roots = resolve_input_paths([str(tmp_path / "shots"), "  ", str(tmp_path / "shots" / "a.png")])
     found = discover_images(roots)
     assert [path.name for path in found] == ["a.png", "b.JPG"]
+
+
+def test_discovery_keeps_one_of_identical_files(tmp_path: Path) -> None:
+    """The 115 screenshots/crawl files were fr-atlas's own, found twice: a copy is left out wherever it lies (the
+    first in discovery order stays); a file of the same size with other bytes is no copy."""
+    for name, data in (
+        ("fr-atlas/shot.png", b"same"),
+        ("screenshots/crawl/shot.png", b"same"),
+        ("screenshots/other.png", b"diff"),
+        ("screenshots/big.png", b"bigger"),
+    ):
+        (tmp_path / name).parent.mkdir(parents=True, exist_ok=True)
+        (tmp_path / name).write_bytes(data)
+    found = discover_images([tmp_path / "screenshots", tmp_path / "fr-atlas"])
+    assert [path.relative_to(tmp_path).as_posix() for path in found] == [
+        "fr-atlas/shot.png",
+        "screenshots/big.png",
+        "screenshots/other.png",
+    ]
+
+
+def test_copies_name_the_first_file_with_the_same_bytes(tmp_path: Path) -> None:
+    """The build script removes the copies discovery leaves out: the same file must stay (discovery order), or the
+    next discovery would add the removed one back."""
+    files = {name: tmp_path / name for name in ("B.png", "a.png", "c.png", "d.png")}
+    for name, data in (("B.png", b"same"), ("a.png", b"same"), ("c.png", b"same"), ("d.png", b"diff")):
+        files[name].write_bytes(data)
+    ordered = discovery_order(files.values())
+    assert [path.name for path in ordered] == ["a.png", "B.png", "c.png", "d.png"]
+    assert copies(ordered) == {files["B.png"]: files["a.png"], files["c.png"]: files["a.png"]}
+    assert file_hash(files["a.png"]) == hashlib.sha256(b"same").hexdigest()
 
 
 def test_editor_never_changes_the_screenshot(tmp_path: Path, review_store: ReviewStore) -> None:
@@ -396,6 +431,40 @@ def test_export_takes_processed_screenshots_and_finite_boxes(tmp_path: Path, rev
     }
     reviewed = export_dataset(review_store, tmp_path / "reviewed")
     assert (reviewed.images, reviewed.annotations) == (1, 0)  # only the reviewed screenshot
+
+
+def test_an_export_gives_every_screenshot_its_block_split(tmp_path: Path, review_store: ReviewStore) -> None:
+    """The splits are drawn over the whole store, reviewed or not, by blocks: the four screenshots one atlas places
+    close together share a split, though only one of them is reviewed and exported."""
+    atlas = tmp_path / "atlas"
+    atlas.mkdir()
+    names = [f"shot{i}" for i in range(4)]
+    frames = [
+        {"name": name, "path": f"{name}.png", "w": 1920, "h": 1080, "M": [[1, 0, i * 200], [0, 1, 0]]}
+        for i, name in enumerate(names)
+    ]
+    (atlas / "atlas.json").write_text(json.dumps({"frames": frames, "nodes": [], "edges": [], "landmarks": []}))
+    paths = [atlas / f"{name}.png" for name in names]
+    for i, path in enumerate(paths):
+        path.write_bytes(bytes([i]))
+    review_store.add_images(paths)
+    for path in paths:
+        result = {"width": 1920, "height": 1080, "annotations": [{"label": "tower", "bbox": [5, 5, 20, 20]}]}
+        review_store.record_detection(image_key(path), result, force=False)
+    review_store.save_review(image_key(paths[0]), 1, reviewed=True)
+
+    result = export_dataset(review_store, tmp_path / "export")
+    assert result.images == 1 and sum(result.splits.values()) == 1
+    splits = review_store.splits()
+    assert set(splits) == {image_key(path) for path in paths}
+    assert len(set(splits.values())) == 1
+    assert "blocks" in result.report
+    # the ledger keeps all four, by their bytes, with their block
+    ledger = read_ledger()
+    assert result.ledger_added == 4
+    assert {entry.file for entry in ledger.values()} == {relative_source(path) for path in paths}
+    assert {entry.split for entry in ledger.values()} == set(splits.values())
+    assert {entry.block for entry in ledger.values()} == {f"{relative_source(atlas)}#0"}
 
 
 def test_a_failed_export_keeps_the_previous_one(

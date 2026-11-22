@@ -51,6 +51,9 @@ def pytest_configure(config):
     """Enable the optional detector before tests import or call the live pipeline."""
     if config.getoption("--rf-detr"):
         os.environ[RF_DETR_USE_ENV] = "1"
+        from grand_project.detect.rf_detr_cuda import prefer_pip_cuda_libraries
+
+        prefer_pip_cuda_libraries()  # restarts pytest once with PyTorch's own cuDNN first (Linux; rf_detr_cuda)
 
 
 def pytest_collection_modifyitems(config, items):
@@ -69,6 +72,55 @@ def pytest_collection_modifyitems(config, items):
 
 
 # ------------------------------------------------------------------ fixtures
+ANNOTATOR_DIR = rc_paths.ROOT / "tools" / "detection_dataset_annotator"
+"""The dataset annotator's folder: its review stores (``detection-dataset*/``, local data) and split ledger (git)."""
+
+
+def _annotator_files() -> dict[Path, str]:
+    """The reviewer's own annotator files by SHA-256: every review store below ``ANNOTATOR_DIR`` (its database,
+    its write-ahead log, its backups) and the split ledger. The ``-shm`` index is left out: any reader rewrites it."""
+    files = [path for path in ANNOTATOR_DIR.glob("detection-dataset*/*.sqlite3*") if not path.name.endswith("-shm")]
+    files.append(ANNOTATOR_DIR / "splits.csv")
+    out = {}
+    for path in files:
+        if path.is_file():
+            digest = hashlib.sha256()
+            with open(path, "rb") as handle:
+                for chunk in iter(lambda: handle.read(1 << 20), b""):
+                    digest.update(chunk)
+            out[path] = digest.hexdigest()
+    return out
+
+
+@pytest.fixture(scope="session", autouse=True)
+def annotator_files_unchanged():
+    """Fail the run when any test changed, made or removed a real review store or the split ledger: hand reviews
+    cannot be made again (``annotator_output_dir`` keeps every test in its own folder; this catches a leak)."""
+    before = _annotator_files()
+    yield
+    after = _annotator_files()
+    changed = sorted(str(path.relative_to(rc_paths.ROOT)) for path in before.keys() | after.keys()
+                     if before.get(path) != after.get(path))  # fmt: skip
+    if changed:
+        pytest.fail(
+            "the tests changed the annotator's own files (or the annotator page wrote them meanwhile: stop it while "
+            f"testing): {', '.join(changed)}",
+            pytrace=False,
+        )
+
+
+@pytest.fixture(autouse=True)
+def annotator_output_dir(tmp_path, monkeypatch) -> Path:
+    """Every test's own annotator output folder and split ledger (both read live from the annotator's constants):
+    a command or the page run without ``--output-dir`` never opens the reviewer's review store."""
+    from tools.detection_dataset_annotator import constants as annotator
+
+    out = tmp_path / "annotator-out"
+    monkeypatch.setattr(annotator, "ANNOTATOR_DEFAULT_OUTPUT_DIR", str(out))
+    monkeypatch.setattr(annotator, "ANNOTATOR_SPLIT_LEDGER", tmp_path / "ledger" / "splits.csv")
+    return out
+
+
 @pytest.fixture(autouse=True)
 def app_settings(tmp_path, monkeypatch) -> Path:
     """Every test keeps the app's settings in its own folder: the player's own settings are never touched."""

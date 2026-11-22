@@ -27,6 +27,7 @@ ANNOTATOR_MAX_SIDE = (3840, 2160)
 ANNOTATOR_DEFAULT_INPUT_DIRS = (
     paths.TEST_DATA / "res_atlases",
     paths.TEST_DATA / "roa-atlas",
+    paths.TEST_DATA / "fr-atlas" / "crawl_atlas_v076",
     paths.TEST_DATA / "screenshots",
 )
 """Screenshot roots of the first annotation pass (in the test data, so ``local_paths.json`` applies)."""
@@ -39,6 +40,12 @@ ANNOTATOR_STORE_FILE = "review_state.sqlite3"
 
 ANNOTATOR_STORE_CREATED = 1
 """``PRAGMA user_version`` the review store sets once its tables are created (a new file has 0)."""
+
+ANNOTATOR_BUILD_BACKUP = "review_state.before-build-{stamp}.sqlite3"
+"""Name of the store's copy ``build_store`` makes before it changes the store (``stamp``: the local date and time)."""
+
+ANNOTATOR_BUILD_PROGRESS_EVERY = 100
+"""``build_store`` prints detection progress every this many screenshots."""
 
 ANNOTATOR_STORE_BUSY_S = 10.0
 """Seconds a store write waits while another session (a browser tab, a detection run) writes. Writes are one
@@ -71,8 +78,13 @@ ANNOTATOR_SPLIT_BINS = 8
 """Bins of exported boxes per screenshot (quantiles) the splits are drawn from, so each split holds screenshots as
 busy as the others (user: splits aware of the detections per image, which the model's queries must cover)."""
 
-ANNOTATOR_SPLIT_SEED = 1337
-"""Seed of the split's random draw and refinement: the same screenshots give the same splits."""
+ANNOTATOR_SPLIT_SEED = 10
+"""Seed of the split's random draw, its refinement and the blocks' k-means: the same screenshots give the same splits.
+Chosen with the user (2026-11-20) from seeds 0-19 with blocks of 60, by the split's own quality, no model results: the
+least overlap (map nodes of held-out screenshots a training screenshot also shows: roa-atlas validation 21% / test 15%,
+fr-atlas 5% / 7%) among the seeds that put both atlases in every split and every class within 6% of its share. 6 of
+the 20 left fr-atlas without validation or test; 1337 left 42% on roa-atlas test. Once the split ledger holds a
+screenshot's split, the seed only draws screenshots new to it."""
 
 ANNOTATOR_SPLIT_ROUNDS = 20000
 """Swaps tried when refining the splits so every class is spread across them as the split shares say (user)."""
@@ -84,6 +96,26 @@ ANNOTATOR_SPLIT_PINNED_TEST = (
 )
 """Screenshots always in the test split: the hand truth and the reference atlases that ``python -m
 grand_project.detect score`` and ``tools/compare_detectors.py`` measure on, so those numbers stay on unseen data."""
+
+ANNOTATOR_ATLAS_FILE = "atlas.json"
+"""An atlas's file: its screenshots lie next to it (where the app finds them), and it places each in atlas units."""
+
+ANNOTATOR_SPLIT_BLOCK_SHOTS = 60
+"""Screenshots per spatial block of an atlas (blocks.py; k-means of the screenshots' middles in atlas units): a block
+goes to one split whole. Screenshots of an atlas overlap (a map node is on 4.5 roa-atlas / 3.3 fr-atlas screenshots
+on average), so drawn one by one, 91-93% of a held-out screenshot's map nodes were also on a training screenshot.
+Measured on both atlases (2026-11-20, 5 seeds): blocks of 5 / 10 / 20 / 40 screenshots leave 78 / 65 / 48 / 32% of
+the held-out roa-atlas map nodes on training screenshots, 70 / 57 / 42 / 14% on fr-atlas; 60 (3 seeds) 16-31% and
+5-16%, both atlases still in validation and test (80 left fr-atlas without test). User: 60, for the iterative
+training rounds (with ``ANNOTATOR_SPLIT_SEED``: 21 / 15% and 5 / 7%)."""
+
+ANNOTATOR_HASH_THREADS = 8
+"""Files the split ledger hashes at once (hashlib lets go of the GIL): one thread read 820 MB/s of roa-atlas PNGs."""
+
+ANNOTATOR_SPLIT_LEDGER = paths.ROOT / "tools" / "detection_dataset_annotator" / "splits.csv"
+"""The split ledger (split_ledger.py; kept in git): every screenshot's split by the SHA-256 of its bytes, so a rebuilt
+store, another machine or a copy of the file gives it the same split. The store's own image key hashes the
+screenshot's path on this machine, and the store is local data."""
 
 # ---- detector worker processes ---------------------------------------------------------------------------------
 
@@ -187,6 +219,12 @@ ANNOTATOR_SESSION_MOUNTED_EDITOR = "mounted_editor"
 ANNOTATOR_SESSION_NOTICE = "detection_notice"
 """Streamlit session key: a message shown as a toast after the next rerun."""
 
+ANNOTATOR_SESSION_PRELABEL = "prelabel_process"
+"""Session state key of the running model pre-label pass (``model_prelabel`` as its own process)."""
+
+ANNOTATOR_PRELABEL_LOG = "model_prelabel.log"
+"""The model pre-label pass's output, in the output folder (the page shows its last lines)."""
+
 # ---- icon and hidden map-node proposals (icon_proposals.py) ----------------------------------------------------
 
 ANNOTATOR_ICON_ROW_DY = (18.0, 42.0)
@@ -248,3 +286,68 @@ ANNOTATOR_HIDDEN_SNAP = 8.0
 
 ANNOTATOR_HIDDEN_SOURCE = "icon_row"
 """Annotation source of map nodes added under an icon row that had none (the editor shows it)."""
+
+# ---- seeding from an atlas's hand-labelled biome truth (truth_seed.py) -----------------------------------------
+
+ANNOTATOR_TRUTH_FILES = (paths.TEST_DATA / "fr-atlas" / "truth.json",)
+"""The hand-labelled biome truths ``build_store`` seeds the store from (the PM's fr-atlas truth, 2026-11-20)."""
+
+ANNOTATOR_TRUTH_MARK = "truth"
+"""The field (in a screenshot's ``extra``, and the export's manifest) naming the biome truth that seeded it: the truth
+vouches for its city areas and citadels, so ``train_rf_detr --truth-seeded`` may train on it unreviewed. A detection
+rerun replaces ``extra``, so the mark goes with the boxes it vouched for."""
+
+ANNOTATOR_TRUTH_SOURCE = "biome_truth"
+"""Annotation source of boxes a hand-labelled biome truth set (``truth_seed``): no guess, so drawn solid. The PM's
+fr-atlas truth is about 90% right by its labeller's estimate; the classical city-area guesses it replaces were about
+50% right there (2026-11-20)."""
+
+ANNOTATOR_TRUTH_MAP_REACH = 20.0
+"""Atlas units within which a node box's middle is the truth's map (the truth file's own rule: "a map within 20
+atlas units is the same map"; the median map spacing is 82)."""
+
+ANNOTATOR_TRUTH_CITY_REACH = 60.0
+"""Atlas units within which a citadel box's middle lies of a city area's map for the citadel to be that city's (the
+truth's rule for a City finding its city area); a citadel farther from every city area is a false one (the fortress
+ones: 91 of fr-atlas's 413 seeded citadels)."""
+
+ANNOTATOR_TRUTH_STRONGHOLD_REACH = 250.0
+"""Atlas units within which a Breach stronghold box's middle lies of a map of a truth stronghold area, for the report
+only (the truth labels roughly every stronghold area: 133 of fr-atlas's 176 seeded stronghold boxes were this close)."""
+
+
+# ---- the iterative loop: review effort and model pre-labels -----------------------------------------------------
+
+ANNOTATOR_EFFORT_MOVE_IOU = 0.75
+"""Overlap under which a kept box counts as moved or resized (``effort.edit_cost``): a node box (38.7 px) shifted
+about 5 px, or resized about 10 %. Smaller nudges are within the box rules' tolerance."""
+
+ANNOTATOR_EFFORT_SECONDS = {"kept": 0.3, "relabelled": 1.5, "moved": 3.0, "deleted": 1.0, "added": 5.0}
+"""Estimated seconds a reviewer spends per box by what the review did to it (a kept box still has to be checked).
+Estimates, not measurements: ``effort report`` fits them to the review timer's active seconds once enough timed
+reviews exist."""
+
+ANNOTATOR_EFFORT_MIN_FIT = 10
+"""Timed reviews from which ``effort report`` fits the seconds per edit to the active seconds."""
+
+ANNOTATOR_IDLE_MS = 60_000
+"""Milliseconds without a key or pointer event after which the review timer stops counting (a reviewer away)."""
+
+ANNOTATOR_PRELABEL_FIELD = "prelabel"
+"""The field (in a screenshot's ``extra``) saying what pre-labelled it: ``{"source": "classical" | "rf_detr",
+"model", "model_sha", "policy", "round"}`` (``model_prelabel``), so the effort report compares the arms."""
+
+ANNOTATOR_REVIEW_FIELD = "review"
+"""The field (in a screenshot's ``extra``) holding its review log: ``{"active_s", "reviewed_at"}``."""
+
+ANNOTATOR_PRELABEL_POLICIES = ("classical", "model", "relabel", "union")
+"""How model pre-labels join the classical boxes (``model_prelabel.merge``): ``classical`` keeps them as they are;
+``model`` takes the model's boxes instead (a hand truth's box stays); ``relabel`` keeps the classical boxes and gives
+each the class of the model box it matches; ``union`` is ``relabel`` plus the boxes only the model found (dotted).
+``simulate_loop`` measures which one saves the most edits."""
+
+ANNOTATOR_PRELABEL_POLICY = "relabel"
+"""The policy ``model_prelabel`` uses unless told otherwise. The simulated loop (2026-11-21, fr-atlas, the trial
+recipe) chose it: after a first round of 63 screenshots it left 1.7-1.9 truth-checked edits per screenshot where the
+classical boxes left 8.2-10.7, and as it keeps the classical boxes it adds none to judge; ``union`` saved as many
+truth-checked edits but added 19-31 boxes per screenshot only the model found, unchecked until reviewed."""

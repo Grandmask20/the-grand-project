@@ -25,6 +25,13 @@ def fake_worker(monkeypatch: pytest.MonkeyPatch) -> str:
 
 
 @pytest.fixture
+def split_ledger_file(annotator_output_dir: Path) -> Path:
+    """This test's own split ledger (``annotator_output_dir`` in ``tests/conftest.py`` gives every test one, so no
+    test writes the real one, kept in git)."""
+    return Path(K.ANNOTATOR_SPLIT_LEDGER)
+
+
+@pytest.fixture
 def review_store(tmp_path: Path) -> Iterator[ReviewStore]:
     """An empty review store in ``tmp_path/out``, closed after the test (Windows cannot delete an open database)."""
     with ReviewStore.open(tmp_path / "out" / K.ANNOTATOR_STORE_FILE) as store:

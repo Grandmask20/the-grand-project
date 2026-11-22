@@ -1,10 +1,11 @@
 # Detection dataset annotator
 
 This Streamlit app seeds an RF-DETR object-detection dataset from the existing classical atlas detector. It
-recursively scans the three default screenshot roots (`res_atlases`, `roa-atlas` and `screenshots` in the test data;
-an atlas's own `atlas_files/` map pictures are skipped), runs the classical detector, and shows its first guesses over
-each screenshot in a box editor where a reviewer fixes labels and geometry, draws missed objects, deletes false ones,
-and marks the screenshot reviewed. The labels are described below ([Labels](#labels)); exports feed
+recursively scans the four default screenshot roots (`res_atlases`, `roa-atlas`, `fr-atlas/crawl_atlas_v076` and
+`screenshots` in the test data; an atlas's own `atlas_files/` map pictures are skipped, and of files with the same bytes
+only the first is taken: `screenshots/crawl` repeats 115 fr-atlas screenshots), runs the classical detector, and shows
+its first guesses over each screenshot in a box editor where a reviewer fixes labels and geometry, draws missed
+objects, deletes false ones, and marks the screenshot reviewed. The labels are described below ([Labels](#labels)); exports feed
 `python -m tools.train_rf_detr` ([Training](#training)).
 
 Run it from the project folder:
@@ -84,8 +85,12 @@ into the same folder:
 - `labels.json`: the numeric class ids and their classes.
 
 Only reviewed screenshots are exported by default. Every exported screenshot gets a train / validation / test split,
-which the store keeps ([Splits](#splits)). A label in use that is not one of the dataset's (a reviewer's own, or one
-the labels no longer have) is exported as a class of its own and named in a warning: rerun those screenshots.
+which the store and the split ledger keep ([Splits](#splits)), and a screenshot a biome truth seeded carries that truth
+(`truth`, [below](#seeding-from-a-biome-truth)). A label in use that is not one of the dataset's (a reviewer's own, or
+one the labels no longer have) is exported as a class of its own and named in a warning: rerun those screenshots.
+
+The same export without the page: `python -m tools.detection_dataset_annotator.export [--unreviewed]` (`make
+export_dataset`; `--unreviewed` exports every processed screenshot, as a truth-seeded training round needs).
 
 ## Labels
 
@@ -158,32 +163,155 @@ class, locked when a hand button stands within `STRONGHOLD_LOCK_REACH` or no map
 
 ## Splits
 
-Every exported screenshot gets its split once and keeps it (`splits.py`), so a later model never trains on an earlier
-model's test screenshots. The hand truth and reference atlases that `python -m grand_project.detect score` and
-`tools/compare_detectors.py` measure on (`ANNOTATOR_SPLIT_PINNED_TEST`) are always test. The others (the user's
-design):
+Every screenshot in the store, reviewed or not, gets its split once (at `split_ledger freeze` or the first export) and
+keeps it for good, so the splits are settled before the review and a later model never trains on an earlier model's
+validation or test screenshots. The hand truth and reference atlases that `python -m grand_project.detect score` and
+`tools/compare_detectors.py` measure on (`ANNOTATOR_SPLIT_PINNED_TEST`) are always test.
 
-1. binned by exported boxes per screenshot (`ANNOTATOR_SPLIT_BINS` quantiles), so every split has quiet and busy
+Screenshots of one atlas overlap: a map node is on 4.5 roa-atlas and 3.3 fr-atlas screenshots on average, so a split
+drawn screenshot by screenshot put 91-93% of a held-out screenshot's map nodes on training screenshots too. The splits
+therefore draw **blocks** (`blocks.py`): an atlas's screenshots (those next to its `atlas.json`) are grouped by where
+they lie, k-means of their middles in atlas units, about `ANNOTATOR_SPLIT_BLOCK_SHOTS` (60) to a block; a screenshot
+no atlas places is a block of its own. The blocks (the user's design):
+
+1. binned by their boxes per screenshot (`ANNOTATOR_SPLIT_BINS` quantiles), so every split has quiet and busy
    screenshots alike (the model's queries must cover the busiest);
-2. bin by bin, in random order, each drawn to the split missing the most of its share so far
+2. bin by bin, in random order, each drawn to the split missing the most of its share of screenshots so far
    (`ANNOTATOR_SPLIT_FRACTIONS`, 80/10/10);
 3. refined by seeded swaps within a bin while they bring every class's spread over the splits closer to the shares
-   (each class counts the same, so rare ones reach every split too).
+   (each class counts the same, so rare ones reach every split too), and the screenshots of each split and of each
+   atlas too.
 
-The export shows the balance (screenshots, boxes per screenshot, each class's share per split). Screenshots of one
-atlas overlap, so a random split puts views of the same spots in train and test: the test numbers overstate how a
-model does on a new player's atlas; the pinned hand truth gives a fairer one.
+A block takes the split of a pinned screenshot in it, else the split most of its screenshots already have. With
+blocks of 60 the draw depends a lot on the seed (of seeds 0-19, six left fr-atlas without validation or test), so
+`ANNOTATOR_SPLIT_SEED` (10) was chosen by the split's own quality: the least overlap among the seeds that put both
+atlases in every split, every class within 6% of its share. Of the held-out screenshots' map nodes, 21% (validation) /
+15% (test) on roa-atlas and 5% / 7% on fr-atlas are also on training screenshots. That overlap at block edges still
+flatters validation and test a little; the pinned hand truth and the fr-atlas test blocks are the fairer measure (the
+PM's fr-atlas `stats.md` benchmark is clean only on its test blocks).
+
+**The split ledger** (`split_ledger.py`; `splits.csv` next to it, kept in git). The store is local data, and its image
+keys hash each screenshot's path on this machine, so a rebuilt store or another machine would draw the splits again.
+The ledger keeps every screenshot's split by the SHA-256 of its bytes (the app's own screenshot identity, an
+`atlas.json` frame's `sha`), with the block it was drawn with and its file:
+
+```sh
+python -m tools.detection_dataset_annotator.split_ledger                  # freeze: every screenshot's split
+python -m tools.detection_dataset_annotator.split_ledger check [--manifest .../manifest.json]
+```
+
+`freeze`, and every export, takes each screenshot's split from the ledger (by its bytes; by its file name when its
+bytes changed), else from the store, else test for a pinned one, else draws it by blocks. Copies share one split. The
+ledger gains rows for new screenshots and never loses one (another machine may hold them). Where the ledger, the store
+and a pinned root disagree, nothing is written and the screenshots are named: a person decides, since a screenshot a
+model trained on must stay in train. `check` changes nothing: it compares the store's splits, and an export's
+manifest's, with the ledger (run it before each training round). Both print each atlas's overlap and the balance
+(screenshots, blocks, boxes per screenshot, each class's share per split). Commit `splits.csv` whenever it changes.
+
+## Rebuilding the store
+
+`python -m tools.detection_dataset_annotator.build_store [--dry-run]` runs the steps that took the first detection
+run's store (1,947 screenshots, 2026-11-20) to the one being reviewed, so a new machine, a lost store or an old one
+comes out the same:
+
+1. back up the store (`review_state.before-build-<time>.sqlite3` next to it; safe while the page runs);
+2. discover the screenshots below the roots (the store's, else the four defaults; `--root` to change them) and queue
+   the new ones;
+3. remove what discovery leaves out: byte copies of another screenshot (the first in discovery order stays, the one
+   Discover keeps: the 115 `screenshots/crawl` copies of fr-atlas) and an atlas's own map pictures. Reviewed ones
+   stay and are named; missing files are only counted;
+4. detect the screenshots not detected yet in worker processes (`--workers N`; `--no-detect` leaves them for the page);
+5. seed the biome truths (`--truth`, by default the PM's fr-atlas `truth.json`: [below](#seeding-from-a-biome-truth)).
+
+Each step changes only what is not done yet, so a second run changes nothing; `--dry-run` says what would change. When
+the store's tables change, a new store is built the same way: run it with a new `--output-dir` (or after moving the
+old `review_state.sqlite3` aside); the ledger gives every screenshot its split back. Then
+`python -m tools.detection_dataset_annotator.split_ledger` gives every screenshot its split, the ledger's where it has
+one ([Splits](#splits)). Restart the annotator page afterwards: it keeps the screenshots it showed.
+
+## Seeding from a biome truth
+
+`python -m tools.detection_dataset_annotator.truth_seed atlas_test_data/fr-atlas/truth.json [--dry-run]` fills the
+city areas and citadels of a hand-labelled atlas's unreviewed screenshots from its truth file (the PM's `truth.json`,
+see `atlas_test_data/fr-atlas/README.md`), where the classical guesses were about half right:
+
+- a map node at a truth map (20 atlas units) in a city's area takes that area's class; one the guess put in a city's
+  area that the truth has outside every city area gets its ground ring's class again; other nodes stay as they are;
+- a citadel near no city area's map (60 atlas units) is deleted (the false Cities, most in the fortress), the others
+  take their area's city type.
+
+The boxes it sets are solid (`biome_truth`), but the screenshot is still to be reviewed: the truth is about 90% right
+by its labeller's estimate. Every screenshot the truth places is marked with it (`truth` in its `extra`, changed or
+not: the truth vouches for its city areas either way), so a bootstrap training round can take it unreviewed
+([Training](#training)); a detection rerun drops the mark with the boxes it vouched for. Reviewed screenshots are never
+changed. It reports the truth Cities a screenshot shows without a
+citadel box (draw them) and the stronghold boxes far from every truth stronghold area (check them). On fr-atlas it
+takes about 15 minutes (the ground ring names each screenshot's icons for the Delirium mist rule).
 
 ## Training
 
-`make prepare_rf_detr_data` (or `python -m tools.train_rf_detr --annotator-manifest .../manifest.json
---dataset-only`) builds the Hugging Face dataset from the export; `make train_rf_detr` trains. The model sees
-native-scale 768 px tiles of the 1080p screenshots with the HUD painted over (a node keeps its 39 px), never mirrored
-(the atlas is not); icons are found as one `icon` class and named by the classical detector's naming step
-(`badges.name_found_icons`: the stored and the icon model's pictures, the whole-icon templates), reveal buttons as one
-`reveal_button` class named by their symbol (`cities.name_button`). See `tools/train_rf_detr.py` for the recipe (the
-RF-DETR paper's:
-per-layer learning-rate decay, EMA, best checkpoint by validation mean AP per family).
+`tools/train_rf_detr.py` fine-tunes transformers' RF-DETR (`Roboflow/rf-detr-small` at a pinned Hub revision) with
+transformers' `Trainer`:
+
+```sh
+make export_dataset                      # or the page's Export button
+make prepare_rf_detr_data                # python -m tools.train_rf_detr --annotator-manifest .../manifest.json --dataset-only
+make train_rf_detr                       # trains into runs/rf-detr-small (best/ is what the program loads)
+```
+
+- **What it trains on**: reviewed screenshots. A bootstrap round (`RF_DETR_OPTIONS=--truth-seeded`, after `make
+  export_dataset EXPORT_OPTIONS=--unreviewed`) also takes the unreviewed screenshots a biome truth seeded: their city
+  areas and citadels are the truth's, every other box the classical detector's (which a reviewed round then
+  corrects).
+- **Before it builds a dataset** it checks the manifest against the split ledger (`split_ledger.check_manifest`) and
+  stops on any disagreement; the dataset's `metadata.json` records the manifest's and the ledger's SHA-256 and the
+  screenshots per split and kind.
+- **What the model sees**: native-scale 768 px tiles of the 1080p screenshots with the HUD painted over (a node keeps
+  its 39 px), never mirrored (the atlas is not), a little brighter or darker (the hue is never changed: it tells the
+  biome). Icons are found as one `icon` class and named by the classical detector's naming step
+  (`badges.name_found_icons`), reveal buttons as one `reveal_button` class named by their symbol
+  (`cities.name_button`).
+- **The recipe** is the RF-DETR paper's as the official roboflow/rf-detr trains it (`RF_DETR_*` in
+  `grand_project/detect/constants.py`): the backbone at its own rate decayed per layer and per component, the decoder
+  at 0.7x, an EMA of the weights (what is evaluated and kept), a constant rate without warm-up, gradient clipping 0.1,
+  16 tiles per optimizer step, bf16 where the GPU has it; the fine-tuned class heads start from the pre-trained
+  checkpoint's rows. The best checkpoint is the EMA weights' best validation mean AP per family (the program needs
+  where objects are); early stopping after `RF_DETR_PATIENCE` epochs without a better one; the test split is scored
+  once.
+- **What it writes**: `runs/<run>/checkpoints/` (the Trainer's, each with the EMA weights in `ema/`; `--resume` goes on
+  from the last), `runs/<run>/best/` (the best EMA weights, the processor, `labels.json` and `trained_on.txt`, the
+  screenshots it trained on) and `training_summary.json` (the recipe, every evaluation, the test scores, the data's
+  hashes, the git commit). `--report-to tensorboard|trackio` logs to that tool when it is installed.
+- **The next round** goes on from a model: `--init-from runs/<run>/best` (each class keeps its rows by name, a new class
+  with a `parent` starts from its parent's).
+
+## The iterative loop
+
+Classical detection and an ever-refined model take turns: a model trained on what is reviewed pre-labels the next
+screenshots, the review corrects them, the next model trains on more. Two tools measure whether that saves a reviewer
+work:
+
+- **Model pre-labels** (`python -m tools.detection_dataset_annotator.model_prelabel --model runs/<run>/best`, or the
+  page's sidebar *Model pre-labels*): the model's boxes, snapped to the box rules, joined with the classical ones
+  (`--policy`: `relabel`, the default, keeps the classical boxes and takes the model's class where they match, a
+  changed class dotted `rf_detr_guess`; `union` also adds the boxes only the model found, dotted; `model` takes the
+  model's boxes instead, a hand truth's box kept). Only unreviewed **training** screenshots without a reviewer's box
+  get them: a validation or test screenshot reviewed from a model's guesses would score the model on its own answers
+  (user's rule), and the model's own training screenshots (`trained_on.txt`) and those a hand truth seeded are left
+  too; a screenshot reviewed or edited while the pass runs keeps its review. It is an A/B test: a `--share` of the
+  eligible spatial blocks get the model's pre-labels, the others keep the classical ones, and each screenshot
+  records its arm.
+- **The review effort**: the store keeps what each screenshot was first shown (`prelabels`: written by detection,
+  truth seeding and model pre-labels, never by an edit), and the editor's review timer adds the active time (a gap
+  longer than `ANNOTATOR_IDLE_MS` is not counted) to the screenshot's review log. `python -m
+  tools.detection_dataset_annotator.effort` then gives, per arm, the boxes a review kept, relabelled, moved, deleted and
+  added per screenshot, their estimated seconds (`ANNOTATOR_EFFORT_SECONDS`) and the timer's; with enough timed reviews
+  it fits the seconds per kind of edit.
+- **The simulated loop** (`python -m tools.detection_dataset_annotator.simulate_loop --manifest ... --classical-store
+  ...`) plays the loop on a hand-labelled atlas without a reviewer: rounds reveal more of fr-atlas's training blocks,
+  each trains a model from the last, and every pre-label policy is scored on fr-atlas's validation and test blocks
+  against the PM's truth (the city areas and citadels: gold) and the classical boxes (the rest: silver). Its report is
+  the loop's learning curve.
 
 ## Detection details
 
@@ -235,14 +363,20 @@ review flag.
 | `app.py` | the Streamlit page (sidebar, queue, autosave and navigation callbacks) |
 | `component/` | the box editor: a small Streamlit component (plain JavaScript and CSS, no build step) |
 | `state.py` | screenshot discovery, detection options, labels, the review queue |
-| `store.py` | the review state in `review_state.sqlite3`: one screenshot per save, safe between sessions |
+| `store.py` | the review state in `review_state.sqlite3`: one screenshot per save, safe between sessions; the pre-label snapshot |
 | `detection.py` | runs the classical detector; its result becomes boxes through `grand_project/detect/proposals.py` |
 | `icon_proposals.py` | the extra icons and hidden map nodes (above) |
 | `pool.py`, `worker.py` | detection in worker processes, driven by asyncio (`python -m tools.detection_dataset_annotator.worker`) |
 | `boxes.py` | the editor's boxes mapped back to saved annotations by stable id |
-| `export.py` | COCO and manifest export |
-| `splits.py` | train / validation / test splits |
+| `export.py` | COCO and manifest export (also a command) |
+| `splits.py`, `blocks.py` | train / validation / test splits, drawn by spatial blocks of each atlas |
+| `split_ledger.py`, `splits.csv` | every screenshot's split by the SHA-256 of its bytes, kept in git (`freeze`, `check`) |
+| `build_store.py` | the store brought up to date in one run (back up, discover, remove copies, detect, seed truths) |
+| `truth_seed.py` | city areas and citadels from an atlas's hand-labelled biome truth |
 | `score_nodes.py` | the biome and city-area guesses against reviewed screenshots |
+| `effort.py` | what a review changed of the pre-labels, and the effort report by pre-label arm |
+| `model_prelabel.py` | an RF-DETR model's pre-labels on unreviewed training screenshots (an A/B test by block) |
+| `simulate_loop.py` | the iterative loop simulated on a hand-labelled atlas |
 | `constants.py` | every threshold and setting (`ANNOTATOR_...`); the labels are the registry's (above) |
 
 Tests: `pytest tests/detection_dataset_annotator` (the worker pool's tests run against a stand-in worker,

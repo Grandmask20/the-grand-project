@@ -6,12 +6,17 @@ RF_DETR_ANNOTATOR_MANIFEST=...``). Both files point at the original screenshots;
 Stored labels become detector classes (``labels.export_class``: icon types the detector does not keep become
 ``icon``, the icon types the dataset leaves out are not exported), numbered by ``labels.dataset_classes``. Labels
 outside the dataset's vocabulary (a reviewer's own, or one the labels no longer have: rerun those screenshots) are
-exported as classes of their own and reported (``ExportResult.unknown``). Every exported screenshot gets its
-train / validation / test split (``splits.py``), which the store keeps.
+exported as classes of their own and reported (``ExportResult.unknown``). Every screenshot in the store, reviewed or
+not, gets its train / validation / test split at an export (``split_ledger.settle_splits``: the ledger's, else drawn
+by spatial blocks), which the store and the ledger keep: the splits are settled before the review, and an exported
+screenshot carries its split, and the biome truth that seeded it (``ANNOTATOR_TRUTH_MARK``) if one did.
+
+    python -m tools.detection_dataset_annotator.export [--output-dir D] [--unreviewed]
 """
 
 from __future__ import annotations
 
+import argparse
 import contextlib
 import math
 import os
@@ -26,7 +31,7 @@ from grand_project.detect.labels import dataset_classes, export_class, known
 
 from . import constants as K
 from .detection import decode_image
-from .splits import assign_splits, pinned_split, split_report
+from .splits import split_report
 from .state import relative_source, write_json_atomic
 
 if TYPE_CHECKING:
@@ -50,6 +55,8 @@ class ExportResult:
     """Exported screenshots per split."""
     report: str = ""
     """The split balance report (``splits.split_report``)."""
+    ledger_added: int = 0
+    """Screenshots the split ledger gained (``split_ledger.settle_splits``)."""
 
 
 def _exported_annotation(annotation: dict[str, Any], label_ids: dict[str, int]) -> dict[str, Any] | None:
@@ -136,12 +143,22 @@ def export_dataset(store: ReviewStore, output_dir: Path, *, reviewed_only: bool 
     """Export the (reviewed) annotations as COCO JSON and a project-native RF-DETR manifest.
 
     Screenshots that no longer exist are left out. Classes are ``labels.dataset_classes`` of the labels the exported
-    screenshots use, numbered in that order. Screenshots without a split get one (``splits.assign_splits``, kept in
-    the store); the manifest carries each screenshot's split.
+    screenshots use, numbered in that order. Every screenshot of the store without a split gets one
+    (``split_ledger.settle_splits``, kept in the store and the ledger); the manifest carries each exported screenshot's
+    split.
+
+    Raises:
+        SplitConflict: The ledger, the store or a pinned root disagree on splits; nothing is exported.
     """
+    # imported here: the ledger is also a command (python -m), which the package's import must not load first
+    from .split_ledger import settle_splits
+
     output_dir.mkdir(parents=True, exist_ok=True)
-    # One read for the classes and the boxes: a box saved meanwhile cannot have a label the classes miss.
-    items = list(store.items(reviewed_only=reviewed_only))
+    # One read for the splits, the classes and the boxes: a box saved meanwhile cannot have a label the classes miss.
+    every = list(store.items())
+    settled = settle_splits(store, every)
+    split_of = settled.split_of
+    items = [(key, item) for key, item in every if item.get("reviewed") or not reviewed_only]
     labels = dataset_classes(
         str(annotation.get("label", "")).strip() for _key, item in items for annotation in item.get("annotations", [])
     )
@@ -156,6 +173,8 @@ def export_dataset(store: ReviewStore, output_dir: Path, *, reviewed_only: bool 
         if not (reviewed or item.get("detected")):
             continue  # never processed: its empty box list is not a labelling
         path = Path(item["path"])
+        if key not in split_of:
+            continue  # its file could not be read
         size = _image_size(item, path) if path.is_file() else None
         if size is None:
             continue
@@ -193,11 +212,11 @@ def export_dataset(store: ReviewStore, output_dir: Path, *, reviewed_only: bool 
                 "width": width,
                 "height": height,
                 "reviewed": reviewed,
+                **({K.ANNOTATOR_TRUTH_MARK: item[K.ANNOTATOR_TRUTH_MARK]} if item.get(K.ANNOTATOR_TRUTH_MARK) else {}),
                 "annotations": objects,
             }
         )
 
-    split_of = _splits(store, manifest_rows)
     for row in manifest_rows:
         row["split"] = split_of[row["key"]]
     for row in image_rows:
@@ -235,8 +254,9 @@ def export_dataset(store: ReviewStore, output_dir: Path, *, reviewed_only: bool 
         coco_path=coco_path,
         manifest_path=manifest_path,
         unknown=_unknown(manifest_rows),
-        splits={split: sum(1 for s in split_of.values() if s == split) for split in K.ANNOTATOR_SPLITS},
-        report=split_report(counts, split_of) if counts else "",
+        splits={split: sum(1 for row in manifest_rows if row["split"] == split) for split in K.ANNOTATOR_SPLITS},
+        report=split_report(counts, split_of, settled.blocks) if counts else "",
+        ledger_added=settled.added,
     )
 
 
@@ -258,16 +278,32 @@ def _class_counts(row: dict[str, Any]) -> dict[str, int]:
     return out
 
 
-def _splits(store: ReviewStore, rows: list[dict[str, Any]]) -> dict[str, str]:
-    """Every exported screenshot's split: kept from earlier exports, the pinned ones test, the new ones drawn by
-    ``assign_splits`` around them. The new ones are claimed in the store (``claim_splits``): a screenshot another
-    export gave a split meanwhile keeps that one, and the export uses it."""
-    items = {row["key"]: _class_counts(row) for row in rows}
-    paths = {row["key"]: row["path"] for row in rows}
-    fixed = {key: split for key, split in store.splits().items() if key in items}
-    pinned = {key: split for key in items if (split := pinned_split(paths[key])) is not None}
-    split_of = assign_splits(items, pinned=pinned, fixed=fixed)
-    changed = {key: split for key, split in split_of.items() if fixed.get(key) != split}
-    if changed:
-        split_of.update(store.claim_splits(changed, overwrite=pinned))
-    return split_of
+def main(argv: list[str] | None = None) -> int:
+    """Export the review store as the page's Export button does, and print what was written."""
+    from .state import resolve_path
+    from .store import ReviewStore
+
+    parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    parser.add_argument("--output-dir", default=K.ANNOTATOR_DEFAULT_OUTPUT_DIR, help="the annotator's output folder")
+    parser.add_argument(
+        "--unreviewed",
+        action="store_true",
+        help="export unreviewed screenshots too (truth-seeded training and model pre-labels need them)",
+    )
+    args = parser.parse_args(argv)
+    output_dir = resolve_path(args.output_dir)
+    with ReviewStore.open(output_dir / K.ANNOTATOR_STORE_FILE) as store:
+        result = export_dataset(store, output_dir, reviewed_only=not args.unreviewed)
+    print(
+        f"{result.images} screenshots, {result.annotations} boxes, {result.classes} classes -> {result.manifest_path}"
+    )
+    print(f"splits: {result.splits}; ledger gained {result.ledger_added} screenshots")
+    if result.unknown:
+        print(f"labels outside the dataset's (rerun those screenshots): {result.unknown}")
+    if result.report:
+        print(result.report)
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

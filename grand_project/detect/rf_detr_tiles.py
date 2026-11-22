@@ -5,7 +5,8 @@ A screenshot is read as the classical detector reads it (``core.scale_screenshot
 icons), and it is cut into ``RF_DETR_TILE`` px squares overlapping by ``RF_DETR_TILE_OVERLAP`` (every object lies
 whole in some tile). The model sees each tile at its own size, so a 39 px map node stays 39 px.
 
-Training cuts random tiles (``random_tile``: scale jitter, tiles centred on rare classes, render-scale blur);
+Training cuts random tiles (``random_tile``: scale jitter, tiles centred on rare classes, render-scale blur,
+brightness and contrast);
 inference cuts the fixed grid (``tile_origins``) and keeps a predicted box only from a tile that holds it whole.
 Images are numpy arrays (H, W, 3); boxes are ``[x, y, w, h]`` in the image's pixels.
 """
@@ -154,35 +155,69 @@ def repeat_factors(categories: Iterable[Iterable[int]], threshold: float = K.RF_
     return [max((per_class[cid] for cid in ids), default=1.0) for ids in images]
 
 
+def epoch_length(factors: Sequence[float], per_image: int) -> int:
+    """How many images one training epoch draws: ``per_image`` x the sum of the repeat factors, rounded."""
+    return round(sum(per_image * float(factor) for factor in factors))
+
+
 def epoch_indices(factors: Sequence[float], per_image: int, rng: random.Random) -> list[int]:
-    """The images drawn in one training epoch, shuffled: each ``per_image`` x its repeat factor times (the fraction
-    drawn at random, so on average exactly that often)."""
-    out: list[int] = []
-    for index, factor in enumerate(factors):
-        times = per_image * float(factor)
-        whole = int(times)
-        out.extend([index] * (whole + (1 if rng.random() < times - whole else 0)))
+    """The images drawn in one training epoch, shuffled: each ``per_image`` x its repeat factor times.
+
+    Always ``epoch_length`` draws (the Trainer sizes an epoch by the sampler's length): every image's whole number
+    of draws, then the fractions by systematic sampling, so an image's fraction is (about) its chance of one more.
+    """
+    times = [per_image * float(factor) for factor in factors]
+    out = [index for index, count in enumerate(times) for _ in range(int(count))]
+    extra = epoch_length(factors, per_image) - len(out)
+    fractions = [(index, count - int(count)) for index, count in enumerate(times) if count > int(count)]
+    total = sum(fraction for _index, fraction in fractions)
+    if extra > 0 and total > 0:
+        rng.shuffle(fractions)
+        step, mark, reach = total / extra, rng.random() * total / extra, 0.0
+        for index, fraction in fractions:
+            reach += fraction
+            while mark < reach and extra > 0:
+                out.append(index)
+                extra -= 1
+                mark += step
+        if extra > 0:  # the last mark missed the end by a rounding error (the fractions summed in another order)
+            out.extend(index for index, _fraction in fractions[-extra:])
     rng.shuffle(out)
     return out
 
 
+_BACKBONE = "backbone.backbone."
+"""Where the DINOv2 backbone's parameters sit in the Transformers RF-DETR (``model.backbone.backbone.``)."""
+
+
 def layer_lr_scale(name: str, layers: int, decay: float) -> float:
-    """The learning-rate factor of a parameter: DINOv2 backbone layers decay from the top (the paper's 0.8 per
-    layer: earlier layers keep more of their pre-training), its embeddings most; everything else trains at 1.
+    """The learning-rate factor of a backbone parameter, the reference implementation's rule
+    (roboflow/rf-detr ``get_dinov2_lr_decay_rate``): layers decay from the top (the paper's 0.8 per layer: earlier
+    layers keep more of their pre-training), the embeddings most, the rest of the backbone (its final layer norm)
+    not at all; parameters outside the backbone get 1.
 
     Args:
         name: the parameter's name in the Transformers RF-DETR model.
-        layers: the backbone's encoder layers (12 for DINOv2-S).
+        layers: ``backbone_config.out_indices[-1] + 1``, as the reference counts them (13 for DINOv2-S).
         decay: the factor per layer.
     """
-    marker = "backbone.backbone."
-    if marker not in name:
+    if _BACKBONE not in name:
         return 1.0
-    rest = name.split(marker, 1)[1]
-    if rest.startswith("encoder.layer."):
-        layer = int(rest.split(".")[2])
-        return decay ** (layers - layer)
-    return decay ** (layers + 1)  # embeddings (patch, position, class tokens) and anything before the layers
+    rest = name.split(_BACKBONE, 1)[1]
+    if rest.startswith("embeddings."):
+        layer = 0
+    elif rest.startswith("encoder.layer."):
+        layer = int(rest.split(".")[2]) + 1
+    else:
+        layer = layers + 1
+    return decay ** (layers + 1 - layer)
+
+
+def backbone_weight_decay(name: str) -> bool:
+    """Whether a backbone parameter takes weight decay: not its layer scales, embeddings, biases or norms (the
+    reference's ``get_dinov2_weight_decay_rate``)."""
+    rest = name.split(_BACKBONE, 1)[-1]
+    return not any(part in rest for part in ("layer_scale", "embeddings", "bias", "norm"))
 
 
 def rare_classes(categories: Iterable[Iterable[int]], threshold: float = K.RF_DETR_REPEAT_THRESHOLD) -> set[int]:
@@ -206,6 +241,15 @@ def _render_blur(image: np.ndarray, rng: random.Random) -> np.ndarray:
     return cv2.resize(small, (width, height), interpolation=cv2.INTER_LINEAR)
 
 
+def _brightness_contrast(image: np.ndarray, rng: random.Random) -> np.ndarray:
+    """The image a little brighter or darker and with more or less contrast (``RF_DETR_AUGMENT_BRIGHTNESS`` /
+    ``_CONTRAST``), as albumentations' RandomBrightnessContrast does: ``image * (1 + c) + b * 255``. The hue is left
+    alone: it tells the biome."""
+    alpha = 1.0 + rng.uniform(-K.RF_DETR_AUGMENT_CONTRAST, K.RF_DETR_AUGMENT_CONTRAST)
+    beta = 255.0 * rng.uniform(-K.RF_DETR_AUGMENT_BRIGHTNESS, K.RF_DETR_AUGMENT_BRIGHTNESS)
+    return cv2.convertScaleAbs(image, alpha=alpha, beta=beta)
+
+
 def random_tile(
     image: np.ndarray,
     boxes: Sequence[Sequence[float]],
@@ -218,7 +262,8 @@ def random_tile(
     """One training tile of a 1080p screenshot: a random square, sometimes centred on a rare class's object.
 
     The square is ``tile`` px give or take ``RF_DETR_AUGMENT_SCALE_JITTER``, resized to ``tile``; with probability
-    ``RF_DETR_AUGMENT_RENDER_PROBABILITY`` it is blurred as a lower render scale draws it (and mirrored with
+    ``RF_DETR_AUGMENT_RENDER_PROBABILITY`` it is blurred as a lower render scale draws it, with
+    ``RF_DETR_AUGMENT_PHOTO_PROBABILITY`` its brightness and contrast change (and it is mirrored with
     ``RF_DETR_AUGMENT_FLIP_PROBABILITY``, 0: the atlas is never mirrored). Boxes are clipped to it
     (``crop_boxes``); a square without any box is tried again (``RF_DETR_AUGMENT_CROP_ATTEMPTS``).
 
@@ -261,6 +306,8 @@ def random_tile(
         kept = [[v * scale for v in box] for box in kept]
     if rng.random() < K.RF_DETR_AUGMENT_RENDER_PROBABILITY:
         out = _render_blur(out, rng)
+    if rng.random() < K.RF_DETR_AUGMENT_PHOTO_PROBABILITY:
+        out = _brightness_contrast(out, rng)
     if rng.random() < K.RF_DETR_AUGMENT_FLIP_PROBABILITY:  # off by default: the atlas is never mirrored
         out = out[:, ::-1]
         kept = [[tile - box[0] - box[2], box[1], box[2], box[3]] for box in kept]
@@ -294,15 +341,38 @@ def prepare(image: np.ndarray, boxes: Sequence[Sequence[float]] = (), *, rgb: bo
 def nms(detections: list[dict[str, Any]], iou: float, key: str = "family") -> list[dict[str, Any]]:
     """Keep the best-scored of detections of one ``key`` (a family) overlapping by ``iou`` or more.
 
+    Vectorised per family (a weak model can report thousands of boxes on a screenshot while it trains).
+
     Args:
         detections: dicts with "box" ``[x0, y0, x1, y1]``, "score" and ``key``.
         iou: the overlap from which two detections are one object.
         key: detections compete only with those of the same value of this field.
+
+    Returns:
+        The kept detections, best score first.
     """
+    groups: dict[Any, list[dict[str, Any]]] = {}
+    for det in detections:
+        groups.setdefault(det[key], []).append(det)
     kept: list[dict[str, Any]] = []
-    for det in sorted(detections, key=lambda d: -d["score"]):
-        if all(other[key] != det[key] or box_iou(det["box"], other["box"]) < iou for other in kept):
-            kept.append(det)
+    for group in groups.values():
+        group.sort(key=lambda d: -d["score"])
+        boxes = np.asarray([d["box"] for d in group], float).reshape(-1, 4)
+        areas = np.clip(boxes[:, 2] - boxes[:, 0], 0, None) * np.clip(boxes[:, 3] - boxes[:, 1], 0, None)
+        alive = np.ones(len(group), bool)
+        for i in range(len(group)):
+            if not alive[i]:
+                continue
+            kept.append(group[i])
+            rest = np.nonzero(alive[i + 1 :])[0] + i + 1
+            if not len(rest):
+                break
+            w = np.minimum(boxes[i, 2], boxes[rest, 2]) - np.maximum(boxes[i, 0], boxes[rest, 0])
+            h = np.minimum(boxes[i, 3], boxes[rest, 3]) - np.maximum(boxes[i, 1], boxes[rest, 1])
+            inter = np.clip(w, 0, None) * np.clip(h, 0, None)
+            overlap = inter / np.maximum(1e-9, areas[i] + areas[rest] - inter)
+            alive[rest[overlap >= iou]] = False
+    kept.sort(key=lambda d: -d["score"])
     return kept
 
 
@@ -317,11 +387,13 @@ def box_iou(a: Sequence[float], b: Sequence[float]) -> float:
 
 
 __all__ = [
+    "backbone_weight_decay",
     "box_iou",
     "crop_boxes",
     "cut_by_inner_edge",
     "densest_tile",
     "epoch_indices",
+    "epoch_length",
     "fill_hud",
     "layer_lr_scale",
     "nms",

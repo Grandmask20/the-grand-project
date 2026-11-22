@@ -43,12 +43,7 @@ def _labelled() -> tuple[dict, dict]:
         (old_landmarks), "dashes", "path", and (points, features, labels) tuples for "towers", "maps" and
         "badges".
     """
-    truth, where = {}, {}
-    for tf, shots in TRUTH_SETS:
-        if tf.exists():
-            for name, t in json.loads(tf.read_text(encoding="utf-8")).items():
-                truth[name] = dict(t, badges=[b for b in t["badges"] if not b["name"].startswith("ExpeditionShip")])
-                where[name] = shots / name
+    truth, where = _truth_screenshots()
     data = {}
     for name, t in truth.items():
         img = cv2.imdecode(np.fromfile(str(where[name]), np.uint8), cv2.IMREAD_COLOR)
@@ -326,6 +321,45 @@ def cmd_score() -> int:
     atlas_truth.print_score(atlas_truth.score(truth, new))
     print(f"\nhidden maps from badge rows: {sum(1 for o in new.values() for n in o['nodes'] if n.get('hidden'))}")
     (TRUTH.parent / "last_score_outputs.json").write_text(json.dumps(new, default=float), encoding="utf-8")
+    print(f"{time.time() - t0:.0f} s")
+    return 0
+
+
+def _truth_screenshots() -> tuple[dict, dict]:
+    """The hand-labelled truth (all TRUTH_SETS) and where each screenshot is, as ``_labelled`` reads them (Expedition
+    ship markers are not ring badges: left out)."""
+    truth, where = {}, {}
+    for tf, shots in TRUTH_SETS:
+        if tf.exists():
+            for name, t in json.loads(tf.read_text(encoding="utf-8")).items():
+                truth[name] = dict(t, badges=[b for b in t["badges"] if not b["name"].startswith("ExpeditionShip")])
+                where[name] = shots / name
+    return truth, where
+
+
+def cmd_score_rf_detr() -> int:
+    """Command `python -m grand_project.detect score_rf_detr`: the RF-DETR detector on the hand-labelled screenshots.
+
+    The model is GRAND_PROJECT_RF_DETR_MODEL's, else runs/rf-detr-small/best. The truth screenshots are pinned to the
+    annotator's test split, so no model ever trained on them: the score is a held-out one, beside `score`'s
+    leave-one-out score of the classical detector. Writes the outputs to last_score_outputs_rf_detr.json next to
+    TRUTH.
+
+    Returns:
+        0 (process exit code).
+    """
+    from .rf_detr_model import detect_rf_detr
+
+    t0 = time.time()
+    truth, where = _truth_screenshots()
+    new = {}
+    for name in truth:
+        out = detect_rf_detr(cv2.imdecode(np.fromfile(str(where[name]), np.uint8), cv2.IMREAD_COLOR))
+        out["icons"] = [icon for icon in out["icons"] if not icon["name"].startswith("ExpeditionShip")]
+        new[name] = out
+    print("\n== RF-DETR detector (held-out: the truth screenshots are always test)")
+    atlas_truth.print_score(atlas_truth.score(truth, new))
+    (TRUTH.parent / "last_score_outputs_rf_detr.json").write_text(json.dumps(new, default=float), encoding="utf-8")
     print(f"{time.time() - t0:.0f} s")
     return 0
 

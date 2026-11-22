@@ -1349,6 +1349,11 @@ def main(argv: list[str] | None = None) -> int:
     Returns:
         Exit code.
     """
+    from grand_project.detect.rf_detr_cuda import prefer_pip_cuda_libraries
+    from grand_project.detect.rf_detr_model import rf_detr_enabled
+
+    if rf_detr_enabled():  # the optional RF-DETR detector on CUDA needs PyTorch's own cuDNN, before torch loads
+        prefer_pip_cuda_libraries()
     ap = argparse.ArgumentParser(prog="python -m grand_project", description="The Grand Project atlas app.")
     ap.add_argument("atlas", nargs="?", help="atlas .json file to open (default: the last one)")
     ap.add_argument("--port", type=int, default=APP_PORT, help=f"first port to try (default {APP_PORT}; 0: any)")

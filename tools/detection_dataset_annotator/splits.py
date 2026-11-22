@@ -1,29 +1,37 @@
 """Train / validation / test splits of the exported screenshots (user's design), kept once given.
 
-1. Screenshots are binned by how many boxes they export (quantiles, ``ANNOTATOR_SPLIT_BINS``), so every split holds
-   screenshots as busy as the others (the model's queries must cover the busiest ones).
-2. Bin by bin, from the quietest to the busiest, the screenshots without a split are drawn in random order to the
-   split missing the largest part of its share so far (``ANNOTATOR_SPLIT_FRACTIONS``; screenshots that have a split
-   count too),
-   so every split gets screenshots of every busyness in its share, even when there are few screenshots.
-3. Seeded swaps of two such screenshots of one bin between two splits are kept while they bring every class's
-   spread across the splits closer to the split shares (each class counts the same, whatever its size), so rare
-   classes are represented in every split too. A swap keeps the bins' counts.
+The splits draw blocks of screenshots, not single ones (``blocks.py``: an atlas's screenshots overlap, so a block
+holds the screenshots of one part of an atlas and goes to one split whole; a screenshot no atlas places is a block of
+its own).
 
-Screenshots keep their split from one export to the next (the store remembers it): a later model never trains on an
-earlier model's test screenshots. Pinned screenshots (``ANNOTATOR_SPLIT_PINNED_TEST``: the hand truth and the
-reference atlases the detector scores are measured on) are always test.
+1. Blocks are binned by their boxes per screenshot (quantiles, ``ANNOTATOR_SPLIT_BINS``), so every split holds
+   screenshots as busy as the others (the model's queries must cover the busiest ones).
+2. Bin by bin, from the quietest to the busiest, the blocks without a split are drawn in random order to the split
+   missing the largest part of its share of screenshots so far (``ANNOTATOR_SPLIT_FRACTIONS``; screenshots that
+   have a split count too), so every split gets screenshots of every busyness in its share, even when there are few.
+3. Seeded swaps of two such blocks of one bin between two splits are kept while they bring every class's spread
+   across the splits closer to the split shares (each class counts the same, whatever its size), and the splits'
+   screenshots and each atlas's screenshots too (so uneven blocks keep the shares, and every atlas reaches every
+   split).
+
+Screenshots keep their split from one export to the next (the store and the split ledger keep it, the ledger by the
+screenshot's bytes: ``split_ledger.py``): a later model never trains on an earlier model's validation or test
+screenshots. A block takes the split of a pinned member (``ANNOTATOR_SPLIT_PINNED_TEST``: the hand truth and the
+reference atlases the detector scores are measured on, always test), else the one most of its members already have;
+its members that have a split keep it.
 """
 
 from __future__ import annotations
 
 import random
+from collections import Counter
 from collections.abc import Iterable, Mapping
 from pathlib import Path
 
 import numpy as np
 
 from . import constants as K
+from .blocks import Block
 
 
 def pinned_split(path: str | Path, roots: Iterable[Path] = K.ANNOTATOR_SPLIT_PINNED_TEST) -> str | None:
@@ -49,6 +57,15 @@ def _error(totals: np.ndarray, targets: np.ndarray, scale: np.ndarray) -> float:
     return float((((totals - targets) / scale) ** 2).sum())
 
 
+def _block_split(members: list[str], pinned: Mapping[str, str], fixed: Mapping[str, str], names: list[str]) -> int:
+    """A block's split: a pinned member's, else the one most of its members have (ties: the first split), else -1."""
+    for key in members:
+        if pinned.get(key) in names:
+            return names.index(pinned[key])
+    kept = Counter(names.index(fixed[key]) for key in members if fixed.get(key) in names)
+    return min(kept, key=lambda split: (-kept[split], split)) if kept else -1
+
+
 def assign_splits(
     items: Mapping[str, Mapping[str, int]],
     *,
@@ -56,18 +73,20 @@ def assign_splits(
     seed: int = K.ANNOTATOR_SPLIT_SEED,
     pinned: Mapping[str, str] | None = None,
     fixed: Mapping[str, str] | None = None,
+    blocks: Mapping[str, Block] | None = None,
     bins: int = K.ANNOTATOR_SPLIT_BINS,
     rounds: int = K.ANNOTATOR_SPLIT_ROUNDS,
 ) -> dict[str, str]:
     """Give every screenshot a split.
 
     Args:
-        items: image key -> {class: exported boxes of it} for every screenshot to split.
+        items: image key -> {class: boxes of it} for every screenshot to split.
         fractions: each split's share, in ``ANNOTATOR_SPLITS`` order.
         seed: the random draw's seed.
-        pinned: image key -> split it must be in (wins over ``fixed``).
+        pinned: image key -> split it must be in (wins over ``fixed``, and takes its block along).
         fixed: image key -> split it already has (kept).
-        bins: box-count bins.
+        blocks: image key -> its block (``blocks.screenshot_blocks``); a key without one is a block of its own.
+        bins: bins of boxes per screenshot.
         rounds: swaps tried in the refinement.
 
     Returns:
@@ -79,51 +98,65 @@ def assign_splits(
     keys = sorted(items)  # sorted: the same screenshots give the same draw whatever order they come in
     if not keys:
         return {}
-    pinned, fixed = dict(pinned or {}), dict(fixed or {})
+    pinned, fixed, blocks = dict(pinned or {}), dict(fixed or {}), dict(blocks or {})
+    block_of = {key: blocks.get(key, Block(key)) for key in keys}
+    groups = sorted(set(block_of.values()))
+    index = {block: i for i, block in enumerate(groups)}
+    members: list[list[str]] = [[] for _ in groups]
+    for key in keys:
+        members[index[block_of[key]]].append(key)
+    size = np.array([len(m) for m in members], float)
+
+    # What the splits balance, per block: its boxes of every class, its screenshots, and its screenshots under the
+    # name of its atlas (atlases of several blocks: each atlas reaches every split).
     classes = sorted({name for counts in items.values() for name in counts})
-    counts = np.array([[items[key].get(name, 0) for name in classes] for key in keys], float).reshape(len(keys), -1)
-    totals = counts.sum(axis=1)
-    bin_of = _bins(totals, bins)
-    split_of = np.full(len(keys), -1)
-    for i, key in enumerate(keys):
-        given = pinned.get(key) or fixed.get(key)
-        if given in names:
-            split_of[i] = names.index(given)
+    per_atlas = Counter(block.atlas for block in groups)
+    atlases = sorted(atlas for atlas, count in per_atlas.items() if count > 1)
+    counts = np.zeros((len(groups), len(classes) + 1 + len(atlases)))
+    for g, keys_of in enumerate(members):
+        for key in keys_of:
+            for c, name in enumerate(classes):
+                counts[g, c] += items[key].get(name, 0)
+        counts[g, len(classes)] = size[g]
+        if groups[g].atlas in atlases:
+            counts[g, len(classes) + 1 + atlases.index(groups[g].atlas)] = size[g]
+    bin_of = _bins(counts[:, : len(classes)].sum(axis=1) / size, bins)
+    split_of = np.array([_block_split(m, pinned, fixed, names) for m in members])
     free = split_of < 0
     rng = random.Random(seed)
     share = np.asarray(fractions, float)
-    # Bins from the quietest screenshots to the busiest; in each, the screenshots that have a split count first, then
-    # the others in random order, each to the split furthest below its share so far: every split gets screenshots of
-    # every busyness, in its share, however few screenshots there are.
+    # Bins from the quietest blocks to the busiest; in each, the blocks that have a split count first, then the
+    # others in random order, each to the split furthest below its share of screenshots so far: every split gets
+    # screenshots of every busyness, in its share, however few there are.
     have = np.zeros(len(names))
     for b in np.unique(bin_of):
-        members = [int(i) for i in np.nonzero(bin_of == b)[0]]
-        for i in members:
-            if not free[i]:
-                have[split_of[i]] += 1
-        todo = [i for i in members if free[i]]
+        in_bin = [int(g) for g in np.nonzero(bin_of == b)[0]]
+        for g in in_bin:
+            if not free[g]:
+                have[split_of[g]] += size[g]
+        todo = [g for g in in_bin if free[g]]
         rng.shuffle(todo)
-        for i in todo:
-            target = share * (have.sum() + 1)
+        for g in todo:
+            target = share * (have.sum() + size[g])
             # the share of its target each split still misses: small splits are not starved by a big one's lead
             missing = np.where(target > 0, (target - have) / np.maximum(target, 1e-9), -np.inf)
             split = int(np.argmax(missing))
-            split_of[i] = split
-            have[split] += 1
+            split_of[g] = split
+            have[split] += size[g]
 
-    # refine: swaps of two free screenshots of one bin between two splits, kept while they lower the error
-    per_split = np.zeros((len(names), len(classes)))
-    for i, split in enumerate(split_of):
-        per_split[split] += counts[i]
-    class_total = counts.sum(axis=0)
-    targets = share[:, None] * class_total[None, :]
-    scale = np.maximum(class_total, 1.0)[None, :]
-    by_bin = {int(b): [int(i) for i in np.nonzero((bin_of == b) & free)[0]] for b in np.unique(bin_of)}
-    swappable = [b for b, members in by_bin.items() if len({int(split_of[i]) for i in members}) > 1]
+    # refine: swaps of two free blocks of one bin between two splits, kept while they lower the error
+    per_split = np.zeros((len(names), counts.shape[1]))
+    for g, split in enumerate(split_of):
+        per_split[split] += counts[g]
+    column_total = counts.sum(axis=0)
+    targets = share[:, None] * column_total[None, :]
+    scale = np.maximum(column_total, 1.0)[None, :]
+    by_bin = {int(b): [int(g) for g in np.nonzero((bin_of == b) & free)[0]] for b in np.unique(bin_of)}
+    swappable = [b for b, in_bin in by_bin.items() if len({int(split_of[g]) for g in in_bin}) > 1]
     error = _error(per_split, targets, scale)
-    for _ in range(rounds if swappable and classes else 0):
-        members = by_bin[rng.choice(swappable)]
-        i, j = rng.sample(members, 2) if len(members) >= 2 else (members[0], members[0])
+    for _ in range(rounds if swappable else 0):
+        in_bin = by_bin[rng.choice(swappable)]
+        i, j = rng.sample(in_bin, 2) if len(in_bin) >= 2 else (in_bin[0], in_bin[0])
         a, b = int(split_of[i]), int(split_of[j])
         if a == b:
             continue
@@ -135,19 +168,28 @@ def assign_splits(
         if new_error < error - 1e-12:
             per_split, error = trial, new_error
             split_of[i], split_of[j] = b, a
-    return {key: names[int(split_of[i])] for i, key in enumerate(keys)}
+    out = {}
+    for key in keys:
+        given = pinned.get(key) if pinned.get(key) in names else fixed.get(key)
+        out[key] = given if given in names else names[int(split_of[index[block_of[key]]])]
+    return out
 
 
-def split_report(items: Mapping[str, Mapping[str, int]], splits: Mapping[str, str]) -> str:
-    """Per split: screenshots, boxes per screenshot, and each class's share of its boxes against the split's share."""
+def split_report(
+    items: Mapping[str, Mapping[str, int]], splits: Mapping[str, str], blocks: Mapping[str, Block] | None = None
+) -> str:
+    """Per split: screenshots, blocks, boxes per screenshot, and each class's share of its boxes against the split's
+    share."""
     names = list(K.ANNOTATOR_SPLITS)
+    blocks = dict(blocks or {})
     classes = sorted({name for counts in items.values() for name in counts})
     shots = {s: [k for k in items if splits.get(k) == s] for s in names}
-    lines = ["split        shots  boxes/shot"]
+    lines = ["split        shots  blocks  boxes/shot"]
     for s in names:
         boxes = [sum(items[k].values()) for k in shots[s]]
         mean = float(np.mean(boxes)) if boxes else 0.0
-        lines.append(f"{s:<11} {len(shots[s]):6d}  {mean:10.1f}")
+        count = len({blocks.get(k, Block(k)) for k in shots[s]})
+        lines.append(f"{s:<11} {len(shots[s]):6d}  {count:6d}  {mean:10.1f}")
     lines.append("class share per split (" + " / ".join(names) + ")")
     for name in classes:
         per = [sum(items[k].get(name, 0) for k in shots[s]) for s in names]

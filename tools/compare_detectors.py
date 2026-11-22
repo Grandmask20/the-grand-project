@@ -1,6 +1,7 @@
 """Compare the classical detector with a fine-tuned RF-DETR detector.
 
-Accuracy is measured by rebuilding temporary copies of the standard ``atlas-tests`` atlases.  The saved
+Accuracy is measured by rebuilding temporary copies of the standard resolution atlases (``res_atlases`` in the test
+data, built from the author's ``atlas-tests``).  The saved
 ``res_4k_100`` atlas is kept as a fixed reference, so both backends are compared with the same reference rather than
 with an atlas produced by themselves.  The reference is the sharpest view of the same three atlas locations, not
 hand-labelled truth; a match means that a detector found the same map node, icon, path or landmark in that reference.
@@ -46,6 +47,7 @@ from grand_project.detect.constants import (
     RF_DETR_USE_ENV,
 )
 from grand_project.detect.pipeline import detect_classical
+from grand_project.detect.rf_detr_cuda import prefer_pip_cuda_libraries
 from grand_project.detect.rf_detr_model import detect_rf_detr, reset_rf_detr_runtime
 
 
@@ -355,7 +357,7 @@ def _speed_paths(root: Path, maximum: int | None) -> list[Path]:
 
 def _print_accuracy(report: dict[str, Any]) -> None:
     """Print the accuracy table."""
-    print("Accuracy vs fixed res_4k_100 reference (atlas-tests)")
+    print("Accuracy vs fixed res_4k_100 reference (res_atlases)")
     print("atlas              backend       maps P/R/F1       icons P/R/F1      paths P/R/F1      landmarks P/R/F1")
     for backend_name, backend_report in report.items():
         for atlas_name, atlas_report in backend_report["atlases"].items():
@@ -366,7 +368,7 @@ def _print_accuracy(report: dict[str, Any]) -> None:
                     f"{metric.get('precision', 0):.0%}/{metric.get('recall', 0):.0%}/{metric.get('f1', 0):.0%}"
                 )
             print(f"{atlas_name:<18} {backend_name:<12} {values[0]:<16} {values[1]:<16} {values[2]:<16} {values[3]}")
-    print("P/R/F1 = precision / recall / F1; atlas-tests reference the sharpest view, not hand-labelled truth.")
+    print("P/R/F1 = precision / recall / F1; the reference is the sharpest view, not hand-labelled truth.")
 
 
 def _print_speed(report: dict[str, Any]) -> None:
@@ -384,7 +386,7 @@ def _print_speed(report: dict[str, Any]) -> None:
 def _parse_args() -> argparse.Namespace:
     """Parse comparison options."""
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    parser.add_argument("--atlas-tests", type=Path, default=project_paths.TEST_DATA / "atlas-tests")
+    parser.add_argument("--atlas-tests", type=Path, default=project_paths.TEST_DATA / "res_atlases")
     parser.add_argument("--roa-atlas", type=Path, default=project_paths.TEST_DATA / "roa-atlas")
     parser.add_argument("--model-dir", type=Path, default=RF_DETR_DEFAULT_MODEL_DIR)
     parser.add_argument("--device", choices=("auto", "cpu", "cuda", "mps"), default="auto")
@@ -403,6 +405,7 @@ def _parse_args() -> argparse.Namespace:
 
 def main() -> int:
     """Run both detector comparisons and return a process exit code."""
+    prefer_pip_cuda_libraries()  # RF-DETR on CUDA needs PyTorch's own cuDNN, before torch loads (rf_detr_cuda)
     args = _parse_args()
     model_dir = args.model_dir.expanduser().resolve()
     if not model_dir.is_dir():

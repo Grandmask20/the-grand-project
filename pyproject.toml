@@ -1,6 +1,6 @@
 [project]
 name = "the-grand-project"
-version = "1.22"
+version = "1.23"
 description = "Builds one big map of your Path of Exile 2 atlas from screenshots: maps, paths, badges, towers and cities."
 readme = "README.md"
 requires-python = ">=3.11"
@@ -30,10 +30,11 @@ dev = [
     "ruff>=0.9",
 ]
 training = [
+    "accelerate>=1.1",  # transformers' Trainer runs on it
     "datasets>=3.0",
     "torch>=2.5",
     "torchvision>=0.20",
-    "transformers>=5.9",  # the first release with RF-DETR (rf_detr model type and image processor)
+    "transformers>=5.23",  # RF-DETR (5.9+) and the Trainer hooks the trainer relies on (loss_is_scaled_for_ga, evaluate)
 ]
 annotator = [
     "streamlit>=1.53",

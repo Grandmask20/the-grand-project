@@ -63,6 +63,13 @@ README's developer section). `tools/` are developer helpers
 - **Models**: no pickles from outside. Detector models are skops archives loaded with an allowlist
   (`test_model_safety`); small models are stored as plain arrays in `.npz` (e.g. `references/city_barrel.npz`).
 - **Icons: finding vs naming.** Finding (is there an icon here?) uses only frozen data (`references/badge_finder.npz`: rim template + one picture set); naming (which icon?) uses the growing stored pictures. Teaching icons must never change what is found; re-freeze only on purpose (`python -m tools.freeze_badge_finder`, then retrain and re-score).
+- **RF-DETR** (`tools/train_rf_detr.py`, `detect/rf_detr*.py`, the annotator's loop tools): trained with
+  transformers' `Trainer` on the official roboflow/rf-detr recipe (`RF_DETR_*`; check a recipe change against that
+  repo, file:line). Checkpoints are saved in transformers' own key layout (`save_native`: the Trainer reloads them
+  unconverted) and loaded with `use_safetensors=True`. A process that runs the model calls
+  `rf_detr_cuda.prefer_pip_cuda_libraries()` first (Linux: PyTorch's cuDNN before a system one). Validation and test
+  screenshots never get model pre-labels; a training round checks its manifest against the split ledger. When the
+  annotator store's tables change, a new store is built with `build_store` (no migration code).
 - **App**: requests are answered on their own threads; the session changes the atlas only under its lock, and
   long work runs on the session's worker (or a background thread) and reports through `Events` (log, progress,
   versions, questions). CPU-heavy work that would starve the server (Python's GIL) runs as its own process

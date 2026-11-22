@@ -21,4 +21,10 @@ e2e-run/
 htmlcov/
 coverage.xml
 The Grand Project.lnk
-tools/detection_dataset_annotator/detection-dataset/
+tools/detection_dataset_annotator/detection-dataset*/
+fr-atlas
+roa-atlas
+.agents
+.claude
+runs/
+atlas_test_data/truth/last_score_outputs*.json

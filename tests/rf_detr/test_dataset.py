@@ -25,7 +25,6 @@ def _manifest(tmp_path: Path, images: list[dict], **fields) -> Path:
     manifest = tmp_path / "manifest.json"
     data = {
         "format": "the-grand-project-rf-detr-manifest",
-        "schema_version": 2,
         "labels": {"0": "map_node_grass", "1": "icon"},
         "images": images,
         **fields,
@@ -102,6 +101,26 @@ def test_unreviewed_screenshots_are_no_training_data(tmp_path: Path) -> None:
     assert [(r.path.name, r.split) for r in records] == [("a.png", "train"), ("d.png", "validation")]
     records, _labels = load_annotator_manifest(_manifest(tmp_path, shots), max_images=2)
     assert [r.path.name for r in records] == ["a.png", "d.png"]
+
+
+def test_truth_seeded_screenshots_join_only_when_asked(tmp_path: Path) -> None:
+    """A bootstrap round (--truth-seeded) also trains on the unreviewed screenshots a biome truth seeded (their
+    ``truth`` mark), never on other unreviewed ones; by default only reviewed screenshots are training data."""
+    truth = "atlas_test_data/fr-atlas/truth.json"
+    shots = [
+        _image(tmp_path, "a.png", "train"),
+        _image(tmp_path, "b.png", "train", reviewed=False, truth=truth),
+        _image(tmp_path, "c.png", "train", reviewed=False),
+        _image(tmp_path, "d.png", "validation", reviewed=False, truth=truth),
+    ]
+    records, _labels = load_annotator_manifest(_manifest(tmp_path, shots))
+    assert [r.path.name for r in records] == ["a.png"]
+    records, _labels = load_annotator_manifest(_manifest(tmp_path, shots), truth_seeded=True)
+    assert [(r.path.name, r.source_type) for r in records] == [
+        ("a.png", "annotator_reviewed"),
+        ("b.png", K.RF_DETR_TRUTH_SEEDED_SOURCE),
+        ("d.png", K.RF_DETR_TRUTH_SEEDED_SOURCE),
+    ]
 
 
 def test_records_by_split_needs_training_and_validation() -> None:
@@ -206,6 +225,7 @@ def test_the_dataset_keeps_the_annotators_splits(tmp_path: Path) -> None:
     assert dataset["train"].features["objects"]["category"].feature.names == ["map_node_grass", "icon"]
     meta = json.loads((out / "metadata.json").read_text())
     assert (meta["tile"], meta["test_images"]) == (K.RF_DETR_TILE, 1)
+    assert meta["kinds"] == {split: {"annotator_reviewed": 1} for split in ("train", "validation", "test")}
     assert json.loads((out / "labels.json").read_text()) == labels
     with pytest.raises(FileExistsError):
         build_dataset(records, label_map=labels, output_dir=out)

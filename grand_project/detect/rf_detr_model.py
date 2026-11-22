@@ -94,12 +94,13 @@ def class_families(labels: dict[int, str]) -> dict[str, list[tuple[int, str]]]:
     return out
 
 
-def _load_runtime() -> dict[str, Any]:
-    """Load the processor and model once, failing clearly when the feature flag is misconfigured."""
-    global _RUNTIME
-    if _RUNTIME is not None:
-        return _RUNTIME
-    model_dir = rf_detr_model_path()
+def load_detector(model_dir: Path) -> dict[str, Any]:
+    """Load a fine-tuned checkpoint folder: its processor, model (eval mode, on the configured device) and class
+    families.
+
+    Raises:
+        RuntimeError: the folder is missing, cannot be loaded, or has classes the labels no longer have.
+    """
     if not model_dir.is_dir():
         raise RuntimeError(
             f"RF-DETR is enabled but its model directory does not exist: {model_dir}. "
@@ -110,14 +111,30 @@ def _load_runtime() -> dict[str, Any]:
         from transformers import AutoImageProcessor, AutoModelForObjectDetection
 
         processor = AutoImageProcessor.from_pretrained(model_dir)
-        model = AutoModelForObjectDetection.from_pretrained(model_dir)
+        # safetensors only: a pickled checkpoint can run code when loaded (AGENTS.md, models)
+        model = AutoModelForObjectDetection.from_pretrained(model_dir, use_safetensors=True)
     except Exception as exc:
         raise RuntimeError(f"could not load the RF-DETR model from {model_dir}: {exc}") from exc
+    labels = _labels(model_dir, model)
+    unknown = sorted(name for name in labels.values() if not L.known(name))
+    if unknown:
+        # a checkpoint of an earlier label set: its retired classes (city, locked_stronghold, ...) would be found and
+        # silently dropped, so the program would lose those objects
+        raise RuntimeError(
+            f"the RF-DETR model in {model_dir} has classes the labels no longer have ({', '.join(unknown)}): "
+            "train it again on a new export"
+        )
     device = _device(torch)
     model.to(device)
     model.eval()
-    families = class_families(_labels(model_dir, model))
-    _RUNTIME = {"processor": processor, "model": model, "device": device, "families": families}
+    return {"processor": processor, "model": model, "device": device, "families": class_families(labels)}
+
+
+def _load_runtime() -> dict[str, Any]:
+    """Load the configured model once (``load_detector``), failing clearly when the feature flag is misconfigured."""
+    global _RUNTIME
+    if _RUNTIME is None:
+        _RUNTIME = load_detector(rf_detr_model_path())
     return _RUNTIME
 
 
@@ -375,6 +392,7 @@ __all__ = [
     "class_families",
     "detect_rf_detr",
     "family_detections",
+    "load_detector",
     "predict_tiles",
     "reset_rf_detr_runtime",
     "rf_detr_enabled",

@@ -10,6 +10,9 @@ from __future__ import annotations
 
 import copy
 import sqlite3
+import subprocess
+import sys
+import time
 from dataclasses import dataclass
 from functools import partial
 from pathlib import Path
@@ -17,6 +20,7 @@ from typing import Any
 
 import streamlit as st
 
+from grand_project.detect import constants as DK
 from tools.detection_dataset_annotator import constants as K
 from tools.detection_dataset_annotator.boxes import (
     annotations_changed,
@@ -29,6 +33,7 @@ from tools.detection_dataset_annotator.boxes import (
 from tools.detection_dataset_annotator.component import annotate
 from tools.detection_dataset_annotator.export import export_dataset
 from tools.detection_dataset_annotator.pool import cpu_count, default_workers, detect_pending
+from tools.detection_dataset_annotator.split_ledger import SplitConflict
 from tools.detection_dataset_annotator.state import (
     DetectionOptions,
     discover_images,
@@ -123,6 +128,19 @@ def _accepted(editor_key: str, payload: dict[str, Any], edited: list[dict[str, A
     st.session_state[_saved_seq_key(editor_key)] = int(payload.get("seq", 0))
 
 
+def _review_log(item: dict[str, Any], payload: dict[str, Any], *, reviewed: bool | None) -> dict[str, Any] | None:
+    """The screenshot's review log after an editor message (``ANNOTATOR_REVIEW_FIELD``): its active seconds grown by
+    the editor's review timer, and when it was marked reviewed; None when the message adds neither."""
+    active_ms = float(payload.get("active_ms") or 0)
+    if active_ms <= 0 and not reviewed:
+        return None
+    log = dict(item.get(K.ANNOTATOR_REVIEW_FIELD) or {})
+    log["active_s"] = round(float(log.get("active_s", 0.0)) + active_ms / 1000.0, 1)
+    if reviewed:
+        log["reviewed_at"] = time.strftime("%Y-%m-%dT%H:%M:%S")
+    return {K.ANNOTATOR_REVIEW_FIELD: log}
+
+
 def _on_edit(store_path: Path, image_key: str, revision: int, editor_key: str) -> None:
     """Autosave: runs before the script whenever the editor sends its boxes."""
     payload = (st.session_state.get(editor_key) or {}).get("edit")
@@ -131,7 +149,8 @@ def _on_edit(store_path: Path, image_key: str, revision: int, editor_key: str) -
         if item is None:
             return
         edited = _edited_annotations(item, editor_key, payload)
-        if edited is not None and not store.save_review(image_key, revision, annotations=edited):
+        log = _review_log(item, payload, reviewed=None)
+        if (edited is not None or log) and not store.save_review(image_key, revision, annotations=edited, extra=log):
             return  # a detector rerun landed in between
     _accepted(editor_key, payload, edited)
 
@@ -158,8 +177,9 @@ def _on_action(store_path: Path, image_key: str, revision: int, editor_key: str,
             return
         edited = _edited_annotations(item, editor_key, action)
         reviewed, target = _action_target(str(action.get("type")), bool(item.get("reviewed")), keys, image_key)
-        changes = edited is not None or reviewed is not None
-        if changes and not store.save_review(image_key, revision, annotations=edited, reviewed=reviewed):
+        log = _review_log(item, action, reviewed=reviewed)
+        changes = edited is not None or reviewed is not None or log is not None
+        if changes and not store.save_review(image_key, revision, annotations=edited, reviewed=reviewed, extra=log):
             return  # a detector rerun landed in between
     _accepted(editor_key, action, edited)
     st.session_state[K.ANNOTATOR_SESSION_SELECTED] = target
@@ -217,6 +237,7 @@ def _render_editor(store: ReviewStore, key: str, keys: list[str], settings: Sett
         "saved_seq": st.session_state.get(_saved_seq_key(editor_key), 0),
         "chip_px": K.ANNOTATOR_EDITOR_CHIP_PX,
         "autosave_ms": K.ANNOTATOR_EDITOR_AUTOSAVE_MS,
+        "idle_ms": K.ANNOTATOR_IDLE_MS,
         "editor_height": K.ANNOTATOR_EDITOR_HEIGHT,
     }
     annotate(
@@ -320,12 +341,79 @@ def _run_detection(
     st.rerun()
 
 
+def _export(store: ReviewStore, settings: Settings) -> None:
+    """Export the dataset and show what was written (or why the splits stopped it)."""
+    try:
+        result = export_dataset(store, settings.output_dir, reviewed_only=settings.reviewed_only)
+    except SplitConflict as conflict:
+        st.error(str(conflict))
+        return
+    st.success(
+        f"Exported {result.images} images and {result.annotations} boxes to "
+        f"`{result.manifest_path}` and `{result.coco_path}`. Splits: "
+        + ", ".join(f"{name} {count}" for name, count in (result.splits or {}).items())
+        + (f"; {result.ledger_added} screenshots added to the split ledger." if result.ledger_added else "")
+    )
+    if result.unknown:
+        st.warning(
+            "Exported labels the dataset does not know as classes of their own: "
+            + ", ".join(f"`{label}` ({count})" for label, count in sorted(result.unknown.items()))
+            + ". If the labels changed since those screenshots were detected, rerun them (Rerun all) instead."
+        )
+    if result.skipped_annotations:
+        st.warning(f"Skipped {result.skipped_annotations} invalid annotations or icons the dataset leaves out.")
+    if result.report:
+        with st.expander("Split balance"):
+            st.code(result.report, language=None)
+
+
+def _model_prelabels(settings: Settings) -> None:
+    """Start the model pre-label pass (``model_prelabel``, its own process: the GPU work would stall the page) and
+    show its progress."""
+    running = st.session_state.get(K.ANNOTATOR_SESSION_PRELABEL)
+    busy = running is not None and running.poll() is None
+    log = settings.output_dir / K.ANNOTATOR_PRELABEL_LOG
+    with st.expander("Model pre-labels"):
+        st.caption(
+            "An RF-DETR model pre-labels unreviewed training screenshots beside the classical boxes: a share of their "
+            "blocks, the rest keep the classical boxes, so the effort report compares both. Validation and test "
+            "screenshots never get them."
+        )
+        model = st.text_input("Model folder", relative_source(DK.RF_DETR_DEFAULT_MODEL_DIR))
+        share = st.slider("Share of blocks the model pre-labels", 0.0, 1.0, 0.5, 0.05)
+        if st.button("Pre-label", width="stretch", disabled=busy):
+            settings.output_dir.mkdir(parents=True, exist_ok=True)
+            with open(log, "w", encoding="utf-8") as out:
+                st.session_state[K.ANNOTATOR_SESSION_PRELABEL] = subprocess.Popen(
+                    [
+                        sys.executable,
+                        "-m",
+                        "tools.detection_dataset_annotator.model_prelabel",
+                        "--model",
+                        str(resolve_path(model)),
+                        "--share",
+                        str(share),
+                        "--output-dir",
+                        str(settings.output_dir),
+                    ],
+                    stdout=out,
+                    stderr=subprocess.STDOUT,
+                    cwd=str(resolve_path(".")),
+                )
+            st.rerun()
+        if busy:
+            st.caption("Pre-labelling… (refresh to follow it)")
+        if log.is_file():
+            lines = log.read_text(encoding="utf-8", errors="replace").splitlines()[-4:]
+            st.code("\n".join(lines) or "(no output yet)", language=None)
+
+
 def _sidebar_actions(store: ReviewStore, queue: list[QueueEntry], settings: Settings) -> None:
     """Discover, detect, export and rerun-all buttons."""
     pending_count = sum(not entry.detected for entry in queue)
     with st.sidebar:
         discover, detect_new = st.columns(2)
-        if discover.button("Discover", use_container_width=True, help="Find screenshots below the roots"):
+        if discover.button("Discover", width="stretch", help="Find screenshots below the roots"):
             found = discover_images(settings.roots)
             added, existing = store.add_images(found)  # new screenshots only: every detection and edit is kept
             store.set_input_roots(settings.roots)
@@ -333,29 +421,14 @@ def _sidebar_actions(store: ReviewStore, queue: list[QueueEntry], settings: Sett
                 f"Discovered {len(found)} images ({added} new, {existing} already in the queue)."
             )
             st.rerun()
-        if detect_new.button(f"Detect new ({pending_count})", use_container_width=True, disabled=not pending_count):
+        if detect_new.button(f"Detect new ({pending_count})", width="stretch", disabled=not pending_count):
             _run_detection(store, settings)
-        if st.button("Export dataset", type="primary", use_container_width=True):
-            result = export_dataset(store, settings.output_dir, reviewed_only=settings.reviewed_only)
-            st.success(
-                f"Exported {result.images} images and {result.annotations} boxes to "
-                f"`{result.manifest_path}` and `{result.coco_path}`. Splits: "
-                + ", ".join(f"{name} {count}" for name, count in (result.splits or {}).items())
-            )
-            if result.unknown:
-                st.warning(
-                    "Exported labels the dataset does not know as classes of their own: "
-                    + ", ".join(f"`{label}` ({count})" for label, count in sorted(result.unknown.items()))
-                    + ". If the labels changed since those screenshots were detected, rerun them (Rerun all) instead."
-                )
-            if result.skipped_annotations:
-                st.warning(f"Skipped {result.skipped_annotations} invalid annotations or icons the dataset leaves out.")
-            if result.report:
-                with st.expander("Split balance"):
-                    st.code(result.report, language=None)
+        if st.button("Export dataset", type="primary", width="stretch"):
+            _export(store, settings)
         manifest = settings.output_dir / K.ANNOTATOR_MANIFEST_FILE
         if manifest.is_file():
             st.caption(f"Last export: `{manifest}`")
+        _model_prelabels(settings)
         with st.expander("Rerun all screenshots"):
             confirmed = st.checkbox(
                 "I understand this replaces existing edits",
@@ -364,7 +437,7 @@ def _sidebar_actions(store: ReviewStore, queue: list[QueueEntry], settings: Sett
                     "detections and review flag are kept."
                 ),
             )
-            if st.button("Rerun all", use_container_width=True, disabled=not queue or not confirmed):
+            if st.button("Rerun all", width="stretch", disabled=not queue or not confirmed):
                 _run_detection(store, settings, keys=[entry.key for entry in queue], force=True)
 
 
@@ -393,11 +466,11 @@ def _queue_picker(store: ReviewStore, queue: list[QueueEntry], settings: Setting
     if detected:
         run = detect.button(
             "Rerun detection",
-            use_container_width=True,
+            width="stretch",
             help="Replace this screenshot's boxes with a fresh classical detection (clears its review flag).",
         )
     else:
-        run = detect.button("Detect", type="primary", use_container_width=True)
+        run = detect.button("Detect", type="primary", width="stretch")
     if run:
         _run_detection(store, settings, keys=[selected], force=detected)
     return selected

@@ -35,7 +35,7 @@ from grand_project import cities
 
 from . import constants as K
 from . import labels as L
-from .biomes import city_area_nodes, node_biomes
+from .biomes import BiomeGuess, city_area_nodes, node_biomes
 from .icon_types import icon_class
 
 Box = tuple[float, float, float, float]
@@ -145,12 +145,18 @@ def node_classes(
             else:
                 source = K.RF_DETR_SOURCE_CITY_AREA_GUESS
             out.append((L.node_label(city_type=city), source))
-        elif guess.biome is None:
-            out.append((L.node_label(), K.RF_DETR_SOURCE_CLASSICAL))
         else:
-            source = K.RF_DETR_SOURCE_CLASSICAL if guess.sure else K.RF_DETR_SOURCE_BIOME_GUESS
-            out.append((L.node_label(biome=guess.biome), source))
+            out.append(biome_class(guess))
     return out
+
+
+def biome_class(guess: BiomeGuess) -> tuple[str, str]:
+    """A map node's class and source from its ground ring alone: its biome's class (a guess unless sure), or plain
+    ``map_node`` when too little ground is seen."""
+    if guess.biome is None:
+        return L.node_label(), K.RF_DETR_SOURCE_CLASSICAL
+    source = K.RF_DETR_SOURCE_CLASSICAL if guess.sure else K.RF_DETR_SOURCE_BIOME_GUESS
+    return L.node_label(biome=guess.biome), source
 
 
 def dataset_boxes(
@@ -232,6 +238,7 @@ def dataset_boxes(
 
 __all__ = [
     "Box",
+    "biome_class",
     "box_around_line",
     "box_at_point",
     "clip_box",

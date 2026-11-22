@@ -124,7 +124,7 @@ def test_editor_saves_after_a_rerun_are_refused(tmp_path: Path, review_store: Re
     assert [(a["id"], a["label"]) for a in item["annotations"]] == [("b1", "icon"), ("b2", "tower"), ("b3", "hall")]
     assert item["reviewed"] is True and item["next_annotation_id"] == 4  # duplicate id b1 got a new one
 
-    review_store.record_detection(key, _result(_box("city_vaal", 5)), force=True)
+    review_store.record_detection(key, _result(_box("citadel_stone", 5)), force=True)
     before = review_store.item(key)
     assert not review_store.save_review(key, 1, annotations=[], reviewed=True)  # the editor still shows revision 1
     assert review_store.item(key) == before
@@ -230,11 +230,107 @@ def test_splits_are_kept(tmp_path: Path, review_store: ReviewStore) -> None:
 
 def test_an_export_claims_only_splits_nobody_gave_yet(tmp_path: Path, review_store: ReviewStore) -> None:
     """Two exports at once: the second one's draw cannot move a screenshot the first one already gave a split; it
-    gets the stored split back and uses it. A pinned screenshot (a truth screenshot: test) always takes its split."""
+    gets the stored split back and uses it."""
     shots = _shots(tmp_path, "a.png", "b.png", "c.png")
     review_store.add_images(shots)
     a, b, c = (image_key(shot) for shot in shots)
     review_store.claim_splits({a: "train", c: "train"})  # given by an export that finished first
-    claimed = review_store.claim_splits({a: "validation", b: "validation", c: "test"}, overwrite={c})
-    assert claimed == {a: "train", b: "validation", c: "test"}
+    claimed = review_store.claim_splits({a: "validation", b: "validation", c: "test"})
+    assert claimed == {a: "train", b: "validation", c: "train"}
     assert review_store.splits() == claimed
+
+
+def test_only_unreviewed_screenshots_are_removed(tmp_path: Path, review_store: ReviewStore) -> None:
+    """Removing a screenshot takes its boxes along; a reviewed one stays (its review is the work to keep), and a key
+    the store does not have is no error."""
+    shots = _shots(tmp_path, "a.png", "b.png")
+    review_store.add_images(shots)
+    a, b = (image_key(shot) for shot in shots)
+    for key in (a, b):
+        review_store.record_detection(key, _result(_box("tower", 1.0)), force=False)
+    review_store.save_review(b, 1, reviewed=True)
+
+    assert review_store.remove_unreviewed([a, b, "missing", a]) == [a]
+    assert list(review_store.paths()) == [b]
+    assert review_store.item(a) is None
+    count = review_store._db.execute("SELECT COUNT(*) FROM annotations WHERE image_key = ?", (a,)).fetchone()[0]
+    assert count == 0
+
+
+def test_a_backup_is_the_whole_store_and_never_overwrites(tmp_path: Path, review_store: ReviewStore) -> None:
+    shots = _shots(tmp_path, "a.png")
+    review_store.add_images(shots)
+    review_store.record_detection(image_key(shots[0]), _result(_box("tower", 1.0)), force=False)
+    target = tmp_path / "copy" / "backup.sqlite3"
+
+    review_store.backup(target)
+    with ReviewStore.open(target) as copy:
+        assert copy.item(image_key(shots[0]))["annotations"] == review_store.item(image_key(shots[0]))["annotations"]
+    with pytest.raises(FileExistsError):
+        review_store.backup(target)
+
+
+def test_prelabels_are_what_a_reviewer_was_first_shown(tmp_path: Path, review_store: ReviewStore) -> None:
+    """Detection and new pre-labels (truth seeding, a model) replace the snapshot the review is measured against;
+    a reviewer's edits never do."""
+    (path,) = _shots(tmp_path, "a.png")
+    key = image_key(path)
+    review_store.add_images([path])
+    review_store.record_detection(key, _result(_box("icon", 10.0), _box("tower", 50.0)), force=False)
+    detected = [(a["id"], a["label"]) for a in review_store.prelabels(key)]
+    assert detected == [("b0", "icon"), ("b1", "tower")]
+    assert review_store.save_review(key, 1, annotations=[_box("hall", 90.0, id="b0")])  # an edit
+    assert [(a["id"], a["label"]) for a in review_store.prelabels(key)] == detected
+    assert review_store.save_review(key, 1, annotations=[_box("map_node_vaal", 10.0)], prelabel=True)
+    assert [a["label"] for a in review_store.prelabels(key)] == ["map_node_vaal"]
+    review_store.record_detection(key, _result(_box("icon", 10.0)), force=True)  # a rerun starts over
+    assert [a["label"] for a in review_store.prelabels(key)] == ["icon"]
+
+
+def test_extra_fields_merge_and_go_with_a_rerun(tmp_path: Path, review_store: ReviewStore) -> None:
+    """A truth mark, a pre-label's arm or the review log are merged into a screenshot's ``extra`` under the same
+    revision check as its boxes (None removes a field); a detection rerun replaces them with the boxes."""
+    (path,) = _shots(tmp_path, "a.png")
+    key = image_key(path)
+    review_store.add_images([path])
+    review_store.record_detection(key, _result(_box("icon", 10.0)), force=False)
+    assert review_store.save_review(key, 1, extra={"truth": "t.json", "review": {"active_s": 3.0}})
+    assert review_store.save_review(key, 1, extra={"review": None, "prelabel": {"source": "rf_detr"}})
+    item = review_store.item(key)
+    assert (item["truth"], item["prelabel"], "review" in item) == ("t.json", {"source": "rf_detr"}, False)
+    assert not review_store.save_review(key, 0, extra={"truth": "other.json"})  # an old revision: nothing saved
+    review_store.record_detection(key, _result(_box("icon", 10.0)), force=True)
+    assert "truth" not in review_store.item(key)
+
+
+def test_a_store_an_older_annotator_built_is_refused(tmp_path: Path) -> None:
+    """Its first detection would fail on the missing table: opening it says to build a new store instead (no
+    migration), and leaves its file as it was."""
+    import sqlite3
+
+    from tools.detection_dataset_annotator import StoreLayoutError
+
+    path = tmp_path / "old" / K.ANNOTATOR_STORE_FILE
+    ReviewStore.open(path).close()
+    with sqlite3.connect(path) as db:
+        db.execute("DROP TABLE prelabels")  # the store as the annotator before pre-label snapshots built it
+    db.close()
+    before = path.read_bytes()
+    with pytest.raises(StoreLayoutError, match="no prelabels table.*build_store"):
+        ReviewStore.open(path)
+    assert path.read_bytes() == before
+
+
+def test_an_untouched_save_leaves_a_review_in_progress(tmp_path: Path, review_store: ReviewStore) -> None:
+    """A pass beside the page (model pre-labels) saves only while nobody edited or reviewed the screenshot: the check
+    and the save are one write, so an edit made meanwhile is never overwritten."""
+    shots = _shots(tmp_path, "a.png", "b.png", "c.png")
+    fresh, edited, reviewed = (_detected(review_store, path, _box("icon", 10.0)) for path in shots)
+    assert review_store.save_review(edited, 1, annotations=[_box("tower", 10.0, id="b0")])
+    assert review_store.save_review(reviewed, 1, reviewed=True)
+    new = [_box("map_node_vaal", 10.0)]
+    assert review_store.save_review(fresh, 1, annotations=new, prelabel=True, untouched=True)
+    assert not review_store.save_review(edited, 1, annotations=new, prelabel=True, untouched=True)
+    assert not review_store.save_review(reviewed, 1, annotations=new, prelabel=True, untouched=True)
+    labels = {key: [a["label"] for a in review_store.item(key)["annotations"]] for key in (fresh, edited, reviewed)}
+    assert labels == {fresh: ["map_node_vaal"], edited: ["tower"], reviewed: ["icon"]}

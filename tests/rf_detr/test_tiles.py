@@ -2,6 +2,7 @@
 
 import random
 
+import cv2
 import numpy as np
 import pytest
 
@@ -77,12 +78,67 @@ def test_rare_classes_repeat_their_screenshots() -> None:
 
 
 def test_backbone_layers_learn_slower_from_the_bottom() -> None:
-    """The paper's per-layer learning-rate decay in DINOv2: the top layer x0.8, the embeddings least."""
+    """The reference's per-layer learning-rate decay in DINOv2 (roboflow/rf-detr ``get_dinov2_lr_decay_rate``, its
+    layer count ``out_indices[-1] + 1`` = 13 for DINOv2-S): the top layer x0.8^2, the embeddings least, the final
+    layer norm not at all, nothing outside the backbone."""
     name = "model.backbone.backbone.encoder.layer.{}.mlp.fc1.weight"
-    assert T.layer_lr_scale(name.format(11), 12, 0.8) == pytest.approx(0.8)
-    assert T.layer_lr_scale(name.format(0), 12, 0.8) == pytest.approx(0.8**12)
-    assert T.layer_lr_scale("model.backbone.backbone.embeddings.cls_token", 12, 0.8) == pytest.approx(0.8**13)
-    assert T.layer_lr_scale("class_embed.weight", 12, 0.8) == 1.0
+    assert T.layer_lr_scale(name.format(11), 13, 0.8) == pytest.approx(0.8**2)
+    assert T.layer_lr_scale(name.format(0), 13, 0.8) == pytest.approx(0.8**13)
+    assert T.layer_lr_scale("model.backbone.backbone.embeddings.cls_token", 13, 0.8) == pytest.approx(0.8**14)
+    assert T.layer_lr_scale("model.backbone.backbone.layernorm.weight", 13, 0.8) == 1.0
+    assert T.layer_lr_scale("class_embed.weight", 13, 0.8) == 1.0
+
+
+def test_backbone_norms_embeddings_biases_and_layer_scales_take_no_weight_decay() -> None:
+    backbone = "model.backbone.backbone."
+    assert T.backbone_weight_decay(f"{backbone}encoder.layer.3.attention.q_proj.weight")
+    assert T.backbone_weight_decay(f"{backbone}encoder.layer.3.mlp.fc1.weight")
+    for name in ("encoder.layer.3.attention.q_proj.bias", "encoder.layer.3.norm1.weight", "layernorm.weight",
+                 "encoder.layer.3.layer_scale1.lambda1", "embeddings.position_embeddings"):  # fmt: skip
+        assert not T.backbone_weight_decay(backbone + name), name
+
+
+def test_an_epoch_always_draws_its_length() -> None:
+    """The Trainer sizes an epoch by the sampler's length: the fractions of the repeat factors never change it."""
+    factors = [1.0, 1.25, 1.5, 2.6]
+    for seed in range(50):
+        drawn = T.epoch_indices(factors, 3, random.Random(seed))
+        assert len(drawn) == T.epoch_length(factors, 3) == round(3 * sum(factors))
+        assert drawn.count(0) == 3 and drawn.count(3) in (7, 8)  # 7.8: its whole 7, maybe one more
+
+
+def test_brightness_and_contrast_change_and_the_hue_stays(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The reference's small-dataset brightness and contrast: a grass-green tile stays green (the hue tells the
+    biome), only lighter or darker."""
+    monkeypatch.setattr(K, "RF_DETR_AUGMENT_PHOTO_PROBABILITY", 1.0)
+    monkeypatch.setattr(K, "RF_DETR_AUGMENT_RENDER_PROBABILITY", 0.0)
+    image = np.zeros((K.RF_DETR_TILE, K.RF_DETR_TILE, 3), np.uint8)
+    image[:] = (60, 140, 50)
+    boxes = [[100.0, 100.0, 39.0, 39.0]]
+    changed = 0
+    for seed in range(20):
+        tile, _keep, _kept = T.random_tile(image, boxes, [0], random.Random(seed))
+        hue = cv2.cvtColor(tile[:1, :1], cv2.COLOR_RGB2HSV)[0, 0, 0]
+        assert abs(int(hue) - int(cv2.cvtColor(image[:1, :1], cv2.COLOR_RGB2HSV)[0, 0, 0])) <= 2
+        changed += not np.array_equal(tile[0, 0], image[0, 0])
+    assert changed >= 15
+
+
+def test_nms_of_many_boxes_is_the_pairwise_rule() -> None:
+    """The vectorised NMS keeps what the pairwise rule keeps (a weak model's thousands of boxes take milliseconds)."""
+    rng = random.Random(4)
+    detections = []
+    for _ in range(400):
+        x, y = rng.uniform(0, 300), rng.uniform(0, 300)
+        detections.append(
+            {"family": rng.choice(["node", "icon"]), "box": [x, y, x + 39, y + 39], "score": rng.random()}
+        )
+    kept = T.nms(detections, 0.5)
+    expected = []
+    for det in sorted(detections, key=lambda d: -d["score"]):
+        if all(o["family"] != det["family"] or T.box_iou(det["box"], o["box"]) < 0.5 for o in expected):
+            expected.append(det)
+    assert kept == expected
 
 
 def test_nms_keeps_one_detection_per_object_and_family() -> None:

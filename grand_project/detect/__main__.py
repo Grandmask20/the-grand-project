@@ -1,17 +1,25 @@
-"""python -m grand_project.detect score | train | train_cities | train_fortress | run IMG... | show IMG..."""
+"""python -m grand_project.detect score | score_rf_detr | train | train_cities | train_fortress | run IMG... |
+show IMG..."""
 
 import sys
 
-from grand_project.detect import __doc__ as DOC
-from grand_project.detect.annotate import cmd_show
-from grand_project.detect.citytrain import cmd_train_cities
-from grand_project.detect.pipeline import cmd_run
-from grand_project.detect.training import cmd_score, cmd_train
-from grand_project.detect.walls import cmd_train_fortress
+from grand_project.detect.rf_detr_cuda import prefer_pip_cuda_libraries
+from grand_project.detect.rf_detr_model import rf_detr_enabled
+
+if __name__ == "__main__" and (rf_detr_enabled() or sys.argv[1:2] == ["score_rf_detr"]):
+    prefer_pip_cuda_libraries()  # before torch loads: RF-DETR on CUDA needs PyTorch's own cuDNN (rf_detr_cuda)
+
+from grand_project.detect import __doc__ as DOC  # noqa: E402
+from grand_project.detect.annotate import cmd_show  # noqa: E402
+from grand_project.detect.citytrain import cmd_train_cities  # noqa: E402
+from grand_project.detect.pipeline import cmd_run  # noqa: E402
+from grand_project.detect.training import cmd_score, cmd_score_rf_detr, cmd_train  # noqa: E402
+from grand_project.detect.walls import cmd_train_fortress  # noqa: E402
 
 if __name__ == "__main__":
     cmds = {
         "score": cmd_score,
+        "score_rf_detr": cmd_score_rf_detr,
         "train": cmd_train,
         "train_cities": cmd_train_cities,
         "train_fortress": cmd_train_fortress,

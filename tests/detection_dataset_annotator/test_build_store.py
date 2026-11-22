@@ -1,0 +1,119 @@
+"""The store's steps as one run (tools/detection_dataset_annotator/build_store.py): back up, discover, remove what
+discovery leaves out, detect, seed the biome truths; a second run changes nothing."""
+
+from __future__ import annotations
+
+import json
+from collections import Counter
+from pathlib import Path
+
+import pytest
+
+from tools.detection_dataset_annotator import ReviewStore, build_store, image_key
+from tools.detection_dataset_annotator import constants as K
+
+
+def _truth(tmp_path: Path, files: list[str]) -> Path:
+    """A truth placing the screenshots 1:1 (identity M, no tilt) with one Vaal area map at (600, 500)."""
+    data = {
+        "maps": [[600.0, 500.0, "Vaal city"]],
+        "biomes": [{"type": "Vaal city", "maps": [0], "city": {"x": 600.0, "y": 500.0, "assumed": True}}],
+        "screenshots": [
+            {"name": Path(f).stem, "file": f, "w": 1920, "h": 1080, "M": [[1, 0, 0], [0, 1, 0]], "horizon": None}
+            for f in files
+        ],
+    }
+    path = tmp_path / "truth.json"
+    path.write_text(json.dumps(data), encoding="utf-8")
+    return path
+
+
+@pytest.fixture
+def old_store(tmp_path: Path) -> dict[str, Path]:
+    """A store built before discovery left copies and atlas pictures out, and a screenshot it has not seen yet.
+
+    ``a-atlas`` sorts before ``z-copies``, so discovery keeps the atlas's own files: ``z-copies/ok_a.png`` is a copy
+    to remove, ``z-copies/ok_b.png`` a copy that was reviewed (kept), ``a-atlas/atlas_files/ok_map.png`` an atlas
+    picture (removed), ``a-atlas/ok_new.png`` new (discovered, then detected by the fake worker).
+    """
+    root = tmp_path / "shots"
+    files = {
+        "a": root / "a-atlas" / "ok_a.png",
+        "b": root / "a-atlas" / "ok_b.png",
+        "copy_a": root / "z-copies" / "ok_a.png",
+        "copy_b": root / "z-copies" / "ok_b.png",
+        "map": root / "a-atlas" / "atlas_files" / "ok_map.png",
+        "new": root / "a-atlas" / "ok_new.png",
+    }
+    for name, path in files.items():
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(name.removeprefix("copy_").encode())
+    with ReviewStore.open(tmp_path / "out" / K.ANNOTATOR_STORE_FILE, [root]) as store:
+        held = [files[name] for name in ("a", "b", "copy_a", "copy_b", "map")]
+        store.add_images(held)
+        node = {"label": "map_node_grass", "bbox": [580.0, 480.0, 40.0, 40.0], "source": "classical"}
+        for path in held:
+            result = {"width": 1920, "height": 1080, "annotations": [node]}
+            store.record_detection(image_key(path), result, force=False)
+        store.save_review(image_key(files["copy_b"]), 1, reviewed=True)
+    return files
+
+
+def _labels(store: ReviewStore, path: Path) -> list[tuple[str, str]]:
+    item = store.item(image_key(path))
+    assert item is not None
+    return [(box["label"], box["source"]) for box in item["annotations"]]
+
+
+def test_a_run_brings_an_old_store_up_to_date_and_a_second_changes_nothing(
+    tmp_path: Path, old_store: dict[str, Path], fake_worker: str
+) -> None:
+    truth = _truth(tmp_path, ["ok_a.png"])
+    lines: list[str] = []
+    done = build_store.build(tmp_path / "out", truths=[truth], workers=1, say=lines.append)
+
+    assert done == Counter({"added": 1, "removed": 2, "kept reviewed": 1, "detected": 1, "seeded": 1})
+    assert any("kept, reviewed" in line and "z-copies/ok_b.png" in line for line in lines)
+    with ReviewStore.open(tmp_path / "out" / K.ANNOTATOR_STORE_FILE) as store:
+        assert sorted(Path(path).relative_to(tmp_path).as_posix() for path in store.paths().values()) == [
+            "shots/a-atlas/ok_a.png",
+            "shots/a-atlas/ok_b.png",
+            "shots/a-atlas/ok_new.png",
+            "shots/z-copies/ok_b.png",
+        ]
+        assert _labels(store, old_store["a"]) == [("map_node_vaal", K.ANNOTATOR_TRUTH_SOURCE)]
+        assert _labels(store, old_store["b"]) == [("map_node_grass", "classical")]  # the truth does not place it
+    (backup,) = (tmp_path / "out").glob(K.ANNOTATOR_BUILD_BACKUP.format(stamp="*"))
+    with ReviewStore.open(backup) as before:
+        assert len(before.paths()) == 5
+
+    again = build_store.build(tmp_path / "out", truths=[truth], workers=1, say=lines.append)
+    assert again == Counter({"kept reviewed": 1})  # every other count is 0
+    assert len(list((tmp_path / "out").glob(K.ANNOTATOR_BUILD_BACKUP.format(stamp="*")))) == 2
+
+
+def test_a_dry_run_says_what_would_change_and_changes_nothing(tmp_path: Path, old_store: dict[str, Path]) -> None:
+    truth = _truth(tmp_path, ["ok_a.png"])
+    store_file = tmp_path / "out" / K.ANNOTATOR_STORE_FILE
+    with ReviewStore.open(store_file) as store:
+        before = {key: store.item(key) for key in store.paths()}
+
+    done = build_store.build(tmp_path / "out", truths=[truth], dry_run=True, say=lambda line: None)
+    # the seed sees the store as it is: the copy of ok_a.png, not removed in a dry run, has its name
+    assert done == Counter({"added": 1, "removed": 2, "kept reviewed": 1, "seeded": 2})
+    with ReviewStore.open(store_file) as store:
+        assert {key: store.item(key) for key in store.paths()} == before
+    assert list((tmp_path / "out").glob(K.ANNOTATOR_BUILD_BACKUP.format(stamp="*"))) == []
+    assert build_store.build(tmp_path / "none", dry_run=True, say=lambda line: None) == Counter()
+    assert not (tmp_path / "none").exists()
+
+
+def test_a_missing_truth_file_is_an_error_but_a_missing_default_is_skipped(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    with pytest.raises(FileNotFoundError):
+        build_store.build(tmp_path / "out", roots=[tmp_path], truths=[tmp_path / "no.json"], say=lambda line: None)
+    monkeypatch.setattr(K, "ANNOTATOR_TRUTH_FILES", (tmp_path / "gone" / "truth.json",))
+    lines: list[str] = []
+    build_store.build(tmp_path / "out", roots=[tmp_path], say=lines.append)
+    assert any("no truth file" in line for line in lines)

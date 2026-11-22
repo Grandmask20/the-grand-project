@@ -65,10 +65,11 @@ def resolve_input_paths(values: Iterable[str], root: Path = paths.ROOT) -> list[
 
 
 def discover_images(roots: Iterable[Path]) -> list[Path]:
-    """Recursively find supported image files below each input root, without duplicate paths.
+    """Recursively find supported image files below each input root, without duplicate paths or copies.
 
     Folders named in ``ANNOTATOR_SKIP_DIRS`` (an atlas's own map pictures) are not entered. A file whose path UTF-8
-    cannot hold is left out (see ``_utf8``).
+    cannot hold is left out (see ``_utf8``). Of files with the same bytes only the first in ``discovery_order`` is
+    kept (``copies``).
     """
     found: dict[str, Path] = {}
     for root in roots:
@@ -87,7 +88,51 @@ def discover_images(roots: Iterable[Path]) -> list[Path]:
                 resolved = path.resolve()
                 if _utf8(str(resolved)):
                     found[os.path.normcase(str(resolved))] = resolved
-    return sorted(found.values(), key=lambda path: str(path).casefold())
+    ordered = discovery_order(found.values())
+    later = copies(ordered)
+    return [path for path in ordered if path not in later]
+
+
+def discovery_order(paths: Iterable[Path]) -> list[Path]:
+    """Paths in discovery's order (by path, ignoring case): of files with the same bytes, the first is kept."""
+    return sorted(paths, key=lambda path: str(path).casefold())
+
+
+def file_hash(path: Path) -> str:
+    """SHA-256 of a file's bytes: a screenshot's identity wherever it lies (the app's own, ``builder.py``; an
+    ``atlas.json`` frame's ``sha``), where its image key hashes its path on this machine.
+
+    Raises:
+        OSError: The file cannot be read.
+    """
+    with Path(path).open("rb") as handle:
+        return hashlib.file_digest(handle, "sha256").hexdigest()
+
+
+def copies(paths: Iterable[Path]) -> dict[Path, Path]:
+    """Each file with the same bytes as an earlier one (in the given order) -> that first one.
+
+    A copy would be labelled twice and could land in two splits (the 115 ``screenshots/crawl`` files are fr-atlas's
+    own). Only files of one size are compared, so a usual discovery reads no file. A file that cannot be read is no
+    copy.
+    """
+    by_size: dict[int, list[Path]] = {}
+    for path in paths:
+        with contextlib.suppress(OSError):
+            by_size.setdefault(path.stat().st_size, []).append(path)
+    out: dict[Path, Path] = {}
+    for same_size in by_size.values():
+        first: dict[str, Path] = {}
+        for path in same_size if len(same_size) > 1 else ():
+            try:
+                digest = file_hash(path)
+            except OSError:
+                continue
+            if digest in first:
+                out[path] = first[digest]
+            else:
+                first[digest] = path
+    return out
 
 
 def _utf8(text: str) -> bool:
@@ -117,12 +162,17 @@ def relative_source(path: Path, root: Path = paths.ROOT) -> str:
 
 def write_json_atomic(path: Path, value: Any) -> None:
     """Write JSON through a neighbouring temporary file, so an interrupted write never leaves half a file."""
+    write_text_atomic(path, json.dumps(value, indent=2) + "\n")
+
+
+def write_text_atomic(path: Path, text: str) -> None:
+    """Write text (UTF-8, the same line ends on every system) through a neighbouring temporary file, so an
+    interrupted write never leaves half a file."""
     path.parent.mkdir(parents=True, exist_ok=True)
     fd, temporary = tempfile.mkstemp(prefix=f".{path.name}.", suffix=".tmp", dir=path.parent)
     try:
-        with os.fdopen(fd, "w", encoding="utf-8") as output:
-            json.dump(value, output, indent=2)
-            output.write("\n")
+        with os.fdopen(fd, "w", encoding="utf-8", newline="\n") as output:
+            output.write(text)
         os.replace(temporary, path)
     except BaseException:
         with contextlib.suppress(OSError):

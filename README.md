@@ -1,4 +1,4 @@
-# The Grand Project — v1.22
+# The Grand Project — v1.23
 
 Builds one big map of your Path of Exile 2 atlas from your screenshots. Named after the in-game tablet, *The Grand Project*. It finds maps, paths, icons, towers and cities, and lets you search, bookmark and route through them.
 
@@ -61,14 +61,21 @@ make annotate_dataset
 ```
 
 The annotator (`tools/detection_dataset_annotator`, see its README) recursively discovers screenshots in
-`atlas_test_data/res_atlases`, `atlas_test_data/roa-atlas`, and `atlas_test_data/screenshots`. It shows the
+`atlas_test_data/res_atlases`, `atlas_test_data/roa-atlas`, `atlas_test_data/fr-atlas/crawl_atlas_v076` and
+`atlas_test_data/screenshots`. It shows the
 established classical detector's boxes over each screenshot in a keyboard-driven editor (draw, move, resize, relabel
 and delete boxes; edits save themselves; press `?` for the shortcuts), lets you mark screenshots reviewed, and hides
 reviewed screenshots. Screenshots are never changed. Every map node is labelled with its biome (grass, desert,
 water, mountain) or the city area it lies in, a city's own map with its citadel (Iron = Ezomyte, Stone = Vaal,
 Copper = Faridun), a hall with its whole structure; dotted boxes are the classical detector's unsure guesses. Exported
 reviewed annotations include COCO `annotations.json` and a project-native `manifest.json` (with each screenshot's
-train / validation / test split); `make prepare_rf_detr_data` reads the latter from the annotator's default folder.
+train / validation / test split, drawn by spatial blocks of each atlas so overlapping screenshots stay together, and
+kept for good in `tools/detection_dataset_annotator/splits.csv` by each screenshot's SHA-256);
+`make prepare_rf_detr_data` reads the latter from the annotator's default folder. `python -m
+tools.detection_dataset_annotator.build_store` brings the annotator's store up to date in one run (discovery, removing
+copies, detection, and fr-atlas's city areas and citadels from the PM's hand-labelled biome truth), and `python -m
+tools.detection_dataset_annotator.split_ledger` gives every screenshot its split before the review (`check` compares
+an export with the ledger; the trainer checks its manifest itself). `make export_dataset` exports without the page.
 
 ---
 
@@ -202,10 +209,11 @@ The tests look for the data in `ATLAS_TEST_DATA` (environment variable) if set, 
 Run these from this folder:
 
 - `python -m grand_project.detect score` scores the detector on the hand-labelled screenshots; `python -m grand_project.detect train` retrains it into the database. Both need the test data. `make evaluate_detector` runs the score; `make pr_precheck` runs everything to check before a pull request.
-- `python -m tools.train_rf_detr --annotator-manifest <export>/manifest.json --dataset-only` builds a Hugging Face `DatasetDict` (train / validation / test, as the annotator split them) under `runs/rf-detr-small/dataset/`; omit `--dataset-only` to fine-tune the Hugging Face RF-DETR Small checkpoint. Install the optional training dependencies first with `pip install -e ".[training]"`. The training data is only the annotator's reviewed export (labels: `grand_project/detect/labels.py`); the hand truth stays for scoring. The model sees native-scale 768 px tiles of the 1080p screenshots with the HUD painted over (`detect/rf_detr_tiles.py`; random tiles, rare classes drawn more often, never mirrored), learns map nodes by biome or city area, citadels, halls, towers, Breach strongholds, the square reveal buttons (one `reveal_button` class: a locked stronghold's hand, the Expedition ship, named by their symbol) and icons (one `icon` class, the deadly-boss icon included, named by the classical icon namer), and keeps paths to the established path tracer. The recipe follows the RF-DETR paper: learning rate 1e-4 with per-layer decay in the DINOv2 backbone, EMA weights, gradient accumulation, the best checkpoint by validation mean AP per family (`detect/rf_detr_eval.py`), the test split scored once. `--init-from runs/rf-detr-small/best` goes on from an earlier model when labels were added (class rows carry over by name). It writes a Transformers-compatible model under `runs/rf-detr-small/best/`.
-- `python -m tools.compare_detectors --accuracy-only` rebuilds the fixed atlas-test screenshots with both backends and reports per-category precision / recall / F1; add `--speed-only --max-images N` for detector latency. It accepts `--model-dir` when the checkpoint is outside `runs/rf-detr-small/best/`.
+- `python -m tools.train_rf_detr --annotator-manifest <export>/manifest.json --dataset-only` builds a Hugging Face `DatasetDict` (train / validation / test, as the split ledger keeps them; the manifest is checked against the ledger first) under `runs/rf-detr-small/dataset/`; omit `--dataset-only` to fine-tune RF-DETR Small (transformers' `RfDetrForObjectDetection`, `Roboflow/rf-detr-small` at a pinned revision) with transformers' `Trainer`. Install the optional training dependencies first with `pip install -e ".[training]"`. The training data is the annotator's reviewed export (labels: `grand_project/detect/labels.py`); `--truth-seeded` adds the unreviewed screenshots a biome truth seeded (a bootstrap round); the hand truth stays for scoring. The model sees native-scale 768 px tiles of the 1080p screenshots with the HUD painted over (`detect/rf_detr_tiles.py`; random tiles, rare classes drawn more often, never mirrored), learns map nodes by biome or city area, citadels, halls, towers, Breach strongholds, the square reveal buttons (one `reveal_button` class: a locked stronghold's hand, the Expedition ship, named by their symbol) and icons (one `icon` class, the deadly-boss icon included, named by the classical icon namer), and keeps paths to the established path tracer. The recipe is the RF-DETR paper's as the official roboflow/rf-detr trains it: the backbone at its own rate with per-layer and per-component decay, EMA weights (evaluated and kept), a constant rate, gradient clipping 0.1, bf16, the best checkpoint by validation mean AP per family (`detect/rf_detr_eval.py`), the test split scored once. `--init-from runs/rf-detr-small/best` goes on from an earlier model (class rows carry over by name), `--resume` from an interrupted run's last checkpoint. It writes a Transformers-compatible model under `runs/rf-detr-small/best/`.
+- `python -m tools.compare_detectors --accuracy-only` rebuilds the resolution atlases (`res_atlases`) with both backends and reports per-category precision / recall / F1; add `--speed-only --max-images N` for detector latency. `python -m grand_project.detect score_rf_detr` scores the RF-DETR detector on the hand-labelled screenshots, beside `score`'s classical numbers. Both accept the checkpoint in `GRAND_PROJECT_RF_DETR_MODEL` / `--model-dir` when it is outside `runs/rf-detr-small/best/`.
 - `make prepare_rf_detr_data` prepares the dataset from the annotator's export (`RF_DETR_ANNOTATOR_MANIFEST`, default `tools/detection_dataset_annotator/detection-dataset/manifest.json`), and `make train_rf_detr` prepares it and fine-tunes the model; pass extra trainer options with `RF_DETR_OPTIONS="..."`.
-- The fine-tuned model is opt-in: set `GRAND_PROJECT_USE_RF_DETR=1` (and optionally `GRAND_PROJECT_RF_DETR_MODEL=/path/to/best`) before running the program or builder. Tests keep the classical detector by default; `pytest --rf-detr` selects RF-DETR and requires a trained checkpoint. The default remains the classical detector when the flag is absent.
+- The fine-tuned model is opt-in: set `GRAND_PROJECT_USE_RF_DETR=1` (and optionally `GRAND_PROJECT_RF_DETR_MODEL=/path/to/best`) before running the program or builder. On Linux a process that runs it restarts itself once with PyTorch's own CUDA libraries first (`detect/rf_detr_cuda.py`: a system cuDNN first on `LD_LIBRARY_PATH` breaks it). Tests keep the classical detector by default; `pytest --rf-detr` selects RF-DETR and requires a trained checkpoint. A checkpoint with classes the labels no longer have is refused. The default remains the classical detector when the flag is absent.
+- The iterative annotation loop (classical detection and an ever-refined model taking turns) is measured by the annotator's `model_prelabel`, `effort` and `simulate_loop` (see its README, *The iterative loop*).
 - `python -m grand_project.builder add --atlas X.json --image FOLDER` builds an atlas without the window.
 - `python -m tools.atlas_marks` checks the detector against all hand-drawn mark layers and true paths.
 - `python -m grand_project.detect train` also retrains the City check (a city's map node always stands on a brass barrel) from screenshots plus a `cities_truth.json` listing each city's map node (`CITY_TRUTH_SETS`); it prints a fair score first and saves `references/city_barrel.npz`. `python -m grand_project.detect train_cities [FOLDER ...]` retrains only that.
@@ -222,7 +230,7 @@ Run these from this folder:
 |---|---|
 | `paths.py` | every folder location (atlases, references, user data, test data) |
 | `core/` | screenshots and their geometry, placing a screenshot (`register.py`), terrain matching, the atlas file (`atlas.py`), joining groups of waiting screenshots (`islands.py`), the clean map (`seams.py`) |
-| `detect/` | the screenshot detector: maps, badges, landmarks, path dashes, fortress walls, the stored models, training; the icon types (`ICON_INFO`, `icon_types.py`: their dataset classes and pictures); the RF-DETR dataset's labels (`labels.py` over `RF_DETR_LABEL_INFO`), first guesses (`proposals.py`, `biomes.py`), tiles (`rf_detr_tiles.py`), metrics (`rf_detr_eval.py`) and the opt-in backend (`rf_detr_model.py`) |
+| `detect/` | the screenshot detector: maps, badges, landmarks, path dashes, fortress walls, the stored models, training; the icon types (`ICON_INFO`, `icon_types.py`: their dataset classes and pictures); the RF-DETR dataset's labels (`labels.py` over `RF_DETR_LABEL_INFO`), first guesses (`proposals.py`, `biomes.py`), tiles (`rf_detr_tiles.py`), metrics (`rf_detr_eval.py`), the opt-in backend (`rf_detr_model.py`) and its CUDA libraries (`rf_detr_cuda.py`) |
 | `finalize/` | the atlas-wide check after screenshots are added: path evidence, map rules, settlements, local re-checks |
 | `builder.py` | detecting and adding screenshots (also a command line) |
 | `cities.py`, `towers.py` | city types and biomes; hand-made tower / stronghold rules |

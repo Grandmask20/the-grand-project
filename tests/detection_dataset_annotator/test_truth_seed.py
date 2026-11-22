@@ -1,0 +1,152 @@
+"""Seeding a hand-labelled atlas's screenshots from its biome truth (tools/detection_dataset_annotator/truth_seed.py):
+city areas and citadels as the truth has them, the rest as the classical guess had it."""
+
+from __future__ import annotations
+
+import json
+from pathlib import Path
+from typing import Any
+
+import numpy as np
+import pytest
+
+from grand_project.detect import biomes
+from grand_project.detect.biomes import BiomeGuess
+from tools.detection_dataset_annotator import ReviewStore, truth_seed
+from tools.detection_dataset_annotator import constants as K
+from tools.detection_dataset_annotator.state import image_key
+from tools.detection_dataset_annotator.truth_seed import Truth, seed_screenshot, seed_store
+
+TRUTH_SOURCE = K.ANNOTATOR_TRUTH_SOURCE
+
+
+def _box(label: str, x: float, y: float, source: str = "classical", size: float = 40.0) -> dict[str, Any]:
+    """A box of the given size centred on (x, y)."""
+    return {"label": label, "bbox": [x - size / 2, y - size / 2, size, size], "source": source}
+
+
+def _truth(tmp_path: Path, files: tuple[str, ...] = ("shot.png",)) -> Truth:
+    """An atlas placed 1:1 on the screenshots (identity M, no tilt): a Vaal area map at (600, 500) with its City, a map
+    outside every area at (900, 500), a Faridun area map at (1200, 500) whose City no citadel box shows."""
+    data = {
+        "maps": [[600.0, 500.0, "Vaal city"], [900.0, 500.0, ""], [1200.0, 500.0, "Faridun city"]],
+        "biomes": [
+            {"type": "Vaal city", "maps": [0], "city": {"x": 600.0, "y": 500.0, "assumed": False}},
+            {"type": "Faridun city", "maps": [2], "city": {"x": 1200.0, "y": 500.0, "assumed": False}},
+        ],
+        "screenshots": [
+            {"name": Path(f).stem, "file": f, "w": 1920, "h": 1080, "M": [[1, 0, 0], [0, 1, 0]], "horizon": None}
+            for f in files
+        ],
+    }
+    path = tmp_path / "truth.json"
+    path.write_text(json.dumps(data), encoding="utf-8")
+    return Truth.load(path)
+
+
+def _boxes() -> list[dict[str, Any]]:
+    return [
+        _box("map_node_grass", 600, 500),  # in the Vaal area: becomes a Vaal area node
+        _box("map_node_ezomyte", 900, 500, "city_area_guess"),  # a city node outside every area: its ring again
+        _box("map_node_faridun", 1200, 500),  # already right: only its source changes
+        _box("map_node_water", 300, 300),  # at no truth map: left
+        _box("citadel_iron", 610, 510, "city_guess"),  # in the Vaal area: becomes a Stone citadel
+        _box("citadel_copper", 1500, 300),  # near no city area: a false City, deleted
+        _box("breach_stronghold", 1500, 700, size=150.0),  # near no stronghold area: reported
+        _box("icon", 600, 470, size=34.0),
+    ]
+
+
+@pytest.fixture
+def desert_ring(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Every ground ring sees an unsure desert (the module is read when the ring runs)."""
+    monkeypatch.setattr(biomes, "node_biomes", lambda img, nodes, icons: [BiomeGuess("desert", False)] * len(nodes))
+
+
+def test_a_screenshot_takes_the_truth_city_areas_and_citadels(tmp_path: Path, desert_ring: None) -> None:
+    truth = _truth(tmp_path)
+    item = {"path": str(tmp_path / "shot.png"), "width": 1920, "height": 1080, "annotations": _boxes()}
+    boxes, done = seed_screenshot(
+        item, truth.screenshots["shot.png"], truth, lambda path: np.zeros((1080, 1920, 3), np.uint8)
+    )
+    assert boxes is not None
+    labelled = [(box["label"], box["source"]) for box in boxes]
+    assert labelled == [
+        ("map_node_vaal", TRUTH_SOURCE),
+        ("map_node_desert", "biome_guess"),
+        ("map_node_faridun", TRUTH_SOURCE),
+        ("map_node_water", "classical"),
+        ("citadel_stone", TRUTH_SOURCE),
+        ("breach_stronghold", "classical"),
+        ("icon", "classical"),
+    ]
+    assert done["citadel deleted (no city area)"] == 1 and done["citadel retyped"] == 1
+    assert done["truth City without a citadel box (draw)"] == 1  # the Faridun one
+    assert done["stronghold far from truth strongholds (check)"] == 1
+
+
+def test_a_screenshot_twice_seeded_changes_no_more(tmp_path: Path, desert_ring: None) -> None:
+    truth = _truth(tmp_path)
+    item = {"path": str(tmp_path / "shot.png"), "width": 1920, "height": 1080, "annotations": _boxes()}
+    image = np.zeros((1080, 1920, 3), np.uint8)
+    boxes, _done = seed_screenshot(item, truth.screenshots["shot.png"], truth, lambda path: image)
+    again, _done = seed_screenshot(
+        {**item, "annotations": boxes}, truth.screenshots["shot.png"], truth, lambda p: image
+    )
+    assert again is None
+
+
+def test_the_store_is_seeded_but_reviewed_screenshots_are_left(
+    tmp_path: Path, review_store: ReviewStore, desert_ring: None, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Only unreviewed screenshots the truth places are changed; a second run changes nothing."""
+    monkeypatch.setattr(truth_seed, "_detector_image", lambda path: np.zeros((1080, 1920, 3), np.uint8))
+    paths = [tmp_path / name for name in ("shot.png", "reviewed.png", "elsewhere.png")]
+    truth = _truth(tmp_path, files=("shot.png", "reviewed.png"))
+    review_store.add_images(paths)
+    for path in paths:
+        result = {"detected": True, "width": 1920, "height": 1080, "annotations": _boxes(), "error": None}
+        review_store.record_detection(image_key(path), result, force=True)
+    reviewed = review_store.item(image_key(paths[1]))
+    assert reviewed is not None
+    review_store.save_review(image_key(paths[1]), reviewed["edit_version"], reviewed=True)
+
+    done, changed, placed = seed_store(review_store, truth)
+    assert (changed, placed) == (1, 1)
+    assert done["node -> Vaal area"] == 1
+    labels = [box["label"] for box in review_store.item(image_key(paths[0]))["annotations"]]
+    assert "citadel_copper" not in labels and "citadel_stone" in labels
+    for untouched in paths[1:]:
+        assert [box["label"] for box in review_store.item(image_key(untouched))["annotations"]] == [
+            box["label"] for box in _boxes()
+        ]
+    assert seed_store(review_store, truth)[1] == 0
+
+
+def test_every_screenshot_the_truth_places_is_marked(
+    tmp_path: Path, review_store: ReviewStore, desert_ring: None, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The truth vouches for a placed screenshot's city areas whether it changed a box or not, so every one carries
+    its mark (a truth-seeded training round takes them); changed boxes are the screenshot's new pre-labels."""
+    monkeypatch.setattr(truth_seed, "_detector_image", lambda path: np.zeros((1080, 1920, 3), np.uint8))
+    paths = [tmp_path / name for name in ("shot.png", "quiet.png", "elsewhere.png")]
+    truth = _truth(tmp_path, files=("shot.png", "quiet.png"))
+    review_store.add_images(paths)
+    for path, boxes in zip(paths, (_boxes(), [_box("icon", 300, 300, size=34.0)], _boxes()), strict=True):
+        result = {"detected": True, "width": 1920, "height": 1080, "annotations": boxes, "error": None}
+        review_store.record_detection(image_key(path), result, force=True)
+    _done, changed, placed = seed_store(review_store, truth)
+    assert (changed, placed) == (1, 2)
+    seeded, quiet, elsewhere = (review_store.item(image_key(path)) for path in paths)
+    assert seeded[K.ANNOTATOR_TRUTH_MARK] == quiet[K.ANNOTATOR_TRUTH_MARK] == truth.source
+    assert K.ANNOTATOR_TRUTH_MARK not in elsewhere
+    assert review_store.prelabels(image_key(paths[0])) == seeded["annotations"]  # what a reviewer is first shown
+    assert seed_store(review_store, truth)[1] == 0
+
+
+def test_a_box_without_a_place_is_left(tmp_path: Path) -> None:
+    """A box stored without a place (NaN is stored as NULL) is kept as it is, as the editor and export skip it."""
+    truth = _truth(tmp_path)
+    nowhere = {"label": "map_node_vaal", "bbox": [None, None, None, None], "source": "classical"}
+    item = {"path": str(tmp_path / "shot.png"), "width": 1920, "height": 1080, "annotations": [nowhere]}
+    assert seed_screenshot(item, truth.screenshots["shot.png"], truth, lambda path: None)[0] is None

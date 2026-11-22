@@ -124,26 +124,49 @@ def test_a_missing_model_is_a_clear_error(tmp_path: Path, monkeypatch: pytest.Mo
         rf_detr_model._load_runtime()
 
 
+def _stub_loaders(monkeypatch: pytest.MonkeyPatch, transformers, tmp_path: Path, labels: dict[str, str]) -> None:
+    """A checkpoint folder with ``labels`` and stand-in transformers loaders (they must ask for safetensors)."""
+    (tmp_path / "labels.json").write_text(json.dumps(labels))
+    model = SimpleNamespace(config=SimpleNamespace(), to=lambda device: None, eval=lambda: None)
+
+    def load_model(path, **kwargs):
+        assert kwargs.get("use_safetensors") is True  # never a pickle (AGENTS.md, models)
+        return model
+
+    monkeypatch.setattr(transformers.AutoImageProcessor, "from_pretrained", lambda path: "processor")
+    monkeypatch.setattr(transformers.AutoModelForObjectDetection, "from_pretrained", load_model)
+    monkeypatch.setenv(K.RF_DETR_MODEL_ENV, str(tmp_path))
+    monkeypatch.setenv(K.RF_DETR_DEVICE_ENV, "cpu")
+    rf_detr_model.reset_rf_detr_runtime()
+
+
 def test_a_checkpoint_loads_its_own_label_map(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """The checkpoint's saved label map (its labels.json) gives its classes' families, matched by name."""
     pytest.importorskip("torch")
     transformers = pytest.importorskip("transformers")
-    (tmp_path / "labels.json").write_text(json.dumps({"0": "citadel_stone", "1": "map_node", "2": "custom"}))
-    model = SimpleNamespace(config=SimpleNamespace(), to=lambda device: None, eval=lambda: None)
-    monkeypatch.setattr(transformers.AutoImageProcessor, "from_pretrained", lambda path: "processor")
-    monkeypatch.setattr(transformers.AutoModelForObjectDetection, "from_pretrained", lambda path: model)
-    monkeypatch.setenv(K.RF_DETR_MODEL_ENV, str(tmp_path))
-    monkeypatch.setenv(K.RF_DETR_DEVICE_ENV, "cpu")
-    rf_detr_model.reset_rf_detr_runtime()
+    _stub_loaders(monkeypatch, transformers, tmp_path, {"0": "citadel_stone", "1": "map_node", "2": "icon"})
     try:
         runtime = rf_detr_model._load_runtime()
         assert runtime["families"] == {
             "citadel": [(0, "citadel_stone")],
             "node": [(1, "map_node")],
-            "custom": [(2, "custom")],
+            "icon": [(2, "icon")],
         }
         assert rf_detr_model._load_runtime() is runtime  # loaded once
         assert str(runtime["device"]) == "cpu"
+    finally:
+        rf_detr_model.reset_rf_detr_runtime()
+
+
+def test_a_checkpoint_of_retired_classes_is_refused(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """A checkpoint of an earlier label set would find its retired classes (City, locked stronghold) and silently drop
+    them: it is refused, naming them."""
+    pytest.importorskip("torch")
+    transformers = pytest.importorskip("transformers")
+    _stub_loaders(monkeypatch, transformers, tmp_path, {"0": "map_node", "1": "city", "2": "locked_stronghold"})
+    try:
+        with pytest.raises(RuntimeError, match="city, locked_stronghold"):
+            rf_detr_model._load_runtime()
     finally:
         rf_detr_model.reset_rf_detr_runtime()
 

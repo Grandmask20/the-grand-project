@@ -9,9 +9,11 @@ from grand_project import paths as rc_paths
 HERE = Path(__file__).resolve().parent
 
 
-# RF-DETR training data settings. Coordinates in detector truth are measured at the detector's 1080p height;
-# the dataset builder scales these boxes back to the source image before Hugging Face stores the image.
-RF_DETR_MODEL_NAME = "Roboflow/rf-detr-small"
+# RF-DETR: the optional detector (rf_detr_model.py), its dataset (rf_detr.py, from the annotator's export) and its
+# trainer (tools/train_rf_detr.py, transformers' Trainer). The recipe follows the official roboflow/rf-detr.
+RF_DETR_MODEL_NAME = "Roboflow/rf-detr-small"  # the pre-trained checkpoint fine-tuned (transformers' RfDetr port)
+RF_DETR_MODEL_REVISION = "3bdc465063270f99769da5a1b4c00c68bd2d439d"  # its Hub commit (2026-05-20): a run is
+# reproducible and never picks up a changed upload
 RF_DETR_USE_ENV = "GRAND_PROJECT_USE_RF_DETR"  # set to 1/true/on to select the optional RF-DETR backend
 RF_DETR_MODEL_ENV = "GRAND_PROJECT_RF_DETR_MODEL"  # optional model directory override for program/tests
 RF_DETR_DEVICE_ENV = "GRAND_PROJECT_RF_DETR_DEVICE"  # optional torch device override, e.g. cpu or cuda
@@ -19,17 +21,21 @@ RF_DETR_DEVICE_ENV = "GRAND_PROJECT_RF_DETR_DEVICE"  # optional torch device ove
 # dynamic linker reads it only at process start), so it restarts at most once
 RF_DETR_CUDA_REEXEC_ENV = "GRAND_PROJECT_RF_DETR_CUDA_REEXEC"
 RF_DETR_DEFAULT_MODEL_DIR = rc_paths.ROOT / "runs" / "rf-detr-small" / "best"
+RF_DETR_TRAINED_ON = "trained_on.txt"  # in a kept model's folder: the screenshots it trained on (one project-relative
+# path a line), which the annotator's model pre-labels skip (they would only replay its training labels)
 # the annotator's export (tools/detection_dataset_annotator) and the dataset loader (rf_detr.py) share these
 RF_DETR_MANIFEST_FORMAT = "the-grand-project-rf-detr-manifest"  # the manifest's "format"; other files are refused
 RF_DETR_SPLITS = ("train", "validation", "test")  # a screenshot's split (the Hugging Face split names)
-RF_DETR_SCORE_THRESHOLD = 0.35  # confidence: tuned as a safe starting point for the small fine-tuned checkpoint
-RF_DETR_MAX_TARGETS = 300  # objects/image: RF-DETR Small's default decoder query count; path dashes can exceed it
+RF_DETR_TRUTH_SEEDED_SOURCE = "annotator_truth_seeded"  # source_type of an unreviewed screenshot a biome truth
+# seeded, taken only with --truth-seeded (a bootstrap round)
+RF_DETR_SCORE_THRESHOLD = 0.35  # family score (the sum of a family's class scores) a detection needs; a starting
+# point, to be set from a trained checkpoint's validation precision / recall
 RF_DETR_MAP_BOX_SHRINK = 0.9  # factor: user's rule, the map node box is 10% smaller per side than first set
 # (reviewers found it too large); only map nodes: every other box keeps its size
 RF_DETR_MAP_BOX = 43.0 * RF_DETR_MAP_BOX_SHRINK  # px: square around a map node's centre: the 1080p map-base glow
 # measured 48, which reviewers found too large; 43 is 20% less area (48 * sqrt(0.8)), then shrunk as above
 RF_DETR_ICON_BOX = 34.0  # px: square around an icon centre, inside the standard icon rim
-RF_DETR_LANDMARK_BOX = 80.0  # px: square around a city / hall / deadly-boss map point
+RF_DETR_LANDMARK_BOX = 80.0  # px: square around a citadel: the city's map node and its brass barrel
 RF_DETR_TOWER_WIDTH = 80.0  # px: tower box width around its map node
 RF_DETR_TOWER_HEIGHT = 220.0  # px: tower box extends upward from its map node to the spire
 RF_DETR_TOWER_NODE_REACH = 55.0  # px: a tower box's base and the map node it stands on are at most this far apart
@@ -37,9 +43,7 @@ RF_DETR_STRONGHOLD_BOX = 150.0  # px: square around a Breach stronghold structur
 RF_DETR_BUTTON_BOX = (68.0, 66.0)  # px: width, height of a square reveal button's frame (references/lock_icon.png,
 # the frame cities.square_buttons matches at 1080p)
 RF_DETR_PATH_PAD = 8.0  # px: padding around a traced path centre line
-RF_DETR_PATH_DASH_BOX = 18.0  # px: square around one path dash for the low-level path detector
 RF_DETR_WALL_MIN_AREA = 12000  # px²: ignore tiny connected components in optional painted wall masks
-RF_DETR_SOFT_FLAGS = frozenset({"ui", "offcenter"})  # ambiguous hand labels are excluded unless requested
 
 # RF-DETR input: native-scale tiles. Every screenshot is first read as the classical detector reads it (1440p and
 # 4K windows scaled to 1080p, core.scale_screenshot), then cut into square tiles the model sees at their own size:
@@ -62,10 +66,15 @@ RF_DETR_AUGMENT_SCALE_JITTER = 0.10  # fraction: tiles cut 10% larger or smaller
 RF_DETR_AUGMENT_RENDER_PROBABILITY = 0.3  # chance: blur a tile as a lower in-game render scale draws it
 RF_DETR_AUGMENT_RENDER_SCALE = (0.33, 1.0)  # factor: shrink and re-enlarge range, the res_atlases' 33-100% render
 # scales (they change map nodes, terrain and paths; icons are UI and stay sharp, so this is an approximation)
+# Brightness and contrast as the reference's small-dataset preset (AUG_CONSERVATIVE, under 500 images): players'
+# in-game gamma and brightness differ; the hue is never changed, it tells the biome
+RF_DETR_AUGMENT_PHOTO_PROBABILITY = 0.3  # chance: change a tile's brightness and contrast
+RF_DETR_AUGMENT_BRIGHTNESS = 0.1  # fraction of 255: brightness shifted by up to this much
+RF_DETR_AUGMENT_CONTRAST = 0.1  # fraction: contrast scaled by up to 1 +- this
 RF_DETR_AUGMENT_RARE_PROBABILITY = 0.5  # chance: centre a training tile on a rare class's object (repeat factor > 1)
 RF_DETR_TILES_PER_IMAGE = 4  # training tiles cut from each screenshot per epoch (more for rare classes, below)
 RF_DETR_REPEAT_THRESHOLD = 0.1  # LVIS repeat-factor sampling: a class on fewer than this share of the training
-# screenshots repeats them max(1, sqrt(threshold / share)) times (locked strongholds: 21 of 1,421 screenshots)
+# screenshots repeats them max(1, sqrt(threshold / share)) times (reveal buttons: on about 1 screenshot in 10)
 
 # RF-DETR inference: classes of one family (a map node is one of the 8 node classes) are scored together, so a node
 # unsure between two biomes is still found once: its family score is the sum of its classes' scores, its class
@@ -76,17 +85,26 @@ RF_DETR_BOSS_ROW = (10.0, 45.0)  # px: a deadly-boss icon's map node is this far
 # above the map; the res atlases' larger icons sat 26-36 above it)
 RF_DETR_BOSS_DX = 30.0  # px: and at most this far left or right of it (the icon is the middle one of its row)
 
-# RF-DETR fine-tuning recipe (the paper's Appendix A): learning rate 1e-4, the DINOv2 backbone's layers decayed
-# 0.8x per layer from the top (earlier layers keep more of their pre-training), an exponential moving average of
-# the weights (EMA), no warm-up and no fixed-length schedule (the paper: cosine schedules assume a known horizon),
-# gradient clipping 0.1; the best checkpoint is picked by the validation's task metrics (rf_detr_eval), not its loss.
-RF_DETR_LEARNING_RATE = 1e-4
-RF_DETR_LAYER_DECAY = 0.8  # factor per DINOv2 layer from the top (12 layers: the patch embedding gets 0.8^13)
-RF_DETR_EMA_DECAY = 0.999  # per optimizer step: weights averaged over the last ~1,000 steps
+# RF-DETR fine-tuning recipe: the paper's Appendix A as the official roboflow/rf-detr trains it (TrainConfig,
+# training/param_groups.py, models/backbone/backbone.py): AdamW, the DINOv2 backbone at its own rate decayed per
+# layer from the top (earlier layers keep more of their pre-training) and per component, an exponential moving
+# average of the weights (EMA, the weights evaluated and kept), no warm-up and a constant rate (the paper: cosine
+# schedules assume a known horizon), gradient clipping 0.1; the best checkpoint by the validation's task metrics
+# (rf_detr_eval), not its loss.
+RF_DETR_LEARNING_RATE = 1e-4  # everything outside the backbone and the decoder (projector, heads, queries)
+RF_DETR_LR_ENCODER = 1.5e-4  # the backbone's base rate (reference lr_encoder), before the decays below
+RF_DETR_LAYER_DECAY = 0.8  # factor per backbone layer from the top (rf_detr_tiles.layer_lr_scale; reference
+# lr_vit_layer_decay): the top layer gets 0.8^2, the embeddings 0.8^14, the final layer norm 1
+RF_DETR_COMPONENT_DECAY = 0.7  # reference lr_component_decay: the decoder learns at 0.7x, the backbone at 0.7^2 x
+RF_DETR_WEIGHT_DECAY = 1e-4  # AdamW; none on biases, norms, embeddings and layer scales
+RF_DETR_EMA_DECAY = 0.993  # per optimizer step (reference default): weights averaged over the last ~140 steps
 RF_DETR_EMA_TAU = 100.0  # optimizer steps: the EMA's decay warms up as decay * (1 - exp(-step / tau)), so early
 # averages are not stuck near the starting weights (a smoke run of 12 steps scored as if untrained without it)
 RF_DETR_GRAD_CLIP = 0.1  # max gradient norm
+RF_DETR_BATCH = 4  # tiles per batch; with RF_DETR_GRAD_ACCUM, 16 per optimizer step (the reference's effective batch)
+RF_DETR_GRAD_ACCUM = 4  # batches per optimizer step
 RF_DETR_PATIENCE = 8  # epochs without a better validation score before training stops
+RF_DETR_EARLY_STOP_DELTA = 0.001  # mean AP: a smaller gain is no better score (reference early_stopping_min_delta)
 # RF-DETR evaluation (rf_detr_eval): a prediction matches a box of its family whose middle is this close, px, as
 # python -m grand_project.detect score matches (truth.py: MAP_R 20 for maps, BADGE_R 14 for icons, LM_R 90 for
 # landmarks); tests/rf_detr/test_eval.py keeps them equal.
@@ -308,8 +326,10 @@ RF_DETR_SOURCE_CLASSICAL = "classical"  # a classical detector result taken as i
 RF_DETR_SOURCE_CITY_GUESS = "city_guess"  # a citadel whose type is an unsure look-alike guess (CITY_LOOK_SURE)
 RF_DETR_SOURCE_BIOME_GUESS = "biome_guess"  # a node whose biome the ground ring could not tell surely
 RF_DETR_SOURCE_CITY_AREA_GUESS = "city_area_guess"  # a node in a city's area (one screenshot may cut the area off)
+RF_DETR_SOURCE_MODEL = "rf_detr"  # a box an RF-DETR model's pre-labels agree on with the classical detector
+RF_DETR_SOURCE_MODEL_GUESS = "rf_detr_guess"  # a box only the model proposes, or a class it changed: check it first
 RF_DETR_GUESS_SOURCES = frozenset(
-    {RF_DETR_SOURCE_CITY_GUESS, RF_DETR_SOURCE_BIOME_GUESS, RF_DETR_SOURCE_CITY_AREA_GUESS}
+    {RF_DETR_SOURCE_CITY_GUESS, RF_DETR_SOURCE_BIOME_GUESS, RF_DETR_SOURCE_CITY_AREA_GUESS, RF_DETR_SOURCE_MODEL_GUESS}
 )
 
 
@@ -623,8 +643,9 @@ BADGE_FINDER_FILE = rc_paths.ref("badge_finder.npz")
 # Every icon type the program knows: game icon -> (poe2db name, BGR colour, other names it can be searched by).
 # Names follow poe2db.tw Waystones > Map Legends / Map Content (https://poe2db.tw/us/Waystones#MapContent); the
 # viewer shows them, the dataset annotator offers each type as a label (icon_<name>, with its picture from
-# ICON_ART_DIR) and the RF-DETR detector turns its classes back into these names. The annotator numbers the icon
-# classes in this order, so add new types at the end.
+# ICON_ART_DIR; exported as the one `icon` class) and the classical naming step names the RF-DETR detector's icons
+# with them (badges.name_found_icons). The annotator lists the icon labels in this order, so add new types at the
+# end.
 ICON_INFO = {
     "MapBoss": ("Powerful Map Boss", (70, 120, 255), "map boss, defeat the map boss"),
     "MapBossSpecial": ("Deadly Map Boss", (50, 50, 255), "special boss, hall boss, city boss"),

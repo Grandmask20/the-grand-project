@@ -96,3 +96,47 @@ def test_most_guesses_first_orders_the_queue(page) -> None:
         options = at.selectbox[0].options
         assert [Path(o.split(" · ")[0].split(" ", 1)[1]).name for o in options] == ["b.png", "c.png", "a.png"]
         assert options[0].endswith("2 guesses")
+
+
+def test_the_review_timer_adds_up_in_the_review_log() -> None:
+    """Each editor message's active time adds to the screenshot's review log; marking it reviewed notes when."""
+    from tools.detection_dataset_annotator import app
+
+    item: dict[str, Any] = {}
+    assert app._review_log(item, {"active_ms": 0}, reviewed=None) is None  # nothing to add: no save
+    first = app._review_log(item, {"active_ms": 12_500}, reviewed=None)
+    assert first == {K.ANNOTATOR_REVIEW_FIELD: {"active_s": 12.5}}
+    done = app._review_log(first, {"active_ms": 2_000}, reviewed=True)[K.ANNOTATOR_REVIEW_FIELD]
+    assert done["active_s"] == 14.5 and "reviewed_at" in done
+
+
+def test_pre_label_starts_the_model_pass_on_this_store(page, monkeypatch: pytest.MonkeyPatch) -> None:
+    """The button runs ``model_prelabel`` as its own process (the GPU work would stall the page) on the page's output
+    folder and the chosen model, logging into that folder, and is disabled while the pass runs."""
+    import subprocess
+
+    started = []
+
+    class Running:
+        def __init__(self, command, **kwargs) -> None:
+            started.append((command, kwargs))
+            kwargs["stdout"].write("12 screenshots eligible\n")
+
+        def poll(self):
+            return None  # still running
+
+    monkeypatch.setattr(subprocess, "Popen", Running)
+    at, store, _keys = page({"name": "a.png", "boxes": [_box("icon", 10)]})
+    try:
+        out = store.path.parent
+        expander = next(e for e in at.sidebar.expander if e.label == "Model pre-labels")
+        next(t for t in expander.text_input if t.label == "Model folder").set_value(str(out / "model"))
+        _button(at, "Pre-label").click().run()
+        ((command, kwargs),) = started
+        assert command[1:3] == ["-m", "tools.detection_dataset_annotator.model_prelabel"]
+        assert command[command.index("--output-dir") + 1] == str(out)
+        assert command[command.index("--model") + 1] == str((out / "model").resolve())
+        assert _button(at, "Pre-label").disabled
+        assert "12 screenshots eligible" in (out / K.ANNOTATOR_PRELABEL_LOG).read_text(encoding="utf-8")
+    finally:
+        store.close()

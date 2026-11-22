@@ -1,11 +1,12 @@
 """Hugging Face dataset preparation for the RF-DETR detector.
 
-Training data comes from one place: the reviewed screenshots exported by the dataset annotator
+Training data comes from one place: the screenshots exported by the dataset annotator
 (``tools/detection_dataset_annotator``: ``manifest.json``). Its classes are the labels of ``labels.py`` and each
-screenshot carries the train / validation / test split the annotator gave it and keeps (the hand-labelled truth
-screenshots are pinned to test, so ``python -m grand_project.detect score`` keeps measuring unseen screenshots).
-Unreviewed classical boxes are not training data: they would teach the classical detector's mistakes, which the model
-is meant to get past.
+screenshot carries the train / validation / test split the split ledger keeps (the hand-labelled truth screenshots
+are pinned to test, so ``python -m grand_project.detect score`` keeps measuring unseen screenshots).
+Reviewed screenshots are the training data. Unreviewed classical boxes are not: they would teach the classical
+detector's mistakes, which the model is meant to get past. The one opt-in exception (``truth_seeded``, a bootstrap
+round) is a screenshot a hand-labelled biome truth seeded: its city areas and citadels are the truth's.
 
 The model sees native-scale tiles of the screenshots (``rf_detr_tiles.py``): training cuts random tiles each time an
 image is drawn (``TileTransform``), so the saved dataset holds whole screenshots and boxes in their own pixels.
@@ -71,16 +72,20 @@ def _annotation(label: str, raw: dict[str, Any], name_to_id: dict[str, int], man
     }
 
 
-def load_annotator_manifest(manifest_path: Path, max_images: int | None = None) -> tuple[list[Record], dict[str, str]]:
+def load_annotator_manifest(
+    manifest_path: Path, max_images: int | None = None, *, truth_seeded: bool = False
+) -> tuple[list[Record], dict[str, str]]:
     """Load the screenshots and boxes exported by ``tools.detection_dataset_annotator``.
 
     The manifest keeps source image paths and ``xywh`` boxes, so nothing is copied. It must give every screenshot its
     split. Only the screenshots it marks reviewed are loaded: an export with "reviewed screenshots only" off also
-    holds unreviewed ones, whose boxes are the classical detector's guesses, never training data.
+    holds unreviewed ones, whose boxes are the classical detector's guesses, never training data. With
+    ``truth_seeded`` the unreviewed screenshots a biome truth seeded (their ``truth``) are loaded too.
 
     Args:
         manifest_path: the annotator's ``manifest.json``.
         max_images: keep only this many screenshots (a smoke test), every split kept represented.
+        truth_seeded: also the unreviewed screenshots a hand-labelled biome truth seeded (a bootstrap round).
 
     Returns:
         (the records, id -> class name).
@@ -100,7 +105,8 @@ def load_annotator_manifest(manifest_path: Path, max_images: int | None = None) 
     name_to_id = {name: index for index, name in enumerate(label_names)}
     records: list[Record] = []
     for item in data.get("images", []):
-        if not item.get("reviewed"):
+        seeded = truth_seeded and not item.get("reviewed") and bool(item.get("truth"))
+        if not (item.get("reviewed") or seeded):
             continue  # unreviewed classical boxes would teach the classical detector's mistakes
         image_path = Path(str(item.get("path", "")))
         if not image_path.is_absolute():
@@ -119,7 +125,9 @@ def load_annotator_manifest(manifest_path: Path, max_images: int | None = None) 
                 image_id=int(item.get("image_id", len(records))),
                 path=image_path,
                 source=str(item.get("source", image_path.name)),
-                source_type=str(item.get("source_type", "annotator_reviewed")),
+                source_type=K.RF_DETR_TRUTH_SEEDED_SOURCE
+                if seeded
+                else str(item.get("source_type", "annotator_reviewed")),
                 source_group=str(item.get("source_group", "annotator")),
                 width=int(item["width"]),
                 height=int(item["height"]),
@@ -213,8 +221,17 @@ def _rows(records: list[Record]) -> list[dict[str, Any]]:
     return rows
 
 
-def build_dataset(records: list[Record], *, label_map: dict[str, str], output_dir: Path | None = None) -> Any:
+def build_dataset(
+    records: list[Record],
+    *,
+    label_map: dict[str, str],
+    output_dir: Path | None = None,
+    provenance: dict[str, Any] | None = None,
+) -> Any:
     """Create a ``DatasetDict`` (train, validation, test, as the records' splits say) and optionally save it.
+
+    The saved folder holds ``labels.json`` and ``metadata.json``: the screenshots per split and kind (reviewed,
+    truth-seeded), the tile, and ``provenance`` (the manifest's and the ledger's SHA-256: which data a model saw).
 
     Raises:
         ValueError: no training or no validation screenshot.
@@ -240,14 +257,20 @@ def build_dataset(records: list[Record], *, label_map: dict[str, str], output_di
         output_dir.mkdir(parents=True, exist_ok=True)
         dataset.save_to_disk(str(output_dir))
         (output_dir / "labels.json").write_text(json.dumps(label_map, indent=2) + "\n", encoding="utf-8")
+        kinds: dict[str, dict[str, int]] = {}
+        for split, chosen in splits.items():
+            for record in chosen:
+                kinds.setdefault(split, {}).setdefault(record.source_type, 0)
+                kinds[split][record.source_type] += 1
         (output_dir / "metadata.json").write_text(
             json.dumps(
                 {
-                    "schema_version": 2,
                     "format": "huggingface-datasets-object-detection",
                     **{f"{split}_images": len(chosen) for split, chosen in splits.items()},
+                    "kinds": kinds,
                     "labels": label_map,
                     "tile": K.RF_DETR_TILE,
+                    **(provenance or {}),
                 },
                 indent=2,
             )
