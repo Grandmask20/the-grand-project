@@ -90,6 +90,27 @@ describe("NumberSetting (the timelapse's length, maps per step)", () => {
 		expect(onCommit.mock.calls.map((c) => c[0])).toEqual([60, 30]);
 	});
 
+	it("an answer clears only its own value on its way, not a later send of the same number (CodeRabbit)", async () => {
+		const user = userEvent.setup();
+		const answers: ((ok: boolean) => void)[] = [];
+		const onCommit = vi.fn(
+			(_v: number) =>
+				new Promise<boolean>((r) => {
+					answers.push(r);
+				}),
+		);
+		render(<NumberSetting label="length" value={30} lo={5} hi={600} onCommit={onCommit} />);
+		const box = screen.getByRole("spinbutton", { name: "length" });
+		for (const v of ["60", "30", "60"]) {
+			await user.clear(box);
+			await user.type(box, `${v}{Enter}`);
+		}
+		await act(async () => answers[0](true)); // the first 60 answers: the last 60 is still on its way
+		await user.clear(box);
+		await user.type(box, "30{Enter}");
+		expect(onCommit.mock.calls.map((c) => c[0])).toEqual([60, 30, 60, 30]);
+	});
+
 	it("an empty box goes back to the setting, and the app's own changes show", async () => {
 		const user = userEvent.setup();
 		const onCommit = vi.fn();

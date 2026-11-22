@@ -473,9 +473,15 @@ def test_a_model_failing_after_a_new_map_image_is_the_models_failure(session, mo
 
 
 def test_the_timelapse_replans_in_the_models_locked_step(session, monkeypatch):
+    import threading
+
     held = []
+    me = threading.current_thread()
     monkeypatch.setattr(session, "_replay_on", True)
-    monkeypatch.setattr(session, "_replan", lambda: held.append(session._lock._is_owned()))
+    # (only this rebuild's replan: a rebuild the opening started behind it can land meanwhile on a busy machine: CI)
+    monkeypatch.setattr(
+        session, "_replan", lambda: threading.current_thread() is me and held.append(session._lock._is_owned())
+    )
     session.rebuild_model()
     assert held == [True]  # (a close between the check and the replan made the rebuild fail)
 

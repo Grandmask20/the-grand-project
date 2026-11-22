@@ -460,9 +460,11 @@ export function NumberSetting({
 	const edits = useRef(0); // keys typed: a refusal answered after newer typing leaves the box as typed
 	const current = useRef(value);
 	current.current = value;
-	// a value sent and still on its way: a new one is compared with it, not the setting in use (typed back to the
-	// setting while another was on its way, it was never sent and the other won: CodeRabbit)
-	const sent = useRef<number | null>(null);
+	// the last value sent while still on its way, with its own ticket: a new one is compared with it, not the setting
+	// in use (typed back to the setting while another was on its way, it was never sent and the other won), and only
+	// its own answer clears it (an earlier send of the same number cleared it too soon: CodeRabbit)
+	const sent = useRef<{ ticket: number; value: number } | null>(null);
+	const tickets = useRef(0);
 	const timer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined); // a value still settling
 	const off = useRef(disabled);
 	off.current = disabled;
@@ -486,7 +488,7 @@ export function NumberSetting({
 		if (t.trim() === "" || !Number.isFinite(n)) return setText(String(value));
 		const v = Math.min(hi, Math.max(lo, whole ? Math.round(n) : n));
 		setText(String(v));
-		if (v !== (sent.current ?? value)) send(v);
+		if (v !== (sent.current?.value ?? value)) send(v);
 	};
 	// a value used; refused, and nothing typed since, the box shows the setting in use again (it kept the refused
 	// number while the replay used the old one: CodeRabbit)
@@ -494,9 +496,10 @@ export function NumberSetting({
 		const at = edits.current;
 		const answer = onCommit(v);
 		if (answer) {
-			sent.current = v;
+			const ticket = ++tickets.current;
+			sent.current = { ticket, value: v };
 			void answer.then((ok) => {
-				if (sent.current === v) sent.current = null;
+				if (sent.current?.ticket === ticket) sent.current = null;
 				if (ok || edits.current !== at) return;
 				typing.current = false;
 				setText(String(current.current));
@@ -509,7 +512,7 @@ export function NumberSetting({
 		if (off.current) return;
 		const n = Number(t);
 		const v = whole ? Math.round(n) : n;
-		if (t.trim() !== "" && Number.isFinite(n) && v >= lo && v <= hi && v !== (sent.current ?? value)) send(v);
+		if (t.trim() !== "" && Number.isFinite(n) && v >= lo && v <= hi && v !== (sent.current?.value ?? value)) send(v);
 	};
 	// (the one as it is then: the setting may have changed meanwhile)
 	const latest = useRef(settle);
