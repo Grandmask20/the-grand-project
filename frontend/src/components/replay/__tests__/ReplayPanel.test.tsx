@@ -83,18 +83,29 @@ describe("ReplayPanel", () => {
 		expect(FakeRecorder.last?.stops).toBe(1);
 	});
 
-	it("uses only the newest settings change's answer, and none after it closed (CodeRabbit)", async () => {
+	it("sends settings changes one after another: the last answer shown is the last change's (CodeRabbit)", async () => {
 		let first: (p: ReplayPlan) => void = () => {};
-		let third: (p: ReplayPlan) => void = () => {};
 		const answers = [
 			new Promise<ReplayPlan>((r) => {
 				first = r;
 			}),
 			Promise.resolve(plan(60)),
-			new Promise<ReplayPlan>((r) => {
-				third = r;
-			}),
 		];
+		let n = 0;
+		const { user, calls } = open({ "PATCH /api/replay": () => answers[n++] });
+		const box = screen.getByRole("spinbutton", { name: "length (s)" });
+		await user.clear(box);
+		await user.type(box, "45{Enter}");
+		await user.clear(box);
+		await user.type(box, "60{Enter}");
+		expect(calls.filter((c) => c.path === "/api/replay")).toHaveLength(1); // the second waits for the first
+		await act(async () => first(plan(45)));
+		await waitFor(() => expect(useAppStore.getState().replay?.plan.settings.length).toBe(60));
+		expect(calls.filter((c) => c.path === "/api/replay").map((c) => c.body)).toEqual([{ length: 45 }, { length: 60 }]);
+	});
+
+	it("a newer change that fails leaves the one before it that worked (CodeRabbit)", async () => {
+		const answers = [plan(45), new Error("refused")];
 		let n = 0;
 		const { user } = open({ "PATCH /api/replay": () => answers[n++] });
 		const box = screen.getByRole("spinbutton", { name: "length (s)" });
@@ -102,14 +113,23 @@ describe("ReplayPanel", () => {
 		await user.type(box, "45{Enter}");
 		await user.clear(box);
 		await user.type(box, "60{Enter}");
-		await waitFor(() => expect(useAppStore.getState().replay?.plan.settings.length).toBe(60));
-		await act(async () => first(plan(45))); // the older answer comes last
-		expect(useAppStore.getState().replay?.plan.settings.length).toBe(60);
-		// a change answering after the timelapse closed doesn't open it again
+		await waitFor(() => expect(useAppStore.getState().error).toBeTruthy());
+		expect(useAppStore.getState().replay?.plan.settings.length).toBe(45);
+	});
+
+	it("a change answering after the timelapse closed doesn't open it again", async () => {
+		let answer: (p: ReplayPlan) => void = () => {};
+		const { user } = open({
+			"PATCH /api/replay": () =>
+				new Promise<ReplayPlan>((r) => {
+					answer = r;
+				}),
+		});
+		const box = screen.getByRole("spinbutton", { name: "length (s)" });
 		await user.clear(box);
 		await user.type(box, "70{Enter}");
 		act(() => useAppStore.getState().setReplay(null));
-		await act(async () => third(plan(70)));
+		await act(async () => answer(plan(70)));
 		expect(useAppStore.getState().replay).toBeNull();
 	});
 });

@@ -57,7 +57,8 @@ export function ReplayPanel({ meta }: { meta: Meta }) {
 	const exporting = useRef<{ cancel: boolean } | null>(null);
 	const [exportInfo, setExportInfo] = useState("");
 	const [busy, setBusy] = useState(false); // a frame export runs: the position is its own (CodeRabbit)
-	const asked = useRef(0); // the settings changes sent: only the newest one's answer is used
+	// settings changes, sent one after another (each answer then lands in order: CodeRabbit)
+	const queue = useRef<Promise<void>>(Promise.resolve());
 
 	// playback: move on, move the camera
 	// biome-ignore lint/correctness/useExhaustiveDependencies: restarted only when play starts / stops
@@ -117,17 +118,20 @@ export function ReplayPanel({ meta }: { meta: Meta }) {
 		moveCamera(p, 1);
 	};
 
-	const change = async (c: Partial<ReplaySettings>) => {
-		const mine = ++asked.current;
-		try {
-			const next = await app.setReplay(c);
-			// only the newest change's answer, and only while the timelapse is open (an older one answering last
-			// showed its settings; one answering after a close opened it again: CodeRabbit)
-			if (mine !== asked.current || !useAppStore.getState().replay) return;
-			setReplay({ plan: next, pos: 0, playing: false, recording: false });
-		} catch (e) {
-			if (mine === asked.current) showError(e);
-		}
+	// one after another, so the last answer shown is the last change's, and a change that fails leaves the one before
+	// it shown (an older answer arriving last showed its settings; with only the newest kept, a failing newer change
+	// dropped an older one that had worked: CodeRabbit). None once the timelapse is closed (one opened it again).
+	const change = (c: Partial<ReplaySettings>) => {
+		queue.current = queue.current.then(async () => {
+			if (!useAppStore.getState().replay) return;
+			try {
+				const next = await app.setReplay(c);
+				if (useAppStore.getState().replay) setReplay({ plan: next, pos: 0, playing: false, recording: false });
+			} catch (e) {
+				showError(e);
+			}
+		});
+		return queue.current;
 	};
 
 	const play = () => {
