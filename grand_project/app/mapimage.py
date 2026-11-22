@@ -1106,7 +1106,7 @@ class MapImageMixin:
         return buf.tobytes() if ok else None
 
     def vector_tile(self, z: int, x: int, y: int, replay: bool = False) -> bytes:
-        """Return a vector tile (MVT) of what the filters show.
+        """Return a vector tile (MVT) of what the filters show (vector_tile_made, without its address).
 
         Args:
             z: Tile level.
@@ -1119,19 +1119,48 @@ class MapImageMixin:
         Returns:
             The tile's bytes (b"" when empty).
         """
+        return self.vector_tile_made(z, x, y, replay)[0]
+
+    def vector_tile_made(self, z: int, x: int, y: int, replay: bool = False) -> tuple[bytes, str | None]:
+        """Return a vector tile and the address it was made for (_address): the page may ask with an older one.
+
+        Args:
+            z: Tile level.
+            x: Tile column.
+            y: Tile row.
+            replay: Asked by the page tab playing the timelapse (vector_tile).
+
+        Returns:
+            (the tile's bytes, b"" when empty; its address, None without a map image).
+        """
         steps = replay and self._source.replay is not None
         made = self._vector_made(steps)
         if made is None:
-            return b""
+            return b"", None
         tiler = made[1]
         # kept under the versions of the tiler that made it: read again, they may name a newer one (CodeRabbit)
         key = ("v", *made[0], z, x, y)
         hit = self._tiles.get(key)
-        if hit is not None:
-            return hit
-        data = tiler.tile(z, x, y)
-        self._tiles.put(key, data)
-        return data
+        if hit is None:
+            hit = tiler.tile(z, x, y)
+            self._tiles.put(key, hit)
+        return hit, self._address(made, steps)
+
+    @staticmethod
+    def _address(made: tuple, steps: bool) -> str:
+        """The address a vector tile or the 3D scene made at these versions is asked for with: the page's "v" (its
+        vectorVersion: map_info's tile key, then the model, filter and map image versions), and "&r=" the timelapse
+        plan's token for the tab playing it.
+
+        Args:
+            made: (versions, ..., generation) from _made.
+            steps: The timelapse's.
+
+        Returns:
+            "<run>.<generation>-<model>-<filters>-<map image>" (+ "&r=<token>").
+        """
+        key, gen = made[0], made[3]
+        return f"{SESSION_RUN}.{gen}-{key[0]}-{key[1]}-{key[2]}" + (f"&r={key[3]}" if steps else "")
 
     def _vector_tiler(self, steps: bool = False) -> VectorTiler | None:
         """Return the vector tiler of the current model, filters and map image (made on first use).
@@ -1146,7 +1175,7 @@ class MapImageMixin:
         return made[1] if made is not None else None
 
     def _vector_made(self, steps: bool = False) -> tuple | None:
-        """Return (versions, tiler, grid) of the current model, filters and map image, made once (_made).
+        """Return (versions, tiler, grid, generation) of the current model, filters and map image, made once (_made).
 
         Args:
             steps: The timelapse's (items carry their reveal step), kept beside the plain one.
@@ -1168,7 +1197,8 @@ class MapImageMixin:
         return self._made("_vector_steps" if steps else "_vector", steps, build)
 
     def _scene_made(self, steps: bool = False) -> tuple | None:
-        """Return (versions, 3D scene features, grid) of the current model, filters and map image, made once and only
+        """Return (versions, 3D scene features, grid, generation) of the current model, filters and map image, made
+        once and only
         when the 3D view asks (the flat map's tiles never carry them): _made.
 
         The 3D view's icons and models aren't cut into tiles: the page gets them whole (scene_3d); read back from
@@ -1190,7 +1220,8 @@ class MapImageMixin:
         return self._made("_scene3d_steps" if steps else "_scene3d", steps, build)
 
     def _made(self, slot: str, steps: bool, build: Callable[[TileSource], object]) -> tuple | None:
-        """Return (versions, what `build` made, grid) for the tiles' source now (_source), kept in `slot`.
+        """Return (versions, what `build` made, grid, generation) for the tiles' source now (_source), kept in
+        `slot`.
 
         Made from the source alone, never under the session lock: a job holds that lock for minutes, and the tiles
         asked for meanwhile waited for it and took all the browser's connections, so even the ground of a spot jumped
@@ -1217,11 +1248,22 @@ class MapImageMixin:
             v = getattr(self, slot, None)
             if v is not None and v[0] == key:
                 return v
-            made = (key, build(src), src.grid)
+            made = (key, build(src), src.grid, src.gen)
             setattr(self, slot, made)
             return made
 
     def scene_3d(self, replay: bool = False) -> bytes:
+        """The 3D view's icons, paths and models as JSON (scene_3d_made, without its address).
+
+        Args:
+            replay: For the tab playing the timelapse: each item carries the step it appears at.
+
+        Returns:
+            The JSON (scene_3d_made).
+        """
+        return self.scene_3d_made(replay)[0]
+
+    def scene_3d_made(self, replay: bool = False) -> tuple[bytes, str | None]:
         """Return the 3D view's icons, paths and models as JSON, whole (what the filters show, in atlas units).
 
         Built from the same features the vector tiles are cut from, once per model / filter / map image version.
@@ -1233,16 +1275,17 @@ class MapImageMixin:
             JSON {"icons": [[x, y, id, name, slot, lift, step, node]],
             "paths": [{"id", "strong", "abyss", "share", "step", "pts"}],
             "models": [{"rings", "colour", "base", "height" (metres), "ax", "ay", "step", "pick"}]} (step -1: from
-            the start; pick: what a click on it selects, "node:<i>" / "landmark:<i>" / "").
+            the start; pick: what a click on it selects, "node:<i>" / "landmark:<i>" / ""), and the address it was
+            made for (_address; None without a map image).
         """
         steps = replay and self._source.replay is not None
         made = self._scene_made(steps)  # its own snapshot: the slot can be replaced meanwhile (CodeRabbit)
         if made is None:
-            return b'{"icons": [], "paths": [], "models": []}'
-        key, scene, g = made
+            return b'{"icons": [], "paths": [], "models": []}', None
+        key, scene, g, _gen = made
         kept = getattr(self, "_scene", None)
         if kept is not None and kept[0] == (key, steps):
-            return kept[1]
+            return kept[1], self._address(made, steps)
 
         def A(p) -> list[float]:  # world px at zmax -> atlas units
             return [round((p[0] - g.offset) / g.scale + g.x0, 1), round((p[1] - g.offset) / g.scale + g.y0, 1)]
@@ -1268,7 +1311,7 @@ class MapImageMixin:
 
         data = json.dumps({"icons": icons, "paths": paths, "models": models}, separators=(",", ":")).encode()
         self._scene = ((key, steps), data)
-        return data
+        return data, self._address(made, steps)
 
     def vector_layers(self, src: TileSource, steps: bool = False, with_3d: bool = True) -> dict[str, list[dict]]:
         """Build the vector tile features of what the filters show (world px at zmax).

@@ -737,15 +737,32 @@ class Handler(BaseHTTPRequestHandler):
 
     @route("GET", r"/api/tiles/vector/(?P<z>\d+)/(?P<x>\d+)/(?P<y>\d+)\.pbf")
     def get_vector_tile(self, q, z, x, y) -> None:
-        """A vector tile."""
+        """A vector tile: kept by the browser only when made for the address it was asked with (_asked_for)."""
         replay = bool(q.get("r", [""])[0])  # the tab playing the timelapse
-        self._bytes(self.S.vector_tile(int(z), int(x), int(y), replay), "application/x-protobuf")
+        data, made_for = self.S.vector_tile_made(int(z), int(x), int(y), replay)
+        self._bytes(data, "application/x-protobuf", cache=made_for == self._asked_for(q))
 
     @route("GET", "/api/scene3d")
     def get_scene_3d(self, q) -> None:
-        """The 3D view's icons, paths and models, whole (versioned URL: kept by the browser)."""
+        """The 3D view's icons, paths and models, whole (kept by the browser when made for its address: _asked_for)."""
         replay = bool(q.get("r", [""])[0])  # the tab playing the timelapse
-        self._bytes(self.S.scene_3d(replay), "application/json")
+        data, made_for = self.S.scene_3d_made(replay)
+        self._bytes(data, "application/json", cache=made_for == self._asked_for(q))
+
+    @staticmethod
+    def _asked_for(q) -> str:
+        """The address a vector tile or the 3D scene was asked with ("v", and "&r=" for the timelapse's tab), as
+        MapImageMixin._address writes it. The answer is made from what is current: when that changed since the
+        page read its addresses, it was kept a year under the older one (CodeRabbit), so then it isn't kept.
+
+        Args:
+            q: The query.
+
+        Returns:
+            "<v>" (+ "&r=<r>").
+        """
+        r = q.get("r", [""])[0]
+        return q.get("v", [""])[0] + (f"&r={r}" if r else "")
 
     @route("GET", r"/api/icons/(?P<name>[^/]+)\.png")
     def get_icon(self, q, name) -> None:

@@ -153,6 +153,23 @@ def test_the_page_is_served_and_routes_itself(app, tmp_path, monkeypatch):
     assert call(srv, "/../../etc/passwd")[2] == b"<html>app</html>"  # never outside the page's folder
 
 
+def test_tiles_and_the_3d_scene_are_kept_only_under_the_address_they_were_made_for(app):
+    srv, pts = app
+    s = srv.session
+    wx, wy = s.grid.world_px(*pts[0])
+    tile = f"/api/tiles/vector/{s.grid.zmax}/{int(wx // 256)}/{int(wy // 256)}.pbf"
+    info = s.map_info()
+    now = f"{info['tile_key']}-{info['model_version']}-{info['filter_version']}-{info['terrain_version']}"
+    for path in (tile, "/api/scene3d"):
+        assert "immutable" in call(srv, f"{path}?v={now}")[1]["Cache-Control"]  # made for it: kept
+        # asked with an older address (the map changed since the page read it): answered from what is current, so
+        # not kept under the old one (CodeRabbit: it stayed a year)
+        st, h, _body = call(srv, f"{path}?v=older-0-0-0")
+        assert st == 200 and h["Cache-Control"] == "no-store"
+        # (the timelapse's tab asking for steps of a plan that isn't open: not kept either)
+        assert call(srv, f"{path}?v={now}&r=7")[1]["Cache-Control"] == "no-store"
+
+
 def test_a_dropped_connection_is_not_printed_as_an_error(app, capsys):
     server, _pts = app
     for dropped in (ConnectionResetError, BrokenPipeError, ConnectionAbortedError):
