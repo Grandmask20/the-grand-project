@@ -9,6 +9,7 @@ import { MapViewContext } from "@/hooks/map/UseMapView";
 import { Geo } from "@/logic/Geo";
 import { mapStyle } from "@/logic/map/LayerOrder";
 import { useAppStore } from "@/store/AppStore";
+import { BookmarkTour } from "./BookmarkTour";
 import { MapControls } from "./controls/MapControls";
 import { FrameRecorder } from "./FrameRecorder";
 import { AtlasLayers } from "./layers/AtlasLayers";
@@ -135,6 +136,7 @@ export function AtlasMap({ info, meta }: Props) {
 			{map && (
 				<MapViewContext.Provider value={view}>
 					<SelectionBox />
+					<BookmarkTour />
 				</MapViewContext.Provider>
 			)}
 			{!shown && (
