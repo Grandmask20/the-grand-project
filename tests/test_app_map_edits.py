@@ -185,6 +185,20 @@ def test_a_map_you_added_that_a_check_found_since_can_be_deleted(tmp_path):
         s.shutdown()
 
 
+def test_deleting_a_map_you_added_leaves_another_you_added_nearby(opened):
+    """Two maps added 1.5 reach apart, a delete clicked between them, nearer the second: only the second goes (both
+    adds went: CodeRabbit)."""
+    from grand_project.app.constants import MAP_EDIT_REACH as R
+
+    s, _path, _pts = opened
+    s.edit_map(2000, 2000, "add")
+    s.edit_map(2000 + 1.5 * R, 2000, "add")
+    s.edit_map(2000 + 0.8 * R, 2000, "remove")
+    assert s.atlas.map_edits == [{"x": 2000.0, "y": 2000.0, "op": "add"}]
+    shown = [(n["x"], n["y"]) for n in s.V["nodes"] if n["status"] != "removed" and n.get("origin") == "by you"]
+    assert shown == [(2000.0, 2000.0)]
+
+
 def test_bad_map_edits_are_refused(opened):
     s, _path, pts = opened
     for args in (("move",), ("add", "Castle"), ("remove", "City")):

@@ -167,17 +167,22 @@ def test_a_crop_of_the_ground_is_for_its_atlas_only(opened):
     assert s.crop_jpeg(-1e6, -1e6, s.generation) is None  # no ground there
 
 
-def test_a_crop_made_while_the_map_image_changes_is_dropped(opened, monkeypatch):
-    """A map image put in while a crop is cut: the crop (old grid, new tiles) is dropped (CodeRabbit)."""
+def test_a_crop_is_cut_from_one_map_image(opened, monkeypatch):
+    """A map image put in while a crop is cut (its grid and tiles changed, its version not yet: set_terrain's order):
+    the crop still comes from the one map image it started on (it read the grid and the tiles at different moments:
+    CodeRabbit)."""
     s, _path, pts = opened
-    real = s.terrain_tile
+    whole = s.crop_jpeg(*pts[0], s.generation)
+    assert whole is not None
+    s._tiles.clear()  # (each tile made again below, from the tiling the crop holds)
+    real = s._tile_from
 
-    def swapped(*a, **k):
-        s.terrain_version += 1  # (as set_terrain does)
+    def mid_change(*a, **k):
+        s.grid, s._raster, s._sharp = None, None, None  # (the new map image half put in)
         return real(*a, **k)
 
-    monkeypatch.setattr(s, "terrain_tile", swapped)
-    assert s.crop_jpeg(*pts[0], s.generation) is None
+    monkeypatch.setattr(s, "_tile_from", mid_change)
+    assert s.crop_jpeg(*pts[0], s.generation) == whole
 
 
 def test_crops_are_not_kept_by_the_browser(opened):

@@ -107,7 +107,10 @@ class EditsMixin:
                 if not live:
                     raise ValueError("there is no map there to delete")
                 n = self.V["nodes"][live[0]]
-                added = [e for e in edits if e["op"] == "add" and near(e)]
+                # the add that made this map (or one a check found there since) goes: the nearest to it, not every add
+                # near the click (a neighbour you added went too: CodeRabbit)
+                to_n = lambda e: math.hypot(e["x"] - n["x"], e["y"] - n["y"])  # noqa: E731
+                added = sorted((e for e in edits if e["op"] == "add" and to_n(e) < MAP_EDIT_REACH), key=to_n)[:1]
                 self.atlas.map_edits = [e for e in edits if e not in added]
                 # the landmark standing on it goes with it (a false City on a ghost map): the landmark edits this
                 # takes away and makes are kept in the delete, so bringing the map back puts them back as they were

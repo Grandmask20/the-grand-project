@@ -158,6 +158,9 @@ class MapImageMixin:
         self.grid: Grid | None = None
         self._raster: RasterTiler | None = None
         self._sharp: SharpTiles | None = None
+        # (grid, raster tiler, sharp tiles, version): the map image's tiling, handed over as one (a crop read the grid
+        # and the tiles at different moments of a change: CodeRabbit)
+        self._tile_state: tuple = (None, None, None, self.terrain_version)
         self._ground = None
         self._ground_for = None
         self._tiles.clear()
@@ -311,6 +314,7 @@ class MapImageMixin:
             self._ground = None
             self.terrain_version += 1
             self._terrain_snap = (self.terrain, self.terrain_version)
+            self._tile_state = (self.grid, self._raster, self._sharp, self.terrain_version)  # (all of it at once)
             self._tiles.clear()
             self._vector = None
             self._scene3d = None
@@ -964,11 +968,15 @@ class MapImageMixin:
         Returns:
             The JPEG bytes, or None where there is no ground.
         """
-        key = ("t", self.terrain_version, z, x, y)
+        return self._tile_from(self._tile_state, z, x, y, wanted)
+
+    def _tile_from(self, state: tuple, z: int, x: int, y: int, wanted=None) -> bytes | None:
+        """terrain_tile, from one map image's tiling (_tile_state, read once by the caller)."""
+        _grid, raster, sharp, version = state
+        key = ("t", version, z, x, y)
         hit = self._tiles.get(key)
         if hit is not None:
             return hit or None
-        raster, sharp = self._raster, self._sharp
         if raster is None:
             return None
         if sharp is not None and sharp.has(z):
@@ -999,12 +1007,11 @@ class MapImageMixin:
         """
         if gen != self.generation:
             return None
-        # the map image's version read first, its grid after: a map image put in meanwhile changes the version, and the
-        # crop (old grid, new tiles, or tiles of both) is dropped at the end (no session lock: jobs hold it long;
-        # CodeRabbit)
-        version = self.terrain_version
-        g, sharp = self.grid, self._sharp
-        if g is None or self._raster is None:
+        # one map image's grid and tiles, read once: a map image put in meanwhile can't mix with it (no session lock:
+        # jobs hold it long; CodeRabbit)
+        state = self._tile_state
+        g, raster, sharp, _version = state
+        if g is None or raster is None:
             return None
         want = WEBMAP_CROP_PX / (2 * WEBMAP_CROP_UNITS)  # px per atlas unit wanted
         z = g.zmax
@@ -1023,7 +1030,7 @@ class MapImageMixin:
             for tx in range(x0 // T, (x0 + side - 1) // T + 1):
                 if tx < 0 or ty < 0:
                     continue
-                data = self.terrain_tile(z, tx, ty)
+                data = self._tile_from(state, z, tx, ty)
                 if not data:
                     continue
                 tile = cv2.imdecode(np.frombuffer(data, np.uint8), cv2.IMREAD_COLOR)
@@ -1038,7 +1045,7 @@ class MapImageMixin:
                     ay0 - ty * T : ay1 - ty * T, ax0 - tx * T : ax1 - tx * T
                 ]
                 found = True
-        if not found or gen != self.generation or version != self.terrain_version:
+        if not found or gen != self.generation:
             return None
         small = cv2.resize(
             canvas,
