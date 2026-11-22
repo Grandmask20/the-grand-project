@@ -9,6 +9,7 @@ import { MapViewContext } from "@/hooks/map/UseMapView";
 import { Geo } from "@/logic/Geo";
 import { mapStyle } from "@/logic/map/LayerOrder";
 import { useAppStore } from "@/store/AppStore";
+import { BoxSelect } from "./BoxSelect";
 import { MapControls } from "./controls/MapControls";
 import { FrameRecorder } from "./FrameRecorder";
 import { AtlasLayers } from "./layers/AtlasLayers";
@@ -97,6 +98,7 @@ export function AtlasMap({ info, meta }: Props) {
 				attributionControl={false}
 				doubleClickZoom={false}
 				dragPan={false} // MapPan's own
+				boxZoom={false} // Shift-drag: BoxSelect's box
 				// right-drag turns by sideways movement everywhere: MapLibre's default turns by the angle around the view's
 				// centre once the mouse is 100 px above or below it and flips direction across it, so turning jumped and
 				// reversed near the middle (user: too sensitive at some points, as if it turned a full circle). Passed on to
@@ -124,6 +126,7 @@ export function AtlasMap({ info, meta }: Props) {
 						<GhostLayers />
 						<QuestionLayers />
 						<MapInteraction />
+						<BoxSelect />
 						<MapCamera />
 						<MapLabels />
 						<PlayerMarker />

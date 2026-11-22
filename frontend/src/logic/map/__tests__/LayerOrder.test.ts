@@ -6,6 +6,7 @@ import { LAYER_ORDER, mapStyle, slotOf } from "@/logic/map/LayerOrder";
 import {
 	bookmarkIconLayer,
 	bookmarkLayer,
+	boxPickedLayer,
 	ghostLineLayer,
 	gotoLayer,
 	hitLayers,
@@ -34,6 +35,7 @@ function everyLayer(): string[] {
 		...route.line,
 		route.nodes,
 		route.here,
+		boxPickedLayer(geo),
 		recentLayer(meta, true),
 		bookmarkLayer(geo, meta, true),
 		bookmarkIconLayer(geo, meta, true),

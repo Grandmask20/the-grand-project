@@ -138,6 +138,9 @@ export interface AppStoreState {
 	clearFind: () => void;
 	highlight: string | null;
 	setHighlight: (type: string | null) => void;
+	/** The maps a shift-drag box picked (BoxSelect): ringed, with a bar to bookmark them all. */
+	boxPicked: number[];
+	setBoxPicked: (ids: number[]) => void;
 	mode: MapMode;
 	/** A map mode starts or ends; none starts while the timelapse is open (user: Route, then the timelapse, and a
 	 * click in it took a map). */
@@ -306,6 +309,8 @@ export const useAppStore = create<AppStoreState>()((set) => ({
 		set({ findText: "", query: "", listed: null, highlight: null, goto: null, results: [], resultsTitle: "" }),
 	highlight: null,
 	setHighlight: (highlight) => set({ highlight }),
+	boxPicked: [],
+	setBoxPicked: (boxPicked) => set({ boxPicked }),
 	mode: { kind: "normal" },
 	// refused while the timelapse is open, and said so (user: it was dropped without a word, not even in the log)
 	setMode: (mode) =>

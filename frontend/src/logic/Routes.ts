@@ -44,6 +44,11 @@ export class RouteGraph {
 		return this.pos.get(id);
 	}
 
+	/** Every map and where it is. */
+	positions(): [number, Point][] {
+		return [...this.pos];
+	}
+
 	iconsOf(id: number): string[] {
 		return this.icons.get(id) ?? [];
 	}

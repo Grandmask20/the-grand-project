@@ -28,6 +28,7 @@ export const LAYER_ORDER = [
 	"highlight",
 	"hits-edge",
 	"hits",
+	"box-picked", // the maps a shift-drag box picked
 	"route-nodes",
 	"route-here", // the map you are on, on a route tracked
 	"fog-picture", // the timelapse's fog: over the map's own layers, so it hides what isn't revealed yet
