@@ -270,6 +270,24 @@ def test_new_atlas_and_close(session, tmp_path):
     assert session.atlas is None and session.map_info() is None
 
 
+def test_closing_clears_the_map_image_before_saying_no_atlas(session, tmp_path, monkeypatch):
+    """The map image goes before the switch to "no atlas", as opening one does (a crop asked for in between was cut
+    from the closed atlas's map: CodeRabbit)."""
+    path, _pts, _img = make_atlas(tmp_path)
+    session.open_atlas(path)
+    assert session._tile_state[0] is not None  # (its map image tiled)
+    seen = []
+    real = session._switch
+
+    def switch(*a):
+        seen.append(session._tile_state[0])
+        return real(*a)
+
+    monkeypatch.setattr(session, "_switch", switch)
+    session.close()
+    assert seen == [None]
+
+
 def test_a_settings_change_is_one_log_line():
     from grand_project.app.session import settings_change_text
 

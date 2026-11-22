@@ -199,6 +199,28 @@ def test_deleting_a_map_you_added_leaves_another_you_added_nearby(opened):
     assert shown == [(2000.0, 2000.0)]
 
 
+def test_deleting_a_map_keeps_the_add_of_the_map_beside_it(tmp_path):
+    """You added B; a check found A and B 0.9 reach apart. Deleting A keeps your add for B (it went, and B would be
+    lost when a later check missed it: CodeRabbit)."""
+    from grand_project.app.constants import MAP_EDIT_REACH as R
+
+    path, _pts, _img = make_atlas(tmp_path)
+    at = core.Atlas.load(path)
+    a, b = (2000.0, 2000.0), (2000.0 + 0.9 * R, 2000.0)
+    at.map_edits = [{"x": b[0], "y": b[1], "op": "add"}]
+    for x, y in (a, b):
+        at.final["nodes"].append({**at.final["nodes"][3], "id": len(at.final["nodes"]), "x": x, "y": y})
+    at.save(path)
+    s = AtlasSession(settings={}, worker=False)
+    try:
+        s.open_atlas(path)
+        s.edit_map(a[0] - 0.5 * R, a[1], "remove")  # from A's far side
+        assert {"x": b[0], "y": b[1], "op": "add"} in s.atlas.map_edits
+        assert [e for e in s.atlas.map_edits if e["op"] == "remove"] == [{"x": a[0], "y": a[1], "op": "remove"}]
+    finally:
+        s.shutdown()
+
+
 def test_bad_map_edits_are_refused(opened):
     s, _path, pts = opened
     for args in (("move",), ("add", "Castle"), ("remove", "City")):

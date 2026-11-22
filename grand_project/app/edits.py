@@ -107,10 +107,19 @@ class EditsMixin:
                 if not live:
                     raise ValueError("there is no map there to delete")
                 n = self.V["nodes"][live[0]]
-                # the add that made this map (or one a check found there since) goes: the nearest to it, not every add
-                # near the click (a neighbour you added went too: CodeRabbit)
+                # the add that made this map (or one a check found there since) goes: one whose nearest map shown is
+                # this one, not every add near the click (a neighbour you added went too) nor one another map owns (an
+                # add a check had found next to it was lost: CodeRabbit)
+                shown = [(j, m) for j, m in enumerate(self.V["nodes"]) if m.get("status") != "removed"]
                 to_n = lambda e: math.hypot(e["x"] - n["x"], e["y"] - n["y"])  # noqa: E731
-                added = sorted((e for e in edits if e["op"] == "add" and to_n(e) < MAP_EDIT_REACH), key=to_n)[:1]
+
+                def owner(e: dict) -> int:
+                    return min(shown, key=lambda jm: math.hypot(jm[1]["x"] - e["x"], jm[1]["y"] - e["y"]))[0]
+
+                added = sorted(
+                    (e for e in edits if e["op"] == "add" and to_n(e) < MAP_EDIT_REACH and owner(e) == live[0]),
+                    key=to_n,
+                )[:1]
                 self.atlas.map_edits = [e for e in edits if e not in added]
                 # the landmark standing on it goes with it (a false City on a ghost map): the landmark edits this
                 # takes away and makes are kept in the delete, so bringing the map back puts them back as they were
