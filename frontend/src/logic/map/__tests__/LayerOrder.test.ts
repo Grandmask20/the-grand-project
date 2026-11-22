@@ -44,7 +44,7 @@ function everyLayer(): string[] {
 		...previewLayers(),
 		outlineLayer(0),
 	];
-	const byHand = ["terrain", "tint-picture", "fog-picture", "ghost-picture", "preview", "lasso"];
+	const byHand = ["terrain-before", "terrain", "tint-picture", "fog-picture", "ghost-picture", "preview", "lasso"];
 	const gl = ["ground-fade-gl", "models-3d-gl", "paths-3d-gl", "icons-3d-gl"];
 	return [...specs.map((s) => s.id), ...byHand, ...gl];
 }
@@ -57,6 +57,7 @@ describe("LAYER_ORDER", () => {
 
 	it("keeps the stack the map has always had", () => {
 		const at = (id: string) => LAYER_ORDER.indexOf(id as (typeof LAYER_ORDER)[number]);
+		expect(at("terrain-before")).toBeLessThan(at("terrain")); // the old ground under the new while adding
 		expect(at("terrain")).toBeLessThan(at("tint-picture")); // Colour by over the ground, under the biomes
 		expect(at("tint-picture")).toBeLessThan(at("biomes"));
 		expect(at("landmarks")).toBeLessThan(at("fog-picture")); // the fog over the map's own layers

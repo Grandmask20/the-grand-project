@@ -377,6 +377,10 @@ HELLO_APP = "the-grand-project"  # what /api/hello answers with: the program's o
 LOG_KEEP = 2000  # log lines kept for the Log tab of a page opened later
 EVENT_HISTORY = 200  # recent events kept for a page that reconnects
 TILE_CACHE = 1500  # encoded tiles (map image, sharp ground, vector) kept in memory
+# seconds a vector tile or 3D scene request waits for the session lock to make them anew (a change since) before it is
+# answered from the ones made last: a job holds the lock for minutes, and the waiting requests took all the browser's
+# connections, so the ground of a spot jumped to never came (user). Longer than a quick edit holds it.
+TILER_LOCK_WAIT = 0.3
 UPLOAD_MAX = 64 * 1024 * 1024  # bytes: one uploaded screenshot at most
 FS_LIST_MAX = 5000  # entries listed by the folder browser at most
 

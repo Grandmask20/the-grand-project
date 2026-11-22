@@ -21,6 +21,7 @@ import sys
 import tempfile
 import threading
 import time
+from collections.abc import Callable
 from pathlib import Path
 
 import cv2
@@ -49,6 +50,7 @@ from grand_project.webmap.sharp import SharpTiles
 from grand_project.webmap.solids import map_pillar, structure
 from grand_project.webmap.tiles import Grid, RasterTiler, VectorTiler
 
+from . import constants as K
 from .constants import TERRAIN_PIXELS, TILE_CACHE
 from .icons import bgr_hex, icon_art_version, icon_col, icon_label, icon_name
 
@@ -145,8 +147,10 @@ class MapImageMixin:
         self._sharp_key = None  # the sharp tile folder in use (kept with the new one: _sharp_folder)
         self._terrain_job = 0
         self.filter_version = 0
-        self._vector = None  # (key, VectorTiler)
-        self._vector_lock = threading.Lock()
+        self._vector = None  # (key, VectorTiler, None, grid, generation): see _made_under_lock
+        # a refresh of the page's vector tiles waits for the session lock (_refresh_when_free): one at a time
+        self._refresh_lock = threading.Lock()
+        self._refresh_waiting = False
         self._reset_mapimage()
 
     def _reset_mapimage(self) -> None:
@@ -316,8 +320,8 @@ class MapImageMixin:
             self._terrain_snap = (self.terrain, self.terrain_version)
             self._tile_state = (self.grid, self._raster, self._sharp, self.terrain_version)  # (all of it at once)
             self._tiles.clear()
-            self._vector = None
-            self._scene3d = None
+            # (the vector tiles and 3D scene are made anew for the new version on the next request; the ones made
+            # before stay, answered while a job holds the lock: _made_under_lock)
             self.parts.done("map_image", self.generation)
             # the cache's identity (atlas file, key) and its turn taken with the image shown, in one locked step:
             # taken after, two images shown one after the other could take their turns the other way round, or an
@@ -803,10 +807,9 @@ class MapImageMixin:
             publish: Tell the page (a "filters" event with the new version).
         """
         self.filter_version += 1
-        self._vector = None
-        self._vector_steps = None
-        self._scene3d = None
-        self._scene3d_steps = None
+        # (the vector tiles and 3D scene are made anew on the next request, the version being in their key; the ones
+        # made before stay, answered while a job holds the lock: _made_under_lock. Dropped here, a filter changed
+        # during a job left nothing to answer with, and every request waited for the job: user)
         if publish:
             self.events.publish("filters", self.filter_version)
 
@@ -1096,10 +1099,8 @@ class MapImageMixin:
         return made[1] if made is not None else None
 
     def _vector_made(self, steps: bool = False) -> tuple | None:
-        """Return (versions, tiler, 3D scene features, grid) of the current model, filters and map image, made once.
-
-        Versions, grid and features are read together under the session lock: read apart, a change between them
-        made a tiler of one map image keyed by another's versions (CodeRabbit).
+        """Return (versions, tiler, grid, generation) of the current model, filters and map image, made once
+        (_made_under_lock).
 
         Args:
             steps: The timelapse's (items carry their reveal step), kept beside the plain one.
@@ -1107,32 +1108,22 @@ class MapImageMixin:
         Returns:
             The tuple, or None without a map image.
         """
-        slot = "_vector_steps" if steps else "_vector"
-        key = (self.model_version, self.filter_version, self.terrain_version, self.replay_token if steps else 0)
-        v = getattr(self, slot, None)
-        if v is not None and v[0] == key:
-            return v
-        with self._vector_lock, self._lock:
-            key = (self.model_version, self.filter_version, self.terrain_version, self.replay_token if steps else 0)
-            v = getattr(self, slot, None)
-            if v is not None and v[0] == key:
-                return v
-            g = self.grid
-            if g is None:
-                return None
+
+        def build(g: Grid) -> VectorTiler:
+            """The tiler of what the filters show (under the session lock)."""
             # without the 3D view's parts: built only when it asks (scene_3d). Built for every flat map too, they
             # were ~0.8 s of a big atlas's first tiles though never in them (user: what isn't shown shouldn't slow it)
             layers = self.vector_layers(g, steps, with_3d=False)
             for k in ("icon_rows", "solids"):
                 layers.pop(k, None)
             dense = max(0, g.zmax - 4)  # icons and labels are not drawn zoomed far out
-            made = (key, VectorTiler(layers, g, min_zoom={"icons": dense}), None, g)
-            setattr(self, slot, made)
-            return made
+            return VectorTiler(layers, g, min_zoom={"icons": dense})
+
+        return self._made_under_lock("_vector_steps" if steps else "_vector", steps, build)
 
     def _scene_made(self, steps: bool = False) -> tuple | None:
-        """Return (versions, 3D scene features, grid) of the current model, filters and map image, made once and only
-        when the 3D view asks (the flat map's tiles never carry them).
+        """Return (versions, 3D scene features, grid, generation) of the current model, filters and map image, made
+        once and only when the 3D view asks (the flat map's tiles never carry them): _made_under_lock.
 
         The 3D view's icons and models aren't cut into tiles: the page gets them whole (scene_3d); read back from
         loaded tiles they were missing zoomed out, came twice at tile edges and were gathered again after every move
@@ -1144,23 +1135,99 @@ class MapImageMixin:
         Returns:
             The tuple, or None without a map image.
         """
-        slot = "_scene3d_steps" if steps else "_scene3d"
-        key = (self.model_version, self.filter_version, self.terrain_version, self.replay_token if steps else 0)
+
+        def build(g: Grid) -> dict:
+            """The 3D view's features (under the session lock)."""
+            layers = self.vector_layers(g, steps)
+            return {"icon_rows": layers["icon_rows"], "solids": layers["solids"], "paths": layers["paths"]}
+
+        return self._made_under_lock("_scene3d_steps" if steps else "_scene3d", steps, build)
+
+    def _tiles_key(self, steps: bool) -> tuple:
+        """The versions the vector tiles and the 3D scene are made for: model, filters, map image, timelapse plan."""
+        return (self.model_version, self.filter_version, self.terrain_version, self.replay_token if steps else 0)
+
+    def _made_under_lock(self, slot: str, steps: bool, build: Callable[[Grid], object]) -> tuple | None:
+        """Return (versions, what `build` made, grid, generation) for the current versions, kept in `slot`.
+
+        Made under the session lock: versions, grid and features read together (read apart, a change between them
+        made a tiler of one map image keyed by another's versions: CodeRabbit). A request waits for that lock only
+        briefly (K.TILER_LOCK_WAIT): a job holds it for minutes (placing, re-checking, saving), and the waiting
+        requests took all the browser's connections, so even the ground of a spot jumped to never came (user).
+        Meanwhile the one made last is answered, what the map showed before the change, and the page is told to ask
+        again once the lock is free (_refresh_when_free). Only one made for this atlas and this timelapse plan:
+        with none, the request waits for the lock as before.
+
+        Args:
+            slot: The attribute it is kept in.
+            steps: The timelapse's (items carry their reveal step).
+            build: Makes it from the grid (called under the lock).
+
+        Returns:
+            The tuple, or None without a map image.
+        """
+        key = self._tiles_key(steps)
         v = getattr(self, slot, None)
         if v is not None and v[0] == key:
             return v
-        with self._vector_lock, self._lock:
-            key = (self.model_version, self.filter_version, self.terrain_version, self.replay_token if steps else 0)
+        last = v if v is not None and v[3] == self.opened.gen and v[0][3] == key[3] else None
+        if not self._lock.acquire(timeout=K.TILER_LOCK_WAIT if last is not None else -1):
+            self._refresh_when_free()
+            return last
+        try:
+            key = self._tiles_key(steps)
             v = getattr(self, slot, None)
             if v is not None and v[0] == key:
                 return v
             g = self.grid
             if g is None:
                 return None
-            layers = self.vector_layers(g, steps)
-            made = (key, {"icon_rows": layers["icon_rows"], "solids": layers["solids"], "paths": layers["paths"]}, g)
+            made = (key, build(g), g, self.opened.gen)
             setattr(self, slot, made)
             return made
+        finally:
+            self._lock.release()
+
+    def _refresh_when_free(self) -> None:
+        """Once the session lock is free, make the vector tiles and 3D scene anew and tell the page to ask for them
+        again: they were answered from the ones made before a change while work held the lock (_made_under_lock),
+        and the page keeps a tile it has until its address changes. One waiter at a time, on a thread of its own;
+        it takes the atlas's generation first and acts only while that atlas is still open."""
+        with self._refresh_lock:
+            if self._refresh_waiting:
+                return
+            self._refresh_waiting = True
+        gen = self.opened.gen
+
+        def wait() -> None:
+            """Wait for the lock, then make them anew under it and tell the page (background thread)."""
+            bumped = False
+            try:
+                with self._lock:
+                    with self._refresh_lock:  # (an answer from the old ones after this asks for another refresh)
+                        self._refresh_waiting = False
+                    if not self.owns(gen):
+                        return  # another atlas opened since: its own versions tell the page
+                    self.filters_changed(publish=False)  # new addresses: the page asks again
+                    bumped = True
+                    # made now, in the same locked step: a job taking the lock next left them unmade, and the page's
+                    # new requests had only the old ones again. Only those in use (a timelapse, the 3D view).
+                    for slot, steps, make in (
+                        ("_vector", False, self._vector_made),
+                        ("_vector_steps", True, self._vector_made),
+                        ("_scene3d", False, self._scene_made),
+                        ("_scene3d_steps", True, self._scene_made),
+                    ):
+                        v = getattr(self, slot, None)
+                        if v is not None and v[3] == gen:
+                            make(steps)
+            except Exception:
+                LOG.exception("the map's vector tiles could not be made again")  # (each request makes its own then)
+            finally:
+                if bumped:
+                    self.events.publish("filters", self.filter_version)
+
+        threading.Thread(target=wait, daemon=True, name="tiles-refresh").start()
 
     def scene_3d(self, replay: bool = False) -> bytes:
         """Return the 3D view's icons, paths and models as JSON, whole (what the filters show, in atlas units).
@@ -1180,7 +1247,7 @@ class MapImageMixin:
         made = self._scene_made(steps)  # its own snapshot: the slot can be replaced meanwhile (CodeRabbit)
         if made is None:
             return b'{"icons": [], "paths": [], "models": []}'
-        key, scene, g = made
+        key, scene, g, _gen = made
         kept = getattr(self, "_scene", None)
         if kept is not None and kept[0] == (key, steps):
             return kept[1]
