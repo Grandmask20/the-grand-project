@@ -91,6 +91,7 @@ from .constants import (
     TRACE_MATCH,
     WALL_MAP,
 )
+from .icon_time import icons_over_time
 from .landmarks import _clean_icons, _guessed, _one_map, _settlements
 from .traces import (
     _along,
@@ -1467,6 +1468,16 @@ def finalize(atlas, log=_log) -> dict:
                     dup_badge.add(k2)
         nd["icons"] = [k for k in nd["icons"] if k not in dup_badge]
 
+    # icons over time (user's rules): one a newer screenshot shows gone (the map was run), or one that appeared where
+    # it never can, is left out
+    cities = [(lm["x"], lm["y"]) for lm in landmarks if lm["kind"] == "City" and not lm["status"].startswith("removed")]
+    alive_nodes = [status[i] != "removed" for i in range(len(nodes))]
+    changed = icons_over_time(atlas, maps, nodes, alive_nodes, icons, dup_badge, cities)
+    over_time = changed["gone"] | changed["false"]
+    for nd in nodes:
+        nd["icons"] = [k for k in nd["icons"] if k not in over_time]
+    dup_badge |= over_time
+
     out_nodes = []
     for i, nd in enumerate(nodes):
         out_nodes.append(
@@ -1538,6 +1549,8 @@ def finalize(atlas, log=_log) -> dict:
         if k in on_map or (ic["name"] != "Unidentified" and ic["n"] * 2 >= ic["could"]):
             out_icons.append({key: (round(v, 2) if isinstance(v, float) else v) for key, v in ic.items()})
     stats["icons_shown"] = len(out_icons)
+    stats["icons_gone"] = len(changed["gone"])  # (a newer screenshot shows them gone)
+    stats["icons_false"] = len(changed["false"])  # (appeared where they never can)
     # which program checked the atlas, and when (user: an atlas checked by an older version couldn't be told apart)
     from grand_project import __version__
 

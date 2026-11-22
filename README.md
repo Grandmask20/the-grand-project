@@ -1,4 +1,4 @@
-# The Grand Project — v1.22
+# The Grand Project — v1.23
 
 Builds one big map of your Path of Exile 2 atlas from your screenshots. Named after the in-game tablet, *The Grand Project*. It finds maps, paths, icons, towers and cities, and lets you search, bookmark and route through them.
 
@@ -87,6 +87,8 @@ Any of these adds screenshots. Screenshots already in the atlas are skipped.
 - **File ▾ → Add screenshots…** (File ▾ is the first button on the toolbar)
 - **Atlas ▾ → (atlas) → Add new screenshots from its folder.**
 
+**Maps you have run since:** newer screenshots of a spot win over older ones. A map's icon is removed when the newest screenshots of it show the map without it (a map that turns green always loses its icon; a blue map can lose one; an attempted deadly boss map keeps only its Deadly Map Boss icon). Screenshots taken less than 30 seconds apart count as one moment, and where the detector missed an icon the app looks at the icon row again before calling it gone. Icons that never appear on a map (Corruption, the blue hideout, Abyss, Abyssal Depths, Expedition, Unique Map, the merchant), or Cleansed where there was no Corruption, are dropped when an earlier screenshot clearly showed the map without them. So keep screenshotting as you play: the atlas follows.
+
 A screenshot that overlaps nothing yet goes to **Waiting** (Atlases tab → Auto-add). Waiting screenshots are retried whenever another one is added, and you can also click **Retry** or **Retry all**.
 
 A screenshot that might be placed wrong is shown on the map, see-through and outlined, while the app asks whether to add it.
@@ -133,12 +135,12 @@ A screenshot that might be placed wrong is shown on the map, see-through and out
   - remove an atlas from the list
   - add new screenshots from an atlas's folder
 
-  The **Atlases tab** (its *Saved atlases* page) shows every atlas as a card with a thumbnail of its map and its numbers of maps, icons and screenshots. Click a card to open it; the pencil renames it; right-click it to *Open atlas folder*. The bin asks whether to *stop tracking* the atlas (its files stay) or *delete the whole atlas and its data* (its `atlas.json`, `atlas_frames/` and `atlas_files/`; your screenshots are never deleted).
+  The **Atlases tab** (its *Saved atlases* page) shows every atlas as a card with a thumbnail of its map and its numbers of maps, icons and screenshots. Click a card to open it; the pencil renames it; the circular arrows re-check it (it asks first, and opens it first when another atlas is open); right-click it to *Open atlas folder*. The bin asks whether to *stop tracking* the atlas (its files stay) or *delete the whole atlas and its data* (its `atlas.json`, `atlas_frames/` and `atlas_files/`; your screenshots are never deleted).
 
   Each atlas lives in its own folder: `atlas.json`, plus `atlas_frames/` (detections) and `atlas_files/` (map image, exports, undo). The screenshots can sit in that same folder; the atlas never takes its own files for screenshots. Keep new ones in `atlases/`.
 - **File menu:**
   - *New atlas*, *Open atlas*, *Open a screenshot folder*, *Save* (adding screenshots also saves).
-  - *Re-check the whole atlas* runs the full clean-up pass again (a few minutes on a big atlas).
+  - *Re-check the whole atlas* detects again the screenshots an older detector read (after an update that changed the detector, all of them once: long on a big atlas; the others keep their saved detection), then runs the atlas-wide clean-up again (a few minutes on a big atlas). It asks first, and says when the atlas was last re-checked, its screenshots in groups by when and on which version they were detected, how many will be detected again and about how long it takes (measured on your computer after the first Re-check). When it finishes, a box over the map lists what changed, in groups: *Maps*, *Paths*, *Landmarks*, *Towers*, *Biomes*, *Icons*. Each group's card shows how many things were added (+, green) and removed (−, red), and changed (~) when some moved or became another kind or biome. Click a card to list its changes with where each one is; click one to see its spot on the map, ringed. Tick *Keep?* on the groups whose changes you want and press *Apply*. An unticked group stays as it was before, on the maps it was on: e.g. untick *Biomes* and every map keeps the biome it had. Your ticks are remembered for every atlas. The map shows the atlas as it was until you apply, nothing changes if the app is closed first, and with nothing changed no box opens.
   - *Fix seams (clean map)* rebuilds the map image with care: each map node comes whole from one screenshot with its icons, seams stay off paths and away from screenshot edges, and lit copies win over fogged ones. It takes several minutes on a big atlas and runs in the background. While screenshots are being added it doesn't start: it asks to *Queue* it or cancel. A queued one starts once adding finishes; if adding failed (a screenshot couldn't be read, ...) it says why and asks: *Cancel* or *Fix seams anyway*. Screenshots added while it runs are added as usual. *Stop fixing seams* stops it, or takes a queued one off.
   - *Export map PNGs*.
   - *Close atlas*, *Quit the app*.

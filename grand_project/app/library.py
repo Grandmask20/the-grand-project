@@ -192,7 +192,7 @@ class LibraryMixin:
             for extra in (self.path, self.settings.get("last_atlas")):
                 if extra and Path(extra).exists() and not any(same_file(a["json"], extra) for a in L):
                     L.append({"name": Path(extra).parent.name, "json": str(Path(extra).resolve())})
-            self.settings["atlases"] = L
+            self.set_setting("atlases", L, save=False)
             return L
 
     def remember_atlas(self, json_path, name: str | None = None) -> None:

@@ -37,7 +37,15 @@ export function MapCamera() {
 		if (fly.n === flown.current) return;
 		flown.current = fly.n;
 		const zoom = Math.max(map.getZoom(), geo.zoomFor(fly.px ?? 1));
-		map.flyTo({ center: geo.toLngLat(fly.x, fly.y), zoom: Math.min(zoom, info.maxzoom), speed: 1.6 });
+		// with a box over the map's top (the Re-check's changes), the spot goes in the middle of what is left below it
+		const top = map.getContainer().getBoundingClientRect().top;
+		const below = fly.clearTop ? Math.max(0, fly.clearTop - top) / 2 : 0;
+		map.flyTo({
+			center: geo.toLngLat(fly.x, fly.y),
+			zoom: Math.min(zoom, info.maxzoom),
+			speed: 1.6,
+			...(below ? { offset: [0, below] as [number, number] } : {}),
+		});
 	}, [map, geo, info, fly]);
 
 	// an area (a saved route): its corners in the view; the room round it is in the box already (routeBox). Carried

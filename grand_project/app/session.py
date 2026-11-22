@@ -14,6 +14,7 @@ spot), debug (debug marks), replay (timelapse plan, colour by).
 from __future__ import annotations
 
 import math
+import threading
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -31,6 +32,7 @@ from .constants import (
     LANDMARK_NODE_REACH,
     LANDMARK_NODE_REACH_STRONGHOLD,
     POTENTIAL_TYPES,
+    RECHECK_GROUPS,
     SHUTDOWN_WAIT,
     STYLE_DEFAULT,
     VERSION,
@@ -103,6 +105,10 @@ class AtlasSession(
             worker: Start the background worker thread (tests run jobs on their own thread instead).
         """
         self.settings = migrate_settings(load_settings() if settings is None else settings)
+        # the settings are changed and saved from the page's requests, the worker (Re-check), auto-add and the
+        # updater: every change and every save under this lock (a save writing them out as another thread added a
+        # key failed, and that save was lost: self review)
+        self._settings_lock = threading.RLock()
         self.events = events or Events()
         # refuses a page change meant for an atlas no longer open (app/atlaslock.py)
         self._lock = AtlasLock(lambda: self.opened.gen)
@@ -125,13 +131,28 @@ class AtlasSession(
     # ------------------------------------------------------------------ settings shared with the page
     def save_settings(self) -> None:
         """Write the settings file."""
-        save_settings(self.settings)
+        with self._settings_lock:
+            save_settings(self.settings)
+
+    def set_setting(self, key: str, value, save: bool = True) -> None:
+        """Change one app setting (under the settings lock), and save them.
+
+        Args:
+            key: The setting.
+            value: Its new value.
+            save: Write the file now (False: a save follows).
+        """
+        with self._settings_lock:
+            self.settings[key] = value
+            if save:
+                save_settings(self.settings)
 
     def ui_settings(self) -> dict:
         """Return the settings the page shows and changes: layers, filters, style, hidden types, replay.
 
         Returns:
-            {"layers", "multi_only", "only_icon_maps", "near_only", "hidden_types", "style", "replay", "ui"}.
+            {"layers", "multi_only", "only_icon_maps", "near_only", "hidden_types", "style", "replay", "ui",
+            "recheck_update"}: "recheck_update" {group: ticked} is what the Re-check box ticks (for every atlas).
         """
         s = self.settings  # (read only: older settings are brought up to date once, as they load: migrate_settings)
         return {
@@ -143,6 +164,7 @@ class AtlasSession(
             "style": _style(s),
             "replay": s.get("replay", {}),
             "ui": s.get("ui", {}),
+            "recheck_update": {g: bool(_recheck_ticks(s).get(g, True)) for g in RECHECK_GROUPS},
         }
 
     def set_ui_settings(self, changes: dict) -> dict:
@@ -155,6 +177,18 @@ class AtlasSession(
         Returns:
             The settings after the change (ui_settings).
         """
+        with self._settings_lock:
+            before = self._change_ui_settings(changes)
+        if tile_flags(self._flags()) != tile_flags(before):  # what the tiles hold changed (not how the page draws it)
+            self.filters_changed()
+        return self.ui_settings()
+
+    def _change_ui_settings(self, changes: dict) -> dict:
+        """The work of set_ui_settings, under the settings lock.
+
+        Returns:
+            The flags before the change (_flags), for the tile check.
+        """
         s = self.settings
         before = self._flags()
         hidden_before = set(s.get("icon_hidden", []))
@@ -166,15 +200,16 @@ class AtlasSession(
                 s[k] = bool(changes[k])
         if "hidden_types" in changes:
             s["icon_hidden"] = sorted(set(changes["hidden_types"]))
+        if isinstance(changes.get("recheck_update"), dict):
+            got = {g: bool(v) for g, v in changes["recheck_update"].items() if g in RECHECK_GROUPS}
+            s["recheck_update"] = {**_recheck_ticks(s), **got}
         if "style" in changes and changes["style"].get("reset"):
             s["style"] = {}
         migrate_settings(s)  # (a tab still on an older page can send a retired setting: self review)
         self.save_settings()
         # every change you make, in one line of the Log tab (user: "every user made change should be listed")
         self.events.log(f"Changed: {settings_change_text(changes, hidden_before)}")
-        if tile_flags(self._flags()) != tile_flags(before):  # what the tiles hold changed (not how the page draws it)
-            self.filters_changed()
-        return self.ui_settings()
+        return before
 
     # ------------------------------------------------------------------ open / new / save / close
     @atlas_switch
@@ -229,7 +264,7 @@ class AtlasSession(
             before, now = self.opened, self._switch(atlas, p)
             # in the same step as the switch: set after it, an older load finishing late made itself the atlas
             # opened at the next start (CodeRabbit)
-            self.settings["last_atlas"] = str(p)
+            self.set_setting("last_atlas", str(p), save=False)
             if before.scope and before.scope != now.scope:
                 self.events.log(f"switched to atlas {name}", before.scope)
         maps = len((atlas.final or {}).get("nodes", []))
@@ -280,7 +315,7 @@ class AtlasSession(
             self._reset_mapimage()
             now = self._switch(core.Atlas(), p)
             now.atlas.save(p)
-        self.settings["last_atlas"] = str(p)
+        self.set_setting("last_atlas", str(p), save=False)
         self._after_load()
         self.events.log(f"new atlas: {p}", now.scope)
         if self.settings.get("watch_on"):
@@ -562,6 +597,7 @@ _WORDS = {
     "multi_only": "Find: only what 2+ screenshots show",
     "only_icon_maps": "Find: only maps with a ticked icon",
     "near_only": "Find: only potential city maps",
+    "recheck_update": "Re-check updates",
     "path_freq": "paths drawn by at least",
     "path_width": "path width",
     "path_style": "path style",
@@ -675,6 +711,12 @@ def dist(a, b) -> float:
 
 
 __all__ = ["AtlasSession", "Opened", "potential_kind", "dist"]
+
+
+def _recheck_ticks(s: dict) -> dict:
+    """The Re-check box's saved ticks ({group: ticked}; {} when none are saved, or the file holds something else)."""
+    t = s.get("recheck_update")
+    return t if isinstance(t, dict) else {}
 
 
 def migrate_settings(s: dict) -> dict:

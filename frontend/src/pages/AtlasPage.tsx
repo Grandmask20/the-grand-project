@@ -6,6 +6,7 @@ import { DeleteAtlasDialog } from "@/components/dialogs/DeleteAtlasDialog";
 import { FileBrowserDialog } from "@/components/dialogs/FileBrowserDialog";
 import { PromptDialog } from "@/components/dialogs/PromptDialog";
 import { QuestionDialog } from "@/components/dialogs/QuestionDialog";
+import { RecheckDialog } from "@/components/dialogs/RecheckDialog";
 import { SourcesDialog } from "@/components/dialogs/SourcesDialog";
 import { MapImageWait } from "@/components/layout/MapImageWait";
 import { SidePanel } from "@/components/layout/SidePanel";
@@ -112,6 +113,7 @@ export function AtlasPage() {
 			<FileBrowserDialog />
 			<PromptDialog />
 			<ConfirmDialog />
+			<RecheckDialog />
 			<BookmarkDialog />
 			<SourcesDialog />
 			<DeleteAtlasDialog />

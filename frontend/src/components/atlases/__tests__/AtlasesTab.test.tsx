@@ -24,6 +24,13 @@ describe("AtlasesTab", () => {
 		);
 	});
 
+	it("asks before re-checking an atlas from its card (user: a refresh icon, a prompt)", async () => {
+		const { user, calls } = renderWithApp(<AtlasesTab />, { "GET /api/atlases": atlases });
+		await user.click(await screen.findByRole("button", { name: "Re-check second" }));
+		expect(useAppStore.getState().recheckAtlas).toBe("/atlases/two/atlas.json");
+		expect(calls.some((c) => c.path.startsWith("/api/atlas/recheck"))).toBe(false); // (asked first)
+	});
+
 	it("asks what to do before deleting", async () => {
 		const { user } = renderWithApp(<AtlasesTab />, { "GET /api/atlases": atlases });
 		await user.click(await screen.findByRole("button", { name: "Delete second" }));

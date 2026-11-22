@@ -74,6 +74,8 @@ class Atlas:
         city_auto: {x, y, d: [..]} cached look-alike distances per city type.
         landmark_edits: {x, y, kind[, on]} set by hand in the viewer; kind "" = deleted.
         biome_edits: {"biome": "Vaal city"... or "" (none), "maps": [[x, y], ...]} lassoed by hand.
+        biome_kept: {x, y, "biome" ("" = none)} maps whose biome a Re-check left as it was (app.recheck_choices).
+        last_check: {"time", "version"} of the last whole-atlas Re-check, or None (none since 1.23).
         locks: {x, y, n} hand icons = locked Breach strongholds.
         lock_scanned: Screenshots already searched for the hand icon.
         frames: Placed screenshots {name, path, sha, w, h, M, horizon, stats, new_nodes, matched_nodes,
@@ -98,6 +100,8 @@ class Atlas:
         self.biome_edits: list[
             dict
         ] = []  # {"biome": "Vaal city"... or "" (none), "maps": [[x, y], ...]} lassoed by hand
+        self.biome_kept: list[dict] = []  # {x,y,biome} biomes a Re-check left as they were (you unticked Biomes)
+        self.last_check: dict | None = None  # {time, version} of the last whole-atlas Re-check (its prompt says)
         self.locks: list[dict] = []  # {x,y,n} hand badges = locked Breach strongholds
         self.lock_scanned: list[str] = []  # screenshots already searched for the hand badge
         self.frames: list[dict] = []  # {name,path,sha,w,h,M,stats}
@@ -761,6 +765,8 @@ class Atlas:
         "city_auto",
         "landmark_edits",
         "biome_edits",
+        "biome_kept",
+        "last_check",
         "locks",
         "lock_scanned",
         "final",
@@ -812,6 +818,8 @@ class Atlas:
             "city_auto": self.city_auto,
             "landmark_edits": self.landmark_edits,
             "biome_edits": self.biome_edits,
+            "biome_kept": self.biome_kept,
+            "last_check": self.last_check,
             "locks": self.locks,
             "lock_scanned": self.lock_scanned,
             "final": self.final,
@@ -874,6 +882,8 @@ class Atlas:
         at.city_auto = d.get("city_auto", [])
         at.landmark_edits = d.get("landmark_edits", [])
         at.biome_edits = d.get("biome_edits", [])
+        at.biome_kept = d.get("biome_kept", [])
+        at.last_check = d.get("last_check")
         at.locks = d.get("locks", [])
         at.lock_scanned = d.get("lock_scanned", [])
         keys = ("inliers", "rmse", "ncc", "ratio", "reference", "reason")

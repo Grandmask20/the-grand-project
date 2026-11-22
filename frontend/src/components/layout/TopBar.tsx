@@ -112,7 +112,7 @@ export function TopBar() {
 					</DropdownMenuItem>
 					<DropdownMenuItem
 						disabled={!open || busy || !state?.atlas?.shots}
-						onSelect={() => void app.recheck().then(refresh).catch(fail)}
+						onSelect={() => state?.atlas && s.askRecheck(state.atlas.path)}
 					>
 						Re-check the whole atlas
 					</DropdownMenuItem>
