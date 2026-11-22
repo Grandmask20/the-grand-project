@@ -1,5 +1,5 @@
 import { useQueryClient } from "@tanstack/react-query";
-import { ChevronDownIcon, ChevronRightIcon, EyeIcon, EyeOffIcon, RouteIcon, Trash2Icon } from "lucide-react";
+import { ChevronDownIcon, ChevronRightIcon, EyeIcon, EyeOffIcon, PlayIcon, RouteIcon, Trash2Icon } from "lucide-react";
 import { type ReactNode, useState } from "react";
 import { AppQueryKeys } from "@/api/AppQueryKeys";
 import { GameIcon } from "@/components/common/GameIcon";
@@ -270,6 +270,12 @@ export function BookmarksTab() {
 							>
 								{g.name} <span className="font-normal text-muted-foreground">({g.items.length})</span>
 							</button>
+							{/* its tour: the camera from one bookmark to the next (BookmarkTour) */}
+							{g.items.some((b) => !b.route) && (
+								<RowAction label={`Tour ${g.name}`} onClick={() => s.setTour({ group: g.name, at: 0 })}>
+									<PlayIcon className="size-4" />
+								</RowAction>
+							)}
 							{/* the pen: its name and look (user: icons and colours per group) */}
 							<RowAction
 								label={`Edit ${g.name}`}

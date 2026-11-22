@@ -22,6 +22,13 @@ describe("BookmarksTab", () => {
 		expect(pen).not.toHaveClass("opacity-0");
 	});
 
+	it("a group's play button starts its tour; an empty group has none", async () => {
+		const { user } = renderWithApp(<BookmarksTab />, { "GET /api/bookmarks": bookmarks });
+		await user.click(await screen.findByRole("button", { name: "Tour Boss" }));
+		expect(useAppStore.getState().tour).toEqual({ group: "Boss", at: 0 });
+		expect(screen.queryByRole("button", { name: "Tour Farm" })).toBeNull();
+	});
+
 	it("hides a bookmark with its eye", async () => {
 		const { user, calls } = renderWithApp(<BookmarksTab />, {
 			"GET /api/bookmarks": bookmarks,

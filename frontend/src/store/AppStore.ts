@@ -147,6 +147,9 @@ export interface AppStoreState {
 	/** A spot to show; clearTop: the window's y above which it would be hidden (a box over the map's top). */
 	fly: { x: number; y: number; px?: number; clearTop?: number; n: number } | null;
 	flyTo: (x: number, y: number, px?: number, clearTop?: number) => void;
+	/** A bookmark group's tour (BookmarkTour): the camera flying from one bookmark to the next. */
+	tour: { group: string; at: number } | null;
+	setTour: (tour: { group: string; at: number } | null) => void;
 	fitAtlas: number;
 	requestFit: () => void;
 	/** Fit an area of the atlas in the view (a saved route: its whole line, with room round it). */
@@ -317,6 +320,8 @@ export const useAppStore = create<AppStoreState>()((set) => ({
 	lassoAsked: false,
 	fly: null,
 	flyTo: (x, y, px, clearTop) => set((s) => ({ fly: { x, y, px, clearTop, n: (s.fly?.n ?? 0) + 1 } })),
+	tour: null,
+	setTour: (tour) => set({ tour }),
 	fitAtlas: 0,
 	requestFit: () => set((s) => ({ fitAtlas: s.fitAtlas + 1 })),
 	fitTo: null,
