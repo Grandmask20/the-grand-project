@@ -168,9 +168,12 @@ export function ReplayPanel({ meta }: { meta: Meta }) {
 		exporting.current = job;
 		setBusy(true);
 		patch({ recording: true, playing: false });
-		// it stops when the atlas or the map changes under it (it kept drawing the old map and threw: CodeRabbit)
+		// it stops when the atlas or the map changes under it (it kept drawing the old map and threw: CodeRabbit), or
+		// the timelapse it was made from is no longer the one open: checked here each time, not only by the cancel
+		// the panel sets when it closes (an export finishing before that still downloaded: CodeRabbit)
 		const still = sameAtlas();
-		const live = () => !job.cancel && still() && useAppStore.getState().map === map;
+		const live = () =>
+			!job.cancel && still() && useAppStore.getState().map === map && useAppStore.getState().replay?.plan === plan;
 		const frameMs = (st.length * 1000) / count;
 		const k = ease(meta, st.smoothing, frameMs / 1000);
 		try {

@@ -4,10 +4,35 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { ReplayPanel } from "@/components/replay/ReplayPanel";
 import type { ReplayPlan } from "@/domain/replay/ReplayPlan";
 import { useAppStore } from "@/store/AppStore";
-import { meta } from "@/test/Fixtures";
+import { mapInfo, meta, state } from "@/test/Fixtures";
 import { renderWithApp, resetStore } from "@/test/RenderWithApp";
+import { download } from "@/utils/Download";
 
 vi.mock("@/utils/Download", () => ({ download: vi.fn() }));
+
+// an export's frames made at once; its file held until a test lets it finish
+const exportFile = vi.hoisted(() => ({ finishing: false, finish: (_b: Blob) => {} }));
+vi.mock("@/logic/ReplayExport", async (orig) => ({
+	...(await orig<typeof import("@/logic/ReplayExport")>()),
+	mapIdle: () => Promise.resolve(),
+	nextFrames: () => Promise.resolve(),
+	onNextRender: () => Promise.resolve(),
+	ReplayExporter: class {
+		draw() {}
+		add() {}
+		close() {}
+		finish() {
+			exportFile.finishing = true;
+			return new Promise<Blob>((r) => {
+				exportFile.finish = r;
+			});
+		}
+	},
+}));
+vi.mock("@/logic/Replay", async (orig) => ({
+	...(await orig<typeof import("@/logic/Replay")>()),
+	cameraTarget: () => null, // (the camera stays: no map to move)
+}));
 
 const settings = {
 	type: "by time",
@@ -69,6 +94,8 @@ describe("ReplayPanel", () => {
 	afterEach(() => {
 		resetStore();
 		vi.unstubAllGlobals();
+		vi.clearAllMocks(); // (a stopped recording downloads: not counted in the next test)
+		exportFile.finishing = false;
 	});
 
 	it("closed from outside (the Timelapse tab, another atlas): a recording still running stops (CodeRabbit)", async () => {
@@ -81,6 +108,27 @@ describe("ReplayPanel", () => {
 		expect(FakeRecorder.last?.state).toBe("recording");
 		act(() => useAppStore.getState().setReplay(null));
 		expect(FakeRecorder.last?.stops).toBe(1);
+	});
+
+	it("an export of a timelapse no longer open doesn't download (it relied on the panel's cancel alone: CodeRabbit)", async () => {
+		const canvas = { width: 200, height: 100, clientWidth: 200, clientHeight: 100 };
+		act(() => useAppStore.getState().setMap({ getCanvas: () => canvas } as unknown as MapLibreMap));
+		const { user } = open({ "GET /api/state": { ...state, map: mapInfo } });
+		act(() =>
+			useAppStore.getState().setReplay({
+				plan: { ...plan(3), settings: { ...plan(3).settings, length: 1 } } as ReplayPlan,
+				pos: 4,
+				playing: false,
+				recording: false,
+			}),
+		);
+		await user.click(screen.getByRole("button", { name: "Export" }));
+		await user.click(await screen.findByRole("menuitem", { name: /^GIF/ }));
+		await waitFor(() => expect(exportFile.finishing).toBe(true));
+		// another timelapse open by the time the file is done (the panel's cancel only comes with a close)
+		act(() => useAppStore.getState().setReplay({ plan: plan(30), pos: 0, playing: false, recording: false }));
+		await act(async () => exportFile.finish(new Blob(["gif"])));
+		expect(download).not.toHaveBeenCalled();
 	});
 
 	it("sends settings changes one after another: the last answer shown is the last change's (CodeRabbit)", async () => {
