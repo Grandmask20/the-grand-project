@@ -151,6 +151,12 @@ A screenshot that might be placed wrong is shown on the map, see-through and out
 
 ## 5. Other things
 
+- **Live sharing** (*Share* in the top bar): a friend watches your atlas grow while you play, or you watch theirs. Your browser links straight to theirs, with no server, account or port forwarding:
+  1. The sharer clicks *New invite* and sends the invite code to the friend (Discord, any chat).
+  2. The friend pastes it under *Watch a friend*, clicks *Join*, and sends back the reply code.
+  3. The sharer pastes the reply and clicks *Connect*. The link goes live.
+
+  Then the friend clicks *Open* to see your maps, paths, landmarks and where you are (*I'm here*), updated as you add screenshots. It is read-only and never changes their own atlas. Screenshots and the map picture are not sent. Keep the page open while sharing. One invite per friend. Codes work once: to link again, or if a code waited long and the link never opens, make new ones. It works on most home connections. If a link never opens, one side's network doesn't allow direct links (some mobile or shared networks). Your public IP address is in the codes, so send them only to friends.
 - **Log tab** (with a *Debug* page in the internal copy): what you did (settings changed, map tools, bookmarks, tabs, selections) and what the program did and is doing (progress, done / stopped / failed), in plain words, with any problems (*Save log*); the *Frame log* records how long the map takes to draw and saves it as CSV. The full log is `user_data/atlas_debug.log`.
 - **Settings** (last atlas, layers, styles, watched folders) are in `user_data/viewer_settings.json`. Delete that file to start fresh.
 - **Port:** the app uses port 8765, or the next free one. `python -m grand_project --port N` picks another; `--no-browser` doesn't open the browser.

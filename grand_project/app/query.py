@@ -721,6 +721,30 @@ class QueryMixin:
                 edges.append(e)
         return {"nodes": nodes, "edges": edges}
 
+    def landmarks(self) -> list[dict]:
+        """Return the landmarks as the map shows them (removed ones left out), for a friend watching this atlas (live
+        sharing: the page sends them with the maps and paths).
+
+        Returns:
+            [{"id", "x", "y", "kind", "label", "node"}]: kind as the atlas keeps it ("Vaal city", "Tower", ...), label
+            as the page names it ("Locked Breach stronghold"), node the map it stands on (None: none).
+        """
+        if not self.atlas:
+            return []
+        on = self.D.get("landmark_node", {})
+        return [
+            {
+                "id": i,
+                "x": float(lm["x"]),
+                "y": float(lm["y"]),
+                "kind": lm["kind"],
+                "label": self.landmark_name(i),
+                "node": on.get(i),
+            }
+            for i, lm in enumerate(self.V["landmarks"])
+            if not lm["status"].startswith("removed")
+        ]
+
 
 def _pkind(label: str) -> str:
     """Return the Find type a biome's potential map is listed under.

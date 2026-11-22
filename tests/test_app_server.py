@@ -66,6 +66,8 @@ def test_tiles_over_http(app):
     st, h, body = call(srv, f"/api/tiles/vector/{z}/{int(wx // 256)}/{int(wy // 256)}.pbf")
     assert h["Content-Type"] == "application/x-protobuf" and read_tile(body)["maps"]
     assert call(srv, "/api/icons/Breach.png?kind=sprite")[2][:4] == b"\x89PNG"
+    marks = json.loads(call(srv, "/api/landmarks")[2])  # (live sharing sends them to a friend)
+    assert marks and {"x", "y", "kind", "label"} <= marks[0].keys()
 
 
 def test_changes_need_the_header_and_the_right_host(app):

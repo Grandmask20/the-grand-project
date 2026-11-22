@@ -762,6 +762,11 @@ class Handler(BaseHTTPRequestHandler):
         """The map graph for routes."""
         self._json(self.S.graph())
 
+    @route("GET", "/api/landmarks")
+    def get_landmarks(self, q) -> None:
+        """The landmarks shown (live sharing sends them to a friend)."""
+        self._json(self.S.landmarks())
+
     @route("POST", "/api/pick")
     def post_pick(self, q) -> None:
         """What is under a point."""

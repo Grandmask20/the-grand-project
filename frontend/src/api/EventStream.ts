@@ -102,6 +102,7 @@ export function createEventHandler(queryClient: QueryClient) {
 					"list",
 					"info",
 					"graph",
+					"landmarks",
 					"frames",
 					"heat",
 					"bookmarks",
