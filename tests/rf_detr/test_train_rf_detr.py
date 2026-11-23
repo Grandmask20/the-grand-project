@@ -22,6 +22,7 @@ torch = pytest.importorskip("torch")
 pytest.importorskip("datasets")
 pytest.importorskip("accelerate")
 transformers = pytest.importorskip("transformers")
+from safetensors.torch import load_file, save_file  # noqa: E402
 
 from grand_project.detect import constants as K  # noqa: E402
 from tools import train_rf_detr as T  # noqa: E402
@@ -85,11 +86,17 @@ class FakeDetr(torch.nn.Module):
     @classmethod
     def from_pretrained(cls, name, **kwargs):
         labels = Path(name, "labels.json")
-        return cls(len(json.loads(labels.read_text())) if labels.is_file() else 91)
+        model = cls(len(json.loads(labels.read_text())) if labels.is_file() else 91)
+        weights = Path(name, "model.safetensors")
+        if weights.is_file():  # a folder this stand-in saved: its weights, as a real model loads them
+            model.load_state_dict(load_file(str(weights)))
+        return model
 
     def save_pretrained(self, path, **kwargs) -> None:
         Path(path).mkdir(parents=True, exist_ok=True)
         Path(path, "config.json").write_text(json.dumps({"num_labels": self.config.num_labels}))
+        save_file({name: value.detach().contiguous() for name, value in self.state_dict().items()},
+                  str(Path(path, "model.safetensors")))  # fmt: skip
 
     def forward(self, pixel_values, labels=None, pixel_mask=None):
         batch, tile = len(pixel_values), pixel_values.shape[-1]
@@ -150,7 +157,7 @@ def test_a_whole_run_trains_picks_the_best_checkpoint_and_scores_the_test_split(
     manifest = _export(tmp_path)
     _freeze(manifest, ledger)
     args = ["--annotator-manifest", str(manifest), "--output-dir", str(out), "--epochs", "3",
-            "--tiles-per-image", "1", "--batch-size", "2", "--grad-accum", "2", "--device", "cpu",
+            "--tiles-per-image", "1", "--batch-size", "1", "--grad-accum", "1", "--device", "cpu",
             "--patience", "1", "--workers", "0"]  # fmt: skip
     assert T.main(args) == 0
     summary = json.loads((out / "training_summary.json").read_text())
@@ -167,6 +174,38 @@ def test_a_whole_run_trains_picks_the_best_checkpoint_and_scores_the_test_split(
     assert (best / K.RF_DETR_TRAINED_ON).read_text().split() == ["shot0.png", "shot1.png", "shot2.png"]
     checkpoint = out / "checkpoints" / summary["best_checkpoint"]
     assert json.loads((checkpoint / T.EMA_DIR / T.EMA_STATE).read_text())["updates"] >= 1
+    # what is kept is the selected checkpoint's EMA: not the last checkpoint's EMA, not the live weights
+    last = max((out / "checkpoints").glob("checkpoint-*"), key=lambda path: int(path.name.split("-")[1]))
+    assert last != checkpoint
+    kept = load_file(str(best / "model.safetensors"))
+    selected = load_file(str(checkpoint / T.EMA_DIR / "model.safetensors"))
+    assert _same(kept, selected)
+    assert not _same(kept, load_file(str(last / T.EMA_DIR / "model.safetensors")))
+    assert not _same(kept, load_file(str(checkpoint / "model.safetensors")))  # the live weights at that checkpoint
+    assert _same(FakeDetr.from_pretrained(best).state_dict(), selected)  # and a reload keeps them
+
+
+def _same(a: dict, b: dict) -> bool:
+    """Whether two state dicts hold the same tensors."""
+    return a.keys() == b.keys() and all(torch.equal(a[name], b[name]) for name in a)
+
+
+def test_a_run_gone_on_from_a_model_lists_what_that_one_trained_on_too(tmp_path: Path, fakes, ledger) -> None:
+    """--init-from: the kept model has learned the earlier model's screenshots as well, so its RF_DETR_TRAINED_ON
+    lists both (a later pre-label pass or held-out check must not take those as unseen)."""
+    earlier = tmp_path / "earlier"
+    earlier.mkdir()
+    (earlier / "labels.json").write_text(json.dumps(LABELS))
+    (earlier / K.RF_DETR_TRAINED_ON).write_text("older/shot.png\nshot0.png\n")
+    manifest = _export(tmp_path)
+    _freeze(manifest, ledger)
+    out = tmp_path / "run"
+    args = ["--annotator-manifest", str(manifest), "--output-dir", str(out), "--epochs", "1",
+            "--tiles-per-image", "1", "--batch-size", "2", "--grad-accum", "1", "--device", "cpu",
+            "--workers", "0", "--init-from", str(earlier)]  # fmt: skip
+    assert T.main(args) == 0
+    listed = (out / "best" / K.RF_DETR_TRAINED_ON).read_text().split()
+    assert listed == ["older/shot.png", "shot0.png", "shot1.png", "shot2.png"]
 
 
 def test_the_ledger_stops_a_manifest_that_moved_a_screenshot(tmp_path: Path, fakes, ledger) -> None:

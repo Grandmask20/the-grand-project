@@ -65,7 +65,7 @@ from grand_project.detect.labels import warm_start_rows
 from grand_project.detect.rf_detr import build_dataset, load_annotator_manifest, tile_transform
 from grand_project.detect.rf_detr_cuda import prefer_pip_cuda_libraries
 from grand_project.detect.rf_detr_eval import evaluate, format_report
-from grand_project.detect.rf_detr_model import class_families, predict_tiles
+from grand_project.detect.rf_detr_model import class_families, predict_tiles, trained_on
 from grand_project.detect.rf_detr_tiles import (
     backbone_weight_decay,
     epoch_indices,
@@ -526,19 +526,17 @@ def swap_in(staging: Path, target: Path) -> None:
     shutil.rmtree(previous, ignore_errors=True)
 
 
-def export_best(checkpoint: Path, processor, best_dir: Path, label_map: dict[str, str], trained_on: list[str]) -> None:
+def export_best(checkpoint: Path, processor, best_dir: Path, label_map: dict[str, str], sources: list[str]) -> None:
     """Put a checkpoint's EMA weights, the processor, the label map and the screenshots trained on
-    (``RF_DETR_TRAINED_ON``) at ``best_dir`` (the folder the program loads), switched in only once complete
-    (``swap_in``)."""
+    (``RF_DETR_TRAINED_ON``: this run's and those of the model it went on from) at ``best_dir`` (the folder the program
+    loads), switched in only once complete (``swap_in``)."""
     staging = best_dir.with_name(f"{best_dir.name}.new")
     if staging.exists():
         shutil.rmtree(staging)
     shutil.copytree(checkpoint / EMA_DIR, staging, ignore=shutil.ignore_patterns(EMA_STATE))
     processor.save_pretrained(staging)
     (staging / "labels.json").write_text(json.dumps(label_map, indent=2) + "\n", encoding="utf-8")
-    (staging / K.RF_DETR_TRAINED_ON).write_text(
-        "".join(f"{source}\n" for source in sorted(trained_on)), encoding="utf-8"
-    )
+    (staging / K.RF_DETR_TRAINED_ON).write_text("".join(f"{source}\n" for source in sorted(sources)), encoding="utf-8")
     swap_in(staging, best_dir)
 
 
@@ -801,7 +799,9 @@ def main(argv: list[str] | None = None) -> int:
     if best is None:
         raise SystemExit("no checkpoint was evaluated: nothing to keep")
     best_dir = args.output_dir / "best"
-    export_best(Path(best), processor, best_dir, label_map, list(dataset["train"]["source"]))
+    # a model gone on from another (--init-from) has also learned what that one trained on
+    sources = set(dataset["train"]["source"]) | (trained_on(args.init_from) if args.init_from else set())
+    export_best(Path(best), processor, best_dir, label_map, sorted(sources))
     print(
         f"saved {best_dir} (the EMA weights of {Path(best).name}, validation mean AP {trainer.state.best_metric:.4f})"
     )

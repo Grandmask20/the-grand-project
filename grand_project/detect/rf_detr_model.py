@@ -56,6 +56,15 @@ def rf_detr_model_path() -> Path:
     return Path(value).expanduser() if value else K.RF_DETR_DEFAULT_MODEL_DIR
 
 
+def trained_on(model_dir: Path) -> set[str]:
+    """The screenshots (project-relative paths) a kept model trained on, as its ``RF_DETR_TRAINED_ON`` lists them
+    (empty when it has no such list)."""
+    listed = Path(model_dir) / K.RF_DETR_TRAINED_ON
+    if not listed.is_file():
+        return set()
+    return {line.strip() for line in listed.read_text(encoding="utf-8").splitlines() if line.strip()}
+
+
 def reset_rf_detr_runtime() -> None:
     """Forget a loaded model; useful when a test swaps the model path or feature flag."""
     global _RUNTIME
@@ -281,19 +290,6 @@ def hall_node(box: list[float], nodes: list[dict], bosses: list[dict]) -> dict |
     return min(inside, key=lambda n: np.hypot(n["x"] - cx, n["y"] - cy), default=None)
 
 
-def _wall_mask(img: np.ndarray, detections: list[dict[str, Any]]) -> np.ndarray:
-    """Build a wall mask by merging RF-DETR wall boxes with the precise classical wall mask."""
-    mask = fortress_walls(img)
-    for item in detections:
-        if item["family"] != "wall":
-            continue
-        x0, y0, x1, y1 = map(round, item["box"])
-        box_mask = np.zeros(img.shape[:2], np.uint8)
-        cv2.rectangle(box_mask, (x0, y0), (x1, y1), 1, -1)
-        mask = np.maximum(mask, box_mask)
-    return mask
-
-
 def detect_rf_detr(img: np.ndarray) -> dict:
     """Detect one screenshot with RF-DETR and return the classical detector's result shape."""
     detections = _predict(img)
@@ -408,7 +404,9 @@ def detect_rf_detr(img: np.ndarray) -> dict:
     # the Expedition rules first, as in the classical detector: they clear tower flags the path tracer reads
     nodes, icons, landmarks = expedition_rules(nodes, icons, landmarks)
     edges = trace_paths(nodes, classical_path_dashes(img), img)
-    wall = _wall_mask(img, detections)
+    # the classical wall mask alone decides, as in the classical detector: a learned wall box is no exact wall and
+    # would cut paths the mask lets through
+    wall = fortress_walls(img)
     edges = [edge for edge in edges if wall_share(edge["line"], wall) < K.WALL_CROSS]
     return {
         "width": w,
@@ -430,4 +428,5 @@ __all__ = [
     "reset_rf_detr_runtime",
     "rf_detr_enabled",
     "rf_detr_model_path",
+    "trained_on",
 ]

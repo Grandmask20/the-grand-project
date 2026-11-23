@@ -239,3 +239,55 @@ def test_a_limited_pass_draws_the_arms_of_every_eligible_block(
     model = str(tmp_path / "model")
     assert model_prelabel.main(["--dry-run", "--limit", "1", "--output-dir", str(out), "--model", model]) == 0
     assert drawn == [sorted(image_key(path) for path in paths)]  # all four drawn; the pass does one
+
+
+def test_a_failed_model_pass_keeps_its_blocks_in_the_models_arm(
+    tmp_path: Path, review_store: ReviewStore, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Each block's arm is planned before any work: a pass that fails leaves its screenshots eligible, and the next
+    pass (another draw) gives them the arm planned, not a new one."""
+    folder = tmp_path / "shots"
+    folder.mkdir()
+    paths = [folder / f"{index}.png" for index in range(2)]
+    for index, path in enumerate(paths):
+        path.write_bytes(bytes([index]))
+    review_store.add_images(paths)
+    for path in paths:
+        result = {"width": 1920, "height": 1080, "annotations": [_box("map_node_grass", 300, 300)]}
+        review_store.record_detection(image_key(path), result, force=False)
+    keys = [image_key(path) for path in paths]
+    review_store.claim_splits({key: "train" for key in keys})
+    monkeypatch.setattr(model_prelabel, "_blocks", lambda items: {key: key for key, _item in items})
+    monkeypatch.setattr("grand_project.detect.rf_detr_model.load_detector", lambda model_dir: {})
+
+    def broken(detector, path):
+        raise RuntimeError("out of memory")
+
+    monkeypatch.setattr(model_prelabel, "predict", broken)
+    model_dir = tmp_path / "model"
+    model_dir.mkdir()
+    out = review_store.path.parent
+    command = ["--model", str(model_dir), "--output-dir", str(out), "--policy", "relabel"]
+    with pytest.raises(RuntimeError, match="out of memory"):
+        model_prelabel.main([*command, "--share", "1"])
+    assert review_store.prelabel_plan() == {key: DK.RF_DETR_SOURCE_MODEL for key in keys}
+    assert all(K.ANNOTATOR_PRELABEL_FIELD not in review_store.item(key) for key in keys)  # still eligible
+
+    found = [{"label": "map_node_vaal", "family": "node", "score": 0.9, "box": [281.0, 281.0, 319.0, 319.0]}]
+    monkeypatch.setattr(model_prelabel, "predict", lambda detector, path: (found, (1920, 1080), (1920, 1080)))
+    assert model_prelabel.main([*command, "--share", "0", "--seed", "7"]) == 0  # a draw that would give none
+    for key in keys:
+        assert review_store.item(key)[K.ANNOTATOR_PRELABEL_FIELD]["source"] == DK.RF_DETR_SOURCE_MODEL
+        assert [b["label"] for b in review_store.item(key)["annotations"]] == ["map_node_vaal"]
+
+
+def test_a_dry_run_plans_no_arm(tmp_path: Path, review_store: ReviewStore) -> None:
+    path = tmp_path / "a.png"
+    path.write_bytes(b"a")
+    review_store.add_images([path])
+    result = {"width": 1920, "height": 1080, "annotations": [_box("map_node_grass", 300, 300)]}
+    review_store.record_detection(image_key(path), result, force=False)
+    review_store.claim_splits({image_key(path): "train"})
+    out = review_store.path.parent
+    assert model_prelabel.main(["--dry-run", "--output-dir", str(out), "--model", str(tmp_path / "model")]) == 0
+    assert review_store.prelabel_plan() == {}

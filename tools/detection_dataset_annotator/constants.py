@@ -337,6 +337,11 @@ ANNOTATOR_PRELABEL_FIELD = "prelabel"
 """The field (in a screenshot's ``extra``) saying what pre-labelled it: ``{"source": "classical" | "rf_detr",
 "model", "model_sha", "policy", "round"}`` (``model_prelabel``), so the effort report compares the arms."""
 
+ANNOTATOR_PRELABEL_PLAN = "prelabel_arms"
+"""The store's ``meta`` entry holding each spatial block's planned pre-label arm (block -> ``classical`` |
+``rf_detr``), kept apart from a screenshot's done mark (``ANNOTATOR_PRELABEL_FIELD``): a model pass that fails keeps
+its blocks in the model's arm for the next one."""
+
 ANNOTATOR_SQL_CHUNK = 500
 """Keys bound in one SQL query of the store (SQLite's limit is 999 in older builds)."""
 

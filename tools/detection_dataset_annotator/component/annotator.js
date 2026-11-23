@@ -216,6 +216,9 @@ class Annotator {
       this.data.dataset !== data.dataset ||
       this.data.image_key !== data.image_key ||
       this.data.revision !== data.revision;
+    // A drag on the old screenshot ends without putting anything back: its boxes must never return over the new one
+    // (a later Esc would restore them).
+    if (first) this.endDrag();
     this.data = data;
     this.labels = data.labels ?? [];
     // Sources of guessed boxes (an unsure city type, biome or city area: constants.ANNOTATOR_GUESS_SOURCES)
@@ -797,12 +800,18 @@ class Annotator {
     this.renderAll();
   }
 
-  cancelDrag() {
+  endDrag() {
+    // Forget the drag in progress, restoring nothing.
     const drag = this.drag;
-    if (!drag) return;
     this.drag = null;
     this.viewport.classList.remove("ann-translating");
     this.drawEl.hidden = true;
+    return drag;
+  }
+
+  cancelDrag() {
+    const drag = this.endDrag();
+    if (!drag) return;
     if ((drag.kind === "move" || drag.kind === "resize") && drag.moved) {
       this.boxes = drag.before;
     }

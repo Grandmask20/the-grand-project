@@ -21,6 +21,7 @@ from tools.detection_dataset_annotator.split_ledger import (
     held_out_overlap,
     join_blocks,
     read_ledger,
+    read_ledger_rows,
     settle_splits,
     write_ledger,
 )
@@ -96,15 +97,59 @@ def test_a_rebuilt_store_gets_every_split_from_the_ledger(tmp_path: Path, review
     assert read_ledger() == before
 
 
-def test_copies_share_one_split_and_one_row(tmp_path: Path, review_store: ReviewStore) -> None:
+def test_copies_share_one_split_and_keep_a_row_each(tmp_path: Path, review_store: ReviewStore) -> None:
     paths = _shots(tmp_path / "shots")
     copy = tmp_path / "copies" / paths[0].name
     copy.parent.mkdir()
     shutil.copy(paths[0], copy)
     _detect(review_store, [*paths, copy])
     settled = settle_splits(review_store)
-    assert settled.split_of[image_key(copy)] == settled.split_of[image_key(paths[0])]
-    assert len(read_ledger()) == SHOTS
+    split = settled.split_of[image_key(paths[0])]
+    assert settled.split_of[image_key(copy)] == split
+    assert len(read_ledger()) == SHOTS  # one digest each
+    rows = [entry for entry in read_ledger_rows() if entry.sha256 == file_hash(copy)]
+    assert sorted(entry.file for entry in rows) == sorted([relative_source(paths[0]), relative_source(copy)])
+    assert {entry.split for entry in rows} == {split}
+    assert settle_splits(review_store).added == 0  # a second settle adds no row
+
+
+def test_a_copy_whose_bytes_changed_keeps_its_originals_held_out_split(
+    tmp_path: Path, review_store: ReviewStore
+) -> None:
+    """A copy is recorded under its own name too: saved again with other bytes and found by a rebuilt store, it keeps
+    its original's split by name instead of being drawn again (perhaps into train, beside its held-out original)."""
+    paths = _shots(tmp_path / "shots")
+    _detect(review_store, paths)
+    settled = settle_splits(review_store)
+    original = next(path for path in paths if settled.split_of[image_key(path)] != "train")
+    held = settled.split_of[image_key(original)]
+    copy = tmp_path / "copies" / "copy.png"
+    copy.parent.mkdir()
+    shutil.copy(original, copy)
+    _detect(review_store, [copy])
+    assert settle_splits(review_store).split_of[image_key(copy)] == held
+    copy.write_bytes(b"the copy, saved again")
+    with ReviewStore.open(tmp_path / "rebuilt" / K.ANNOTATOR_STORE_FILE) as rebuilt:
+        _detect(rebuilt, [*paths, copy])
+        again = settle_splits(rebuilt)
+    assert again.split_of[image_key(copy)] == held
+    assert again.origins["ledger (by file name: its bytes changed)"] == 1
+
+
+def test_a_split_claimed_meanwhile_that_differs_publishes_nothing(
+    tmp_path: Path, review_store: ReviewStore, split_ledger_file: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The store keeps a split claimed before this one (outside the ledger's lock): another split than the one given
+    here is a conflict, and the ledger is not written."""
+    paths = _shots(tmp_path / "shots", 3)
+    _detect(review_store, paths)
+    other = {"train": "test", "validation": "train", "test": "train"}
+    monkeypatch.setattr(
+        review_store, "claim_splits", lambda splits: {key: other[split] for key, split in splits.items()}
+    )
+    with pytest.raises(SplitConflict, match="given .*, store"):
+        settle_splits(review_store)
+    assert not split_ledger_file.exists()
 
 
 def test_a_file_whose_bytes_changed_keeps_its_split_by_name(tmp_path: Path, review_store: ReviewStore) -> None:

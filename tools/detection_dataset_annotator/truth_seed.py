@@ -1,11 +1,13 @@
 """Pre-fill the city areas and citadels of a hand-labelled atlas's screenshots in the review store from its truth.
 
-    python -m tools.detection_dataset_annotator.truth_seed atlas_test_data/fr-atlas/truth.json [--dry-run]
+    python -m tools.detection_dataset_annotator.truth_seed atlas_test_data/fr-atlas/truth.json \\
+        [--screenshots DIR] [--dry-run]
 
 The truth file (``truth.json``, described in ``atlas_test_data/fr-atlas/README.md``) gives every map of an atlas in
 atlas units with the area it lies in ("Ezomyte city", "Vaal city", "Faridun city", "Breach stronghold" or ""), the
 Cities, and how each screenshot is placed (``M``, ``horizon``). For every unreviewed store screenshot the truth places
-(by file name), each box's middle is taken to atlas units (``core.geometry``, as the truth file says) and:
+(by file name, below the truth file's folder or ``--screenshots``: the same name in another atlas is left alone),
+each box's middle is taken to atlas units (``core.geometry``, as the truth file says) and:
 
 - a map node box at a truth map (``ANNOTATOR_TRUTH_MAP_REACH``) in a city's area takes that area's class. One the
   classical guess put in a city's area while the truth has it outside every city area gets its ground ring's class
@@ -70,9 +72,12 @@ class Truth:
     """File name -> its placement (``w``, ``h``, ``M``, ``horizon``)."""
     source: str = ""
     """The truth file, project-relative: the mark a seeded screenshot carries (``ANNOTATOR_TRUTH_MARK``)."""
+    root: Path | None = None
+    """The folder its screenshots lie below (by default the truth file's own: its atlas's): the truth names them by
+    file name only, so a screenshot of that name elsewhere (another atlas) is not one of them. None: anywhere."""
 
     @classmethod
-    def load(cls, path: Path) -> Truth:
+    def load(cls, path: Path, root: Path | None = None) -> Truth:
         data = json.loads(Path(path).read_text(encoding="utf-8"))
         maps = np.array([row[:2] for row in data["maps"]], float).reshape(-1, 2)
         cities_found = [
@@ -86,7 +91,14 @@ class Truth:
             cities=np.array(cities_found, float).reshape(-1, 2),
             screenshots={shot["file"]: shot for shot in data["screenshots"]},
             source=relative_source(Path(path)),
+            root=Path(root if root is not None else Path(path).parent).resolve(),
         )
+
+    def places(self, path: Path) -> bool:
+        """Whether the truth names this screenshot: its file name, below ``root``."""
+        if Path(path).name not in self.screenshots:
+            return False
+        return self.root is None or Path(path).resolve().is_relative_to(self.root)
 
     def _of_areas(self, names: set[str]) -> list[int]:
         return [i for i, area in enumerate(self.areas) if area in names]
@@ -326,13 +338,17 @@ def seed_store(store: ReviewStore, truth: Truth, *, dry_run: bool = False) -> tu
     every = list(store.items())
     named: dict[str, list[Path]] = {}
     for _key, item in every:
-        named.setdefault(Path(item["path"]).name, []).append(Path(item["path"]))
-    todo = [
+        if truth.places(Path(item["path"])):  # copies of a name below the truth's folder: which one it means
+            named.setdefault(Path(item["path"]).name, []).append(Path(item["path"]))
+    candidates = [
         (key, item)
         for key, item in every
         if not item.get("reviewed") and item.get("detected") and Path(item["path"]).name in truth.screenshots
     ]
+    todo = [(key, item) for key, item in candidates if truth.places(Path(item["path"]))]
     done: Counter[str] = Counter()
+    if len(todo) < len(candidates):  # another atlas's screenshot of one of its names: left unchanged and unmarked
+        done[f"skipped: a truth file name outside {relative_source(truth.root)}"] += len(candidates) - len(todo)
     changed = 0
     skipped = "skipped: reviewed, edited or detected again meanwhile"
     for key, item in todo:
@@ -374,11 +390,18 @@ def main(argv: list[str] | None = None) -> int:
     """Seed the review store from a truth file and print what changed."""
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("truth", help="the atlas's truth file (truth.json)")
+    parser.add_argument(
+        "--screenshots", help="the folder its screenshots lie below (default: the truth file's folder)", default=None
+    )
     parser.add_argument("--output-dir", default=K.ANNOTATOR_DEFAULT_OUTPUT_DIR, help="the annotator's output folder")
     parser.add_argument("--dry-run", action="store_true", help="report what would change, change nothing")
     args = parser.parse_args(argv)
-    truth = Truth.load(resolve_path(args.truth))
-    with ReviewStore.open(resolve_path(args.output_dir) / K.ANNOTATOR_STORE_FILE) as store:
+    truth = Truth.load(resolve_path(args.truth), resolve_path(args.screenshots) if args.screenshots else None)
+    store_path = resolve_path(args.output_dir) / K.ANNOTATOR_STORE_FILE
+    if args.dry_run and not store_path.is_file():  # opening it would create an empty store (and its folder)
+        print(f"nothing to seed: no annotator store at {store_path}")
+        return 0
+    with ReviewStore.open(store_path) as store:
         done, changed, placed = seed_store(store, truth, dry_run=args.dry_run)
     print("\n".join(seed_lines(done, changed, placed, dry_run=args.dry_run)))
     return 0
