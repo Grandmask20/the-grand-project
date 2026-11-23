@@ -306,7 +306,7 @@ def settle_splits(
 
         fixed = {**stored, **from_ledger}
         # copies join their blocks into one, so they are drawn together with the neighbours of each of their places
-        own = screenshot_blocks({key: paths[key] for key in keys}, digests)
+        own = screenshot_blocks({key: paths[key] for key in keys})
         blocks = join_blocks(own, same_bytes.values())
         for group in same_bytes.values():
             # and they take a split one of them has

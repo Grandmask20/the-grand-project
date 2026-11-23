@@ -3,17 +3,15 @@
 Screenshots of one atlas overlap: drawn one by one, a held-out screenshot shares most of its map nodes with training
 screenshots (``ANNOTATOR_SPLIT_BLOCK_SHOTS`` has the numbers). So an atlas's screenshots (those next to its
 ``atlas.json``, where the app finds them) are grouped by where they lie: k-means of their middles in atlas units, about
-``ANNOTATOR_SPLIT_BLOCK_SHOTS`` to a block. A screenshot no atlas places (by its bytes: the frame's ``sha``) is a
-block of its own.
+``ANNOTATOR_SPLIT_BLOCK_SHOTS`` to a block. A screenshot no atlas places (``placed_by``) is a block of its own.
 """
 
 from __future__ import annotations
 
-import contextlib
 import math
 from collections.abc import Mapping
 from dataclasses import dataclass
-from pathlib import Path
+from pathlib import Path, PureWindowsPath
 
 import numpy as np
 
@@ -21,7 +19,7 @@ from grand_project.core.atlas import Atlas
 from grand_project.core.geometry import persp, screen_to_atlas
 
 from . import constants as K
-from .state import file_hash, relative_source
+from .state import relative_source
 
 
 @dataclass(frozen=True, order=True)
@@ -34,22 +32,38 @@ class Block:
     """The block's number within its atlas."""
 
 
-def frame_middles(atlas_file: Path) -> dict[str, tuple[float, float]]:
-    """Each placed screenshot's middle in atlas units, by the SHA-256 of its bytes (the frame's ``sha``): only the
-    very screenshot the atlas placed, not another of the same name in a folder below, and wherever the atlas was made
-    (its saved paths may be another system's)."""
+def frame_middles(atlas_file: Path) -> dict[tuple[str, ...], tuple[float, float]]:
+    """Each placed screenshot's middle in atlas units, by the parts of the path the atlas saved for it (split at "/"
+    and "\\": an atlas made on Windows saves Windows paths)."""
     atlas = Atlas.load(atlas_file)
     out = {}
     for frame in atlas.frames:
         homography = screen_to_atlas(np.asarray(frame["M"], float), Atlas.frame_R(frame))
         x, y = persp(homography, [(frame["w"] / 2, frame["h"] / 2)])[0]
-        out[str(frame["sha"])] = (float(x), float(y))
+        out[PureWindowsPath(str(frame["path"])).parts] = (float(x), float(y))
     return out
+
+
+def placed_by(
+    middles: dict[tuple[str, ...], tuple[float, float]], atlas_dir: Path, path: Path
+) -> tuple[float, float] | None:
+    """The middle of the screenshot at ``path`` in its atlas: the frame whose saved path ends with the file's own path
+    from the atlas folder (``x.png`` next to it, ``pre/x.png`` in a folder below), wherever the atlas was made or
+    moved; a file of a frame's name elsewhere is not that frame. None when no frame (or more than one) ends so.
+
+    Not the frame's ``sha``: a screenshot re-encoded since the atlas was made (the trimmed test data) is still the
+    one it placed.
+    """
+    try:
+        own = Path(path).resolve().relative_to(Path(atlas_dir).resolve()).parts
+    except ValueError:
+        return None
+    found = [middle for parts, middle in middles.items() if parts[-len(own) :] == own]
+    return found[0] if len(found) == 1 else None
 
 
 def screenshot_blocks(
     paths: Mapping[str, Path | str],
-    digests: Mapping[str, str] | None = None,
     *,
     shots_per_block: int = K.ANNOTATOR_SPLIT_BLOCK_SHOTS,
     seed: int = K.ANNOTATOR_SPLIT_SEED,
@@ -58,8 +72,6 @@ def screenshot_blocks(
 
     Args:
         paths: image key -> screenshot path.
-        digests: image key -> the SHA-256 of its file (``split_ledger.hash_files``); hashed here when missing, and a
-            file that cannot be read is placed by no atlas.
         shots_per_block: about how many screenshots of an atlas make a block.
         seed: the k-means seed (the same screenshots give the same blocks).
 
@@ -71,22 +83,17 @@ def screenshot_blocks(
     by_folder: dict[Path, list[str]] = {}
     for key in sorted(paths):
         by_folder.setdefault(Path(paths[key]).parent, []).append(key)
-    digests = dict(digests or {})
     out: dict[str, Block] = {}
     for folder, keys in by_folder.items():
         atlas_file = folder / K.ANNOTATOR_ATLAS_FILE
         middles = frame_middles(atlas_file) if atlas_file.is_file() else {}
-        if middles:
-            for key in keys:
-                if key not in digests:
-                    with contextlib.suppress(OSError):
-                        digests[key] = file_hash(Path(paths[key]))
-        placed = [key for key in keys if digests.get(key) in middles]
+        where = {key: placed_by(middles, folder, Path(paths[key])) for key in keys}
+        placed = [key for key in keys if where[key] is not None]
         for key in set(keys) - set(placed):
             out[key] = Block(relative_source(Path(paths[key])))
         if not placed:
             continue
-        points = np.array([middles[digests[key]] for key in placed], float)
+        points = np.array([where[key] for key in placed], float)
         count = min(len(placed), max(1, math.ceil(len(placed) / shots_per_block)))
         if count == 1:
             labels = np.zeros(len(placed), int)
@@ -98,4 +105,4 @@ def screenshot_blocks(
     return out
 
 
-__all__ = ["Block", "frame_middles", "screenshot_blocks"]
+__all__ = ["Block", "frame_middles", "placed_by", "screenshot_blocks"]

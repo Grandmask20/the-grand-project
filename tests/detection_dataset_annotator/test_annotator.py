@@ -449,10 +449,9 @@ def test_an_export_gives_every_screenshot_its_block_split(tmp_path: Path, review
     atlas.mkdir()
     names = [f"shot{i}" for i in range(4)]
     frames = [
-        {"name": name, "path": f"{name}.png", "sha": hashlib.sha256(bytes([i])).hexdigest(), "w": 1920, "h": 1080,
-         "M": [[1, 0, i * 200], [0, 1, 0]]}
+        {"name": name, "path": f"{name}.png", "w": 1920, "h": 1080, "M": [[1, 0, i * 200], [0, 1, 0]]}
         for i, name in enumerate(names)
-    ]  # fmt: skip
+    ]
     (atlas / "atlas.json").write_text(json.dumps({"frames": frames, "nodes": [], "edges": [], "landmarks": []}))
     paths = [atlas / f"{name}.png" for name in names]
     for i, path in enumerate(paths):
