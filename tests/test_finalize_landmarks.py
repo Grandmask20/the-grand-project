@@ -46,3 +46,15 @@ def test_one_whose_badge_went_over_time_must_be_green_or_red(state, kept):
     _recheck_settlements(landmarks, icons, {0}, lambda x, y: state)
     assert (landmarks[0]["status"] == "kept") is kept
     assert landmarks[1]["status"] == "kept"
+
+
+def test_a_badge_of_the_map_next_door_keeps_no_city():
+    """Only its own badge (the nearest, as _settlements chose it) counts: the badge of a neighbouring map that stays
+    does not keep a City whose own badge is gone."""
+    landmarks = [{"kind": "City", "x": 500.0, "y": 400.0, "status": "kept"}]
+    icons = [
+        {"name": "MapBossSpecial", "x": 500.0, "y": 376.0},  # its own: gone
+        {"name": "MapBossSpecial", "x": 590.0, "y": 400.0},  # the next map's, within SETTLE_BADGE: stays
+    ]
+    _recheck_settlements(landmarks, icons, {0}, lambda x, y: "blue")
+    assert landmarks[0]["status"].startswith("removed: its Deadly Map Boss badge is gone")

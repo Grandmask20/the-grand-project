@@ -225,3 +225,21 @@ def test_an_edit_made_while_seeding_ran_is_kept(
     item = review_store.item(key)
     assert changed == 0 and done["skipped: reviewed, edited or detected again meanwhile"] == 1
     assert [box["label"] for box in item["annotations"]] == ["tower"] and K.ANNOTATOR_TRUTH_MARK not in item
+
+
+def test_a_name_with_an_unreadable_file_is_ambiguous(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """A file that cannot be hashed is not known to be the other's copy (and stops nothing); readable copies are one."""
+    paths = [tmp_path / "a" / "shot.png", tmp_path / "b" / "shot.png"]
+    for path in paths:
+        path.parent.mkdir()
+        path.write_bytes(b"same")
+    assert not truth_seed._ambiguous(paths)
+    real = truth_seed.file_hash
+
+    def file_hash(path: Path) -> str:
+        if path == paths[1]:
+            raise PermissionError(path)
+        return real(path)
+
+    monkeypatch.setattr(truth_seed, "file_hash", file_hash)
+    assert truth_seed._ambiguous(paths)

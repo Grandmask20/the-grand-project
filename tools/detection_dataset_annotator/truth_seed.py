@@ -304,7 +304,14 @@ def _ambiguous(paths: Sequence[Path]) -> bool:
     with the same bytes are one screenshot; a file that cannot be read is not known to be one."""
     if len(paths) < 2:
         return False
-    return len({file_hash(path) if path.is_file() else str(path) for path in paths}) > 1
+
+    def identity(path: Path) -> str:
+        try:
+            return file_hash(path)
+        except OSError:  # missing or unreadable: its own, so the name stays ambiguous
+            return str(path)
+
+    return len({identity(path) for path in paths}) > 1
 
 
 def seed_store(store: ReviewStore, truth: Truth, *, dry_run: bool = False) -> tuple[Counter[str], int, int]:

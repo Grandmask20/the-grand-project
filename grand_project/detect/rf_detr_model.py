@@ -261,8 +261,12 @@ def _boss_node(nodes: list[dict], x: float, y: float) -> dict | None:
 
 
 def hall_node(box: list[float], nodes: list[dict], bosses: list[dict]) -> dict | None:
-    """The map node a hall's box stands for: the one inside it under its deadly-boss icon, else (the icon missed) the
+    """The map node a hall's box stands for: the one inside it under a deadly-boss icon, else (the icon missed) the
     one inside it nearest the box's middle, else None.
+
+    Of several maps under deadly-boss icons inside the box (a neighbour inside a wide structure's box), the one nearest
+    the box's bottom edge: the hall's structure rises above its map node (``RF_DETR_HALL_STRUCTURE_DY``). Ties go to
+    the one nearest the box's middle, so the order of the icons never matters.
 
     Args:
         box: the hall's ``xyxy`` box (its map node and structure).
@@ -270,11 +274,10 @@ def hall_node(box: list[float], nodes: list[dict], bosses: list[dict]) -> dict |
         bosses: the deadly-boss icons ("MapBossSpecial"), dicts with "x", "y".
     """
     inside = [n for n in nodes if _inside(box, n["x"], n["y"])]
-    for boss in bosses:
-        node = _boss_node(inside, boss["x"], boss["y"])
-        if node is not None:
-            return node
     cx, cy = _centre(box)
+    bossed = [node for boss in bosses if (node := _boss_node(inside, boss["x"], boss["y"])) is not None]
+    if bossed:
+        return min(bossed, key=lambda n: (box[3] - n["y"], np.hypot(n["x"] - cx, n["y"] - cy), n["x"], n["y"]))
     return min(inside, key=lambda n: np.hypot(n["x"] - cx, n["y"] - cy), default=None)
 
 

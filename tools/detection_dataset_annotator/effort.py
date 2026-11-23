@@ -117,14 +117,17 @@ def match_boxes(
         rows, cols = linear_sum_assignment(np.where(reach, distance, radius * 1e3))
         return [(int(r), int(c)) for r, c in zip(rows, cols, strict=True) if reach[r, c]]
     n, m = distance.shape
-    # one edit outweighs every distance together; a box left unpaired is one edit and a little more than any pair's
-    # distance (two boxes paired beat two unpaired at equal edits); out of reach never pairs
-    unit = (n + m + 1) * radius + 1.0
-    never = unit * (2 * (n + m) + 1)
+    # three tiers, each outweighing everything below it together: an assignment's summed distances stay under
+    # dist_cap (at most min(n, m) pairs, each within radius); an unpaired box costs dist_cap, so a pair fewer costs
+    # 2 * dist_cap, more than any change of distances; the unpaired penalties and distances stay under
+    # (n + m + 1) * dist_cap = edit, so one edit more outweighs them all. Out of reach never pairs.
+    dist_cap = (min(n, m) + 1) * radius + 1.0
+    edit = (n + m + 1) * dist_cap
+    never = (n + m + 1) * (edit + dist_cap)
     cost = np.full((n + m, n + m), never)
-    cost[:n, :m] = np.where(reach, unit * np.asarray(edits, float) + distance, never)
-    cost[np.arange(n), m + np.arange(n)] = unit + radius  # before i unpaired: deleted
-    cost[n + np.arange(m), np.arange(m)] = unit + radius  # after j unpaired: added
+    cost[:n, :m] = np.where(reach, edit * np.asarray(edits, float) + distance, never)
+    cost[np.arange(n), m + np.arange(n)] = edit + dist_cap  # before i unpaired: deleted
+    cost[n + np.arange(m), np.arange(m)] = edit + dist_cap  # after j unpaired: added
     cost[n:, m:] = 0.0
     rows, cols = linear_sum_assignment(cost)
     return [(int(r), int(c)) for r, c in zip(rows, cols, strict=True) if r < n and c < m and reach[r, c]]

@@ -104,5 +104,16 @@ def test_screenshots_are_read_as_the_program_reads_them(
     assert training.cmd_score_rf_detr() == 0
     assert seen == [(1080, 1920, 3)]
     shot.write_bytes(b"not a picture")
-    assert training.cmd_score_rf_detr() == 0
+    assert training.cmd_score_rf_detr() == 1  # the only one: nothing left to score
     assert f"cannot read {shot}" in capsys.readouterr().out
+
+
+def test_no_readable_truth_screenshot_scores_nothing(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys) -> None:
+    """Every truth screenshot unreadable: no empty score, and the last score's outputs stay."""
+    shot = _one_shot(tmp_path, monkeypatch)
+    shot.write_bytes(b"not a picture")
+    last = tmp_path / "last_score_outputs_rf_detr.json"
+    last.write_text("{}", encoding="utf-8")
+    assert training.cmd_score_rf_detr() == 1
+    assert "no truth screenshot could be read" in capsys.readouterr().out
+    assert last.read_text(encoding="utf-8") == "{}"

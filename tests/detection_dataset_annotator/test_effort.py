@@ -7,6 +7,7 @@ import json
 from pathlib import Path
 from typing import Any
 
+import numpy as np
 import pytest
 
 from tools.detection_dataset_annotator import ReviewStore, effort, image_key
@@ -17,6 +18,7 @@ from tools.detection_dataset_annotator.effort import (
     arm_reports,
     edit_cost,
     fit_seconds,
+    match_boxes,
     pixel_scale,
     report_lines,
     reviews,
@@ -69,6 +71,15 @@ def test_matching_keeps_classes_where_the_closest_pairs_would_relabel() -> None:
     before = [_box("map_node", 100, 100), _box("map_node_grass", 116, 100)]
     after = [_box("map_node_grass", 106, 100), _box("map_node", 110, 100)]
     assert edit_cost(before, after)["node"] == Edits(kept=2, moved=2)
+
+
+def test_at_equal_edits_the_most_pairs_win_over_the_closest() -> None:
+    """Two pairs at distance 0 (and two boxes left) or three pairs at the radius cost the same edits: three pairs, as
+    the summed distances must never outweigh a pair."""
+    box = lambda x: np.array([x - 1.0, 0.0, x + 1.0, 2.0])  # noqa: E731
+    before, after = [box(0), box(10), box(20)], [box(10), box(20), box(30)]
+    edits = np.array([[1, 0, 0], [0, 0, 0], [0, 0, 1]], float)  # pairs out of reach are never made anyway
+    assert match_boxes(before, after, 10.0, edits) == [(0, 0), (1, 1), (2, 2)]
 
 
 def test_radii_scale_with_the_screenshot() -> None:

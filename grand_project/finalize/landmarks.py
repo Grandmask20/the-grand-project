@@ -463,12 +463,13 @@ def _recheck_settlements(landmarks, icons, gone, state_at) -> None:
     for lm in landmarks:
         if lm["kind"] not in ("City", "Hall") or lm["status"].startswith("removed"):
             continue
-        badges = [
-            k
+        # its own badge, as _settlements chose it: the nearest one (another map's badge nearby is not its)
+        near = sorted(
+            (math.hypot(ic["x"] - lm["x"], ic["y"] - lm["y"]), k)
             for k, ic in enumerate(icons)
-            if ic["name"] == "MapBossSpecial" and math.hypot(ic["x"] - lm["x"], ic["y"] - lm["y"]) < SETTLE_BADGE
-        ]
-        if not badges or any(k not in gone for k in badges):
+            if ic["name"] == "MapBossSpecial"
+        )
+        if not near or near[0][0] >= SETTLE_BADGE or near[0][1] not in gone:
             continue  # kept without a badge already (green / red), or its badge stays
         if state_at(lm["x"], lm["y"]) in ("green", "red"):
             continue

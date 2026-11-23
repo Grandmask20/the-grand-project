@@ -236,19 +236,21 @@ def test_citadels_halls_and_deadly_bosses_come_back_as_the_classical_landmarks(m
 
 def test_a_deadly_boss_map_beside_a_hall_is_its_own(monkeypatch: pytest.MonkeyPatch) -> None:
     """A hall's box holds its wide structure, so a neighbouring map can lie inside it: that map's deadly-boss icon
-    still marks a deadly boss map; only the icon over the Hall's own map is the Hall's."""
-    predictions = [
-        {"label": "map_node_grass", "family": "node", "box": [980.0, 680.0, 1020.0, 720.0], "score": 0.9},
-        {"label": "hall", "family": "hall", "box": [890.0, 600.0, 1020.0, 725.0], "score": 0.7},
-        {"label": "icon", "family": "icon", "box": [983.0, 659.0, 1017.0, 693.0], "score": 0.9},
-        {"label": "map_node_grass", "family": "node", "box": [890.0, 620.0, 930.0, 660.0], "score": 0.9},
-        {"label": "icon", "family": "icon", "box": [893.0, 599.0, 927.0, 633.0], "score": 0.9},
-    ]
-    result = _detect(monkeypatch, predictions, names=["MapBossSpecial"] * 2)
-    assert sorted((lm["kind"], lm["x"], lm["y"]) for lm in result["landmarks"]) == [
-        ("Deadly boss map", 910.0, 640.0),
-        ("Hall", 1000.0, 700.0),
-    ]
+    still marks a deadly boss map; only the icon over the Hall's own map is the Hall's, whichever icon comes first."""
+    hall_icon = {"label": "icon", "family": "icon", "box": [983.0, 659.0, 1017.0, 693.0], "score": 0.9}
+    other_icon = {"label": "icon", "family": "icon", "box": [893.0, 599.0, 927.0, 633.0], "score": 0.9}
+    for icons in ([hall_icon, other_icon], [other_icon, hall_icon]):
+        predictions = [
+            {"label": "map_node_grass", "family": "node", "box": [980.0, 680.0, 1020.0, 720.0], "score": 0.9},
+            {"label": "hall", "family": "hall", "box": [890.0, 600.0, 1020.0, 725.0], "score": 0.7},
+            {"label": "map_node_grass", "family": "node", "box": [890.0, 620.0, 930.0, 660.0], "score": 0.9},
+            *icons,
+        ]
+        result = _detect(monkeypatch, predictions, names=["MapBossSpecial"] * 2)
+        assert sorted((lm["kind"], lm["x"], lm["y"]) for lm in result["landmarks"]) == [
+            ("Deadly boss map", 910.0, 640.0),
+            ("Hall", 1000.0, 700.0),
+        ]
 
 
 def test_a_citadel_is_a_city_at_the_map_node_inside_its_box(monkeypatch: pytest.MonkeyPatch) -> None:

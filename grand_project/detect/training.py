@@ -387,7 +387,7 @@ def cmd_score_rf_detr() -> int:
     next to TRUTH.
 
     Returns:
-        0 (process exit code); 1 when there is no hand-labelled truth.
+        0 (process exit code); 1 when there is no hand-labelled truth or none of its screenshots can be read.
     """
     from .rf_detr_model import detect_rf_detr, rf_detr_model_path
 
@@ -407,6 +407,9 @@ def cmd_score_rf_detr() -> int:
         for n, state in zip(out["nodes"], name_states(img, out["nodes"]), strict=True):  # as the program names them
             n["state"] = state
         new[name] = out
+    if not new:  # nothing to score: the outputs of the last score stay
+        print("no truth screenshot could be read")
+        return 1
     model_dir = rf_detr_model_path()
     held_out = _held_out(model_dir, [where[name] for name in truth])
     if held_out:
