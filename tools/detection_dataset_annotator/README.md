@@ -16,7 +16,9 @@ make annotate_dataset    # python -m tools.detection_dataset_annotator
 ```
 
 Arguments after `python -m tools.detection_dataset_annotator` go to `streamlit run` (for example
-`--server.port 8600`).
+`--server.port 8600`). The page listens on this computer only (`--server.address 127.0.0.1`): it shows any screenshot
+below the roots typed into it. To reach it from another computer, pass `--server.address 0.0.0.0` on a network you
+trust.
 
 ## Reviewing a screenshot
 

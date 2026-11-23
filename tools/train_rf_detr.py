@@ -694,6 +694,15 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     return parser.parse_args(argv)
 
 
+def check_device(device: str) -> None:
+    """Stop when the device asked for is not there: an explicit ``cuda`` or ``mps`` must not train on the CPU
+    unnoticed (``auto`` takes what there is)."""
+    if device == "cuda" and not torch.cuda.is_available():
+        raise SystemExit("--device cuda: PyTorch sees no CUDA device (use --device auto or cpu)")
+    if device == "mps" and not torch.backends.mps.is_available():
+        raise SystemExit("--device mps: PyTorch sees no Apple GPU (use --device auto or cpu)")
+
+
 def training_arguments(args: argparse.Namespace, checkpoints: Path) -> TrainingArguments:
     """The Trainer's settings: the recipe (``RF_DETR_*``) and the run's options."""
     cuda = args.device in ("auto", "cuda") and torch.cuda.is_available()
@@ -736,6 +745,8 @@ def training_arguments(args: argparse.Namespace, checkpoints: Path) -> TrainingA
 def main(argv: list[str] | None = None) -> int:
     """Prepare the dataset, then fine-tune and save the best RF-DETR checkpoint."""
     args = parse_args(argv)
+    if not args.dataset_only:
+        check_device(args.device)  # before a dataset is built or a model loaded
     dataset, label_map, dataset_dir = _load_or_build_dataset(args)
     if args.train_subset is not None:
         dataset = train_subset(dataset, args.train_subset)

@@ -190,6 +190,33 @@ def _block_name(block: Block, file: str) -> str:
     return "" if block.atlas == file else f"{block.atlas}#{block.index}"
 
 
+def join_blocks(blocks: Mapping[str, Block], groups: Iterable[Iterable[str]]) -> dict[str, Block]:
+    """The blocks with those of each group of copies (the same bytes) joined into one, the first in order.
+
+    A copy in two places overlaps the neighbours of both: its split is theirs, or a held-out screenshot would show
+    what a training one shows. Moving the copy into the other's block alone would leave its own neighbours behind.
+
+    Args:
+        blocks: image key -> its block.
+        groups: image keys of the same bytes.
+
+    Returns:
+        Image key -> its block, joined.
+    """
+    parent: dict[Block, Block] = {}
+
+    def root(block: Block) -> Block:
+        while block in parent:
+            block = parent[block]
+        return block
+
+    for group in groups:
+        joined = sorted({root(blocks[key]) for key in group})
+        for other in joined[1:]:
+            parent[other] = joined[0]
+    return {key: root(block) for key, block in blocks.items()}
+
+
 def settle_splits(
     store: ReviewStore,
     every: list[tuple[str, dict[str, Any]]] | None = None,
@@ -222,18 +249,22 @@ def settle_splits(
         for entry in book.values():
             by_file.setdefault(entry.file, entry)
 
+        problems = []
         from_ledger: dict[str, str] = {}
         by_name: set[str] = set()
         for key in keys:
-            entry = book.get(digests[key])
-            if entry is None and (entry := by_file.get(names[key])) is not None:
+            entry, named = book.get(digests[key]), by_file.get(names[key])
+            if entry is not None and named is not None and entry.split != named.split:
+                # its bytes are another entry's than its name's: which one it is, a person decides
+                problems.append(f"{names[key]}: ledger {entry.split} by its bytes, {named.split} by its file name")
+            if entry is None and named is not None:
+                entry = named
                 by_name.add(key)  # the file's bytes changed: it is still the same screenshot
             if entry is not None:
                 from_ledger[key] = entry.split
         stored = {key: split for key, split in store.splits().items() if key in digests}
         pinned = {key: split for key in keys if (split := pinned_split(paths[key])) is not None}
 
-        problems = []
         for key in keys:
             given = {"ledger": from_ledger.get(key), "store": stored.get(key), "pinned": pinned.get(key)}
             given = {where: split for where, split in given.items() if split}
@@ -250,12 +281,12 @@ def settle_splits(
             raise SplitConflict(problems)
 
         fixed = {**stored, **from_ledger}
-        blocks = screenshot_blocks({key: paths[key] for key in keys})
+        # copies join their blocks into one, so they are drawn together with the neighbours of each of their places
+        blocks = join_blocks(screenshot_blocks({key: paths[key] for key in keys}), same_bytes.values())
         for group in same_bytes.values():
-            # copies share their first one's block, so they are drawn together, and a split one of them has
+            # and they take a split one of them has
             kept = next((pinned.get(key) or fixed.get(key) for key in group if pinned.get(key) or fixed.get(key)), None)
             for key in group:
-                blocks[key] = blocks[group[0]]
                 if kept is not None and key not in pinned:
                     fixed.setdefault(key, kept)
         items = {key: box_classes(item) for key, item in processed if key in digests}
@@ -301,7 +332,11 @@ def _check_rows(rows: list[tuple[str, Path, str | None, str]], ledger: Path | No
         if digest is None:
             problems.append(f"{name} ({where}): cannot be read")
             continue
-        entry = book.get(digest) or by_file.get(name)
+        entry, named = book.get(digest), by_file.get(name)
+        if entry is not None and named is not None and entry.split != named.split:
+            problems.append(f"{name}: ledger {entry.split} by its bytes, {named.split} by its file name")
+            continue
+        entry = entry or named
         if entry is None:
             problems.append(f"{name} ({where} {split}): not in the ledger")
         elif entry.split != split:
@@ -453,6 +488,7 @@ __all__ = [
     "check_manifest",
     "check_splits",
     "held_out_overlap",
+    "join_blocks",
     "overlap_report",
     "read_ledger",
     "settle_splits",

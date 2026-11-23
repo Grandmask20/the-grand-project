@@ -60,6 +60,23 @@ def test_a_sheet_corrected_by_hand_is_saved_frozen_and_scored(folder, tmp_path, 
     assert "blue   " in capsys.readouterr().out
 
 
+def test_sheets_never_take_corrections_meant_for_other_sheets(folder, tmp_path):
+    """New sheets number their crops anew: corrections of the sheets there now would land on other crops; and the
+    sheets of one folder are never saved into another of the same name (they share the default output)."""
+    out = tmp_path / "sheet"
+    assert T.main(["sheet", str(folder), "--out", str(out)]) == 0
+    (out / "corrections.txt").write_text("# checked\nS4 none\n")
+    with pytest.raises(SystemExit, match="holds corrections"):
+        T.main(["sheet", str(folder), "--out", str(out)])
+    (out / "corrections.txt").write_text("# checked, nothing wrong\n")
+    assert T.main(["sheet", str(folder), "--out", str(out)]) == 0
+    other = tmp_path / "other" / folder.name
+    other.mkdir(parents=True)
+    with pytest.raises(SystemExit, match="are of"):
+        T.main(["save", str(other), "--out", str(out)])
+    assert not (other / K.NODE_STATE_TRUTH).exists()
+
+
 def test_freezing_never_takes_pictures_from_the_scoring_truth_sets(folder, monkeypatch):
     monkeypatch.setattr(K, "TRUTH_SETS", [(folder / "truth.json", folder)])
     with pytest.raises(SystemExit, match="TRUTH_SETS"):

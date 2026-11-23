@@ -500,3 +500,14 @@ def test_resume_passes_over_a_checkpoint_without_its_ema(tmp_path: Path) -> None
     callback = T.EmaCallback(0.9, 10.0, resume_from=broken)
     with pytest.raises(RuntimeError, match="no complete EMA"):
         callback.on_train_begin(SimpleNamespace(output_dir=str(tmp_path)), None, None, model=_tiny(LABELS))
+
+
+def test_an_explicit_device_that_is_not_there_stops_the_run(monkeypatch: pytest.MonkeyPatch) -> None:
+    """--device cuda / mps without that device would train on the CPU unnoticed; auto takes what there is."""
+    monkeypatch.setattr(T.torch.cuda, "is_available", lambda: False)
+    monkeypatch.setattr(T.torch.backends.mps, "is_available", lambda: False)
+    for device in ("cuda", "mps"):
+        with pytest.raises(SystemExit, match=f"--device {device}"):
+            T.check_device(device)
+    T.check_device("auto")
+    T.check_device("cpu")

@@ -144,6 +144,35 @@ def test_every_screenshot_the_truth_places_is_marked(
     assert seed_store(review_store, truth)[1] == 0
 
 
+def test_a_screenshot_without_boxes_still_counts_the_cities_to_draw(tmp_path: Path) -> None:
+    """Nothing to seed, but the truth's Cities it shows (Vaal at 600, Faridun at 1200) are still to draw."""
+    item = {"path": str(tmp_path / "shot.png"), "width": 1920, "height": 1080, "annotations": []}
+    truth = _truth(tmp_path)
+    boxes, done, complete = seed_screenshot(item, truth.screenshots["shot.png"], truth, lambda path: None)
+    assert (boxes, complete) == (None, True)
+    assert done["truth City without a citadel box (draw)"] == 2
+
+
+def test_a_file_name_of_two_screenshots_is_left_alone(
+    tmp_path: Path, review_store: ReviewStore, desert_ring: None, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The truth names its screenshots by file name only: of two different screenshots of one name in two folders
+    neither is known to be its (byte copies are one screenshot: the build_store tests seed those)."""
+    monkeypatch.setattr(truth_seed, "_detector_image", lambda path: np.zeros((1080, 1920, 3), np.uint8))
+    paths = [tmp_path / "a" / "shot.png", tmp_path / "b" / "shot.png"]
+    for index, path in enumerate(paths):
+        path.parent.mkdir()
+        path.write_bytes(bytes([index]))
+    review_store.add_images(paths)
+    for path in paths:
+        result = {"detected": True, "width": 1920, "height": 1080, "annotations": _boxes(), "error": None}
+        review_store.record_detection(image_key(path), result, force=True)
+    done, changed, _placed = seed_store(review_store, _truth(tmp_path))
+    assert changed == 0
+    assert done["skipped: its file name is another screenshot's too (which one the truth means is unknown)"] == 2
+    assert all(K.ANNOTATOR_TRUTH_MARK not in review_store.item(image_key(path)) for path in paths)
+
+
 def test_a_box_without_a_place_is_left(tmp_path: Path) -> None:
     """A box stored without a place (NaN is stored as NULL) is kept as it is, as the editor and export skip it."""
     truth = _truth(tmp_path)

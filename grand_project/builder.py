@@ -161,7 +161,8 @@ def extract_frame(image_path: Path, cache_dir: Path) -> core.Frame:
     if img is None:
         raise ValueError(f"{image_path.name} is not a readable image (damaged or not fully written)")
     r = atlas_detect.detect(img)
-    states = atlas_detect.name_states(img, r["nodes"])  # named apart from finding: new pictures re-name, not re-find
+    book = atlas_detect.state_pictures()  # the names and their stamp from one set of pictures
+    states = atlas_detect.name_states(img, r["nodes"], book)  # named apart from finding: new pictures re-name it
     data = {
         "name": image_path.stem,
         "path": str(image_path.resolve()),
@@ -187,7 +188,7 @@ def extract_frame(image_path: Path, cache_dir: Path) -> core.Frame:
             }
             for n, state in zip(r["nodes"], states, strict=True)
         ],
-        "states_from": atlas_detect.states_stamp(),
+        "states_from": book["stamp"],
         "edges": [
             {"a": int(e["a"]), "b": int(e["b"]), "conf": float(e["conf"]), "status": e["status"], "line": e["line"]}
             for e in r["edges"]

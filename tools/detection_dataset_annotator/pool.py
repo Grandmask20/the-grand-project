@@ -183,7 +183,9 @@ async def _stop_worker(process: asyncio.subprocess.Process, *, graceful: bool) -
         with contextlib.suppress(ProcessLookupError):
             process.terminate()
     try:
-        await asyncio.wait_for(process.communicate(), K.ANNOTATOR_WORKER_EXIT_S)
+        # input b"": stdin is closed (EOF ends the worker's loop) on Python 3.11 too; communicate() alone closes it
+        # only from 3.12
+        await asyncio.wait_for(process.communicate(b""), K.ANNOTATOR_WORKER_EXIT_S)
     except TimeoutError:
         with contextlib.suppress(ProcessLookupError):
             process.kill()
@@ -306,5 +308,12 @@ def detect_pending(
         # Raise the original exception, not the TaskGroup's wrapper: Streamlit must see its own stop / rerun signal,
         # and the caller a worker that could not start.
         raise (run.interrupt or _first_error(group)) from None
-    run.fail_remaining("All detection workers stopped before this screenshot was processed.")
+    left = "All detection workers stopped before this screenshot was processed."
+    try:
+        run.fail_remaining(left)
+    except _Interrupted:
+        # the page's stop / rerun signal came from a progress report: the rest are failed unreported, then it goes on
+        run.progress = None
+        run.fail_remaining(left)
+        raise run.interrupt from None
     return run.completed, run.errors

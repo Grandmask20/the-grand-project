@@ -27,12 +27,26 @@ def _library_dirs() -> list[str]:
     return [str(folder) for folder in found if folder.is_dir()]
 
 
-def prefer_pip_cuda_libraries() -> None:
+def _restart_command(argv: list[str] | None) -> list[str]:
+    """The command line the process restarts with: its own, or with ``argv`` in place of its arguments (the
+    interpreter, its options and the script or ``-m`` module stay)."""
+    own = list(sys.orig_argv[1:])
+    if argv is None:
+        return [sys.executable, *own]
+    head = own[: len(own) - (len(sys.argv) - 1)]  # sys.argv[1:] is the tail of sys.orig_argv
+    return [sys.executable, *head, *argv]
+
+
+def prefer_pip_cuda_libraries(argv: list[str] | None = None) -> None:
     """Restart this process (once) with PyTorch's CUDA libraries first on ``LD_LIBRARY_PATH``, when they are not.
 
     Call it first thing in a process that will run RF-DETR, before anything imports torch. Nothing happens off Linux,
     without PyTorch's CUDA libraries, when they come first already, or after the restart
     (``RF_DETR_CUDA_REEXEC_ENV``).
+
+    Args:
+        argv: The arguments the restarted process runs with, for a ``main(argv)`` given its own: in place of this
+            process's arguments, after the same interpreter, options and script or module. None: its own.
     """
     if not sys.platform.startswith("linux") or os.environ.get(K.RF_DETR_CUDA_REEXEC_ENV):
         return
@@ -49,7 +63,7 @@ def prefer_pip_cuda_libraries() -> None:
     env[K.RF_DETR_CUDA_REEXEC_ENV] = "1"
     sys.stdout.flush()
     sys.stderr.flush()
-    os.execve(sys.executable, [sys.executable, *sys.orig_argv[1:]], env)
+    os.execve(sys.executable, _restart_command(argv), env)
 
 
 __all__ = ["prefer_pip_cuda_libraries"]

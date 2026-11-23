@@ -1,6 +1,8 @@
 """Offline tests for detector-comparison report helpers."""
 
-from tools.compare_detectors import _f1, _normalise_accuracy, _parse_match
+import numpy as np
+
+from tools.compare_detectors import _f1, _landmark_hits, _normalise_accuracy, _parse_match
 
 
 def test_parse_match_returns_precision_recall_and_f1() -> None:
@@ -36,3 +38,15 @@ def test_normalise_accuracy_reports_empty_detector_counts() -> None:
         "paths": {"matched": 0, "predicted": 0, "reference": 8, "precision": 0.0, "recall": 0.0, "f1": 0.0},
         "landmarks": {"matched": 0, "predicted": 0, "reference": 2, "precision": 0.0, "recall": 0.0, "f1": 0.0},
     }
+
+
+def test_landmarks_match_one_to_one_whatever_their_order() -> None:
+    """A greedy match let the first City take the reference City the second needed (both within reach of the first):
+    the assignment pairs both, in either order."""
+    expected = [{"kind": "City", "x": 0.0, "y": 0.0}, {"kind": "City", "x": 18.0, "y": 0.0}]
+    predicted = [{"kind": "City", "x": 9.0, "y": 0.0}, {"kind": "City", "x": 1.0, "y": 0.0}]
+    for order in (predicted, predicted[::-1]):
+        assert _landmark_hits(order, expected, np.zeros(2), 10.0) == 2
+    hall = [{"kind": "Hall", "x": 0.0, "y": 0.0}]  # another kind never matches
+    assert _landmark_hits(hall, expected, np.zeros(2), 10.0) == 0
+    assert _landmark_hits(predicted, expected, np.array([100.0, 0.0]), 10.0) == 0  # shifted out of reach

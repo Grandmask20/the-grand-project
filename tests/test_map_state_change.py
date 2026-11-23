@@ -49,6 +49,7 @@ def test_the_newest_screenshot_shows_the_maps_as_they_are(checked, check):
     atlas, final, src = checked
     newest = max(atlas.frames, key=core.capture_time)
     labels = _states(src / "single-map", newest["name"] + ".png")
+    assert labels, f"no hand-checked states for {newest['name']}.png in single-map/states.json"
     H = core.screen_to_atlas(np.array(newest["M"], float), atlas.frame_R(newest))
     kept = _kept(final)
     pts = np.array([[n["x"], n["y"]] for n in kept], float)

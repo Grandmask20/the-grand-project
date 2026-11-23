@@ -153,7 +153,8 @@ def seed_store_nodes(
         if not complete or dry_run:
             changed += boxes is not None and complete
             continue
-        guard = {"untouched": True, "expect_boxes": item["annotations"]}
+        # nothing changed meanwhile: its boxes, its review, and no other truth's mark (checked in the same write)
+        guard = {"untouched": True, "expect_boxes": item["annotations"], "marked": {K.ANNOTATOR_TRUTH_MARK: mark}}
         if boxes is None:
             if item.get(K.ANNOTATOR_TRUTH_MARK) != mark:
                 store.save_review(key, int(item["edit_version"]), extra={K.ANNOTATOR_TRUTH_MARK: mark}, **guard)

@@ -92,7 +92,7 @@ from .constants import (
     WALL_MAP,
 )
 from .icon_time import icons_over_time
-from .landmarks import _clean_icons, _guessed, _one_map, _settlements
+from .landmarks import _clean_icons, _guessed, _one_map, _recheck_settlements, _settlements
 from .states import fit_nodes, state_near, state_stats
 from .traces import (
     _along,
@@ -1485,6 +1485,8 @@ def finalize(atlas, log=_log) -> dict:
     for nd in nodes:
         nd["icons"] = [k for k in nd["icons"] if k not in over_time]
     dup_badge |= over_time
+    # a City / Hall kept for its badge, the badge now gone: as _settlements judges one without (green or red map)
+    _recheck_settlements(landmarks, icons, over_time, lambda x, y: state_near(fits, nodes, x, y))
 
     out_nodes = []
     for i, nd in enumerate(nodes):

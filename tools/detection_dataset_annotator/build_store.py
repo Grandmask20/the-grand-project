@@ -26,6 +26,9 @@ where it has one). ``--dry-run`` backs up, adds, removes, detects and saves noth
 from __future__ import annotations
 
 import argparse
+import os
+import shlex
+import subprocess
 from collections import Counter
 from collections.abc import Callable, Iterable, Mapping
 from datetime import datetime
@@ -184,8 +187,17 @@ def build(
             f"Store: {len(queue)} screenshots, {sum(entry.detected for entry in queue)} detected, "
             f"{sum(entry.reviewed for entry in queue)} reviewed, {sum(entry.guesses for entry in queue)} guesses"
         )
-    say("Next: python -m tools.detection_dataset_annotator.split_ledger (every screenshot's split, kept in the ledger)")
+    folder = _quoted(relative_source(output_dir))
+    say(
+        f"Next: python -m tools.detection_dataset_annotator.split_ledger --output-dir {folder} (every screenshot's "
+        "split, kept in the ledger)"
+    )
     return done
+
+
+def _quoted(text: str) -> str:
+    """A command-line argument quoted for this system's shell (a folder name may hold spaces)."""
+    return subprocess.list2cmdline([text]) if os.name == "nt" else shlex.quote(text)
 
 
 def main(argv: list[str] | None = None) -> int:

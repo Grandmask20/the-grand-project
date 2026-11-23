@@ -860,13 +860,21 @@ def print_score(s: dict) -> None:
 def cmd_score(a) -> int:
     """Run "score": score the cached detector outputs of the screenshots against truth.json.
 
+    The hand-checked map node states next to the screenshots (states.json), when there are any, are scored too.
+
     Args:
         a: Parsed arguments (truth, shots, cache).
 
     Returns:
         Exit code 0.
     """
+    from grand_project.detect.constants import NODE_STATE_TRUTH
+
     truth = json.loads(Path(a.truth).read_text(encoding="utf-8"))
+    states_file = Path(a.shots) / NODE_STATE_TRUTH
+    states = json.loads(states_file.read_text(encoding="utf-8")) if states_file.exists() else {}
+    for name, t in truth.items():
+        t.setdefault("states", states.get(name, []))
     outputs = {}
     for p in Path(a.shots).glob("*.png"):
         if p.name in truth:

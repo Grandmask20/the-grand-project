@@ -387,6 +387,7 @@ def _model_prelabels(settings: Settings) -> None:
                 st.session_state[K.ANNOTATOR_SESSION_PRELABEL] = subprocess.Popen(
                     [
                         sys.executable,
+                        "-u",  # unbuffered: the plan and progress reach the log as they are printed
                         "-m",
                         "tools.detection_dataset_annotator.model_prelabel",
                         "--model",

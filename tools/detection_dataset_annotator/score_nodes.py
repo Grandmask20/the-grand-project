@@ -146,6 +146,8 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
     if args.ring and not (np.isfinite(args.ring).all() and 0 <= args.ring[0] < args.ring[1]):
         parser.error("--ring needs two finite radii, 0 <= INNER < OUTER")
+    if args.limit is not None and args.limit < 0:
+        parser.error("--limit must be 0 or more")
     ring = DK.BIOME_RING
     if args.ring:
         DK.BIOME_RING = (args.ring[0], args.ring[1])  # read live by biomes.node_biomes; put back below
@@ -167,14 +169,14 @@ def _score(store_path: Path, limit: int | None) -> tuple[list[tuple[str, str, bo
     scored = 0
     with ReviewStore.open(store_path) as store:
         for _key, item in store.items(reviewed_only=True):
+            if limit is not None and scored >= limit:
+                break  # before reading the next one: --limit 0 reads none
             raw = decode_image(Path(item["path"]))
             if raw is None:
                 continue
             img = core.scale_screenshot(raw)
             pairs.extend(guess_nodes(img, item.get("annotations", []), raw.shape[1], raw.shape[0]))
             scored += 1
-            if limit is not None and scored >= limit:
-                break
     return pairs, scored
 
 

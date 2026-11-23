@@ -1,9 +1,9 @@
 """Safe file writing and the worker-process setup shared by the builder, the atlas-wide check and the viewer.
 
-write_text_atomic: the atlas, the settings and the detection caches are rewritten often (every bookmark,
-every added screenshot). Writing them in place left a cut-off file when the program was closed, crashed or
-the computer slept mid-write, and a cut-off atlas.json loses every bookmark. The text goes to a temporary
-file next to the target, which then replaces the target in one step: readers see the old file or the new
+write_text_atomic / write_bytes_atomic: the atlas, the settings and the detection caches are rewritten often
+(every bookmark, every added screenshot). Writing them in place left a cut-off file when the program was closed,
+crashed or the computer slept mid-write, and a cut-off atlas.json loses every bookmark. The contents go to a
+temporary file next to the target, which then replaces the target in one step: readers see the old file or the new
 one, never half of one.
 
 process_pool: worker processes are always started fresh ("spawn"), as Windows and macOS do anyway. Linux
@@ -22,11 +22,7 @@ from pathlib import Path
 
 
 def write_text_atomic(path, text: str, encoding: str = "utf-8") -> None:
-    """Write a text file so readers see the old file or the new one, never half of one.
-
-    The text goes to a temporary file next to the target, which then replaces the target in one step (see the
-    module docstring). On Windows a virus scanner / cloud sync may hold the target briefly, so the replace is
-    tried 5 times; the temporary file is removed on any failure.
+    """Write a text file so readers see the old file or the new one, never half of one (``write_bytes_atomic``).
 
     Args:
         path: Target file path.
@@ -36,11 +32,28 @@ def write_text_atomic(path, text: str, encoding: str = "utf-8") -> None:
     Raises:
         PermissionError: The target stayed locked through every try.
     """
+    write_bytes_atomic(path, text.encode(encoding))
+
+
+def write_bytes_atomic(path, data: bytes) -> None:
+    """Write a file so readers see the old file or the new one, never half of one.
+
+    The bytes go to a temporary file next to the target, which then replaces the target in one step (see the
+    module docstring). On Windows a virus scanner / cloud sync may hold the target briefly, so the replace is
+    tried 5 times; the temporary file is removed on any failure.
+
+    Args:
+        path: Target file path.
+        data: The file contents.
+
+    Raises:
+        PermissionError: The target stayed locked through every try.
+    """
     path = Path(path)
     fd, tmp = tempfile.mkstemp(prefix=f".{path.name}.", suffix=".tmp", dir=path.parent)
     try:
-        with os.fdopen(fd, "w", encoding=encoding, newline="") as f:
-            f.write(text)
+        with os.fdopen(fd, "wb") as f:
+            f.write(data)
             f.flush()
             os.fsync(f.fileno())
         for attempt in range(5):  # Windows: a virus scanner / cloud sync may hold the target briefly

@@ -82,10 +82,12 @@ def test_a_city_area_grows_from_its_own_map_through_the_paths() -> None:
 
 
 def test_maps_at_and_beyond_the_screenshot_edge() -> None:
-    """A map whose ring is mostly off the screenshot has too little ground for a guess; no maps, no guesses."""
-    img = _painted([(0, 1920, GRASS)])
-    guesses = biomes.node_biomes(img, [{"x": 960, "y": 540}, {"x": -100, "y": 540}, {"x": 1919, "y": 1079}], [])
-    assert guesses[0].biome == "grass" and guesses[1].biome is None and guesses[2].biome is None
+    """A map whose ring is mostly off the screenshot has too little ground for a guess; half a ring on it is enough;
+    no maps, no guesses. On a cropped screenshot (no game HUD), so only the edge cuts the rings."""
+    img = cv2.cvtColor(np.full((700, 900, 3), GRASS, np.uint8), cv2.COLOR_HSV2BGR)
+    nodes = [{"x": 450, "y": 350}, {"x": 0, "y": 350}, {"x": -34, "y": 350}, {"x": -100, "y": 350}]
+    guesses = biomes.node_biomes(img, nodes, [])
+    assert [g.biome for g in guesses] == ["grass", "grass", None, None]  # x -34: a ~100 px sliver of its ring
     assert biomes.node_biomes(img, [], []) == []
     cls, bad = fl.ground_of(img)
     assert biomes.ocean_flags(cls, bad, np.zeros((0, 2))).shape == (0,)

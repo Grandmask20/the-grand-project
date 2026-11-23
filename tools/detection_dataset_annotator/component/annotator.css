@@ -15,6 +15,7 @@
   color: var(--ann-text);
   font: 13px/1.4 var(--st-font, system-ui, -apple-system, "Segoe UI", sans-serif);
   user-select: none;
+  container: annotator / inline-size;
 }
 
 .ann-main {
@@ -218,9 +219,11 @@
   cursor: default;
 }
 
+/* White on the accent darkened: 6.1:1 on Streamlit's default red (#ff4b4b itself gives 3.3:1, under the 4.5:1 that
+   normal-sized text needs). */
 .ann-primary {
   color: #fff;
-  background: var(--ann-accent);
+  background: color-mix(in srgb, var(--ann-accent) 70%, #000);
   border-color: var(--ann-accent);
 }
 
@@ -394,6 +397,25 @@
   opacity: 0.7;
 }
 
+/* A narrow editor: the side panel goes under the screenshot, which keeps the whole width. */
+@container annotator (max-width: 720px) {
+  .ann-main {
+    flex-direction: column;
+  }
+
+  .ann-viewport {
+    flex: none;
+    height: 60%;
+    min-height: 260px;
+  }
+
+  .ann-side {
+    width: auto;
+    flex: 1;
+    min-height: 0;
+  }
+}
+
 /* Help overlay */
 
 .ann-help {
@@ -416,6 +438,10 @@
   padding: 12px 16px;
   background: var(--ann-panel);
   border-radius: 8px;
+}
+
+.ann-help-card > .ann-btn {
+  margin-top: 8px;
 }
 
 .ann-help-card h3 {

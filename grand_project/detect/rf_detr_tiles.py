@@ -123,11 +123,13 @@ def cut_by_inner_edge(
     left, top = origin
     width, height = size
     edge = K.RF_DETR_TILE_EDGE
+    # strict: a box reaching the margin but not into it is whole (the overlap is exactly the tallest box, a tower,
+    # plus both margins: one tile always holds it so)
     return (
-        (left > 0 and x0 <= edge)
-        or (top > 0 and y0 <= edge)
-        or (left + tile < width and x1 >= tile - edge)
-        or (top + tile < height and y1 >= tile - edge)
+        (left > 0 and x0 < edge)
+        or (top > 0 and y0 < edge)
+        or (left + tile < width and x1 > tile - edge)
+        or (top + tile < height and y1 > tile - edge)
     )
 
 
@@ -160,28 +162,51 @@ def epoch_length(factors: Sequence[float], per_image: int) -> int:
     return round(sum(per_image * float(factor) for factor in factors))
 
 
+def _draw_chances(weights: Sequence[float], draws: int) -> list[float]:
+    """Chances in proportion to ``weights`` that add up to ``draws``, none above 1: a weight whose share would pass 1
+    gets 1, and the rest share what is left (``draws`` is at most the number of weights)."""
+    chances = [0.0] * len(weights)
+    free = set(range(len(weights)))
+    left = float(draws)
+    while free:
+        total = sum(weights[i] for i in free)
+        full = {i for i in free if weights[i] * left >= total}
+        if not full:
+            for i in free:
+                chances[i] = weights[i] * left / total
+            break
+        for i in full:
+            chances[i] = 1.0
+        free -= full
+        left -= len(full)
+    return chances
+
+
 def epoch_indices(factors: Sequence[float], per_image: int, rng: random.Random) -> list[int]:
     """The images drawn in one training epoch, shuffled: each ``per_image`` x its repeat factor times.
 
     Always ``epoch_length`` draws (the Trainer sizes an epoch by the sampler's length): every image's whole number
-    of draws, then the fractions by systematic sampling, so an image's fraction is (about) its chance of one more.
+    of draws, then at most one more each, by systematic sampling over chances in proportion to their fractions
+    (``_draw_chances``), so an image's fraction is (about) its chance of one more.
     """
     times = [per_image * float(factor) for factor in factors]
     out = [index for index, count in enumerate(times) for _ in range(int(count))]
     extra = epoch_length(factors, per_image) - len(out)
     fractions = [(index, count - int(count)) for index, count in enumerate(times) if count > int(count)]
-    total = sum(fraction for _index, fraction in fractions)
-    if extra > 0 and total > 0:
+    if extra > 0 and fractions:
         rng.shuffle(fractions)
-        step, mark, reach = total / extra, rng.random() * total / extra, 0.0
-        for index, fraction in fractions:
-            reach += fraction
-            while mark < reach and extra > 0:
+        chances = _draw_chances([fraction for _index, fraction in fractions], extra)
+        mark, reach = rng.random(), 0.0
+        drawn: set[int] = set()
+        for (index, _fraction), chance in zip(fractions, chances, strict=True):
+            reach += chance
+            if mark < reach and extra > 0:  # one mark in each step of 1, and no chance is above 1: one draw at most
                 out.append(index)
+                drawn.add(index)
                 extra -= 1
-                mark += step
-        if extra > 0:  # the last mark missed the end by a rounding error (the fractions summed in another order)
-            out.extend(index for index, _fraction in fractions[-extra:])
+                mark += 1.0
+        # the last mark missed the end by a rounding error (the chances summed in another order): images not drawn
+        out.extend([index for index, _fraction in reversed(fractions) if index not in drawn][:extra])
     rng.shuffle(out)
     return out
 

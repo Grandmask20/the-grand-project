@@ -6,7 +6,8 @@
 family by family (a map node is one of the node classes): each pre-label is matched one-to-one to a reviewed box of
 its family whose middle lies within the family's radius (``RF_DETR_EVAL_RADIUS``, as the detector is scored). A
 matched box is kept, relabelled (another class of its family) and/or moved (overlap under
-``ANNOTATOR_EFFORT_MOVE_IOU``); an unmatched pre-label was deleted, an unmatched reviewed box added. The simulated
+``ANNOTATOR_EFFORT_MOVE_IOU``); an unmatched pre-label was deleted, an unmatched reviewed box added. The matching is
+the one with the fewest of these edits. The simulated
 loop (``simulate_loop``) measures pre-label policies the same way, against the PM's truth.
 
 The report groups the reviewed screenshots by what pre-labelled them (``ANNOTATOR_PRELABEL_FIELD``: the classical
@@ -92,17 +93,41 @@ def _iou(a: np.ndarray, b: np.ndarray) -> float:
     return float(inter / ((a[2] - a[0]) * (a[3] - a[1]) + (b[2] - b[0]) * (b[3] - b[1]) - inter))
 
 
-def match_boxes(before: Sequence[np.ndarray], after: Sequence[np.ndarray], radius: float) -> list[tuple[int, int]]:
-    """One-to-one pairs (before, after) whose middles lie within ``radius``, closest first overall (an optimal
-    assignment: the fewest edits, where a greedy match can pair a box with its neighbour's)."""
+def match_boxes(
+    before: Sequence[np.ndarray], after: Sequence[np.ndarray], radius: float, edits: np.ndarray | None = None
+) -> list[tuple[int, int]]:
+    """One-to-one pairs (before, after) whose middles lie within ``radius``, by an optimal assignment (a greedy match
+    can pair a box with its neighbour's).
+
+    Args:
+        before: ``[x0, y0, x1, y1]`` boxes.
+        after: ``[x0, y0, x1, y1]`` boxes.
+        radius: the farthest two paired middles lie apart.
+        edits: (len(before), len(after)) the edits each pair would count (a box left unpaired counts one: deleted or
+            added): the pairing with the fewest edits, then the most pairs, then the closest. None: the most pairs,
+            then the closest.
+    """
     if not before or not after:
         return []
     middles_before = np.array([((b[0] + b[2]) / 2, (b[1] + b[3]) / 2) for b in before])
     middles_after = np.array([((a[0] + a[2]) / 2, (a[1] + a[3]) / 2) for a in after])
     distance = np.hypot(*(middles_before[:, None, :] - middles_after[None, :, :]).transpose(2, 0, 1))
-    cost = np.where(distance <= radius, distance, radius * 1e3)
+    reach = distance <= radius
+    if edits is None:
+        rows, cols = linear_sum_assignment(np.where(reach, distance, radius * 1e3))
+        return [(int(r), int(c)) for r, c in zip(rows, cols, strict=True) if reach[r, c]]
+    n, m = distance.shape
+    # one edit outweighs every distance together; a box left unpaired is one edit and a little more than any pair's
+    # distance (two boxes paired beat two unpaired at equal edits); out of reach never pairs
+    unit = (n + m + 1) * radius + 1.0
+    never = unit * (2 * (n + m) + 1)
+    cost = np.full((n + m, n + m), never)
+    cost[:n, :m] = np.where(reach, unit * np.asarray(edits, float) + distance, never)
+    cost[np.arange(n), m + np.arange(n)] = unit + radius  # before i unpaired: deleted
+    cost[n + np.arange(m), np.arange(m)] = unit + radius  # after j unpaired: added
+    cost[n:, m:] = 0.0
     rows, cols = linear_sum_assignment(cost)
-    return [(int(r), int(c)) for r, c in zip(rows, cols, strict=True) if distance[r, c] <= radius]
+    return [(int(r), int(c)) for r, c in zip(rows, cols, strict=True) if r < n and c < m and reach[r, c]]
 
 
 def pixel_scale(width: float | None, height: float | None) -> float:
@@ -143,7 +168,15 @@ def edit_cost(
     out: dict[str, Edits] = {}
     for name, (before, after) in sorted(grouped.items()):
         radius = DK.RF_DETR_EVAL_RADIUS.get(name, max(DK.RF_DETR_EVAL_RADIUS.values())) * scale
-        pairs = match_boxes([box for _l, box in before], [box for _l, box in after], radius)
+        # what pairing each two would count: relabelled, moved (the fewest edits overall is the review's)
+        cost = np.array(
+            [
+                [(label != other) + (_iou(box, theirs) < K.ANNOTATOR_EFFORT_MOVE_IOU) for other, theirs in after]
+                for label, box in before
+            ],
+            float,
+        ).reshape(len(before), len(after))
+        pairs = match_boxes([box for _l, box in before], [box for _l, box in after], radius, cost)
         edits = Edits(deleted=len(before) - len(pairs), added=len(after) - len(pairs))
         for i, j in pairs:
             if before[i][0] != after[j][0]:

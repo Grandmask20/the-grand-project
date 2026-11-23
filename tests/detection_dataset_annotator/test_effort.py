@@ -63,6 +63,14 @@ def test_matching_is_one_to_one_and_the_fewest_edits() -> None:
     assert edit_cost(before, after)["node"] == Edits(kept=2, moved=2)
 
 
+def test_matching_keeps_classes_where_the_closest_pairs_would_relabel() -> None:
+    """Two nodes a little apart, each reviewed box nearer the other's pre-label: pairing the closest would count two
+    relabels; pairing by class counts only the moves, the fewest edits."""
+    before = [_box("map_node", 100, 100), _box("map_node_grass", 116, 100)]
+    after = [_box("map_node_grass", 106, 100), _box("map_node", 110, 100)]
+    assert edit_cost(before, after)["node"] == Edits(kept=2, moved=2)
+
+
 def test_radii_scale_with_the_screenshot() -> None:
     """A 4K screenshot's boxes are twice the detector's pixels: so is the match radius (node: 20 px at 1080p)."""
     before, after = [_box("map_node", 100, 100, 77.4, 77.4)], [_box("map_node", 130, 100, 77.4, 77.4)]

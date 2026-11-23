@@ -85,3 +85,14 @@ def test_a_typed_city_rules_its_type_out_for_its_neighbours(monkeypatch: pytest.
         {"kind": "City", "x": 900.0, "y": 500.0},
     ]
     assert cities.landmark_city_types(image, landmarks) == {0: ("Vaal", True), 2: ("Ezomyte", True)}
+
+
+def test_a_city_whose_neighbours_took_every_type_is_unsure(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Three typed cities of each type closer than TRIO_GAP to a fourth contradict each other (close cities always
+    differ): whatever type it gets, clear as its look may be, is a guess."""
+    monkeypatch.setattr(cities, "look_distances", lambda feats: [0.10, 0.80, 0.90])
+    points = [(600.0, 500.0), (900.0, 500.0), (750.0, 300.0), (750.0, 450.0)]
+    known = {0: "Ezomyte", 1: "Vaal", 2: "Faridun"}
+    found = cities.screenshot_city_types(np.zeros((1080, 1920, 3), np.uint8), points, known)
+    assert found[:3] == [("Ezomyte", True), ("Vaal", True), ("Faridun", True)]
+    assert found[3] == ("Ezomyte", False)

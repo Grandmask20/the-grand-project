@@ -15,7 +15,8 @@ def _nameable() -> set[str]:
     """The types the classical detector can output: the icon database's pictures and the badges model's own labelled
     pictures (detect/badges.py names icons by both), the icons with their own template, and the ship markers
     (found by their square button, landmarks.ship_markers)."""
-    c = sqlite3.connect(f"file:{icon_refs.DB_PATH.as_posix()}?mode=ro", uri=True)
+    # as_uri percent-encodes the path ("#", "?" or "%" in a folder name would break a raw one)
+    c = sqlite3.connect(f"{icon_refs.DB_PATH.resolve().as_uri()}?mode=ro", uri=True)
     stored = {r[0] for r in c.execute("SELECT DISTINCT name FROM badge_refs")}
     c.close()
     return stored | set(models.load_model("badges")["names"]) | set(K.SPECIAL_ICONS) | {"ExpeditionShip"}

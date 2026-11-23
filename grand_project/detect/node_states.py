@@ -19,7 +19,7 @@ from pathlib import Path
 import cv2
 import numpy as np
 
-from grand_project import icon_refs
+from grand_project import fileio, icon_refs
 
 from . import constants as K
 
@@ -132,18 +132,20 @@ def name_state(img: np.ndarray, x: float, y: float, book: dict | None = None) ->
     return (book["states"][k] if d[k] <= K.NODE_STATE_MAX_DIST else None), float(d[k])
 
 
-def name_states(img: np.ndarray, nodes: list[dict]) -> list[str | None]:
+def name_states(img: np.ndarray, nodes: list[dict], book: dict | None = None) -> list[str | None]:
     """Name the state of every found map node of one screenshot.
 
     Args:
         img: BGR screenshot (1080p).
         nodes: Detected map nodes (dicts with "x", "y" in screen px; "hidden" / "unverified" ones are only guesses
             of where a map is, so their state is never named).
+        book: state_pictures(); None loads them. A caller that saves the names with their stamp passes the book it
+            takes the stamp from, so a freeze in between can't pair names with another set's stamp.
 
     Returns:
         One state (or None when unsure) per node, in order.
     """
-    book = state_pictures()
+    book = book if book is not None else state_pictures()
     return [None if n.get("hidden") or n.get("unverified") else name_state(img, n["x"], n["y"], book)[0] for n in nodes]
 
 
@@ -165,9 +167,12 @@ def save_state_pictures(path, crops: np.ndarray, states: list[str], shots: list[
     if bad:
         raise ValueError(f"unknown state(s): {', '.join(bad)}")
     size = icon_refs.SIZE
+    data = io.BytesIO()
     np.savez_compressed(
-        path,
+        data,
         crops=np.asarray(crops, np.uint8).reshape(-1, size, size, 3),
         states=np.array(states, dtype=str),
         shots=np.array(shots, dtype=str),
     )
+    # in one step: a failed write keeps the pictures there were (the detector reads them whenever the file changes)
+    fileio.write_bytes_atomic(path, data.getvalue())

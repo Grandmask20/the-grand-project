@@ -42,3 +42,24 @@ def test_truth_without_states_prints_no_states_score(capsys):
     s = atlas_truth.score(truth, {"a.png": {"nodes": [{"x": 100.0, "y": 100.0}], "landmarks": [], "icons": []}})
     atlas_truth.print_score(s)
     assert "map node states" not in capsys.readouterr().out
+
+
+def test_the_score_command_reads_the_states_next_to_the_screenshots(tmp_path, capsys):
+    """`truth score`: truth.json has no states; the hand-checked ones are the screenshots' states.json."""
+    import argparse
+    import hashlib
+    import json
+
+    shots, cache = tmp_path / "shots", tmp_path / "cache"
+    shots.mkdir()
+    cache.mkdir()
+    (shots / "a.png").write_bytes(b"a screenshot")
+    shot = _shot([{"x": 100.0, "y": 100.0, "state": "green"}])
+    del shot["states"]
+    (tmp_path / "truth.json").write_text(json.dumps({"a.png": shot}))
+    (shots / "states.json").write_text(json.dumps({"a.png": [{"x": 100.0, "y": 100.0, "state": "green"}]}))
+    found = {"nodes": [{"x": 100.0, "y": 101.0, "state": "blue"}], "landmarks": [], "icons": []}
+    (cache / f"{hashlib.sha256(b'a screenshot').hexdigest()[:16]}.json").write_text(json.dumps(found))
+    args = argparse.Namespace(truth=str(tmp_path / "truth.json"), shots=str(shots), cache=str(cache))
+    assert atlas_truth.cmd_score(args) == 0
+    assert "map node states: 0 right, 1 wrong, 0 unsure" in capsys.readouterr().out

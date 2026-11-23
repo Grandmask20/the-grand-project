@@ -77,8 +77,20 @@ def _positions(path: Path, img: np.ndarray, known: dict, truth: dict) -> list[tu
     return [(n["x"], n["y"], None) for n in detect(img)["nodes"] if not n.get("hidden")]
 
 
+def _holds_corrections(path: Path) -> bool:
+    """Whether a corrections file has a correction in it (not only comments)."""
+    return path.exists() and any(
+        line.split("#", 1)[0].strip() for line in path.read_text(encoding="utf-8").splitlines()
+    )
+
+
 def cmd_sheet(folder: Path, out: Path, shots: list[str], every: int) -> int:
     """Write the sheets, proposals.json and corrections.txt for a folder's screenshots."""
+    if _holds_corrections(out / "corrections.txt"):
+        # new sheets number their crops anew: the corrections would land on other crops
+        raise SystemExit(
+            f"{out / 'corrections.txt'} holds corrections for the sheets there now: save them (save), then empty it"
+        )
     paths = core.screenshots_in(folder)
     if shots:
         want = set(shots)
@@ -154,6 +166,8 @@ def read_corrections(path: Path) -> dict[str, str | None]:
 def cmd_save(folder: Path, out: Path) -> int:
     """Apply corrections.txt to the proposals and write the folder's states.json."""
     data = json.loads((out / "proposals.json").read_text(encoding="utf-8"))
+    if Path(data["folder"]).resolve() != Path(folder).resolve():  # two folders of one name share the default out
+        raise SystemExit(f"the sheets in {out} are of {data['folder']}, not {folder}")
     proposals = data["proposals"]
     fixes = read_corrections(out / "corrections.txt")
     unknown = sorted(set(fixes) - set(proposals))

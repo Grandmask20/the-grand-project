@@ -120,7 +120,7 @@ def test_states_named_with_other_pictures_are_named_again(tmp_path, monkeypatch)
     at, maps_by, _nodes, _icons = _atlas(tmp_path, [["grey", "grey"]] * 3, stamp="old pictures")
     f = at.frames[0]
     cv2.imwrite(f["path"], np.zeros((1080, 1920, 3), np.uint8))
-    monkeypatch.setattr(atlas_detect, "name_states", lambda img, nodes: ["blue", None])
+    monkeypatch.setattr(atlas_detect, "name_states", lambda img, nodes, book=None: ["blue", None])
     rec = traces._saved(at, f)
     assert rec["state"] == ["blue", None]
     saved = json.loads((tmp_path / f"{f['sha'][:16]}_{atlas_detect.DETECTOR_ID}.json").read_text())
@@ -128,9 +128,14 @@ def test_states_named_with_other_pictures_are_named_again(tmp_path, monkeypatch)
     assert [n["state"] for n in saved["nodes"]] == ["blue", None]
 
 
-def test_states_stay_as_saved_when_the_screenshot_is_gone(tmp_path):
+def test_states_stay_as_saved_when_the_screenshot_is_gone(tmp_path, monkeypatch):
+    """...and are named again once it is back (CodeRabbit: they were kept as today's names before)."""
     at, _maps_by, _nodes, _icons = _atlas(tmp_path, [["green", "grey"]] * 3, stamp="old pictures")
-    assert traces._saved(at, at.frames[1])["state"] == ["green", "grey"]
+    f = at.frames[1]
+    assert traces._saved(at, f)["state"] == ["green", "grey"]
+    cv2.imwrite(f["path"], np.zeros((1080, 1920, 3), np.uint8))
+    monkeypatch.setattr(atlas_detect, "name_states", lambda img, nodes, book=None: ["blue", None])
+    assert traces._saved(at, f)["state"] == ["blue", None]
 
 
 @pytest.mark.parametrize("bad", ["auto", 7])

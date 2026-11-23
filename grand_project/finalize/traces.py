@@ -190,7 +190,8 @@ def _saved(atlas, f):
     d = getattr(atlas, "frames_dir", None)
     if d is None or not f.get("sha"):
         return None
-    stamp = atlas_detect.states_stamp()
+    book = atlas_detect.state_pictures()  # one set of pictures: the cache key, the names and their stamp
+    stamp = book["stamp"]
     key = (f["sha"], stamp)
     if key in _SAVED:
         _SAVED[key] = _SAVED.pop(key)
@@ -207,6 +208,7 @@ def _saved(atlas, f):
         return None
     dashes = any(k not in data for k in ("dash_pts", "seen_grid", "wall_grid", "amber_pts"))
     states = data.get("states_from") != stamp
+    fresh = True  # its states named with today's pictures: kept under today's stamp
     if dashes or states:
         img = atlas.image(f["path"]) if Path(f["path"]).exists() else None
         if img is None and dashes:
@@ -215,12 +217,17 @@ def _saved(atlas, f):
             if dashes:
                 data.update(atlas_detect.dash_record(img))
             if states:
-                for n, state in zip(data["nodes"], atlas_detect.name_states(img, data["nodes"]), strict=True):
+                named = atlas_detect.name_states(img, data["nodes"], book)
+                for n, state in zip(data["nodes"], named, strict=True):
                     n["state"] = state
                 data["states_from"] = stamp
             # a cache that can't be written now (e.g. a Windows lock) is filled in again next time
             with contextlib.suppress(OSError):
                 atlas_io.write_text_atomic(cf, json.dumps(data))
+        else:
+            # the image is gone: its states stay as they were saved, but not kept as today's, so they are named
+            # again once it is back
+            fresh = False
     D = np.asarray(data["dash_pts"], float).reshape(-1, 2)
     rec = {
         "P": np.array([[n["x"], n["y"]] for n in data["nodes"]], float).reshape(-1, 2),
@@ -233,9 +240,10 @@ def _saved(atlas, f):
         "grid": np.array([[c == "1" for c in row] for row in data["seen_grid"]], bool),
         "wall": np.array([[c == "1" for c in row] for row in data["wall_grid"]], bool),
     }
-    _SAVED[key] = rec
-    while len(_SAVED) > SAVED_CACHE:
-        _SAVED.pop(next(iter(_SAVED)))
+    if fresh:
+        _SAVED[key] = rec
+        while len(_SAVED) > SAVED_CACHE:
+            _SAVED.pop(next(iter(_SAVED)))
     return rec
 
 
