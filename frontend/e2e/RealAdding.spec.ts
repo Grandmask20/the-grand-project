@@ -55,8 +55,10 @@ test("two batches of real screenshots, the second sent while the first is detect
 	// the page shows the new maps: the map, Find, the replay of how it was made
 	await page.reload();
 	await expect(page.getByText(new RegExp(`${s.atlas?.maps} maps`))).toBeVisible();
+	// (the page opens on Bookmarks: user)
+	await page.getByRole("tablist", { name: "Side panel" }).getByRole("tab", { name: "Find", exact: true }).click();
 	await page.getByRole("textbox", { name: "Find" }).fill("#0");
-	await expect(page.getByRole("button", { name: "Map #0", exact: true })).toBeVisible();
+	await expect(page.getByRole("list", { name: "Results" }).getByRole("button", { name: /^Map #0\b/ })).toBeVisible();
 	const plan = await post(page, "/api/replay/open");
 	expect(plan.status).toBe(200);
 	expect(Number(plan.body?.n_steps)).toBeGreaterThan(0);

@@ -107,16 +107,18 @@ export function useRoutes() {
 	);
 
 	/** The next map of the route tracked, and the map goes there (the maps passed again on the way back from a branch
-	 * are skipped: they're run already). */
+	 * are skipped: they're run already). Your position moves on to it with the route (user: "you are here" should
+	 * follow Next map). */
 	const nextMap = useCallback(() => {
 		const r = useAppStore.getState().route;
 		if (!r || r.at === undefined) return;
 		const at = nextNew(r.path, r.at);
 		if (at === null) return;
 		setRoute({ ...r, at, message: tracking(r.path, at) });
+		setPlayer(r.path[at]);
 		const p = graph?.at(r.path[at]);
 		if (p) flyTo(p[0], p[1], 0.6);
-	}, [setRoute, graph, flyTo]);
+	}, [setRoute, setPlayer, graph, flyTo]);
 
 	return {
 		graph,
@@ -140,10 +142,22 @@ export function nextNew(path: number[], at: number): number | null {
 	return null;
 }
 
+/** How many maps of a route tracked are left to run (each once: the maps passed again on the way back from a branch
+ * are run already). */
+export function mapsLeft(path: number[], at: number): number {
+	const run = new Set(path.slice(0, at + 1));
+	return new Set(path.slice(at + 1).filter((m) => !run.has(m))).size;
+}
+
+/** How far along a route tracked is, 0 at its start to 1 at its last map (by its maps, each once). */
+export function routeDone(path: number[], at: number): number {
+	const maps = new Set(path).size;
+	return maps > 1 ? (maps - 1 - mapsLeft(path, at)) / (maps - 1) : 1;
+}
+
 /** What the Route page says while a route is tracked: how many maps are left (each once). */
 export function tracking(path: number[], at: number): string {
-	const run = new Set(path.slice(0, at + 1));
-	const left = new Set(path.slice(at + 1).filter((m) => !run.has(m))).size;
+	const left = mapsLeft(path, at);
 	return left > 0 ? `${plural(left, "map")} left` : "You're there: the route's last map.";
 }
 

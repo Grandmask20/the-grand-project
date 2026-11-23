@@ -67,13 +67,17 @@ class Atlas:
         edges: Paths keyed by (node index, node index) -> {seen, could, confirmed}.
         landmarks: Merged landmarks {kind, x, y, n, conf, source}.
         bookmarks: {name, category, note, x, y} set in the viewer.
+        group_looks: {group: {"colour"?, "icon"?}} bookmark groups' own colour and icon (app.bookmarks).
         icons: Every icon (badge), merged across screenshots {name, x, y, bx, by, n, frames, score, source};
             (bx, by) is the map base under the icon's row.
         final: Atlas-wide clean-up result (atlas_finalize), or None.
         city_types: {x, y, type} cities whose type was set by hand.
         city_auto: {x, y, d: [..]} cached look-alike distances per city type.
         landmark_edits: {x, y, kind[, on]} set by hand in the viewer; kind "" = deleted.
+        map_edits: {x, y, op} maps deleted ("remove") or added ("add") by hand (app.model applies them).
         biome_edits: {"biome": "Vaal city"... or "" (none), "maps": [[x, y], ...]} lassoed by hand.
+        biome_kept: {x, y, "biome" ("" = none)} maps whose biome a Re-check left as it was (app.recheck_choices).
+        last_check: {"time", "version"} of the last whole-atlas Re-check, or None (none since 1.23).
         locks: {x, y, n} hand icons = locked Breach strongholds.
         lock_scanned: Screenshots already searched for the hand icon.
         frames: Placed screenshots {name, path, sha, w, h, M, horizon, stats, new_nodes, matched_nodes,
@@ -90,14 +94,18 @@ class Atlas:
         # the id the next bookmark gets: one past every id this atlas has had, so a deleted one's id is never given
         # again (a page still holding it would act on the new bookmark: CodeRabbit)
         self.bookmark_next_uid = 0
+        self.group_looks: dict[str, dict] = {}  # {group: {colour?, icon?}} (app.bookmarks)
         self.icons: list[dict] = []  # every badge, merged across screenshots
         self.final: dict | None = None  # atlas-wide clean-up result (atlas_finalize)
         self.city_types: list[dict] = []  # {x,y,type} cities whose type was set by hand
         self.city_auto: list[dict] = []  # {x,y,d:[..]} cached look-alike distances per city type
         self.landmark_edits: list[dict] = []  # {x,y,kind[,on]} set by hand in the viewer; kind "" = deleted
+        self.map_edits: list[dict] = []  # {x,y,op} maps deleted ("remove") or added ("add") by hand
         self.biome_edits: list[
             dict
         ] = []  # {"biome": "Vaal city"... or "" (none), "maps": [[x, y], ...]} lassoed by hand
+        self.biome_kept: list[dict] = []  # {x,y,biome} biomes a Re-check left as they were (you unticked Biomes)
+        self.last_check: dict | None = None  # {time, version} of the last whole-atlas Re-check (its prompt says)
         self.locks: list[dict] = []  # {x,y,n} hand badges = locked Breach strongholds
         self.lock_scanned: list[str] = []  # screenshots already searched for the hand badge
         self.frames: list[dict] = []  # {name,path,sha,w,h,M,stats}
@@ -387,17 +395,19 @@ class Atlas:
         moved = apply(M, frame.pts)
         atlas_pts = self.points()
         mapping: dict[int, int] = {}
-        # greedy one-to-one node merge, closest pairs first
-        if len(atlas_pts):
-            d = np.linalg.norm(moved[:, None, :] - atlas_pts[None, :, :], axis=2)
-            order = np.dstack(np.unravel_index(np.argsort(d, axis=None), d.shape))[0]
+        # greedy one-to-one node merge, closest pairs first; only the pairs within MERGE_TOL are sorted (every pair,
+        # screenshot nodes x atlas nodes, was measured and sorted: slow on a big atlas, GPT audit)
+        if len(atlas_pts) and len(moved):
+            from scipy.spatial import cKDTree
+
+            near = cKDTree(atlas_pts).query_ball_point(moved, MERGE_TOL)
+            pairs = sorted((float(np.hypot(*(moved[i] - atlas_pts[j]))), i, j) for i, js in enumerate(near) for j in js)
             used_a = set()
-            for i, j in order:
-                if d[i, j] > MERGE_TOL:
-                    break
-                if int(i) in mapping or int(j) in used_a:
+            for _d, i, j in pairs:
+                if i in mapping or j in used_a:
                     continue
-                mapping[int(i)], _ = int(j), used_a.add(int(j))
+                mapping[i] = j
+                used_a.add(j)
         new_nodes = 0
         on_hud = getattr(frame, "on_hud", np.zeros(len(moved), bool))
         hud_skipped = 0
@@ -744,6 +754,39 @@ class Atlas:
             h.update(np.round(np.array(f["M"], float), 2).tobytes())
         return h.hexdigest()
 
+    # what an atlas file holds (to_json's fields, besides its version), and which of it is set by hand: Undo puts
+    # everything else back as it was before the add (it restored a picked few, and the locked strongholds found in
+    # the screenshots it took away stayed: GPT audit)
+    SAVED = (
+        "frames",
+        "nodes",
+        "edges",
+        "landmarks",
+        "bookmarks",
+        "bookmark_next_uid",
+        "group_looks",
+        "icons",
+        "city_types",
+        "city_auto",
+        "landmark_edits",
+        "map_edits",
+        "biome_edits",
+        "biome_kept",
+        "last_check",
+        "locks",
+        "lock_scanned",
+        "final",
+    )
+    HAND_EDITS = (
+        "bookmarks",
+        "bookmark_next_uid",
+        "group_looks",
+        "city_types",
+        "landmark_edits",
+        "map_edits",
+        "biome_edits",
+    )
+
     def to_json(self) -> dict:
         """Return the atlas as the dict saved in atlas.json.
 
@@ -784,11 +827,15 @@ class Atlas:
             "landmarks": self.landmarks,
             "bookmarks": self.bookmarks,
             "bookmark_next_uid": self.bookmark_next_uid,
+            "group_looks": self.group_looks,
             "icons": self.icons,
             "city_types": self.city_types,
             "city_auto": self.city_auto,
             "landmark_edits": self.landmark_edits,
+            "map_edits": self.map_edits,
             "biome_edits": self.biome_edits,
+            "biome_kept": self.biome_kept,
+            "last_check": self.last_check,
             "locks": self.locks,
             "lock_scanned": self.lock_scanned,
             "final": self.final,
@@ -845,12 +892,16 @@ class Atlas:
         at.landmarks = d["landmarks"]
         at.bookmarks = d.get("bookmarks", [])
         at.bookmark_next_uid = int(d.get("bookmark_next_uid", 0))
+        at.group_looks = d.get("group_looks") or {}
         at.icons = d.get("icons", [])
         at.final = d.get("final")
         at.city_types = d.get("city_types", [])
         at.city_auto = d.get("city_auto", [])
         at.landmark_edits = d.get("landmark_edits", [])
+        at.map_edits = d.get("map_edits", [])
         at.biome_edits = d.get("biome_edits", [])
+        at.biome_kept = d.get("biome_kept", [])
+        at.last_check = d.get("last_check")
         at.locks = d.get("locks", [])
         at.lock_scanned = d.get("lock_scanned", [])
         keys = ("inliers", "rmse", "ncc", "ratio", "reference", "reason")

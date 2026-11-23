@@ -22,9 +22,24 @@ export function bookmarkOf(info: ItemInfo | null): BookmarkEdit | null {
 			name: info.name ?? "",
 			group: info.group ?? "Other",
 			note: info.note ?? "",
+			colour: info.colour,
+			icon: info.icon,
+			plain: info.plain,
 		};
 	const b = info.bookmark_of;
-	return b ? { id: b.id, x: info.x, y: info.y, name: b.name, group: b.group, note: b.note } : null;
+	return b
+		? {
+				id: b.id,
+				x: info.x,
+				y: info.y,
+				name: b.name,
+				group: b.group,
+				note: b.note,
+				colour: b.colour,
+				icon: b.icon,
+				plain: b.plain,
+			}
+		: null;
 }
 
 /** A new bookmark on an item (its place and suggested name), or on a spot of the map when nothing is there.

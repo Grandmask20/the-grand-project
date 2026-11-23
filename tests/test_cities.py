@@ -85,12 +85,3 @@ def test_a_typed_city_rules_its_type_out_for_its_neighbours(monkeypatch: pytest.
         {"kind": "City", "x": 900.0, "y": 500.0},
     ]
     assert cities.landmark_city_types(image, landmarks) == {0: ("Vaal", True), 2: ("Ezomyte", True)}
-
-
-def test_a_cleared_map_still_blocks_city_areas_by_the_icons_it_lost() -> None:
-    """A Cleansed map that was run lost its icon (finalize.states) but is still never a city map."""
-    nodes = [
-        {"x": 0.0, "y": 0.0, "status": "confirmed", "icons": [], "icons_lost": ["Sanctification"]},
-        {"x": 500.0, "y": 0.0, "status": "confirmed", "icons": []},
-    ]
-    assert cities.blocked_maps(nodes, [], [], icon_node={}) == {0: "cleansed"}

@@ -18,6 +18,7 @@ import numpy as np
 from grand_project.core import capture_time, time_order
 
 from . import replay as R
+from .atlaslock import atlas_edit
 from .constants import (
     COLOUR_SPREADS,
     HEAT_RES,
@@ -208,6 +209,7 @@ class ReplayMixin:
         return (buf.tobytes(), [x0, y0, x0 + W * cell, y0 + H * cell]) if ok else None
 
     # ------------------------------------------------------------------ the replay
+    @atlas_edit
     def replay_open(self) -> dict:
         """Open the replay: work out its plan; the map's tiles then carry each item's step.
 
@@ -236,6 +238,7 @@ class ReplayMixin:
             self._vector_steps = None
             self._scene3d_steps = None
 
+    @atlas_edit
     def set_replay_settings(self, changes: dict) -> dict:
         """Change replay settings; the plan is worked out again when it depends on them.
 

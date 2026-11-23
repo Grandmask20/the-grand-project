@@ -66,6 +66,19 @@ export type BookmarkEdit = {
 	note: string;
 	/** Saving a route (Save route): it goes in as a route bookmark. */
 	route?: SavedRoute;
+	/** Its own look as it is now ("": none); unknown (left out), the edit keeps it. */
+	colour?: string;
+	icon?: string;
+	plain?: boolean;
+};
+
+/** A bookmark group being renamed or given a look (its pen in Bookmarks). */
+export type GroupEdit = {
+	name: string;
+	colour: string;
+	icon: string;
+	plain: boolean;
+	onRenamed?: (to: string) => void;
 };
 
 export type Camera = { x: number; y: number; px: number; bearing: number; pitch: number };
@@ -88,6 +101,10 @@ export interface AppStoreState {
 	/** The page each tab with pages shows (Atlases: atlases / auto; Bookmarks: bookmarks / route; Log: log / debug). */
 	pages: Record<string, string>;
 	setPage: (tab: string, page: string) => void;
+	/** The View tab's sections open ("2d:Paths", "3d:Icons"...): none at first (user: all view settings folded on
+	 * first open), then as you left them while the app is open. */
+	viewOpen: string[];
+	toggleViewSection: (key: string) => void;
 	/** Layers shown because you changed one of their View settings (cleared when you leave the tab). */
 	/** The layers shown because a View setting of theirs is in use (RevealWhileUsed), and notices (VIEW_NOTICE). */
 	editing: string[];
@@ -127,8 +144,9 @@ export interface AppStoreState {
 	setMode: (mode: MapMode) => void;
 	/** Biome select's menu is up (its note would still say to draw). */
 	lassoAsked: boolean;
-	fly: { x: number; y: number; px?: number; n: number } | null;
-	flyTo: (x: number, y: number, px?: number) => void;
+	/** A spot to show; clearTop: the window's y above which it would be hidden (a box over the map's top). */
+	fly: { x: number; y: number; px?: number; clearTop?: number; n: number } | null;
+	flyTo: (x: number, y: number, px?: number, clearTop?: number) => void;
 	fitAtlas: number;
 	requestFit: () => void;
 	/** Fit an area of the atlas in the view (a saved route: its whole line, with room round it). */
@@ -155,10 +173,15 @@ export interface AppStoreState {
 	askConfirm: (c: Confirm | null) => void;
 	bookmarkEdit: BookmarkEdit | null;
 	editBookmark: (b: BookmarkEdit | null) => void;
+	groupEdit: GroupEdit | null;
+	editGroup: (g: GroupEdit | null) => void;
 	sources: Point | null;
 	showSources: (p: Point | null) => void;
 	deleteAtlas: string | null;
 	askDeleteAtlas: (json: string | null) => void;
+	/** The atlas (its .json file) the Re-check prompt asks about. */
+	recheckAtlas: string | null;
+	askRecheck: (json: string | null) => void;
 	error: string | null;
 	/** The error is a brief note about the last click (no maps inside a lasso): it closes on the next click. */
 	errorBrief: boolean;
@@ -196,7 +219,8 @@ export const useAppStore = create<AppStoreState>()((set) => ({
 	setMap: (map) => set({ map }),
 	camera: null,
 	setCamera: (camera) => set({ camera }),
-	tab: "find",
+	// the Bookmarks tab first (user: "starting on the bookmarks tab is good")
+	tab: "bookmarks",
 	// leaving the Bookmarks tab ends "Add bookmark" (user: it stayed on, and a later click on the map added one)
 	setTab: (asked) =>
 		set((st) => {
@@ -213,6 +237,11 @@ export const useAppStore = create<AppStoreState>()((set) => ({
 		}),
 	pages: {},
 	setPage: (tab, page) => set((st) => ({ pages: { ...st.pages, [tab]: page } })),
+	viewOpen: [],
+	toggleViewSection: (key) =>
+		set((st) => ({
+			viewOpen: st.viewOpen.includes(key) ? st.viewOpen.filter((k) => k !== key) : [...st.viewOpen, key],
+		})),
 	editing: [],
 	hold: (layer) => {
 		const era = holdEra;
@@ -262,7 +291,17 @@ export const useAppStore = create<AppStoreState>()((set) => ({
 	query: "",
 	setQuery: (query) => set(query.trim() ? { query, highlight: null, goto: null } : { query }),
 	listed: null,
-	listType: (label, icon) => set({ findText: "", query: "", listed: { label, icon }, highlight: icon, goto: null }),
+	// (the results before go at once: they showed under the type opened until its own came)
+	listType: (label, icon) =>
+		set({
+			findText: "",
+			query: "",
+			listed: { label, icon },
+			highlight: icon,
+			goto: null,
+			results: [],
+			resultsTitle: "",
+		}),
 	clearFind: () =>
 		set({ findText: "", query: "", listed: null, highlight: null, goto: null, results: [], resultsTitle: "" }),
 	highlight: null,
@@ -277,7 +316,7 @@ export const useAppStore = create<AppStoreState>()((set) => ({
 		),
 	lassoAsked: false,
 	fly: null,
-	flyTo: (x, y, px) => set((s) => ({ fly: { x, y, px, n: (s.fly?.n ?? 0) + 1 } })),
+	flyTo: (x, y, px, clearTop) => set((s) => ({ fly: { x, y, px, clearTop, n: (s.fly?.n ?? 0) + 1 } })),
 	fitAtlas: 0,
 	requestFit: () => set((s) => ({ fitAtlas: s.fitAtlas + 1 })),
 	fitTo: null,
@@ -311,10 +350,14 @@ export const useAppStore = create<AppStoreState>()((set) => ({
 	askConfirm: (confirm) => set({ confirm }),
 	bookmarkEdit: null,
 	editBookmark: (bookmarkEdit) => set({ bookmarkEdit }),
+	groupEdit: null,
+	editGroup: (groupEdit) => set({ groupEdit }),
 	sources: null,
 	showSources: (sources) => set({ sources }),
 	deleteAtlas: null,
 	askDeleteAtlas: (deleteAtlas) => set({ deleteAtlas }),
+	recheckAtlas: null,
+	askRecheck: (recheckAtlas) => set({ recheckAtlas }),
 	error: null,
 	errorBrief: false,
 	// an answer for the atlas open before isn't an error: the page just draws the new one
@@ -350,7 +393,9 @@ export const useAppStore = create<AppStoreState>()((set) => ({
 			prompt: null,
 			confirm: null,
 			bookmarkEdit: null,
+			groupEdit: null,
 			sources: null,
+			recheckAtlas: null, // (asked about the atlas open before: another one opened meanwhile, self review)
 		});
 	},
 }));

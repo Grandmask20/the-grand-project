@@ -343,6 +343,9 @@ export function MapInteraction() {
 			if (t && (t.tagName === "INPUT" || t.tagName === "TEXTAREA" || t.isContentEditable)) return;
 			if (e.key === "Escape" && mode.kind !== "normal") {
 				setMode({ kind: "normal" }); // (what the mode left behind goes: the effect below)
+			} else if (e.key === "Escape" && useAppStore.getState().selected) {
+				// the selection's box over the map closes first (its x says Esc)
+				useAppStore.getState().select(null);
 			} else if (e.key === "Escape") {
 				// with nothing to cancel, Esc empties Find and takes its rings off the map (user: it only worked in the box)
 				useAppStore.getState().clearFind();

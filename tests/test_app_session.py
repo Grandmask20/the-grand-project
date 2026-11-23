@@ -14,7 +14,6 @@ import numpy as np
 import pytest
 
 from grand_project import cities, core
-from grand_project.app.icons import icon_name
 from grand_project.app.library import list_dir
 from grand_project.app.model import view_model
 from grand_project.app.session import AtlasSession
@@ -26,6 +25,15 @@ def session():
     s = AtlasSession(settings={}, worker=False)
     yield s
     s.shutdown()
+
+
+def settled(session) -> None:
+    """Wait for what opening an atlas starts behind it: the locked-stronghold search ends with a model rebuild (a
+    filter version), which landed in the middle of a test on a busy machine."""
+    t = getattr(session, "_lock_thread", None)
+    if t:
+        t.join(60)  # (the test runner's own timeout covers a hang)
+        assert not t.is_alive(), "the locked-stronghold search didn't end"
 
 
 def points(s: AtlasSession, layer: str, replay: bool = False) -> dict:
@@ -77,6 +85,7 @@ def test_vector_tiles_hold_the_maps_where_they_are(session, tmp_path):
         assert abs(gx - x) < 0.1 and abs(gy - y) < 0.1 and props["status"] == "confirmed"
     assert maps[6][2]["icons"] == "|Breach|Delirium|"
     assert not points(session, "removed")
+    settled(session)
     v = session.filter_version
     session.set_ui_settings({"layers": {"Removed": True}})
     assert session.filter_version == v + 1 and list(points(session, "removed")) == [15]
@@ -90,15 +99,14 @@ def test_a_maps_state_is_in_its_tiles_and_its_details(session, tmp_path):
     session.open_atlas(path)
     seen = time.mktime((2026, 11, 21, 20, 25, 0, 0, 0, -1))
     with session._lock:
-        session.atlas.final["nodes"][3].update(state="green", state_seen=seen, state_errors=2, icons_lost=["Breach"])
+        session.atlas.final["nodes"][3].update(state="green", state_seen=seen, state_errors=2)
     session.rebuild_model()
     maps = points(session, "maps")
     assert maps[3][2]["state"] == "green" and maps[1][2]["state"] == ""
     lines = session.info("node", 3)["lines"]
     assert "State: green (cleared), last seen 21 Nov 20:25" in lines
     assert "2 screenshot(s) disagree about its state (detection errors)" in lines
-    assert f"Lost icons: {icon_name('Breach')}" in lines
-    assert not [line for line in session.info("node", 1)["lines"] if line.startswith(("State", "Lost"))]
+    assert not [line for line in session.info("node", 1)["lines"] if line.startswith("State")]
 
 
 def test_biomes_ground_icons_and_models(session, tmp_path):
@@ -131,7 +139,15 @@ def test_find_details_and_clicks(session, tmp_path):
     hits = session.search("breach")["results"]
     assert any(r["kind"] == "icon" for r in hits) and any(r["kind"] == "landmark" for r in hits)
     assert session.search("220, 400") == {"goto": [220.0, 400.0]}
-    assert session.search("#12")["results"][0] == {"kind": "node", "id": 12, "label": "Map #12", "x": 440.0, "y": 200.0}
+    row = session.search("#12")["results"][0]
+    assert {k: row[k] for k in ("kind", "id", "label", "x", "y", "map")} == {
+        "kind": "node",
+        "id": 12,
+        "label": "Map #12",
+        "x": 440.0,
+        "y": 200.0,
+        "map": 12,
+    }  # (and its picture, icons, note: Find's rows)
     assert len(session.list_type("Breach stronghold")) == 2
     info = session.info("landmark", 0)
     assert info["title"] == "Vaal city" and info["city_type"] == "Vaal"  # typed by hand
@@ -271,6 +287,24 @@ def test_new_atlas_and_close(session, tmp_path):
     assert session.atlas is None and session.map_info() is None
 
 
+def test_closing_clears_the_map_image_before_saying_no_atlas(session, tmp_path, monkeypatch):
+    """The map image goes before the switch to "no atlas", as opening one does (a crop asked for in between was cut
+    from the closed atlas's map: CodeRabbit)."""
+    path, _pts, _img = make_atlas(tmp_path)
+    session.open_atlas(path)
+    assert session._tile_state[0] is not None  # (its map image tiled)
+    seen = []
+    real = session._switch
+
+    def switch(*a):
+        seen.append(session._tile_state[0])
+        return real(*a)
+
+    monkeypatch.setattr(session, "_switch", switch)
+    session.close()
+    assert seen == [None]
+
+
 def test_a_settings_change_is_one_log_line():
     from grand_project.app.session import settings_change_text
 
@@ -292,6 +326,7 @@ def test_a_settings_change_is_one_log_line():
 def test_drawn_by_at_least_makes_no_tile_again_and_paths_carry_their_share(session, tmp_path):
     path, _pts, _img = make_atlas(tmp_path)
     session.open_atlas(path)
+    settled(session)  # (macOS CI: the search's model rebuild landed after v was read)
     v = session.filter_version
     session.set_ui_settings({"style": {"path_freq": 0.5}})  # (user: each step remade every tile and the 3D scene)
     assert session.filter_version == v
@@ -307,9 +342,14 @@ def test_your_position_reads_in_words_in_the_log():
     assert settings_change_text({"ui": {"player": None}}, set()) == "your position forgotten"
 
 
-def test_doubtful_saved_on_goes_off_now_that_it_has_no_button(session):
-    session.settings["layers"] = {"Doubtful": True}
-    assert session.ui_settings()["layers"]["Doubtful"] is False
+def test_doubtful_saved_on_goes_off_now_that_it_has_no_button():
+    from grand_project.app.session import AtlasSession
+
+    s = AtlasSession(settings={"layers": {"Doubtful": True}}, worker=False)  # (brought up to date as they load)
+    try:
+        assert s.ui_settings()["layers"]["Doubtful"] is False
+    finally:
+        s.shutdown()
 
 
 def test_a_hidden_map_style_saved_before_becomes_the_maps_switch_off():
@@ -321,3 +361,144 @@ def test_a_hidden_map_style_saved_before_becomes_the_maps_switch_off():
         assert ui["style"]["map_style"] == "circles" and ui["layers"]["Nodes"] is False
     finally:
         s.shutdown()
+
+
+def test_clearing_a_city_biome_takes_back_the_cities_it_made_not_your_own_edits(session, tmp_path):
+    # (GPT audit: clearing the biome left the Hall a City)
+    path, _at = biome_atlas(tmp_path)
+    session.open_atlas(path)
+    poly = [[1400, 1000], [1800, 1000], [1800, 1300], [1400, 1300]]
+    n = session.V["nodes"][session.lasso_nodes(poly)[0]]
+    with session._lock:  # (a Hall the detection found there)
+        session.atlas.final["landmarks"].append(
+            {"kind": "Hall", "x": n["x"], "y": n["y"], "status": "kept", "n": 3, "could": 3, "conf": 0.9}
+        )
+    session.rebuild_model()
+    session.set_biome(poly, "Vaal city")
+    made = [e for e in session.atlas.landmark_edits if e.get("by") == "biome"]
+    assert made and made[0]["kind"] == "City"
+    assert any(c.get("by") == "biome" and c["type"] == "Vaal" for c in session.atlas.city_types)
+    session.set_biome(poly, "")
+    assert not [e for e in session.atlas.landmark_edits if e.get("by") == "biome"]
+    assert not [c for c in session.atlas.city_types if c.get("by") == "biome"]
+    assert {"x": 480.0, "y": 360.0, "type": "Vaal"} in session.atlas.city_types  # the type set by hand stays
+
+
+def test_undo_puts_back_all_but_your_hand_edits(session, tmp_path):
+    # (GPT audit: Undo restored six fields; locked strongholds found in the screenshots it took away stayed)
+    path, _at = biome_atlas(tmp_path)
+    session.open_atlas(path)
+    snap = tmp_path / "before.json"
+    session.atlas.save(snap)
+    before_locks = list(session.atlas.locks)
+    session.atlas.locks = [*before_locks, {"x": 1.0, "y": 2.0}]  # (found in the screenshots added)
+    session.atlas.lock_scanned = [*session.atlas.lock_scanned, "added.png"]
+    b = session.add_bookmark(100, 100, "made after the add")
+    session._undo = [{"file": str(snap), "names": ["added.png"]}]
+    session._run_undo()
+    assert session.atlas.locks == before_locks and "added.png" not in session.atlas.lock_scanned
+    assert any(x["uid"] == b for x in session.atlas.bookmarks)  # (yours: kept)
+
+
+def test_a_map_with_a_landmark_on_it_can_make_it_a_normal_map(session, tmp_path):
+    # (user: a click on a City selects its map, whose menu could only make it a landmark, never back)
+    path, _at = biome_atlas(tmp_path)
+    session.open_atlas(path)
+    k, v = next(iter(session.D["landmark_node"].items()))
+    lm = session.info("node", v)["on_landmark"]
+    assert lm["id"] == k and lm["landmark_kind"] == session.V["landmarks"][k]["kind"]
+    session.set_landmark(lm["x"], lm["y"], "")  # (what its Normal map does)
+    assert session.info("landmark", k)["removed"]
+    assert "on_landmark" not in session.info("node", v)
+
+
+def test_closing_answers_open_questions_no_and_asks_none(session):
+    import threading
+
+    session.events._listeners.append(__import__("queue").Queue())  # (a page open, so a question waits for its answer)
+    got = []
+    t = threading.Thread(target=lambda: got.append(session.events.ask("go on?")))
+    t.start()
+    for _ in range(200):
+        if session.events.open_questions():
+            break
+        threading.Event().wait(0.01)
+    assert session.events.end_questions() == 1
+    t.join(2)
+    assert got == [False]
+    assert session.events.ask("again?") is False  # (none asked while closing)
+
+
+def test_a_bookmark_made_on_a_landmark_is_its_maps_bookmark(session, tmp_path):
+    # (self review: a landmark selects its map now, whose bookmark was only looked for at the map itself)
+    path, _pts, _img = make_atlas(tmp_path)
+    session.open_atlas(path)
+    node = session.V["nodes"][3]
+    session.set_landmark(node["x"] + 35, node["y"], "Tower", on="map")  # (beside its map, within reach)
+    k = next(k for k, lm in enumerate(session.V["landmarks"]) if abs(lm["x"] - node["x"] - 35) < 1)
+    assert session.D["landmark_node"][k] == 3
+    b = session.add_bookmark(node["x"] + 35, node["y"], "my tower", "Towers")  # (made on the landmark)
+    info = session.info("node", 3)
+    assert info["bookmark"] == b  # (35 from the map: not its spot, but its landmark's)
+    assert info["suggest"]["name"] == session.landmark_name(k)
+
+
+def test_a_retired_setting_sent_by_an_older_page_is_brought_up_to_date(session):
+    session.set_ui_settings({"layers": {"Doubtful": True}})
+    assert session.settings["layers"]["Doubtful"] is False
+
+
+def test_one_job_ending_forgets_only_its_own_logged_steps(session):
+    ev = session.events
+    ev.set_progress("detecting 5 / 10")
+    ev.set_progress("building the map image", owner="map")
+    ev.set_progress(None, owner="map")
+    before = len(ev.log_lines)
+    ev.set_progress("detecting 5 / 10")  # (the same step and tenth: not written again)
+    assert len(ev.log_lines) == before
+
+
+def test_a_city_biome_leaves_a_landmark_you_set_by_hand_alone(session, tmp_path):
+    # (CodeRabbit: painting a city biome deleted your own edit there, and clearing it couldn't bring it back)
+    path, _at = biome_atlas(tmp_path)
+    session.open_atlas(path)
+    poly = [[1400, 1000], [1800, 1000], [1800, 1300], [1400, 1300]]
+    n = session.V["nodes"][session.lasso_nodes(poly)[0]]
+    session.set_landmark(n["x"], n["y"], "Hall", on="map")  # (yours)
+    session.set_biome(poly, "Vaal city")
+    mine = [e for e in session.atlas.landmark_edits if abs(e["x"] - n["x"]) < 1 and abs(e["y"] - n["y"]) < 1]
+    assert [e["kind"] for e in mine] == ["Hall"] and not mine[0].get("by")
+    session.set_biome(poly, "")
+    assert any(e["kind"] == "Hall" and not e.get("by") for e in session.atlas.landmark_edits)
+
+
+def test_two_landmarks_on_one_map_each_act_as_themselves(session, tmp_path):
+    # (CodeRabbit: the City's map selection gave the Hall's actions when both stood on one map)
+    path, _pts, _img = make_atlas(tmp_path)
+    session.open_atlas(path)
+    node = session.V["nodes"][3]
+    with session._lock:
+        for kind, dx in (("Hall", -20), ("City", 20)):
+            session.atlas.final["landmarks"].append(
+                {"kind": kind, "x": node["x"] + dx, "y": node["y"], "status": "kept", "n": 3, "could": 3, "conf": 0.9}
+            )
+    session.rebuild_model()
+    ks = {session.V["landmarks"][k]["kind"]: k for k, v in session.D["landmark_node"].items() if v == 3}
+    assert set(ks) == {"Hall", "City"}
+    for kind, k in ks.items():
+        assert session.info("landmark", k)["on_landmark"]["landmark_kind"] == kind
+
+
+def test_a_city_you_set_by_hand_still_takes_the_biome_s_type(session, tmp_path):
+    # (CodeRabbit: the guard for your own edit skipped the type too)
+    path, _at = biome_atlas(tmp_path)
+    session.open_atlas(path)
+    poly = [[1400, 1000], [1800, 1000], [1800, 1300], [1400, 1300]]
+    n = session.V["nodes"][session.lasso_nodes(poly)[0]]
+    session.set_landmark(n["x"], n["y"], "City", on="map")  # (yours, no type set)
+    session.set_biome(poly, "Vaal city")
+    assert any(
+        c.get("by") == "biome" and c["type"] == "Vaal" and abs(c["x"] - n["x"]) < 30 and abs(c["y"] - n["y"]) < 30
+        for c in session.atlas.city_types
+    )
+    assert [e["kind"] for e in session.atlas.landmark_edits if abs(e["x"] - n["x"]) < 1] == ["City"]

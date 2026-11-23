@@ -319,7 +319,7 @@ def _settlements(atlas, maps, landmarks, icons, state_at) -> list[dict]:
         atlas: the core.Atlas (screenshots, map nodes, images).
         maps: list of (frame dict, atlas-to-screen homography) for every screenshot.
         landmarks: the landmark dicts so far (kind, x, y, n, conf, status ...).
-        icons: the merged icons from _clean_icons that are still there (not lost: finalize.states).
+        icons: the merged icons from _clean_icons.
         state_at: callable (x, y) -> the state of the map node there, or None when no screenshot named it
             (finalize.states.state_near).
 

@@ -67,8 +67,15 @@ describe("RouteTab", () => {
 			"GET /api/graph": graph,
 			"GET /api/types": types,
 		});
-		expect(screen.getByText("1 map left")).toBeInTheDocument();
+		// the progress card: its ends, its maps, how many are left (banner's #51, liked by the user)
+		expect(screen.getByText("map #12 → map #13")).toBeInTheDocument();
+		expect(screen.getByText("2 maps · 1 left")).toBeInTheDocument();
+		expect(screen.getByRole("progressbar", { name: "How far along the route" })).toHaveAttribute("aria-valuenow", "0");
 		await waitFor(() => expect(screen.getByRole("button", { name: /map #13/ })).toBeInTheDocument());
+		// the steps: where you are (the start), then the next map
+		const steps = screen.getAllByRole("listitem").map((li) => li.textContent);
+		expect(steps[0]).toContain("map #12 · start");
+		expect(steps[1]).toContain("next");
 		await user.click(screen.getByRole("button", { name: /map #13/ }));
 		expect(useAppStore.getState().fly).toMatchObject({ x: 500, y: 200 });
 		await user.click(screen.getByRole("button", { name: "Stop tracking" }));
@@ -89,5 +96,23 @@ describe("RouteTab", () => {
 		await user.click(await screen.findByRole("option", { name: "Breach" }));
 		await waitFor(() => expect(useAppStore.getState().route).toMatchObject({ path: [13, 12], at: 0 }));
 		expect(screen.getByRole("button", { name: "Next map" })).toBeInTheDocument();
+	});
+
+	it("Next map moves your position on with the route (user: you are here follows it)", async () => {
+		useAppStore.getState().setRoute({ path: [12, 13], message: "1 map left", at: 0 });
+		const { user, calls } = renderWithApp(<RouteTab />, {
+			"GET /api/state": withPlayer,
+			"GET /api/graph": graph,
+			"GET /api/types": types,
+			"PATCH /api/settings": (b: unknown) => b,
+		});
+		await waitFor(() => expect(screen.getByRole("button", { name: /map #13/ })).toBeInTheDocument());
+		await user.click(screen.getByRole("button", { name: "Next map" }));
+		expect(useAppStore.getState().route?.at).toBe(1);
+		await waitFor(() =>
+			expect(calls.find((c) => c.path === "/api/settings")?.body).toMatchObject({
+				ui: { player: { node: 13, x: 500, y: 200 } },
+			}),
+		);
 	});
 });

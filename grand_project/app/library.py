@@ -192,7 +192,7 @@ class LibraryMixin:
             for extra in (self.path, self.settings.get("last_atlas")):
                 if extra and Path(extra).exists() and not any(same_file(a["json"], extra) for a in L):
                     L.append({"name": Path(extra).parent.name, "json": str(Path(extra).resolve())})
-            self.settings["atlases"] = L
+            self.set_setting("atlases", L, save=False)
             return L
 
     def remember_atlas(self, json_path, name: str | None = None) -> None:
@@ -257,8 +257,8 @@ class LibraryMixin:
                 terrain = tf.parent / (Path(jp).stem + "_terrain.png")
                 if not tf.exists() and terrain.exists():
                     canvas = cv2.imdecode(np.fromfile(str(terrain), np.uint8), cv2.IMREAD_COLOR)
-                    if canvas is not None:
-                        core.write_png(tf, make_thumb(canvas), "thumbnail")
+                    if canvas is not None:  # (the writer Delete waits for and stops: retire_files, CodeRabbit)
+                        self._write_thumb_now(jp, canvas)
             except Exception:
                 LOG.warning(f"could not read atlas {jp} for its card", exc_info=True)
             with ATLAS_LIST_LOCK:
@@ -383,8 +383,10 @@ class LibraryMixin:
         """
         if self.path is not None and same_file(json_path, self.path) and self.working():
             raise ValueError("wait until the screenshots being added are done")
-        paths = atlas_data_paths(json_path)
         self._close_if_open(json_path)
+        self.retire_files(json_path)  # (no background write fills its folder while it is deleted)
+        # listed once its writes are done: listed before, a folder the last write made was left behind (CodeRabbit)
+        paths = atlas_data_paths(json_path)
         failed = []
         for q in paths:
             try:

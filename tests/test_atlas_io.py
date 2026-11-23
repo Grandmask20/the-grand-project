@@ -150,8 +150,8 @@ def test_renaming_an_icon_picture_makes_cached_detections_stale(tmp_path, monkey
     the old names are detected again. The database's path has a "#": its read-only URI must still open it."""
     db = tmp_path / "refs #1.sqlite3"
     c = sqlite3.connect(db)
-    c.execute("CREATE TABLE detector_models (name TEXT, created TEXT)")
-    c.execute("CREATE TABLE badge_refs (id INTEGER PRIMARY KEY, name TEXT)")
+    c.execute("CREATE TABLE detector_models (name TEXT, info TEXT, blob BLOB)")
+    c.execute("CREATE TABLE badge_refs (id INTEGER PRIMARY KEY, name TEXT, png BLOB)")
     c.execute("INSERT INTO badge_refs (name) VALUES ('ArcaneOrProsperous')")
     c.commit()
     c.close()

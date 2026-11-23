@@ -25,6 +25,9 @@ describe("BookmarkDialog", () => {
 				name: "my breach",
 				group: "Breach",
 				note: "",
+				colour: "", // (a new one: none of its own, its group's)
+				icon: "",
+				plain: false,
 			}),
 		);
 		await waitFor(() => expect(useAppStore.getState().bookmarkEdit).toBeNull());

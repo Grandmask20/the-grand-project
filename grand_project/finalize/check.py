@@ -91,6 +91,7 @@ from .constants import (
     TRACE_MATCH,
     WALL_MAP,
 )
+from .icon_time import icons_over_time
 from .landmarks import _clean_icons, _guessed, _one_map, _settlements
 from .states import fit_nodes, state_near, state_stats
 from .traces import (
@@ -121,9 +122,9 @@ def finalize(atlas, log=_log) -> dict:
     screenshots could see its spot vs. found it (ghosts, the gap rule, maps on the fortress wall removed);
     3. Abyss chains along the river; 4. paths from the saved traces of every screenshot, seams and straight
     gold links, chosen under the selection rules (no crossings, at most MAX_EXITS exits, sector rule);
-    5. map nodes nobody can corroborate; 6. each map node's state (grey / blue / green / red) and icons over time
-    (finalize.states: the newest sightings, where the change from older ones is allowed; lost icons are not shown);
-    7. landmarks (Halls / Cities) and which icons to show.
+    5. map nodes nobody can corroborate; 6. each map node's state (grey / blue / green / red) over time
+    (finalize.states: the newest sightings, where the change from older ones is allowed); 7. landmarks (Halls /
+    Cities) and which icons to show (icons over time: finalize.icon_time).
 
     Args:
         atlas: the core.Atlas with placed screenshots (frames), merged nodes, icons and landmarks (atlas units).
@@ -131,7 +132,7 @@ def finalize(atlas, log=_log) -> dict:
 
     Returns:
         The new atlas.final dict: "nodes" (list of dicts with id, x, y, status, seen, could, frames, tower,
-        origin, icons, abyss, why, state, state_seen, state_errors, icons_lost), "paths" (list of dicts with a, b,
+        origin, icons, abyss, why, state, state_seen, state_errors), "paths" (list of dicts with a, b,
         kind, frames, seen_in, both_ends, abyss, score and, for traced paths, ends_in, confirm, deny, dashes, line),
         "landmarks", "icons" and "stats".
     """
@@ -1430,19 +1431,12 @@ def finalize(atlas, log=_log) -> dict:
             status[i] = "removed"
             removed_why[i] = "no badge and no path reaches it"
 
-    # ---- 6. each map's state and icons over time: from its newest sightings, as long as the change from the
-    # older ones is allowed (user's rules); a lost icon stays on its map until its loose copies are judged below
+    # ---- 6. each map's state over time: from its newest sightings, as long as the change from the older ones is
+    # allowed (user's rules)
     fits = fit_nodes(atlas, maps_by, nodes, status, icons, log)
-    gone = {k for i, fit in fits.items() for k in nodes[i]["icons"] if icons[k]["name"] in fit["lost"]}
 
     # ---- 7. landmarks: Halls / Cities by their icon, barrel and beam, then the seen / could-see test
-    landmarks = _settlements(
-        atlas,
-        maps,
-        landmarks,
-        [ic for k, ic in enumerate(icons) if k not in gone],
-        lambda x, y: state_near(fits, nodes, x, y),
-    )
+    landmarks = _settlements(atlas, maps, landmarks, icons, lambda x, y: state_near(fits, nodes, x, y))
     for lm in landmarks:
         if lm["status"] != "kept" or lm.get("beam"):
             continue
@@ -1482,6 +1476,16 @@ def finalize(atlas, log=_log) -> dict:
                     dup_badge.add(k2)
         nd["icons"] = [k for k in nd["icons"] if k not in dup_badge]
 
+    # icons over time (user's rules): one a newer screenshot shows gone (the map was run), or one that appeared where
+    # it never can, is left out
+    cities = [(lm["x"], lm["y"]) for lm in landmarks if lm["kind"] == "City" and not lm["status"].startswith("removed")]
+    alive_nodes = [status[i] != "removed" for i in range(len(nodes))]
+    changed = icons_over_time(atlas, maps, nodes, alive_nodes, icons, dup_badge, cities)
+    over_time = changed["gone"] | changed["false"]
+    for nd in nodes:
+        nd["icons"] = [k for k in nd["icons"] if k not in over_time]
+    dup_badge |= over_time
+
     out_nodes = []
     for i, nd in enumerate(nodes):
         fit = fits.get(i, {})
@@ -1496,13 +1500,12 @@ def finalize(atlas, log=_log) -> dict:
                 "frames": sorted(nd["frames"]),
                 "tower": nd["tower"],
                 "origin": nd["origin"],
-                "icons": [icons[k]["name"] for k in nd["icons"] if k not in gone],
+                "icons": [icons[k]["name"] for k in nd["icons"]],
                 "abyss": nd.get("abyss", ""),
                 "why": removed_why.get(i, ""),
                 "state": fit.get("state"),
                 "state_seen": fit.get("seen"),
                 "state_errors": fit.get("errors", 0),
-                "icons_lost": fit.get("lost", []),
             }
         )
     out_paths = []
@@ -1550,15 +1553,17 @@ def finalize(atlas, log=_log) -> dict:
             near = [lm for lm in settle if math.hypot(lm["x"] - ic["bx"], lm["y"] - ic["by"]) < SETTLE_BADGE]
             ic["label"] = f"Deadly Map Boss ({near[0]['kind']})" if near else "Deadly Map Boss"
     # badges to show: on a kept map, or seen by most screenshots that show the spot
-    on_map = {k for i, nd in enumerate(nodes) if status[i] != "removed" for k in nd["icons"] if k not in gone}
-    dup_badge |= _loose_copies(nodes, status, icons, on_map | dup_badge | gone)
+    on_map = {k for i, nd in enumerate(nodes) if status[i] != "removed" for k in nd["icons"]}
+    dup_badge |= _loose_copies(nodes, status, icons, on_map | dup_badge)
     out_icons = []
     for k, ic in enumerate(icons):
-        if k in dup_badge or k in gone:  # a lost icon is never shown, not even by the vote below
+        if k in dup_badge:
             continue
         if k in on_map or (ic["name"] != "Unidentified" and ic["n"] * 2 >= ic["could"]):
             out_icons.append({key: (round(v, 2) if isinstance(v, float) else v) for key, v in ic.items()})
     stats["icons_shown"] = len(out_icons)
+    stats["icons_gone"] = len(changed["gone"])  # (a newer screenshot shows them gone)
+    stats["icons_false"] = len(changed["false"])  # (appeared where they never can)
     # which program checked the atlas, and when (user: an atlas checked by an older version couldn't be told apart)
     from grand_project import __version__
 

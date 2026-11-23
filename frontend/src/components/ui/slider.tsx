@@ -33,8 +33,9 @@ function Slider({
       )}
       {...props}
     >
-      <SliderPrimitive.Track data-slot="slider-track" className="bg-muted relative h-1.5 w-full grow overflow-hidden rounded-full">
-        <SliderPrimitive.Range data-slot="slider-range" className="bg-primary absolute h-full" />
+      {/* the game's slider (its options menu's: Theme.css .poe-slider-*) */}
+      <SliderPrimitive.Track data-slot="slider-track" className="poe-slider-track relative w-full grow">
+        <SliderPrimitive.Range data-slot="slider-range" className="poe-slider-range absolute" />
       </SliderPrimitive.Track>
       {Array.from({ length: _values.length }, (_, index) => (
         <SliderPrimitive.Thumb
@@ -43,7 +44,7 @@ function Slider({
           key={index}
           aria-label={ariaLabel}
           aria-labelledby={ariaLabelledby}
-          className="border-primary bg-background ring-ring/50 block size-4 shrink-0 rounded-full border shadow-sm transition-[color,box-shadow] hover:ring-4 focus-visible:ring-4 focus-visible:outline-hidden disabled:pointer-events-none disabled:opacity-50"
+          className="poe-slider-thumb block shrink-0 focus-visible:outline-2 focus-visible:outline-ring disabled:pointer-events-none disabled:opacity-50"
         />
       ))}
     </SliderPrimitive.Root>

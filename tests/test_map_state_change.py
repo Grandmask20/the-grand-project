@@ -2,18 +2,14 @@
 
 One area of the author's atlas, seen before running maps (pre-change: 20:08-20:10), after (post-change: 20:25-20:26)
 and then once per map run (single-map: 20:28-20:35), placed into one atlas with the classical detector. The check
-(finalize) must keep each map's state and icons from its newest sightings:
+(finalize) must keep each map's state from its newest sightings (its icons over time are finalize.icon_time's):
 
-- the map that carried Fleeing Exile + Sanctification was run: it is green and lost its Sanctification (the
-  classical icon finder never found its Fleeing Exile);
-- the Fleeing Exile moved to a blue neighbour (user: icons move to a neighbour when their map is run);
-- a blue map lost its Sanctification and stayed blue; a Unique map failed (red) and lost its icon;
+- one map failed (red): the Unique map;
 - the maps of the newest screenshot have the states hand-checked there (single-map/states.json);
 - few sightings disagree with the rules (detection errors).
 """
 
 import json
-import math
 import shutil
 
 import numpy as np
@@ -41,53 +37,11 @@ def _kept(final):
     return [n for n in final["nodes"] if n["status"] != "removed"]
 
 
-def test_the_cleared_map_is_green_and_its_fleeing_exile_moved_on(checked, check):
+def test_one_map_failed(checked, check):
+    """Only the Unique map failed (red): a red sighting elsewhere would break the rules (STATE_RED_ICONS)."""
     _atlas, final, _src = checked
-    kept = _kept(final)
-    gained = [n for n in kept if "FleeingExile" in n["icons"] and "Sanctification" in n["icons"]]
-    check("one map carries Fleeing Exile and Sanctification", len(gained) == 1, [n["id"] for n in gained])
-    if not gained:
-        return
-    to = gained[0]
-    check("it is blue", to["state"] == "blue", to["state"])
-    exile = [
-        ic
-        for ic in final["icons"]
-        if ic["name"] == "FleeingExile" and math.hypot(ic["bx"] - to["x"], ic["by"] - to["y"]) < 30
-    ]
-    check(
-        "its Fleeing Exile was first seen after the maps were run",
-        exile and min(exile[0]["frames"]) > "2694490_20261121202000",
-        exile,
-    )
-    cleared = [
-        n
-        for n in kept
-        if n["state"] == "green"
-        and "Sanctification" in n["icons_lost"]
-        and 150 < math.hypot(n["x"] - to["x"], n["y"] - to["y"]) < 400
-    ]
-    check("the map it came from is green and lost its Sanctification", len(cleared) == 1, [n["id"] for n in cleared])
-
-
-def test_a_blue_map_can_lose_an_icon_and_a_failed_one_is_red(checked, check):
-    _atlas, final, _src = checked
-    kept = _kept(final)
-    check(
-        "a blue map lost Sanctification",
-        any(n["state"] == "blue" and "Sanctification" in n["icons_lost"] for n in kept),
-    )
-    failed = [n for n in kept if n["state"] == "red"]
-    check(
-        "one map failed: the Unique map, which lost its icon",
-        [n["icons_lost"] for n in failed] == [["UniqueMap"]],
-        failed,
-    )
-    shown = {(ic["name"], round(ic["bx"]), round(ic["by"])) for ic in final["icons"]}
-    for n in kept:
-        for name in n["icons_lost"]:
-            near = [s for s in shown if s[0] == name and math.hypot(s[1] - n["x"], s[2] - n["y"]) < 30]
-            check(f"map {n['id']}'s lost {name} is not shown", not near, near)
+    failed = [n["id"] for n in _kept(final) if n["state"] == "red"]
+    check("one map is red", len(failed) == 1, failed)
 
 
 def test_the_newest_screenshot_shows_the_maps_as_they_are(checked, check):

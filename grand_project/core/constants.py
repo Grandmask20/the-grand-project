@@ -99,8 +99,6 @@ ATLAS_OUTPUTS = ("_terrain.png", "_terrain.npz", "_composite.png", "_network.png
 # ...and old icon-labelling sheets "<atlas>_badges_<round>.png" written before images were tagged (user: auto-add
 # tried to add six of them in an old crawl atlas folder)
 ATLAS_OLD_SHEETS = r"_badges_(after|check|round\d+)\.png$"  # (only these names: review)
-# Steam names screenshots <app id>_<YYYYMMDDHHMMSS>_<n>: when a screenshot was taken (core.capture_time)
-STEAM_NAME_TIME = r"_(\d{14})_\d+$"
 
 
 ROW_STEP_PX = 36.0  # screen px between neighbouring badges of one row (measured)

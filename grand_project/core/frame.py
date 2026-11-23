@@ -22,7 +22,6 @@ from .constants import (
     ICON_BASE_DY,
     IMAGE_EXT,
     ROW_STEP_PX,
-    STEAM_NAME_TIME,
 )
 from .geometry import persp, rectifier
 
@@ -402,6 +401,10 @@ def row_bases(icons: list[dict]) -> list[tuple[float, float]]:
     return out
 
 
+# (moved here from app.replay: the atlas-wide check needs it too, for icons over time)
+STEAM_TIME = re.compile(r"_(\d{14})_\d+$")  # Steam names screenshots <app id>_<YYYYMMDDHHMMSS>_<n>
+
+
 def capture_time(frame: dict) -> float | None:
     """When a screenshot was taken: from its Steam file name, else the file's modified time.
 
@@ -411,7 +414,7 @@ def capture_time(frame: dict) -> float | None:
     Returns:
         Seconds since the epoch (local time), or None when neither is known.
     """
-    m = re.search(STEAM_NAME_TIME, frame.get("name", ""))
+    m = STEAM_TIME.search(frame.get("name", ""))
     if m:
         try:
             return time.mktime(time.strptime(m.group(1), "%Y%m%d%H%M%S"))

@@ -31,7 +31,7 @@ export function ErrorBanner() {
 	return (
 		<div
 			role="alert"
-			className="pointer-events-auto flex items-start gap-3 rounded-md border border-destructive/60 bg-card px-3 py-2 shadow-lg"
+			className="pointer-events-auto flex items-start gap-3 rounded-md border border-destructive/60 poe-grain px-3 py-2 shadow-lg"
 		>
 			<span className="whitespace-pre-wrap">{error}</span>
 			<button type="button" aria-label="Close" className="opacity-70 hover:opacity-100" onClick={() => showError(null)}>

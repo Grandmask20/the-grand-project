@@ -117,7 +117,14 @@ STYLE_DEFAULT = {
     # icons), "poe2db art", "from screenshots" (taught crops), "flat colour" (a disc in the type's colour) or "outline"
     "icon_size": 1.0,
     "icon_style": "game art",
+    # bookmarks on the map (View tab, user): their pins' size (times BOOKMARK_PIN_R), and where a pin sits: on the
+    # "icon" row above its spot (ICON_ROW_DY up, where a map's icons are) or on the "map node" (the spot itself)
+    "bookmark_size": 1.0,
+    "bookmark_at": "icon",
 }  # View tab
+
+BOOKMARK_PIN_R = 11.0  # atlas units: a bookmark pin's radius at size 1 (it grows with the zoom, as the map's icons do)
+BOOKMARK_ATS = ("icon", "map node")
 
 
 ICON_ROW_DY, ICON_ROW_STEP = 24, 36  # icons are drawn in a row this far above their map node, this far apart,
@@ -141,10 +148,13 @@ TERRAIN_PIXELS = 40_000_000  # stitched map size limit
 
 SAME_SPOT = 28.0  # atlas units: a bookmark this close to a thing IS that thing's bookmark
 BOOKMARK_GROUP_SETS = ("hidden_groups", "folded_groups")  # per-atlas sets of bookmark groups kept in the settings
+STATE_TRIES = 3  # the page's state is put together again at most this often when another atlas opens meanwhile
+SHUTDOWN_WAIT = 30.0  # s: how long closing waits for the job running (then it is cut off, and the log says so)
 FOLDER_FRONT_WAIT = 3.0  # s: how long an atlas folder's newly opened Explorer window is looked for
 FOLDER_PATHS_WAIT = 5.0  # s: at most this long for the Windows shell to say which folders Explorer shows
 FOLDER_FRONT_POLL = 0.05  # s: how often it is looked for (it shows where Explorer puts it until found and moved)
 ROUTE_POINTS_MAX = 20_000  # a saved route's lines and maps: at most this many points (across a 14k-map atlas ~2k)
+LOOK_ICON_MAX = 80  # the longest icon name a bookmark's or group's look takes (the raw names are shorter)
 ROUTE_LEGS_MAX = 200  # a saved route: its main leg and at most this many less one branches
 
 # the in-app update (app/updater.py): GitHub's latest release of the player build
@@ -217,6 +227,9 @@ EDIT_SAME = 90.0  # atlas units: a hand edit applies to the landmark this close 
 
 # a little between re-checks)
 EDIT_SPOT = 15.0  # a new edit replaces an older one only at the same spot
+MAP_EDIT_REACH = 25.0  # atlas units: a map deleted or added by hand is the one this close to its spot (a map drifts a
+# little when the atlas is checked again; maps stand ~200 apart)
+MAP_ICON_REACH = 45.0  # an icon whose base is this close to a map deleted by hand goes with it (cities.icon_maps)
 
 
 # --- replay / timelapse (app.replay and the page's timelapse player), and colouring screenshots by when taken
@@ -304,3 +317,29 @@ PICTURES_KEPT = 8  # ghost / preview pictures kept for the page to fetch (the ne
 # node 75-86 away; a Breach stronghold's map node is about 38 units below it (at most 86)
 LANDMARK_NODE_REACH = 45.0
 LANDMARK_NODE_REACH_STRONGHOLD = 90.0
+
+# ------------------------------------------------------------------ Re-check choices (app.recheck_choices)
+RECHECK_GROUPS = ("maps", "paths", "landmarks", "towers", "biomes", "icons")  # the box's groups, in its order
+RECHECK_GROUP_NAMES = {
+    "maps": "Maps",
+    "paths": "Paths",
+    "landmarks": "Landmarks",
+    "towers": "Towers",
+    "biomes": "Biomes",
+    "icons": "Icons",
+}
+RECHECK_MATCH = 20.0  # atlas units: an old and a new map this close are the same map
+RECHECK_MOVED = 5.0  # a map that moved further than this is listed as moved
+RECHECK_LANDMARK_MATCH = 60.0  # an old and a new landmark (or tower) this close are the same one
+RECHECK_LANDMARK_ON_MAP = 60.0  # a landmark this close to a map moves with it
+RECHECK_ICON_MATCH = 20.0  # an old and a new icon of one name this close are the same icon
+RECHECK_ICON_ON_MAP = 40.0  # an icon's base this close to a map belongs to it
+RECHECK_ITEMS_SHOWN = 400  # changes listed per group (the count says how many there are)
+# s per screenshot, for the Re-check prompt's estimate until a Re-check on this computer has measured them (kept in
+# the settings, "recheck_timing"): detecting again with 4 worker processes (~8 s each alone, v1.01), and the atlas-wide
+# clean-up (crawl atlas: 188 s for 526 screenshots, v1.23)
+RECHECK_DETECT_S = 2.5
+RECHECK_CLEAN_S = 0.4
+RECHECK_TIMING_MIN = 5  # screenshots: a Re-check's timing is kept only when it detected / cleaned up at least this many
+RECHECK_LINE_POINTS = 16  # points along a path's drawn line when two results' lines are compared
+RECHECK_LINE_MOVED = 12.0  # atlas units: a drawn line that moved further than this (its maps' moves aside) changed

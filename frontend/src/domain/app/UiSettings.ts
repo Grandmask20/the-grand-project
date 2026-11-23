@@ -10,6 +10,8 @@ export interface UiSettings {
 	style: Style;
 	replay: Record<string, unknown>;
 	ui: PageSettings;
+	/** What a Re-check updates: the box's ticks, for every atlas ({maps, paths, landmarks, towers, biomes, icons}). */
+	recheck_update?: Record<string, boolean>;
 }
 
 /** Settings only the page uses, kept with the others. */
@@ -19,6 +21,8 @@ export interface PageSettings {
 	player?: { x: number; y: number; node: number; atlas?: string } | null;
 	labels?: boolean;
 	side_width?: number;
+	/** The side panel hidden (its reveal button on the map's edge brings it back). */
+	side_hidden?: boolean;
 	/** Which side of the window the side panel is on (user). */
 	side?: "left" | "right";
 	/** The Layers dock unfolded (folded by default). */

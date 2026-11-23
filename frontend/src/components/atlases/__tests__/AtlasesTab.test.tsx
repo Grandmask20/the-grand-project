@@ -13,6 +13,19 @@ describe("AtlasesTab", () => {
 		expect(screen.getByText("open")).toBeInTheDocument();
 	});
 
+	it("a card's buttons show only while it is pointed at or reached by the keyboard (user: reveal on hover)", async () => {
+		renderWithApp(<AtlasesTab />, { "GET /api/atlases": atlases });
+		const buttons = (await screen.findByRole("button", { name: "Rename second" })).parentElement;
+		// (the column, not each button: a disabled button's own half opacity would show it)
+		// (hidden only where hover works: a touch screen shows them, CodeRabbit)
+		expect(buttons).toHaveClass(
+			"can-hover:opacity-0",
+			"group-hover/card:opacity-100",
+			"group-has-[:focus-visible]/card:opacity-100",
+		);
+		expect(buttons?.closest(".group\\/card")).not.toBeNull();
+	});
+
 	it("opens another atlas from its card", async () => {
 		const { user, calls } = renderWithApp(<AtlasesTab />, {
 			"GET /api/atlases": atlases,
@@ -22,6 +35,13 @@ describe("AtlasesTab", () => {
 		await waitFor(() =>
 			expect(calls.find((c) => c.path === "/api/atlas/open")?.body).toEqual({ path: "/atlases/two/atlas.json" }),
 		);
+	});
+
+	it("asks before re-checking an atlas from its card (user: a refresh icon, a prompt)", async () => {
+		const { user, calls } = renderWithApp(<AtlasesTab />, { "GET /api/atlases": atlases });
+		await user.click(await screen.findByRole("button", { name: "Re-check second" }));
+		expect(useAppStore.getState().recheckAtlas).toBe("/atlases/two/atlas.json");
+		expect(calls.some((c) => c.path.startsWith("/api/atlas/recheck"))).toBe(false); // (asked first)
 	});
 
 	it("asks what to do before deleting", async () => {

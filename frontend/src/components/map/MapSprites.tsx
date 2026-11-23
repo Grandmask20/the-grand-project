@@ -6,6 +6,7 @@ import { useSettings } from "@/hooks/app/UseSettings";
 import { mapAlive, useMapLibre } from "@/hooks/map/UseMapLibre";
 import { useMapView } from "@/hooks/map/UseMapView";
 import { OWN_IMAGES, squareImage } from "@/logic/map/Pictures";
+import { symbolImage } from "@/logic/Symbols";
 
 /**
  * The pictures the map's layers draw: its own (the squares map style, the game's map node picture) and the map
@@ -57,6 +58,12 @@ export function MapSprites() {
 		let timer: ReturnType<typeof setTimeout> | null = null;
 		const missing = (e: MapStyleImageMissingEvent) => {
 			if (OWN_IMAGES.has(e.id) || map.hasImage(e.id)) return;
+			// a bookmark's symbol in its colour ("sym:<name>:<colour>"): drawn here, not fetched
+			if (e.id.startsWith("sym:")) {
+				const pic = symbolImage(e.id);
+				if (pic) map.addImage(e.id, pic);
+				return;
+			}
 			map.addImage(e.id, { width: S, height: S, data: new Uint8Array(S * S * 4) });
 			asked.current.add(e.id);
 			loadPicture(e.id)

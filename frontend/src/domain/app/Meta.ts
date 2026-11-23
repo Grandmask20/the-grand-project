@@ -49,6 +49,11 @@ export interface Meta {
 	recent_fade: number;
 	icon_units: number;
 	icon_min_px: number;
+	/** A bookmark pin's radius at size 1 (atlas units), how far above its spot a pin on the icon row sits, and where a
+	 * pin can sit ("icon", "map node"). */
+	bookmark_pin: number;
+	icon_row_dy: number;
+	bookmark_ats: string[];
 }
 
 export interface ReplaySettings {

@@ -8,19 +8,24 @@ the route). Routes saved before branches held one "line" and no maps. A route ha
 its spot. A bookmark's id is its uid,
 which stays when others are deleted (it was its place in the list: a page still holding an old number deleted or
 edited the bookmark that moved into that place, CodeRabbit); atlases from before get uids when first read.
-Groups hidden on the map, and groups folded shut in the Bookmarks tab, are kept per atlas in the settings
-(settings["hidden_groups" / "folded_groups"][atlas path]; renamed and deleted with their group). Empty groups
-made with New group last until the app closes, unless a bookmark is put in them.
+A bookmark and a group can have a look of their own: a colour ("#rrggbb") and an icon (a map icon's or a place's
+picture by its raw name, or a plain symbol "sym:<name>"), with "plain" for an icon drawn without a ring of the colour,
+in the bookmark ("colour", "icon", "plain") and in the atlas's group_looks; a bookmark without one takes its group's
+(the page draws it). Groups hidden on the map, and groups folded shut in the Bookmarks tab, are kept
+per atlas in the settings (settings["hidden_groups" / "folded_groups"][atlas path]; renamed and deleted with their
+group). Empty groups made with New group last until the app closes, unless a bookmark is put in them.
 """
 
 from __future__ import annotations
 
 import math
+import re
 import time
 
 from grand_project import logs as atlas_log
 
-from .constants import BOOKMARK_GROUP_SETS, CATEGORIES, ROUTE_LEGS_MAX, ROUTE_POINTS_MAX, SAME_SPOT
+from .atlaslock import atlas_edit
+from .constants import BOOKMARK_GROUP_SETS, CATEGORIES, LOOK_ICON_MAX, ROUTE_LEGS_MAX, ROUTE_POINTS_MAX, SAME_SPOT
 from .events import StaleAtlas
 from .icons import icon_label, icon_name
 
@@ -66,11 +71,48 @@ def clean_route(route: dict) -> dict:
     return {"from": int(route["from"]), "to": int(route["to"]), "maps": int(route.get("maps", 0)), "legs": out}
 
 
+def clean_look(colour, icon, plain=None) -> dict:
+    """Check a look sent by the page: a colour "#rrggbb" and an icon's raw name, each "" (or None) for none, and
+    whether the icon has no ring (user: an option for no border).
+
+    Args:
+        colour: The colour, "" or None.
+        icon: The icon's raw name ("sym:<name>": a plain symbol), "" or None.
+        plain: No ring ("none" as the colour): for the icon it shows, its own or its group's (a bookmark's choice
+            was dropped without an icon of its own: CodeRabbit).
+
+    Returns:
+        {"colour"?, "icon"?, "plain"?}: only what is set.
+
+    Raises:
+        ValueError: A colour that isn't "#rrggbb", or an icon name that isn't one.
+    """
+    out = {}
+    if colour:
+        if not isinstance(colour, str) or not re.fullmatch(r"#[0-9a-fA-F]{6}", colour):
+            raise ValueError("a colour is #rrggbb")
+        out["colour"] = colour.lower()
+    if icon:
+        if not isinstance(icon, str) or len(icon) > LOOK_ICON_MAX or not icon.strip():
+            raise ValueError("not an icon's name")
+        out["icon"] = icon.strip()
+    if plain:
+        out["plain"] = True
+    return out
+
+
 class BookmarksMixin:
     """AtlasSession mixin: bookmarks (see the module docstring)."""
 
     def _bookmarks_changed(self) -> None:
-        """Save the atlas and tell the page (it draws the bookmarks itself: the map's tiles stay as they are)."""
+        """Save the atlas and tell the page (it draws the bookmarks itself: the map's tiles stay as they are). The looks
+        of groups no longer there (emptied, deleted) go first: a new group of that name starts plain."""
+        # (under the lock: a group renamed between the names read and the pruning lost its look: CodeRabbit)
+        with self._lock:
+            if self.atlas is not None and self.atlas.group_looks:
+                names = set(self.groups())
+                for g in [g for g in self.atlas.group_looks if g not in names]:
+                    del self.atlas.group_looks[g]
         if self.atlas is not None and self.path is not None:
             with self._lock:
                 self.atlas.save(self.path)
@@ -162,11 +204,13 @@ class BookmarksMixin:
         """Return the bookmarks and groups for the Bookmarks tab.
 
         Returns:
-            {"groups": [{"name", "hidden", "folded", "items": [{"id", "name", "note", "x", "y", "created", "hidden",
-            "shown", "route"?}]}]}.
+            {"groups": [{"name", "hidden", "folded", "colour"?, "icon"?, "plain"?, "items": [{"id", "name", "note",
+            "x", "y", "created", "hidden", "shown", "colour"?, "icon"?, "plain"?, "route"?}]}]}: each one's own look
+            (none: the group's, then the page's).
         """
         hidden = self.hidden_groups()
         folded = self._group_set("folded_groups")
+        looks = self.atlas.group_looks if self.atlas else {}
         by_group: dict[str, list] = {g: [] for g in self.groups()}
         for i, b in self.bookmarks_by_id():
             by_group.setdefault(bm_group(b), []).append(
@@ -179,6 +223,7 @@ class BookmarksMixin:
                     "created": b.get("created", ""),
                     "hidden": bool(b.get("hidden")),
                     "shown": self.bookmark_shown(b),
+                    **{k: b[k] for k in ("colour", "icon", "plain") if b.get(k)},
                     **({"route": b["route"]} if b.get("route") else {}),
                 }
             )
@@ -188,6 +233,7 @@ class BookmarksMixin:
                     "name": g,
                     "hidden": g in hidden,
                     "folded": g in folded,
+                    **{k: v for k, v in looks.get(g, {}).items() if k in ("colour", "icon", "plain")},
                     "items": sorted(items, key=lambda t: t["name"].lower()),
                 }
                 for g, items in sorted(by_group.items(), key=lambda t: t[0].lower())
@@ -244,6 +290,9 @@ class BookmarksMixin:
         quiet=False,
         gen: int | None = None,
         route: dict | None = None,
+        colour: str | None = None,
+        icon: str | None = None,
+        plain: bool = False,
     ) -> int:
         """Add a bookmark unless one already sits on that spot.
 
@@ -254,6 +303,11 @@ class BookmarksMixin:
             group: Its group.
             note: Free text.
             quiet: Only add it (the caller saves once after many).
+            gen: The atlas generation the page made it for (refused for another).
+            route: A saved route's maps (no spot of its own).
+            colour: Its own colour ("#rrggbb"), or none (its group's).
+            icon: Its own icon (a raw name), or none.
+            plain: Its icon without a ring.
 
         Returns:
             Its id (-1 when a bookmark was already there).
@@ -265,6 +319,7 @@ class BookmarksMixin:
             raise ValueError("open an atlas first")
         if not name.strip():
             raise ValueError("a bookmark needs a name")
+        look = clean_look(colour, icon, plain)
         with self._lock:  # the spot check and the append together (CodeRabbit)
             if gen is not None and not self.owns(gen):  # made for an atlas no longer open (CodeRabbit)
                 raise StaleAtlas()
@@ -284,6 +339,7 @@ class BookmarksMixin:
                     "x": float(x),
                     "y": float(y),
                     "created": time.strftime("%Y-%m-%d %H:%M"),
+                    **look,
                     **({"route": route} if route else {}),
                 }
             )
@@ -292,6 +348,7 @@ class BookmarksMixin:
             self.events.log(f"bookmarked {name}")
         return i
 
+    @atlas_edit
     def bookmark_items(self, items: list[tuple[str, int]], group: str) -> tuple[int, int]:
         """Bookmark many map nodes / icons / landmarks into one group (Find > Bookmark all).
 
@@ -318,25 +375,51 @@ class BookmarksMixin:
         self.events.log(msg)
         return added, skipped
 
-    def edit_bookmark(self, i: int, name: str, group: str, note: str) -> None:
-        """Change a bookmark's name, group and note.
+    @atlas_edit
+    def edit_bookmark(
+        self,
+        i: int,
+        name: str,
+        group: str,
+        note: str,
+        colour: str | None = None,
+        icon: str | None = None,
+        plain: bool | None = None,
+    ) -> None:
+        """Change a bookmark's name, group, note and look.
 
         Args:
             i: Its id.
             name: New name.
             group: New group.
             note: New note.
+            colour: Its own colour ("#rrggbb"; "": none, its group's), or None to keep it.
+            icon: Its own icon (a raw name; "": none), or None to keep it.
+            plain: Its icon without a ring, or None to keep it as it is.
 
         Raises:
-            ValueError: With no such bookmark or no name.
+            ValueError: With no such bookmark, no name, or a look that isn't one.
         """
         b = self._bookmark(i)
         if not name.strip():
             raise ValueError("a bookmark needs a name")
+        look = clean_look(colour, icon, True)  # (checked before anything changes)
         b.update(name=name.strip(), group=group.strip() or "Other", note=note)
         b.pop("category", None)
+        for k, v in (("colour", colour), ("icon", icon)):
+            if v is None:
+                continue
+            if k in look:
+                b[k] = look[k]
+            else:
+                b.pop(k, None)
+        if plain is not None:
+            b["plain"] = True
+            if not plain:
+                b.pop("plain")
         self._bookmarks_changed()
 
+    @atlas_edit
     def set_bookmark_route(self, i: int, route: dict, gen: int | None = None) -> None:
         """Change a saved route's maps (Adjust route on it in Bookmarks).
 
@@ -365,6 +448,7 @@ class BookmarksMixin:
             + (f", {branches} branch{'es' if branches != 1 else ''}" if branches else "")
         )
 
+    @atlas_edit
     def delete_bookmarks(self, ids: list[int]) -> list[str]:
         """Delete bookmarks.
 
@@ -385,6 +469,7 @@ class BookmarksMixin:
             self._bookmarks_changed()
         return names
 
+    @atlas_edit
     def move_bookmarks(self, ids: list[int], group: str) -> None:
         """Move bookmarks to a group.
 
@@ -396,6 +481,7 @@ class BookmarksMixin:
             self._bookmark(i)["group"] = group.strip() or "Other"
         self._bookmarks_changed()
 
+    @atlas_edit
     def new_group(self, name: str) -> None:
         """Add an empty group (kept until the app closes unless a bookmark is put in it).
 
@@ -407,6 +493,7 @@ class BookmarksMixin:
             self.events.log(f"new bookmark group {name.strip()!r}")
             self.events.publish("bookmarks", None)
 
+    @atlas_edit
     def rename_group(self, old: str, new: str) -> None:
         """Rename a group.
 
@@ -423,6 +510,10 @@ class BookmarksMixin:
         if old in self._extra_groups:
             self._extra_groups.discard(old)
             self._extra_groups.add(new)
+        # its look goes with it (onto a group of that name already there: the renamed one's, if it has one)
+        look = self.atlas.group_looks.pop(old, None)
+        if look:
+            self.atlas.group_looks[new] = look
         # a hidden group stays hidden under its new name (user: renaming showed it again), a folded one folded
         for kind in BOOKMARK_GROUP_SETS:
             names = self._group_set(kind)
@@ -431,6 +522,34 @@ class BookmarksMixin:
         self.events.log(f"bookmark group {old!r} renamed to {new!r}")
         self._bookmarks_changed()
 
+    @atlas_edit
+    def style_group(self, name: str, colour: str | None, icon: str | None, plain: bool = False) -> None:
+        """Give a group its own look (its bookmarks without one of their own take it), or take it away.
+
+        Args:
+            name: The group's name.
+            colour: Its colour ("#rrggbb"), or ""/None for none.
+            icon: Its icon (a raw name), or ""/None for none.
+            plain: Its icon without a ring.
+
+        Raises:
+            ValueError: With no atlas open, no such group, or a look that isn't one.
+        """
+        if not self.atlas:
+            raise ValueError("open an atlas first")
+        if name not in self.groups():
+            raise ValueError("no such group")
+        look = clean_look(colour, icon, plain)
+        if look:
+            self.atlas.group_looks[name] = look
+        else:
+            self.atlas.group_looks.pop(name, None)
+        what = ", ".join(f"{k} {v}" for k, v in look.items() if k != "plain") or "no colour or icon of its own"
+        what += ", no border" if look.get("plain") else ""
+        self.events.log(f"bookmark group {name!r}: {what}")
+        self._bookmarks_changed()
+
+    @atlas_edit
     def delete_groups(self, names: list[str]) -> int:
         """Delete empty groups (a group with bookmarks goes when its last bookmark does).
 
@@ -452,9 +571,14 @@ class BookmarksMixin:
                 if names & set(gone):
                     self._put_group_set(kind, names - set(gone))
             self.events.log(f"deleted empty bookmark group(s): {', '.join(gone)}")
-            self.events.publish("bookmarks", None)
+            # a look of theirs goes with them (saved: the atlas holds it)
+            if any(n in self.atlas.group_looks for n in gone):
+                self._bookmarks_changed()
+            else:
+                self.events.publish("bookmarks", None)
         return len(gone)
 
+    @atlas_edit
     def fold_groups(self, names: list[str], folded: bool) -> None:
         """Fold groups shut in the Bookmarks tab, or open them (kept per atlas: user: Fold all was forgotten).
 
@@ -470,6 +594,7 @@ class BookmarksMixin:
         self.events.log(f"{'Folded' if folded else 'Opened'} bookmark group(s): {', '.join(sorted(set(names)))}")
         self.events.publish("bookmarks", None)
 
+    @atlas_edit
     def toggle_group(self, g: str) -> None:
         """Hide a group on the map, or show it again (kept per atlas in the settings).
 
@@ -485,6 +610,7 @@ class BookmarksMixin:
         self.events.log(f"bookmark group {g!r} {'hidden' if g in cur else 'shown'} on the map")
         self.events.publish("bookmarks", None)  # (drawn by the page: no tiles made again, user: it was slow)
 
+    @atlas_edit
     def toggle_bookmark(self, i: int) -> None:
         """Hide one bookmark on the map, or show it again; in a hidden group, the group is shown and only this
         bookmark of it.

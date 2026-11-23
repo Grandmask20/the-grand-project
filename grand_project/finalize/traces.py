@@ -183,9 +183,9 @@ def _saved(atlas, f):
 
     Returns:
         A dict with "P" (its maps, (N, 2) screen px), "hidden", "score" and "state" (per map: its state or None),
-        "icons" (the icons it found: (name, x, y) in screen px), "edges" (its traced paths), "tree" (KD-tree of its
-        dashes or None), "amber" (KD-tree of amber dashes or None), "grid" (its clearly-visible grid) and "wall" (its
-        fortress wall grid). None when no saved detection is found (then the view is traced the old way).
+        "edges" (its traced paths), "tree" (KD-tree of its dashes or None), "amber" (KD-tree of amber dashes or
+        None), "grid" (its clearly-visible grid) and "wall" (its fortress wall grid). None when no saved detection
+        is found (then the view is traced the old way).
     """
     d = getattr(atlas, "frames_dir", None)
     if d is None or not f.get("sha"):
@@ -227,7 +227,6 @@ def _saved(atlas, f):
         "hidden": np.array([bool(n.get("hidden")) for n in data["nodes"]], bool),
         "score": np.array([float(n.get("score", 0.5)) for n in data["nodes"]], float),
         "state": [n.get("state") if n.get("state") in atlas_detect.NODE_STATES else None for n in data["nodes"]],
-        "icons": [(ic["name"], float(ic["x"]), float(ic["y"])) for ic in data.get("icons", [])],
         "edges": data["edges"],
         "tree": cKDTree(D) if len(D) else None,
         "amber": (lambda A: cKDTree(A) if len(A) else None)(np.asarray(data["amber_pts"], float).reshape(-1, 2)),

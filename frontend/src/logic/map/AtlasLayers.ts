@@ -24,8 +24,8 @@ export const FIND_RING = 15;
 
 export const NONE: FilterSpecification = ["==", ["get", "id"], -1];
 
-/** A "Show on the map" toggle: on unless switched off. */
-export const layerOn = (settings: UiSettings, group: string): boolean => settings.layers[group] !== false;
+/** A "Show on the map" toggle: on unless switched off (settings without their layers yet: all on). */
+export const layerOn = (settings: UiSettings, group: string): boolean => settings.layers?.[group] !== false;
 
 export const visibility = (on: boolean) => (on ? ("visible" as const) : ("none" as const));
 

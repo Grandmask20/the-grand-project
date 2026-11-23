@@ -46,7 +46,8 @@ class WatchMixin:
         Returns:
             The folder, or None.
         """
-        self.settings.pop("watch_folder", None)  # before v1.11 one folder for every atlas: forgotten
+        with self._settings_lock:  # (the worker saves the settings too)
+            self.settings.pop("watch_folder", None)  # before v1.11 one folder for every atlas: forgotten
         return self.settings.get("watch_folders", {}).get(self._atlas_key())
 
     def watch_dir(self) -> str:
@@ -74,19 +75,23 @@ class WatchMixin:
         Raises:
             ValueError: With no atlas open, or when the folder does not exist.
         """
-        if not self.path:
-            raise ValueError("open or create an atlas first")
-        folders = self.settings.setdefault("watch_folders", {})
-        if folder:
-            if not Path(folder).is_dir():
+        # a request made for another atlas: refused, never applied to the one open now; the check and the change
+        # in one step against a switch, without waiting for a job (AtlasLock.steady)
+        with self._lock.steady():
+            if not self.path:
+                raise ValueError("open or create an atlas first")
+            if folder and not Path(folder).is_dir():
                 raise ValueError(f"not a folder: {folder}")
-            folders[self._atlas_key()] = str(folder)
-        else:
-            folders.pop(self._atlas_key(), None)
-        self.save_settings()
-        if self._watch_on:
-            self.start_watch()
-        self.events.publish("watch", self.watch_state())
+            with self._settings_lock:  # (changed and saved in one step: the worker saves them too)
+                folders = self.settings.setdefault("watch_folders", {})
+                if folder:
+                    folders[self._atlas_key()] = str(folder)
+                else:
+                    folders.pop(self._atlas_key(), None)
+                self.save_settings()
+            if self._watch_on:
+                self.start_watch()
+            self.events.publish("watch", self.watch_state())
 
     def set_watch(self, on: bool) -> None:
         """Turn auto-add on or off (and remember it).
@@ -97,15 +102,19 @@ class WatchMixin:
         Raises:
             ValueError: Turning it on with no atlas open.
         """
-        if on:
-            self.start_watch()
-        else:
-            self.stop_watch()
-            self.settings["watch_on"] = False
-            self.events.set_status("auto-add off")
-        self.save_settings()
+        # a request made for another atlas: refused, never applied to the one open now; the check and the change
+        # in one step against a switch, without waiting for a job (AtlasLock.steady)
+        with self._lock.steady():
+            if on:
+                self.start_watch()
+            else:
+                self.stop_watch()
+                self.set_setting("watch_on", False, save=False)
+                self.events.set_status("auto-add off")
+            self.save_settings()
 
     # ------------------------------------------------------------------ the folder
+
     def _watch_files(self) -> dict[str, int]:
         """List the image files in the watched folder that can be screenshots (the program's own are left out).
 
@@ -167,7 +176,7 @@ class WatchMixin:
         if not self.atlas or not self.path:
             raise ValueError("open or create an atlas first")
         self.stop_watch()
-        self.settings["watch_on"] = True
+        self.set_setting("watch_on", True, save=False)
         folder = self.watch_dir()
         files = self._watch_files()
         self._watch_seen = {k: -1 for k in files}

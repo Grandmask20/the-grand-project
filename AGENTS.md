@@ -23,9 +23,10 @@ It must run on Windows, macOS and Linux.
 - **halls**: deadly-boss map on a normal base with an orange beam on a structure next to it
 - **deadly bosses**: map nodes with the red "powerful map boss" icon
 - **map node states**: grey (unreachable), blue (can be pathed to), green (cleared), red (failed: cities and halls,
-  and Unique maps as the test data shows); running maps changes them (grey → blue → green, blue → red; turning green loses every icon; grey / blue maps
-  can lose or gain icons, which move; green and red never change). Named per screenshot by `detect/node_states.py`,
-  followed over time by `finalize/states.py`; hand-checked states are `states.json` next to a folder's screenshots
+  and Unique maps as the test data shows); running maps changes them (grey → blue → green, blue → red; green and red
+  never change). Named per screenshot by `detect/node_states.py`, followed over time by `finalize/states.py`;
+  hand-checked states are `states.json` next to a folder's screenshots. A map's icons over time (removed when newer
+  screenshots show them gone) are `finalize/icon_time.py`'s
 - **citadel names** (the dataset's labels): Iron citadel = Ezomyte, Stone citadel = Vaal, Copper citadel = Faridun;
   `citadel_*` boxes frame a city's own map node and barrel
 - **node classes**: in the RF-DETR dataset every map node is labelled with its biome (`map_node_grass` / `_desert` /

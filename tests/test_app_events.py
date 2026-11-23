@@ -77,3 +77,26 @@ def test_the_same_progress_step_reaches_each_atlas_log_once():
         ev.set_progress("fixing seams 1 / 500", scope="b.json")
     lines = [entry["data"]["scope"] for entry in ev.history if entry["kind"] == "log"]
     assert lines == ["a.json", "b.json"]  # one in each atlas's log (one was skipped: CodeRabbit), no repeats
+
+
+def test_a_yes_coming_in_as_the_app_closes_never_undoes_its_no():
+    # (CodeRabbit: an answer racing the close could turn its No into a Yes)
+    import queue
+    import threading
+
+    from grand_project.app.events import Events
+
+    ev = Events()
+    ev._listeners.append(queue.Queue())
+    got = []
+    t = threading.Thread(target=lambda: got.append(ev.ask("go on?")))
+    t.start()
+    for _ in range(200):
+        if ev.open_questions():
+            break
+        threading.Event().wait(0.01)
+    qid = ev.open_questions()[0]["id"]
+    assert ev.end_questions() == 1
+    assert ev.answer(qid, True) is False  # (too late: closing)
+    t.join(2)
+    assert got == [False]

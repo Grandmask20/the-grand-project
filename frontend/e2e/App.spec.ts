@@ -29,6 +29,11 @@ async function open(page: Page) {
 	return canvas;
 }
 
+/** One of the side panel's tabs (its pages have tabs of the same names: Bookmarks / Route). */
+function sideTab(page: Page, name: string) {
+	return page.getByRole("tablist", { name: "Side panel" }).getByRole("tab", { name, exact: true });
+}
+
 async function api<T>(page: Page, path: string): Promise<T> {
 	const r = await page.request.get(path);
 	expect(r.ok()).toBe(true);
@@ -50,19 +55,24 @@ test("opens the atlas and draws the map", async ({ page }) => {
 
 test("Find: searches, goes to a result and selects it", async ({ page }) => {
 	await open(page);
+	// (the page opens on Bookmarks: user)
+	await sideTab(page, "Find").click();
 	const find = page.getByRole("textbox", { name: "Find" });
 	await find.fill("#3");
 	await expect(page.getByText('1 match(es) for "#3"')).toBeVisible();
-	await page.getByRole("button", { name: "Map #3", exact: true }).click();
-	await expect(page.getByText("Selected", { exact: true })).toBeVisible();
-	await expect(page.getByText(/^Map #3/).last()).toBeVisible();
+	await page
+		.getByRole("list", { name: "Results" })
+		.getByRole("button", { name: /^Map #3\b/ })
+		.click();
+	// the selection's box over the map
+	await expect(page.getByRole("dialog", { name: /^Selected: Map #3/ })).toBeVisible();
 	await find.fill("120, -45");
 	await expect(page.getByText("centred on 120, -45 (marked)")).toBeVisible();
 });
 
 test("bookmarks: lists them, adds one on the map, saved in the atlas", async ({ page }) => {
 	const canvas = await open(page);
-	await page.getByRole("tab", { name: "Bookmarks" }).click();
+	await sideTab(page, "Bookmarks").click();
 	await expect(page.getByRole("button", { name: "farm <here>", exact: true })).toBeVisible();
 	await page.getByRole("button", { name: "Add bookmark" }).click();
 	const box = await canvas.boundingBox();

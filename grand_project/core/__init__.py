@@ -42,13 +42,13 @@ from .constants import (  # noqa: F401
     SCREEN_HEIGHT,
     SIG_DIST1,
     SIG_DIST2,
-    STEAM_NAME_TIME,
     TERRAIN_MIN_AGREE,
     TERRAIN_MIN_NCC,
     TERRAIN_SCALE,
     VOTE_BIN,
 )
 from .frame import (  # noqa: F401
+    STEAM_TIME,
     Frame,
     _hud_cache,
     atlas_files,

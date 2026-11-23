@@ -4,16 +4,20 @@ import { BookmarkDialog } from "@/components/dialogs/BookmarkDialog";
 import { ConfirmDialog } from "@/components/dialogs/ConfirmDialog";
 import { DeleteAtlasDialog } from "@/components/dialogs/DeleteAtlasDialog";
 import { FileBrowserDialog } from "@/components/dialogs/FileBrowserDialog";
+import { GroupDialog } from "@/components/dialogs/GroupDialog";
 import { PromptDialog } from "@/components/dialogs/PromptDialog";
 import { QuestionDialog } from "@/components/dialogs/QuestionDialog";
+import { RecheckDialog } from "@/components/dialogs/RecheckDialog";
 import { SourcesDialog } from "@/components/dialogs/SourcesDialog";
 import { MapImageWait } from "@/components/layout/MapImageWait";
 import { SidePanel } from "@/components/layout/SidePanel";
+import { SideReveal } from "@/components/layout/SideReveal";
 import { StatusBar } from "@/components/layout/StatusBar";
 import { TopBar } from "@/components/layout/TopBar";
 import { AtlasMap } from "@/components/map/AtlasMap";
 import { MapNotes } from "@/components/map/MapNotes";
 import { ReplayPanel } from "@/components/replay/ReplayPanel";
+import { TimelapseTab } from "@/components/replay/TimelapseTab";
 import { Button } from "@/components/ui/button";
 import { useAppState } from "@/hooks/app/UseAppState";
 import { useEventStream } from "@/hooks/app/UseEventStream";
@@ -56,7 +60,8 @@ export function AtlasPage() {
 		<div className="flex h-full flex-col">
 			<TopBar />
 			<div className="flex min-h-0 flex-1">
-				<SidePanel debug={s.debug} />
+				{/* hidden: its reveal button on the map's edge brings it back (user's notes: a hideable sidebar) */}
+				{!s.settings.ui.side_hidden && <SidePanel debug={s.debug} />}
 				<main
 					className={`flex min-w-0 flex-1 flex-col bg-black ${s.settings.ui.side === "right" ? "-order-1" : ""}`}
 					onDragOver={(e) => {
@@ -98,6 +103,12 @@ export function AtlasPage() {
 						)}
 						<ProgressBox text={s.progress} />
 						<MapNotes />
+						{map && <TimelapseTab />}
+						{s.settings.ui.side_hidden && (
+							<SideReveal
+								className={`absolute top-1/2 z-20 -translate-y-1/2 ${s.settings.ui.side === "right" ? "-right-[5px]" : "-left-[5px]"}`}
+							/>
+						)}
 						{dragging && (
 							<div className="pointer-events-none absolute inset-3 z-30 flex items-center justify-center rounded-lg border-2 border-dashed border-gold bg-black/40 text-gold">
 								Drop screenshots: one is placed by hand, several are added
@@ -112,7 +123,9 @@ export function AtlasPage() {
 			<FileBrowserDialog />
 			<PromptDialog />
 			<ConfirmDialog />
+			<RecheckDialog />
 			<BookmarkDialog />
+			<GroupDialog />
 			<SourcesDialog />
 			<DeleteAtlasDialog />
 		</div>

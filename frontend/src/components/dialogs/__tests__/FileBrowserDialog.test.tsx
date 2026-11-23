@@ -29,6 +29,33 @@ describe("FileBrowserDialog", () => {
 		await waitFor(() => expect(useAppStore.getState().filePick).toBeNull());
 	});
 
+	it("a folder typed before the first listing comes is kept, and Enter opens it (CI: the listing wrote over it)", async () => {
+		const shots = { ...home, path: "/home/me/shots", parent: "/home/me", entries: [home.entries[1]] };
+		let release: () => void = () => {};
+		const late = new Promise<void>((r) => {
+			release = r;
+		});
+		const { user, calls } = renderWithApp(<FileBrowserDialog />, {
+			"GET /api/fs": async (_b: unknown, p?: Record<string, unknown>) => {
+				if (p?.path === "/home/me/shots") return shots;
+				await late; // the start folder answers only after you've typed
+				return home;
+			},
+		});
+		act(() =>
+			useAppStore
+				.getState()
+				.pickFiles({ title: "Add atlas screenshots", folders: false, multiple: true, onPick: vi.fn() }),
+		);
+		const box = screen.getByRole("textbox", { name: "Folder" });
+		await user.type(box, "/home/me/shots");
+		await act(async () => release());
+		expect(box).toHaveValue("/home/me/shots");
+		await user.type(box, "{Enter}");
+		await waitFor(() => expect(calls.some((c) => c.params?.path === "/home/me/shots")).toBe(true));
+		expect(await screen.findByRole("button", { name: /a.png/ })).toBeInTheDocument();
+	});
+
 	it("names a new atlas in the folder it is in", async () => {
 		const onPick = vi.fn();
 		const { user } = renderWithApp(<FileBrowserDialog />, { "GET /api/fs": home });

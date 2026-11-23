@@ -6,7 +6,7 @@ import math
 
 from grand_project import core
 
-from .constants import EDIT_SAME, EDIT_SPOT
+from .constants import EDIT_SAME, EDIT_SPOT, MAP_EDIT_REACH, MAP_ICON_REACH
 
 
 def view_model(atlas: core.Atlas) -> dict:
@@ -14,7 +14,7 @@ def view_model(atlas: core.Atlas) -> dict:
 
     An atlas made before atlas_finalize existed has no atlas-wide result; its raw map nodes and paths are
     converted to the same shape (a map node seen in 2+ screenshots is "confirmed", else "single"). The
-    user's landmark edits are applied on top.
+    user's map edits (maps deleted or added) and landmark edits are applied on top.
 
     Args:
         atlas: The open atlas.
@@ -58,6 +58,7 @@ def view_model(atlas: core.Atlas) -> dict:
         ]
         landmarks = [dict(lm, status="kept") for lm in j["landmarks"]]
     icons = fin["icons"] if fin and "icons" in fin else [i for i in j.get("icons", []) if i["name"] != "LostTower"]
+    nodes, icons = apply_map_edits(nodes, icons, getattr(atlas, "map_edits", []))
     landmarks = apply_landmark_edits(landmarks, getattr(atlas, "landmark_edits", []))
     return {
         "nodes": nodes,
@@ -67,6 +68,71 @@ def view_model(atlas: core.Atlas) -> dict:
         "frames": j["frames"],
         "stats": (fin or {}).get("stats", {}),
     }
+
+
+def apply_map_edits(nodes: list[dict], icons: list[dict], edits: list[dict]) -> tuple[list[dict], list[dict]]:
+    """Returns the map nodes and icons with the maps the user deleted or added (user: ghost maps the detector made
+    can't be removed otherwise, nor a map it missed added).
+
+    A "remove" deletes the live map node nearest its spot within MAP_EDIT_REACH (status "removed", why "removed by
+    you": shown with Layers > Removed), and the icons standing on it go with it (their base nearest it, within
+    MAP_ICON_REACH). An "add" puts a map node on its spot, unless a live one is there already (found since). By spot,
+    so they hold after the atlas is checked again.
+
+    Args:
+        nodes: Map node dicts; not changed.
+        icons: Icon dicts ("x", "y", optional base "bx", "by"); not changed.
+        edits: {"x", "y", "op": "remove" | "add"} (atlas units).
+
+    Returns:
+        (nodes, icons): new lists, an added map node at the end (its id its place).
+    """
+    if not edits:
+        return nodes, icons
+    out = list(nodes)
+    gone: list[int] = []
+    for e in (e for e in edits if e.get("op") == "remove"):
+        near = [
+            (math.hypot(n["x"] - e["x"], n["y"] - e["y"]), i) for i, n in enumerate(out) if n.get("status") != "removed"
+        ]
+        d, i = min(near) if near else (1e9, -1)
+        if d < MAP_EDIT_REACH:
+            out[i] = {**out[i], "status": "removed", "why": "removed by you"}
+            gone.append(i)
+    for e in (e for e in edits if e.get("op") == "add"):
+        if any(
+            n.get("status") != "removed" and math.hypot(n["x"] - e["x"], n["y"] - e["y"]) < MAP_EDIT_REACH for n in out
+        ):
+            continue
+        out.append(
+            {
+                "id": len(out),
+                "x": float(e["x"]),
+                "y": float(e["y"]),
+                "frames": [],
+                "seen": 0,
+                "could": 0,
+                "status": "confirmed",
+                "tower": False,
+                "icons": [],
+                "abyss": "",
+                "why": "added by you",
+                "origin": "by you",
+            }
+        )
+    if gone:
+        # an icon goes with a deleted map when that map is the nearest to its base (live ones count too). Only the
+        # icons in reach of one are looked at further (an atlas has thousands of icons and maps)
+        keep = []
+        for ic in icons:
+            bx, by = ic.get("bx", ic["x"]), ic.get("by", ic["y"])
+            d = min(math.hypot(out[i]["x"] - bx, out[i]["y"] - by) for i in gone)
+            if d > MAP_ICON_REACH or any(
+                n.get("status") != "removed" and math.hypot(n["x"] - bx, n["y"] - by) < d for n in out
+            ):
+                keep.append(ic)
+        icons = keep
+    return out, icons
 
 
 def apply_landmark_edits(landmarks: list[dict], edits: list[dict]) -> list[dict]:
@@ -115,6 +181,7 @@ def apply_landmark_edits(landmarks: list[dict], edits: list[dict]) -> list[dict]
                     "source": "you",
                     "status": "kept",
                     "beam": "set by you",
+                    "added": True,
                 }
             )
             taken.add(len(out) - 1)

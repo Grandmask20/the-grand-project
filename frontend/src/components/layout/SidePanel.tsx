@@ -22,6 +22,7 @@ import { useAppState } from "@/hooks/app/UseAppState";
 import { useSettings, useUpdateSettings } from "@/hooks/app/UseSettings";
 import { useAppStore } from "@/store/AppStore";
 import { cn } from "@/utils/Cn";
+import { SideReveal } from "./SideReveal";
 
 // five tabs with icons (user, from banner's mock: "find view and bookmark are 100% things i want"); Auto-add is a
 // page of Atlases, Route of Bookmarks, and Debug of Log (PAGE_OF in the store)
@@ -76,19 +77,37 @@ export function SidePanel({ debug }: { debug: boolean }) {
 
 	return (
 		<aside
-			className={cn("relative flex h-full shrink-0 flex-col bg-background", side === "left" ? "border-r" : "border-l")}
+			// (in the game's stash panel frame, on its dark grain: Theme.css .poe-panel, its 10px frame all round)
+			className="poe-panel relative flex h-full shrink-0 flex-col"
 			style={{ width }}
 		>
 			<Tabs value={tab} onValueChange={setTab} className="flex min-h-0 flex-1 flex-col">
 				{/* one row that scrolls sideways when the panel is narrow (it wrapped onto the panel before) */}
-				<TabsList className="@container m-2 mb-0 flex h-auto w-auto shrink-0 flex-nowrap justify-start overflow-x-auto pb-2.5 [scrollbar-width:thin]">
-					{/* the tabs share the row's width, with their names or without: the names go only when the row itself is
-					    too narrow for them (a container query, ~23.5rem), so narrowing the panel doesn't make the icons jump
-					    or bunch up at the left (user: "a bit too jumpy") */}
+				{/* the game's stash tabs, from its own art (Theme.css .poe-tab), standing on a bar from one side of the
+				    panel's frame to the other (user) */}
+				<TabsList
+					aria-label="Side panel"
+					className="poe-tools poe-side-tabs @container mt-1 mb-[6px] flex h-auto w-auto shrink-0 flex-nowrap justify-start rounded-none bg-transparent"
+				>
+					<span className="poe-bar" aria-hidden="true" />
+					{/* Log is always its icon alone, at its smallest (it never changes size: user); the others fill the rest
+					    of the row, each as wide as its name needs and the spare shared. Narrowing the panel, only Bookmarks
+					    (the longest name) narrows, its name cut short with "…" as the layers' buttons do ("Bookma…": user);
+					    once it would be narrower than the shortest tab (Find, ~74px), all of them go to their icons: a row
+					    under 22rem (a container query: the sum of the tabs' widths then). Narrowing doesn't
+					    make the icons jump or bunch up at the left (user: "a bit too jumpy") */}
 					{TABS.map(([k, label, Icon]) => (
-						<TabsTrigger key={k} value={k} className="min-w-0 flex-auto gap-1 px-2" title={label} aria-label={label}>
+						<TabsTrigger
+							key={k}
+							value={k}
+							className={
+								k === "log" ? "poe-tab poe-tab-fixed" : k === "bookmarks" ? "poe-tab poe-tab-squeeze" : "poe-tab"
+							}
+							title={label}
+							aria-label={label}
+						>
 							<Icon className="size-4 shrink-0" aria-hidden="true" />
-							<span className="hidden @min-[23.5rem]:inline">{label}</span>
+							{k !== "log" && <span className="hidden min-w-0 truncate @min-[22rem]:inline">{label}</span>}
 						</TabsTrigger>
 					))}
 				</TabsList>
@@ -135,6 +154,10 @@ export function SidePanel({ debug }: { debug: boolean }) {
 				</div>
 			</Tabs>
 			<LayersDock />
+			<SideReveal
+				// (its flat side on the panel's edge: turned, its 34 x 24 box stands 24 wide around its middle)
+				className={cn("absolute top-1/2 z-30 -translate-y-1/2", side === "left" ? "-right-[39px]" : "-left-[39px]")}
+			/>
 			<div
 				aria-hidden="true"
 				title="Drag to resize the side panel (double-click: back to normal)"
@@ -144,7 +167,7 @@ export function SidePanel({ debug }: { debug: boolean }) {
 				onDoubleClick={() => update.mutate({ ui: { side_width: SIDE_DEFAULT } })}
 				className={cn(
 					"absolute top-0 z-20 h-full w-1.5 cursor-col-resize hover:bg-gold/40",
-					side === "left" ? "-right-1" : "-left-1",
+					side === "left" ? "-right-[14px]" : "-left-[14px]",
 				)}
 			/>
 		</aside>

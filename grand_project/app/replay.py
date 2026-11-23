@@ -17,7 +17,7 @@ from dataclasses import dataclass, field
 import cv2
 import numpy as np
 
-from grand_project.core import capture_time, time_order
+from grand_project.core import capture_time, time_order  # noqa: F401 (the replay's own names for them)
 
 from .constants import (
     REPLAY_AREA_RES,

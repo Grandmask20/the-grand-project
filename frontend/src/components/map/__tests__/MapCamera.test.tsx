@@ -29,6 +29,14 @@ describe("MapCamera", () => {
 		expect(fm.map.flyTo.mock.calls[1][0].zoom).toBe(mapInfo.maxzoom);
 	});
 
+	it("puts the spot below a box over the map's top (the Re-check's changes)", () => {
+		const { fm } = renderOnMap(<MapCamera />);
+		act(() => useAppStore.getState().flyTo(10, 20, 1, 300)); // (the box ends 300 px down; the map starts at 0)
+		expect(fm.map.flyTo.mock.calls[0][0]).toMatchObject({ center: geo.toLngLat(10, 20), offset: [0, 150] });
+		act(() => useAppStore.getState().flyTo(10, 20, 1));
+		expect(fm.map.flyTo.mock.calls[1][0]).not.toHaveProperty("offset");
+	});
+
 	it("fits the atlas when asked", () => {
 		const { fm } = renderOnMap(<MapCamera />);
 		act(() => useAppStore.getState().requestFit());

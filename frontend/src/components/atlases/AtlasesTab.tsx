@@ -1,5 +1,6 @@
-import { PencilIcon, Trash2Icon } from "lucide-react";
+import { Trash2Icon } from "lucide-react";
 import { useState } from "react";
+import { GameIcon } from "@/components/common/GameIcon";
 import { Button } from "@/components/ui/button";
 import {
 	DropdownMenu,
@@ -14,6 +15,15 @@ import { useAtlasActions } from "@/hooks/atlas/UseAtlasActions";
 import { useAtlases } from "@/hooks/atlas/UseAtlases";
 import { useAppStoreCalm } from "@/store/AppStore";
 import { cn } from "@/utils/Cn";
+
+// the card's buttons light up on hover like the top bar's (user: "a mild highlight"): the ghost button's own hover
+// shade is the card's, so it didn't show on a card
+const CARD_BUTTON = "hover:bg-foreground/15";
+// the card's buttons show while it is pointed at (user: "add the reveal on hover for the atlas options"), or once
+// the keyboard reaches it; always on a touch screen (can-hover, Theme.css). On the column, not each button, so a
+// disabled one (its own half opacity) stays hidden too
+const CARD_BUTTONS =
+	"flex flex-col gap-1 can-hover:opacity-0 transition-opacity group-hover/card:opacity-100 group-has-[:focus-visible]/card:opacity-100";
 
 /** Saved atlases: a card per known atlas (its map, maps / icons / screenshots); click one to open it, right-click it
  * to open its folder, rename or delete it. */
@@ -48,7 +58,10 @@ export function AtlasesTab() {
 			{atlases.data?.map((a) => (
 				<div
 					key={a.json}
-					className={cn("flex gap-3 rounded-md border p-2 hover:bg-accent", a.open && "border-gold bg-accent/60")}
+					className={cn(
+						"group/card flex gap-3 rounded-md border p-2 hover:bg-accent",
+						a.open && "border-gold bg-accent/60",
+					)}
 				>
 					<button
 						type="button"
@@ -84,18 +97,31 @@ export function AtlasesTab() {
 							{a.open && <span className="text-xs text-gold">open</span>}
 						</div>
 					</button>
-					<div className="flex flex-col gap-1">
+					<div className={CARD_BUTTONS}>
 						<Button
 							size="icon-sm"
 							variant="ghost"
+							className={CARD_BUTTON}
 							aria-label={`Rename ${a.name}`}
 							onClick={() => rename(a.json, a.name)}
 						>
-							<PencilIcon />
+							<GameIcon name="edit" className="size-4" />
 						</Button>
 						<Button
 							size="icon-sm"
 							variant="ghost"
+							className={CARD_BUTTON}
+							aria-label={`Re-check ${a.name}`}
+							title={a.open ? "Re-check this atlas" : "Open and re-check this atlas"}
+							disabled={state?.busy || a.numbers?.shots === 0}
+							onClick={() => s.askRecheck(a.json)}
+						>
+							<GameIcon name="refresh" className="size-4" />
+						</Button>
+						<Button
+							size="icon-sm"
+							variant="ghost"
+							className={CARD_BUTTON}
 							aria-label={`Delete ${a.name}`}
 							onClick={() => s.askDeleteAtlas(a.json)}
 						>

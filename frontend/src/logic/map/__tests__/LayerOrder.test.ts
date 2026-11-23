@@ -4,6 +4,7 @@ import { Geo } from "@/logic/Geo";
 import { atlasLayers, type Look } from "@/logic/map/AtlasLayers";
 import { LAYER_ORDER, mapStyle, slotOf } from "@/logic/map/LayerOrder";
 import {
+	bookmarkIconLayer,
 	bookmarkLayer,
 	ghostLineLayer,
 	gotoLayer,
@@ -35,6 +36,7 @@ function everyLayer(): string[] {
 		route.here,
 		recentLayer(meta, true),
 		bookmarkLayer(geo, meta, true),
+		bookmarkIconLayer(geo, meta, true),
 		savedRouteLayer(meta, true),
 		...litRouteLayers(geo, meta),
 		...markLayers(true),
