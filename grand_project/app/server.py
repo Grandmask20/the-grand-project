@@ -724,8 +724,12 @@ class Handler(BaseHTTPRequestHandler):
 
     @route("GET", r"/api/tiles/terrain/(?P<z>\d+)/(?P<x>\d+)/(?P<y>\d+)\.jpg")
     def get_terrain_tile(self, q, z, x, y) -> None:
-        """A ground tile."""
-        self._bytes(self.S.terrain_tile(int(z), int(x), int(y), self._still_connected), "image/jpeg")
+        """A ground tile of the map image version its address names ("v": tile key, then that version), kept by the
+        browser only when it is of that version (terrain_tile_for)."""
+        end = q.get("v", [""])[0].rsplit("-", 1)[-1]
+        version = int(end) if end.isdigit() else None
+        data, same = self.S.terrain_tile_for(int(z), int(x), int(y), version, self._still_connected)
+        self._bytes(data, "image/jpeg", cache=same)
 
     @route("GET", "/api/crop")
     def get_crop(self, q) -> None:

@@ -305,6 +305,28 @@ def test_jobs_queued_for_a_are_skipped_once_b_is_open(session, two, monkeypatch)
     assert any("Re-check took" in line and "maps " in line for line in session.events.log_lines)
 
 
+def test_the_ground_from_before_the_jobs_is_kept_while_they_run(session, two, monkeypatch):
+    a, _b = two
+    session.open_atlas(a)
+    start = session._tile_state
+    seen = []
+
+    def job(paths, mode):
+        """A job making a new map image (as pasting screenshots does)."""
+        seen.append(session._tile_before)
+        canvas, weight, origin = session.terrain
+        session.set_terrain(canvas, weight, origin, save=False, cities=False)
+        seen.append(session._tile_before)
+
+    monkeypatch.setattr(session, "run_job", job)
+    threading.Thread(target=session._worker, daemon=True).start()
+    session._queue_job([], "recheck_all")
+    session._queue_job([], "recheck_all")  # a second job in the same busy spell: still the ground from before both
+    assert wait_until(lambda: not session.working())
+    assert seen and all(t is start for t in seen)  # (the page's backdrop asks for it: user, CodeRabbit)
+    assert session._tile_before is None  # let go once idle: the backdrop follows the current ground
+
+
 def test_auto_add_follows_the_atlas(session, two, monkeypatch):
     a, b = two
     monkeypatch.setattr(session, "detector_ready", lambda: None)

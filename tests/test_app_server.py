@@ -59,7 +59,8 @@ def test_tiles_over_http(app):
     s = srv.session
     wx, wy = s.grid.world_px(*pts[0])
     z = s.grid.zmax
-    st, h, body = call(srv, f"/api/tiles/terrain/{z}/{int(wx // 256)}/{int(wy // 256)}.jpg?v=1")
+    v = f"{s.map_info()['tile_key']}-{s.terrain_version}"  # (the page's address: tile key, map image version)
+    st, h, body = call(srv, f"/api/tiles/terrain/{z}/{int(wx // 256)}/{int(wy // 256)}.jpg?v={v}")
     assert st == 200 and h["Content-Type"] == "image/jpeg" and body[:2] == b"\xff\xd8"
     assert "immutable" in h["Cache-Control"]  # versioned URLs: kept by the browser
     assert call(srv, f"/api/tiles/terrain/{z}/0/0.jpg")[0] == 204  # no ground there
@@ -168,6 +169,31 @@ def test_tiles_and_the_3d_scene_are_kept_only_under_the_address_they_were_made_f
         assert st == 200 and h["Cache-Control"] == "no-store"
         # (the timelapse's tab asking for steps of a plan that isn't open: not kept either)
         assert call(srv, f"{path}?v={now}&r=7")[1]["Cache-Control"] == "no-store"
+
+
+def test_the_backdrop_gets_the_ground_from_before_the_jobs_running_now(app):
+    srv, pts = app
+    s = srv.session
+    wx, wy = s.grid.world_px(*pts[0])
+    path = f"/api/tiles/terrain/{s.grid.zmax}/{int(wx // 256)}/{int(wy // 256)}.jpg"
+    key, old = s.map_info()["tile_key"], s.terrain_version
+    st, _h, before = call(srv, f"{path}?v={key}-{old}")
+    assert st == 200
+    canvas, weight, origin = s.terrain
+    with s._lock:  # as the worker does when jobs begin, then a job's new map image
+        s._tile_before = s._tile_state
+        s.set_terrain(canvas // 3, weight, origin, save=False, cities=False)
+    new = s.terrain_version
+    st, h, body = call(srv, f"{path}?v={key}-{old}")  # the backdrop's address: the old ground, kept
+    assert st == 200 and body == before and "immutable" in h["Cache-Control"]
+    st, h, body = call(srv, f"{path}?v={key}-{new}")  # the map's own: the new ground
+    assert body != before and "immutable" in h["Cache-Control"]
+    # an address of neither: the current ground, not kept under it (CodeRabbit: the new ground sat under the old
+    # address a year, and a map image built again elsewhere put the backdrop off its place)
+    st, h, other = call(srv, f"{path}?v={key}-{new + 40}")
+    assert other == body and h["Cache-Control"] == "no-store"
+    s._tile_before = None  # the jobs ended: the backdrop follows the current ground
+    assert call(srv, f"{path}?v={key}-{old}")[1]["Cache-Control"] == "no-store"
 
 
 def test_a_dropped_connection_is_not_printed_as_an_error(app, capsys):

@@ -195,6 +195,11 @@ class MapImageMixin:
         # (grid, raster tiler, sharp tiles, version): the map image's tiling, handed over as one (a crop read the grid
         # and the tiles at different moments of a change: CodeRabbit)
         self._tile_state: tuple = (None, None, None, self.terrain_version)
+        # the tiling in place when the jobs running now began (pinned by the worker, let go when it is idle): the
+        # page's backdrop keeps asking for that ground while they run (user: the old terrain viewable until the new
+        # is in, even offscreen), and answered from the new one, a map image built again elsewhere put it off its
+        # place (CodeRabbit). It holds the old map image's memory meanwhile.
+        self._tile_before: tuple | None = None
         self._ground = None
         self._ground_for = None
         self._tiles.clear()
@@ -1019,6 +1024,26 @@ class MapImageMixin:
             The JPEG bytes, or None where there is no ground.
         """
         return self._tile_from(self._tile_state, z, x, y, wanted)
+
+    def terrain_tile_for(self, z: int, x: int, y: int, version: int | None, wanted=None) -> tuple[bytes | None, bool]:
+        """Return a ground tile of the map image version its address names: the current one, or the one from before
+        the jobs running now (_tile_before, the backdrop's), else the current one.
+
+        Args:
+            z: Tile level.
+            x: Tile column.
+            y: Tile row.
+            version: The map image version in its address (None: none given, the current one).
+            wanted: Whether the browser still waits for it (terrain_tile).
+
+        Returns:
+            (the JPEG bytes or None where there is no ground; whether it is of the version asked, so the browser may
+            keep it under that address).
+        """
+        state, before = self._tile_state, self._tile_before
+        if version is not None and version != state[3] and before is not None and before[3] == version:
+            state = before
+        return self._tile_from(state, z, x, y, wanted), version is None or state[3] == version
 
     def _tile_from(self, state: tuple, z: int, x: int, y: int, wanted=None) -> bytes | None:
         """terrain_tile, from one map image's tiling (_tile_state, read once by the caller)."""

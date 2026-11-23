@@ -541,6 +541,8 @@ class AddingMixin:
             with self._lock:  # decided together with the open atlas: a switch can't slip in between
                 current = self.owns(gen) and not self._closing
                 self._busy = True
+                if self._tile_before is None:  # the ground as it was before these jobs (the page's backdrop)
+                    self._tile_before = self._tile_state
             try:
                 if not current:
                     self.events.log(f"skipped a job queued for another atlas ({mode})")
@@ -566,6 +568,7 @@ class AddingMixin:
                 self._busy = self._jobs.unfinished_tasks > 0
                 self.events.set_progress(None)
                 if not self._busy:
+                    self._tile_before = None  # (the page's backdrop follows the current ground now)
                     self.scan_locks()
                     self.events.publish("busy", False)
                     try:  # (one queued while this ran: fix_seams). Never the worker's end: a failure here
