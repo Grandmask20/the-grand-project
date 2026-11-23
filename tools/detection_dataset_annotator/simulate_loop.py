@@ -69,21 +69,30 @@ def parse_rounds(text: str) -> list[list[str]]:
     return rounds
 
 
-def revealed(ledger: Mapping[str, Any], atlas: str, rounds: Sequence[Sequence[str]]) -> list[list[str]]:
-    """The training screenshots (project-relative files) revealed by each round, cumulative.
+def revealed(
+    rows: Iterable[Any], atlas: str, rounds: Sequence[Sequence[str]], train_sources: Iterable[str]
+) -> list[list[str]]:
+    """The training screenshots revealed by each round, cumulative, by the names the manifest gives them.
+
+    A screenshot (a digest) may have several ledger rows, one per name its bytes were seen under: it is revealed under
+    the one the manifest trains on (``train_subset`` keeps screenshots by that name).
 
     Args:
-        ledger: the split ledger (``read_ledger``: sha -> Entry).
+        rows: the split ledger's rows (``read_ledger_rows``).
         atlas: the atlas folder, as the ledger names its blocks (``<atlas>#<n>``).
         rounds: the block numbers each round adds.
+        train_sources: the manifest's training screenshots (their ``source``).
 
     Raises:
-        ValueError: a block that is not one of the atlas's training blocks, or a block named twice.
+        ValueError: a block that is not one of the atlas's training blocks, a block named twice, or a screenshot of a
+            revealed block the manifest has no training screenshot for.
     """
-    blocks: dict[str, list[str]] = {}
-    for entry in ledger.values():
+    sources = set(train_sources)
+    blocks: dict[str, dict[str, list[str]]] = {}
+    for entry in rows:
         if entry.split == "train" and entry.block.startswith(f"{atlas}#"):
-            blocks.setdefault(entry.block.rsplit("#", 1)[1], []).append(entry.file)
+            names = blocks.setdefault(entry.block.rsplit("#", 1)[1], {}).setdefault(entry.sha256, [])
+            names.append(entry.file)
     out: list[list[str]] = []
     seen: list[str] = []
     used: set[str] = set()
@@ -94,7 +103,19 @@ def revealed(ledger: Mapping[str, Any], atlas: str, rounds: Sequence[Sequence[st
             used.add(block)
             if block not in blocks:
                 raise ValueError(f"{atlas}#{block} is not a training block (training blocks: {sorted(blocks)})")
-            seen += sorted(blocks[block])
+            found, missing = [], []
+            for names in blocks[block].values():
+                trained = sorted(name for name in names if name in sources)
+                if trained:
+                    found.append(trained[0])
+                else:
+                    missing.append(sorted(names)[0])
+            if missing:
+                raise ValueError(
+                    f"{len(missing)} screenshots of {atlas}#{block} are no training screenshot of the manifest: "
+                    f"{sorted(missing)[:3]} (export them, with --unreviewed for truth-seeded ones)"
+                )
+            seen += sorted(found)
         out.append(list(seen))
     return out
 
@@ -386,7 +407,7 @@ def report_markdown(results: Sequence[Mapping[str, Any]]) -> str:
 
 def main(argv: list[str] | None = None) -> int:
     """Run the simulated rounds and write the report."""
-    from .split_ledger import read_ledger
+    from .split_ledger import read_ledger_rows
     from .state import resolve_path
 
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
@@ -403,7 +424,6 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
     args.manifest = resolve_path(args.manifest)
     manifest = json.loads(args.manifest.read_text(encoding="utf-8"))
-    rounds = revealed(read_ledger(), args.atlas, parse_rounds(args.rounds))
     truth = Truth.load(resolve_path(args.truth))
     shots = held_out(manifest, args.atlas, args.manifest.parent, truth.source)
     others = [
@@ -419,6 +439,8 @@ def main(argv: list[str] | None = None) -> int:
             f"no validation or test screenshots of {args.atlas} seeded by {truth.source} in {args.manifest}: seed them "
             "(truth_seed) and export them with the unreviewed ones (export --unreviewed)"
         )
+    train_sources = [str(row.get("source")) for row in manifest.get("images", []) if row.get("split") == "train"]
+    rounds = revealed(read_ledger_rows(), args.atlas, parse_rounds(args.rounds), train_sources)
     classical = classical_boxes(resolve_path(args.classical_store))
     missing = [row["source"] for rows in shots.values() for row in rows if row["source"] not in classical]
     if missing:

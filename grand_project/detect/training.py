@@ -411,13 +411,13 @@ def cmd_score_rf_detr() -> int:
         print("no truth screenshot could be read")
         return 1
     model_dir = rf_detr_model_path()
-    held_out = _held_out(model_dir, [where[name] for name in truth])
+    held_out = _held_out(model_dir, [where[name] for name in new])  # the screenshots scored, not every truth one
     if held_out:
-        kind = "held-out: the model trained on none of the truth screenshots"
+        kind = "held-out: the model trained on none of the scored screenshots"
     elif held_out is None:
         kind = f"not known to be held-out: {model_dir} does not list its training screenshots ({RF_DETR_TRAINED_ON})"
     else:
-        kind = "NOT held-out: the model trained on some of the truth screenshots"
+        kind = "NOT held-out: the model trained on some of the scored screenshots"
     print(f"\n== RF-DETR detector ({kind})")
     atlas_truth.print_score(atlas_truth.score(truth, new))
     (TRUTH.parent / "last_score_outputs_rf_detr.json").write_text(json.dumps(new, default=float), encoding="utf-8")

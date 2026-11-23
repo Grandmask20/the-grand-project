@@ -163,17 +163,14 @@ def _changed_elsewhere(item: dict[str, Any], editor_key: str) -> bool:
     return True
 
 
-def _review_log(item: dict[str, Any], payload: dict[str, Any], *, reviewed: bool | None) -> dict[str, Any] | None:
-    """The screenshot's review log after an editor message (``ANNOTATOR_REVIEW_FIELD``): its active seconds grown by
-    the editor's review timer, and when it was marked reviewed; None when the message adds neither."""
-    active_ms = float(payload.get("active_ms") or 0)
-    if active_ms <= 0 and not reviewed:
-        return None
-    log = dict(item.get(K.ANNOTATOR_REVIEW_FIELD) or {})
-    log["active_s"] = round(float(log.get("active_s", 0.0)) + active_ms / 1000.0, 1)
-    if reviewed:
-        log["reviewed_at"] = time.strftime("%Y-%m-%dT%H:%M:%S")
-    return {K.ANNOTATOR_REVIEW_FIELD: log}
+def _review_log(payload: dict[str, Any], *, reviewed: bool | None) -> dict[str, Any]:
+    """What an editor message adds to the screenshot's review log (``save_review``'s ``review_s`` and
+    ``reviewed_at``, added in the save's own write): the editor's review timer, and when it was marked reviewed."""
+    active_ms = max(0.0, float(payload.get("active_ms") or 0))
+    return {
+        "review_s": active_ms / 1000.0,
+        "reviewed_at": time.strftime("%Y-%m-%dT%H:%M:%S") if reviewed else None,
+    }
 
 
 def _on_edit(store_path: Path, image_key: str, revision: int, editor_key: str) -> None:
@@ -184,9 +181,9 @@ def _on_edit(store_path: Path, image_key: str, revision: int, editor_key: str) -
         if item is None or _changed_elsewhere(item, editor_key):
             return
         edited = _edited_annotations(item, editor_key, payload)
-        log = _review_log(item, payload, reviewed=None)
-        if (edited is not None or log) and not store.save_review(
-            image_key, revision, annotations=edited, extra=log, expect_boxes=item["annotations"]
+        log = _review_log(payload, reviewed=None)
+        if (edited is not None or log["review_s"] > 0) and not store.save_review(
+            image_key, revision, annotations=edited, expect_boxes=item["annotations"], **log
         ):
             return  # a detector rerun or another tab's save landed in between
     _accepted(editor_key, payload, edited)
@@ -214,10 +211,10 @@ def _on_action(store_path: Path, image_key: str, revision: int, editor_key: str,
             return
         edited = _edited_annotations(item, editor_key, action)
         reviewed, target = _action_target(str(action.get("type")), bool(item.get("reviewed")), keys, image_key)
-        log = _review_log(item, action, reviewed=reviewed)
-        changes = edited is not None or reviewed is not None or log is not None
+        log = _review_log(action, reviewed=reviewed)
+        changes = edited is not None or reviewed is not None or log["review_s"] > 0
         if changes and not store.save_review(
-            image_key, revision, annotations=edited, reviewed=reviewed, extra=log, expect_boxes=item["annotations"]
+            image_key, revision, annotations=edited, reviewed=reviewed, expect_boxes=item["annotations"], **log
         ):
             return  # a detector rerun or another tab's save landed in between
     _accepted(editor_key, action, edited)

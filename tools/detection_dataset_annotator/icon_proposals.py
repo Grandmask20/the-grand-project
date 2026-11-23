@@ -331,6 +331,10 @@ def hidden_nodes(
         # an icon of another row there: this row is a marker pinned above that icon, not a row above a map node
         return not (len(others) and np.hypot(others[:, 0] - x, others[:, 1] - y).min() <= K.ANNOTATOR_ICON_NMS)
 
+    def on_screen(x: float, y: float) -> bool:
+        """Whether a map node at x, y lies inside the screenshot and off the HUD."""
+        return 0 <= x < width and 0 <= y < height and not core.on_hud_mask([(x, y)], width, height, pad=0)[0]
+
     for row in _icon_rows(on_nodes):
         x = (row[0]["x"] + row[-1]["x"]) / 2  # the map node sits under the row's middle (user's rule)
         y = float(np.mean([icon["y"] for icon in row]))
@@ -346,14 +350,15 @@ def hidden_nodes(
             distance = np.hypot(spots[:, 0] - x, spots[:, 1] - y)
             nearest = int(np.argmin(distance))
             snapped = float(spots[nearest, 0]), float(spots[nearest, 1])
-            # a snap that lands beside a visible map node or not clear keeps the estimate, which is clear of all
+            # a snap that lands beside a visible map node, not clear or off the screen keeps the estimate
             if (
                 distance[nearest] <= K.ANNOTATOR_HIDDEN_SNAP
                 and clear(*snapped, others)
                 and not beside_visible(*snapped)
+                and on_screen(*snapped)
             ):
                 x, y = snapped
-        if not (0 <= x < width and 0 <= y < height) or core.on_hud_mask([(x, y)], width, height, pad=0)[0]:
+        if not on_screen(x, y):
             continue
         node = {"x": round(x, 1), "y": round(y, 1), "hidden": True, "source": "icon row", "proposal": True}
         found.append(node)

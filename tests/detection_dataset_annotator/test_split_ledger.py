@@ -67,7 +67,8 @@ def test_the_ledger_is_written_sorted_and_read_back(split_ledger_file: Path) -> 
     [
         (["sha,split", "x,train"], "columns"),
         (["sha256,split,block,file", "x,holdout,,a.png"], "unknown split"),
-        (["sha256,split,block,file", "x,train,,a.png", "x,test,,b.png"], "different splits"),
+        (["sha256,split,block,file", "x,train,,a.png", "x,test,,b.png"], "same bytes and different splits"),
+        (["sha256,split,block,file", "x,train,,a.png", "y,test,,a.png"], "a.png has two rows with different splits"),
     ],
 )
 def test_a_broken_ledger_is_refused(split_ledger_file: Path, rows: list[str], message: str) -> None:
@@ -75,6 +76,13 @@ def test_a_broken_ledger_is_refused(split_ledger_file: Path, rows: list[str], me
     split_ledger_file.write_text("\n".join(rows) + "\n", encoding="utf-8")
     with pytest.raises(ValueError, match=message):
         read_ledger()
+
+
+def test_a_file_may_have_several_digests_of_one_split(split_ledger_file: Path) -> None:
+    """A file whose bytes changed has a row per digest: fine while they share its split."""
+    split_ledger_file.parent.mkdir(parents=True)
+    split_ledger_file.write_text("sha256,split,block,file\nx,train,,a.png\ny,train,,a.png\n", encoding="utf-8")
+    assert len(read_ledger_rows()) == 2
 
 
 def test_a_rebuilt_store_gets_every_split_from_the_ledger(tmp_path: Path, review_store: ReviewStore) -> None:

@@ -326,6 +326,8 @@ class EmaCallback(TrainerCallback):
         self.tau = tau
         self.resume_from = resume_from
         self.ema: AveragedModel | None = None
+        self.step_skipped = lambda: False
+        """Whether the optimizer step just taken was skipped (an fp16 overflow): ``RfDetrTrainer`` sets it."""
 
     def on_train_begin(self, args, state, control, model=None, **kwargs):
         if self.ema is not None or model is None:
@@ -344,7 +346,8 @@ class EmaCallback(TrainerCallback):
         self.ema.n_averaged.fill_(int(count))
 
     def on_step_end(self, args, state, control, model=None, **kwargs):
-        if self.ema is not None and model is not None:
+        # one update per optimizer step that ran: a skipped one left the weights as they were
+        if self.ema is not None and model is not None and not self.step_skipped():
             self.ema.update_parameters(model)
 
     def on_save(self, args, state, control, **kwargs):
@@ -447,6 +450,7 @@ class RfDetrTrainer(Trainer):
     ) -> None:
         super().__init__(*args, **kwargs)
         self.ema = ema
+        ema.step_skipped = lambda: bool(self.accelerator.optimizer_step_was_skipped)
         self.sampler = sampler
         self.recipe = recipe
         self.label_map = label_map
@@ -694,11 +698,36 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
 
 def check_device(device: str) -> None:
     """Stop when the device asked for is not there: an explicit ``cuda`` or ``mps`` must not train on the CPU
-    unnoticed (``auto`` takes what there is)."""
+    unnoticed (``auto`` takes what there is); and when one process would train on several GPUs (DataParallel)."""
     if device == "cuda" and not torch.cuda.is_available():
         raise SystemExit("--device cuda: PyTorch sees no CUDA device (use --device auto or cpu)")
     if device == "mps" and not torch.backends.mps.is_available():
         raise SystemExit("--device mps: PyTorch sees no Apple GPU (use --device auto or cpu)")
+    # one process on several GPUs: the Trainer wraps the model in DataParallel, whose scatter splits each image's
+    # target dict apart from its image (torchrun sets WORLD_SIZE: one process per GPU is fine)
+    several = device in ("auto", "cuda") and torch.cuda.is_available() and torch.cuda.device_count() > 1
+    if several and "WORLD_SIZE" not in os.environ:
+        raise SystemExit(
+            f"{torch.cuda.device_count()} GPUs visible to one process: expose one (CUDA_VISIBLE_DEVICES=0) or "
+            "launch one process per GPU (torchrun)"
+        )
+
+
+def check_resume_labels(checkpoint: Path, label_map: dict[str, str]) -> None:
+    """Stop when a checkpoint to resume from has other classes than the dataset (in order): its class rows, optimizer
+    and EMA would be restored onto the wrong classes.
+
+    Raises:
+        SystemExit: the classes differ.
+    """
+    config = json.loads((Path(checkpoint) / "config.json").read_text(encoding="utf-8"))
+    saved = [str(config.get("id2label", {}).get(str(index))) for index in range(len(config.get("id2label", {})))]
+    wanted = [label_map[str(index)] for index in range(len(label_map))]
+    if saved != wanted:
+        raise SystemExit(
+            f"--resume: {checkpoint.name} was trained on other classes than this dataset; go on from it with "
+            "--init-from and a new --output-dir instead"
+        )
 
 
 def training_arguments(args: argparse.Namespace, checkpoints: Path) -> TrainingArguments:
@@ -761,6 +790,8 @@ def main(argv: list[str] | None = None) -> int:
     resume_from = last_complete_checkpoint(checkpoints) if args.resume else None
     if args.resume and resume_from is None:  # before a model is downloaded or loaded
         raise SystemExit(f"--resume: no checkpoint (with its EMA) in {checkpoints}")
+    if resume_from is not None:
+        check_resume_labels(resume_from, label_map)
     base = args.init_from or K.RF_DETR_MODEL_NAME
     processor = load_processor(base)
     model = load_model(base, label_map)

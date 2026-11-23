@@ -34,24 +34,40 @@ def _box(label: str, x: float, y: float, size: float = 38.7) -> dict:
 
 
 def test_rounds_reveal_training_blocks_cumulatively() -> None:
-    ledger = {
-        f"sha{i}": Entry(f"sha{i}", split, f"{ATLAS}#{block}", f"{ATLAS}/shot{i}.png")
+    ledger = [
+        Entry(f"sha{i}", split, f"{ATLAS}#{block}", f"{ATLAS}/shot{i}.png")
         for i, (split, block) in enumerate(
             [("train", 0), ("train", 0), ("train", 2), ("validation", 7), ("test", 5), ("train", 8)]
         )
-    }
+    ]
+    trained = [entry.file for entry in ledger if entry.split == "train"]
     assert parse_rounds("8,2; 0") == [["8", "2"], ["0"]]
-    rounds = revealed(ledger, ATLAS, parse_rounds("8,2;0"))
+    rounds = revealed(ledger, ATLAS, parse_rounds("8,2;0"), trained)
     assert rounds == [[f"{ATLAS}/shot5.png", f"{ATLAS}/shot2.png"], [f"{ATLAS}/shot5.png", f"{ATLAS}/shot2.png",
                       f"{ATLAS}/shot0.png", f"{ATLAS}/shot1.png"]]  # fmt: skip
     with pytest.raises(ValueError, match="not a training block"):
-        revealed(ledger, ATLAS, [["7"]])  # the validation block never trains
+        revealed(ledger, ATLAS, [["7"]], trained)  # the validation block never trains
     with pytest.raises(ValueError, match="no blocks"):
         parse_rounds("8;;0")
     with pytest.raises(ValueError, match="revealed twice"):
-        revealed(ledger, ATLAS, parse_rounds("8;8,2"))  # its screenshots would be counted twice
+        revealed(ledger, ATLAS, parse_rounds("8;8,2"), trained)  # its screenshots would be counted twice
     with pytest.raises(ValueError, match="revealed twice"):
-        revealed(ledger, ATLAS, [["0", "0"]])
+        revealed(ledger, ATLAS, [["0", "0"]], trained)
+
+
+def test_a_screenshot_is_revealed_under_the_name_the_manifest_trains_on() -> None:
+    """A copy's bytes have a ledger row per name: the manifest's name is the one revealed; a screenshot the manifest
+    has no training row for stops the simulation instead of training on less."""
+    ledger = [
+        Entry("sha0", "train", f"{ATLAS}#0", "a/copy.png"),  # the first row of its digest
+        Entry("sha0", "train", f"{ATLAS}#0", f"{ATLAS}/shot0.png"),
+        Entry("sha1", "train", f"{ATLAS}#0", f"{ATLAS}/shot1.png"),
+    ]
+    assert revealed(ledger, ATLAS, [["0"]], [f"{ATLAS}/shot0.png", f"{ATLAS}/shot1.png"]) == [
+        [f"{ATLAS}/shot0.png", f"{ATLAS}/shot1.png"]
+    ]
+    with pytest.raises(ValueError, match="no training screenshot of the manifest"):
+        revealed(ledger, ATLAS, [["0"]], [f"{ATLAS}/shot0.png"])
 
 
 def test_a_node_counts_for_the_truth_only_by_its_city_area() -> None:
@@ -200,6 +216,8 @@ def test_a_simulation_trains_each_round_on_from_the_last_and_scores_every_policy
          "annotations": [_box("map_node_vaal", 300, 300)]}
         for n, split in (("val", "validation"), ("tst", "test"))
     ]  # fmt: skip
+    rows += [{"source": relative_source(shots[n]), "path": str(shots[n]), "split": "train", "annotations": []}
+             for n in ("a1", "a2")]  # fmt: skip
     manifest = tmp_path / "manifest.json"
     manifest.write_text(json.dumps({"images": rows}), encoding="utf-8")
 

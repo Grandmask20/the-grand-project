@@ -445,7 +445,17 @@ class Annotator {
     for (const type of ["pointerdown", "pointermove", "wheel"]) {
       this.on(viewport, type, () => this.noteInput(), { passive: true });
     }
-    this.on(document, "keydown", () => this.active && this.noteInput(), true);
+    // Keys typed in the editor count, not those typed in the page's own controls (a Streamlit field).
+    this.on(
+      document,
+      "keydown",
+      (event) => this.active && event.composedPath().includes(this.wrap) && this.noteInput(),
+      true,
+    );
+    // Time away from the editor never counts: the next input starts a new stretch.
+    this.on(this.wrap, "focusout", (event) => {
+      if (!(event.relatedTarget instanceof Node && this.wrap.contains(event.relatedTarget))) this.lastInput = 0;
+    });
     this.on(viewport, "pointerdown", (event) => this.pointerDown(event));
     this.on(viewport, "pointermove", (event) => this.pointerMove(event));
     this.on(viewport, "pointerup", (event) => this.pointerUp(event));
@@ -470,6 +480,7 @@ class Annotator {
   }
 
   setActive(active) {
+    if (!active) this.lastInput = 0; // the time until the reviewer comes back is not review time
     this.active = active;
     this.wrap.classList.toggle("ann-inactive", !active);
   }
@@ -1042,6 +1053,8 @@ class Annotator {
   }
 
   useLabel(name) {
+    // A box drag ends first (as an edit key does): the label goes on the boxes as they were, the ones sent
+    if (this.drag && this.drag.kind !== "pan") this.cancelDrag();
     const boxes = this.selectedBoxes();
     if (!boxes.length) {
       this.currentLabel = name;

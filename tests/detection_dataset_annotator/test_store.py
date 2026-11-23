@@ -417,3 +417,23 @@ def test_an_all_or_nothing_claim_writes_none_when_one_is_taken(tmp_path: Path, r
         keys[0]: "test",
         keys[1]: "train",
     }
+
+
+def test_review_time_adds_up_in_the_write(tmp_path: Path, review_store: ReviewStore) -> None:
+    """Two saves made from one read (an autosave and a review key close together) both count their time."""
+    (shot,) = _shots(tmp_path, "a.png")
+    key = _detected(review_store, shot, _box("icon", 10.0))
+    assert review_store.save_review(key, 1, review_s=12.5)
+    assert review_store.save_review(key, 1, review_s=2.0, reviewed=True, reviewed_at="2026-11-23T10:00:00")
+    log = review_store.item(key)[K.ANNOTATOR_REVIEW_FIELD]
+    assert log == {"active_s": 14.5, "reviewed_at": "2026-11-23T10:00:00"}
+
+
+def test_a_save_can_need_its_split(tmp_path: Path, review_store: ReviewStore) -> None:
+    """Model pre-labels go to training screenshots only, checked in the save's own write."""
+    shots = _shots(tmp_path, "a.png", "b.png")
+    train, test = (_detected(review_store, path, _box("icon", 10.0)) for path in shots)
+    review_store.claim_splits({train: "train", test: "test"})
+    assert not review_store.save_review(test, 1, annotations=[], split="train")
+    assert review_store.save_review(train, 1, annotations=[], split="train")
+    assert review_store.untouched(test) and not review_store.untouched(train) and not review_store.untouched("gone")

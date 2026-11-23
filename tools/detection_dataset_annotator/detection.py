@@ -27,14 +27,13 @@ DEFAULT_OPTIONS = DetectionOptions()
 def decode_image(path: Path) -> np.ndarray | None:
     """The original-size BGR image, or None when it cannot be read (``np.fromfile`` handles non-ASCII paths).
 
-    The pixels as stored, without an EXIF rotation: training reads the files that way (``datasets.Image``, PIL), so
-    the editor, its boxes, the model pre-labels and training share one frame. An empty file is None too: OpenCV
-    raises on an empty buffer (as handled in ``core.read_screenshot``).
+    Upright, its EXIF orientation applied (OpenCV's default): training's decoder (``datasets.Image``) applies it too,
+    and so does the browser, so the editor, its boxes, the model pre-labels and training share one frame. An empty
+    file is None too: OpenCV raises on an empty buffer (as handled in ``core.read_screenshot``).
     """
     try:
         encoded = np.fromfile(str(path), dtype=np.uint8)
-        flags = cv2.IMREAD_COLOR | cv2.IMREAD_IGNORE_ORIENTATION
-        return cv2.imdecode(encoded, flags) if encoded.size else None
+        return cv2.imdecode(encoded, cv2.IMREAD_COLOR) if encoded.size else None
     except (OSError, ValueError, cv2.error):
         return None
 

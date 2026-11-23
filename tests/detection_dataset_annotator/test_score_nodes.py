@@ -182,3 +182,18 @@ def test_paths_across_a_fortress_wall_are_left_out_as_the_detector_does(
     nodes = [_node("map_node_grass", x, 540) for x in (400, 600, 800)]
     guess_nodes(image, nodes, 1920, 1080)
     assert seen["edges"] == [open_path]
+
+
+def test_a_screenshot_without_node_boxes_uses_none_of_the_limit(tmp_path: Path, capsys) -> None:
+    """--limit 1 scores the first screenshot with node boxes, not a reviewed one that has none."""
+    out = tmp_path / "out"
+    with ReviewStore.open(out / K.ANNOTATOR_STORE_FILE) as store:
+        for name, boxes in (("empty.png", []), ("a.png", [_node("map_node_grass", 400, 540)])):
+            shot = tmp_path / name
+            _shot(shot)
+            store.add_images([shot])
+            result = {"detected": True, "width": 1920, "height": 1080, "annotations": boxes}
+            store.record_detection(image_key(shot), result, force=False)
+            assert store.save_review(image_key(shot), 1, reviewed=True)
+    assert main(["--output-dir", str(out), "--limit", "1"]) == 0
+    assert "1 nodes" in capsys.readouterr().out

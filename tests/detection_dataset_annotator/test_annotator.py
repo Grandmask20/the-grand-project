@@ -320,6 +320,9 @@ def test_copies_name_the_first_file_with_the_same_bytes(tmp_path: Path) -> None:
         files[name].write_bytes(data)
     ordered = discovery_order(files.values())
     assert [path.name for path in ordered] == ["a.png", "B.png", "c.png", "d.png"]
+    # names only the case tells apart keep one order, however they were found
+    twins = [tmp_path / "x" / "Shot.png", tmp_path / "x" / "shot.png"]
+    assert discovery_order(twins) == discovery_order(twins[::-1]) == twins
     assert copies(ordered) == {files["B.png"]: files["a.png"], files["c.png"]: files["a.png"]}
     assert file_hash(files["a.png"]) == hashlib.sha256(b"same").hexdigest()
     # a pinned test screenshot is the one kept, wherever it comes in the order (else it would lose its test split)
@@ -529,13 +532,21 @@ def test_detection_refuses_what_is_not_a_screenshot(tmp_path: Path) -> None:
         run_classical_detector(broken)
 
 
-def test_a_screenshot_is_read_as_stored_without_its_exif_rotation(tmp_path: Path) -> None:
-    """Training reads the pixels as stored (PIL, no EXIF rotation): the editor and its boxes must see the same frame."""
-    path = tmp_path / "rotated.jpg"
+def test_a_screenshot_is_read_upright_as_training_decodes_it(tmp_path: Path) -> None:
+    """Training's decoder (``datasets.Image``, as ``build_dataset`` stores the screenshots) applies the EXIF rotation:
+    the editor and its boxes must see the same frame, the same pixels at the same place."""
+    datasets = pytest.importorskip("datasets")
+    path = tmp_path / "rotated.png"
     exif = Image.Exif()
-    exif[0x0112] = 6  # "rotate 90 degrees to display"
-    Image.new("RGB", (64, 32), (200, 10, 10)).save(path, exif=exif)
-    assert decode_image(path).shape[:2] == (32, 64)
+    exif[0x0112] = 6  # "rotate 90 degrees clockwise to display"
+    stored = Image.new("RGB", (64, 32), (0, 0, 0))
+    stored.paste((200, 10, 10), (0, 0, 8, 8))  # a red corner, top left as stored
+    stored.save(path, exif=exif)
+    annotator = decode_image(path)
+    trained = np.asarray(datasets.Image().decode_example({"path": str(path), "bytes": None}).convert("RGB"))
+    assert annotator.shape[:2] == trained.shape[:2] == (64, 32)  # upright: the stored width is the height
+    assert np.array_equal(annotator[:, :, ::-1], trained)  # BGR vs RGB: the red corner at the same place
+    assert trained[0, -1].tolist() == [200, 10, 10]  # rotated clockwise: the corner is now top right
 
 
 def test_a_box_the_editor_edited_is_saved_however_little_it_moved() -> None:

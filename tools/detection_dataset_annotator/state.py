@@ -99,7 +99,9 @@ def discover_images(roots: Iterable[Path]) -> list[Path]:
 def discovery_order(paths: Iterable[Path]) -> list[Path]:
     """Paths in discovery's order (by path, ignoring case): of files with the same bytes, the first is kept (a
     pinned test screenshot first, ``copies``)."""
-    return sorted(paths, key=lambda path: str(path).casefold())
+    # the path itself breaks a tie of names only the case tells apart (a case-sensitive file system), so which one is
+    # kept never depends on the order they were found in
+    return sorted(paths, key=lambda path: (str(path).casefold(), str(path)))
 
 
 def file_hash(path: Path) -> str:

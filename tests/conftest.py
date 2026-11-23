@@ -178,7 +178,8 @@ def detection_cache_name(image: Path) -> str:
 
 @pytest.fixture
 def copy_cache():
-    """Copy screenshots' saved detections into a test atlas's cache folder (no detector run needed).
+    """Copy screenshots' saved detections into a test atlas's cache folder (no detector run needed); a screenshot
+    without one is skipped (``builder.extract_frame`` detects it into the copy).
 
     Returns:
         A function ``copy(images, src_cache, dst_cache)``.
@@ -188,7 +189,8 @@ def copy_cache():
         dst_cache.mkdir(parents=True, exist_ok=True)
         for im in images:
             name = detection_cache_name(im)
-            shutil.copy(Path(src_cache) / name, Path(dst_cache) / name)
+            if (Path(src_cache) / name).is_file():  # one never saved is detected anew into dst_cache when read
+                shutil.copy(Path(src_cache) / name, Path(dst_cache) / name)
 
     return copy
 

@@ -369,8 +369,10 @@ def seed_store(store: ReviewStore, truth: Truth, *, dry_run: bool = False) -> tu
             if not marked and not store.save_review(key, int(item["edit_version"]), extra=mark, **guard):
                 done[skipped] += 1
             continue
-        if dry_run or store.save_review(
-            key, int(item["edit_version"]), annotations=boxes, extra=mark, prelabel=True, **guard
+        # a dry run counts what the save would take: a screenshot nobody edited (the save checks it again)
+        if (dry_run and store.untouched(key)) or (
+            not dry_run
+            and store.save_review(key, int(item["edit_version"]), annotations=boxes, extra=mark, prelabel=True, **guard)
         ):
             changed += 1
         else:

@@ -165,7 +165,7 @@ def main(argv: list[str] | None = None) -> int:
         if not pairs:
             print("No reviewed node boxes yet: review some screenshots first.")
             return 1
-        print(f"{scored} reviewed screenshots, ring {DK.BIOME_RING[0]:g}-{DK.BIOME_RING[1]:g} px\n")
+        print(f"{scored} reviewed screenshots with node boxes, ring {DK.BIOME_RING[0]:g}-{DK.BIOME_RING[1]:g} px\n")
         print(report(pairs))
         return 0
     finally:
@@ -173,7 +173,7 @@ def main(argv: list[str] | None = None) -> int:
 
 
 def _score(store_path: Path, limit: int | None) -> tuple[list[tuple[str, str, bool]], int]:
-    """(reviewed class, guess, sure) of every reviewed node box, and how many screenshots."""
+    """(reviewed class, guess, sure) of every reviewed node box, and how many screenshots had node boxes."""
     pairs: list[tuple[str, str, bool]] = []
     scored = 0
     with ReviewStore.open(store_path) as store:
@@ -184,8 +184,9 @@ def _score(store_path: Path, limit: int | None) -> tuple[list[tuple[str, str, bo
             if raw is None:
                 continue
             img = core.scale_screenshot(raw)
-            pairs.extend(guess_nodes(img, item.get("annotations", []), raw.shape[1], raw.shape[0]))
-            scored += 1
+            found = guess_nodes(img, item.get("annotations", []), raw.shape[1], raw.shape[0])
+            pairs.extend(found)
+            scored += bool(found)  # a screenshot without node boxes scores nothing: it uses none of --limit
     return pairs, scored
 
 

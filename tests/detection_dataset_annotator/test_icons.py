@@ -223,3 +223,11 @@ def test_a_snap_beside_a_visible_map_node_keeps_the_estimate() -> None:
     visible = [{"x": 500.0, "y": 500.0}]
     found = icon_proposals.hidden_nodes(image, {"nodes": visible}, [{"x": 549, "y": 476}], np.array([[543.0, 500.0]]))
     assert [(node["x"], node["y"]) for node in found] == [(549.0, 500.0)]
+
+
+def test_a_snap_onto_the_hud_keeps_the_estimate() -> None:
+    """The row's map node is estimated 4 px above the HUD's edge (y 936 there); a faint spot 6 px below it lies on the
+    HUD: snapping there would drop the row, so the estimate stays."""
+    image = np.zeros((1080, 1920, 3), np.uint8)
+    found = icon_proposals.hidden_nodes(image, {"nodes": []}, [{"x": 600, "y": 908}], np.array([[600.0, 938.0]]))
+    assert [(node["x"], node["y"]) for node in found] == [(600.0, 932.0)]

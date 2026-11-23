@@ -129,16 +129,18 @@ def _ledger_lock(path: Path | None = None) -> Iterator[None]:
 
 def read_ledger_rows(path: Path | None = None) -> list[Entry]:
     """Every row of the ledger, in file order (empty when there is no ledger yet). A digest may have several rows:
-    each file name its bytes were seen under, all with its one split.
+    each file name its bytes were seen under, all with its one split; a file name too (its bytes changed), all with
+    its one split.
 
     Raises:
-        ValueError: The file is not a ledger, names an unknown split, or gives one hash two splits.
+        ValueError: The file is not a ledger, names an unknown split, or gives one hash or one file two splits.
     """
     path = _ledger_path(path)
     if not path.is_file():
         return []
     rows: list[Entry] = []
     split_of: dict[str, Entry] = {}
+    by_file: dict[str, Entry] = {}
     with path.open(encoding="utf-8", newline="") as handle:
         reader = csv.DictReader(handle)
         if tuple(reader.fieldnames or ()) != LEDGER_COLUMNS:
@@ -150,6 +152,10 @@ def read_ledger_rows(path: Path | None = None) -> list[Entry]:
             known = split_of.setdefault(entry.sha256, entry)
             if known.split != entry.split:
                 raise ValueError(f"{path}: {entry.file} and {known.file} have the same bytes and different splits")
+            # a file whose bytes changed has a row per digest: one screenshot, one split
+            named = by_file.setdefault(entry.file, entry) if entry.file else entry
+            if named.split != entry.split:
+                raise ValueError(f"{path}: {entry.file} has two rows with different splits")
             rows.append(entry)
     return rows
 
