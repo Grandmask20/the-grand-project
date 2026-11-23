@@ -349,3 +349,18 @@ def test_the_ledger_is_held_for_one_read_check_and_write(split_ledger_file: Path
     assert done.wait(10)
     thread.join()
     assert order == ["first", "other"]
+
+
+def test_one_screenshot_under_two_names_with_two_splits_is_named(tmp_path: Path, split_ledger_file: Path) -> None:
+    """Rows of the same bytes give one screenshot: two splits for them is a problem, before a name's ledger row could
+    vouch for either."""
+    (shot,) = _shots(tmp_path / "a", 1)
+    copy = tmp_path / "b" / shot.name
+    copy.parent.mkdir()
+    shutil.copy(shot, copy)
+    write_ledger([Entry(file_hash(shot), "train", "", relative_source(shot))])
+    manifest = {"images": [{"path": str(shot), "split": "train"}, {"path": str(copy), "split": "test"}]}
+    problems = check_manifest(manifest)
+    assert problems[0].startswith("same bytes, different splits:") and relative_source(copy) in problems[0]
+    same = {"images": [{"path": str(shot), "split": "train"}, {"path": str(copy), "split": "train"}]}
+    assert check_manifest(same) == []

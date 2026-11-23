@@ -64,10 +64,17 @@ def resolve_input_paths(values: Iterable[str], root: Path = paths.ROOT) -> list[
     return [resolve_path(value.strip(), root) for value in values if value.strip()]
 
 
+def in_skipped_folder(path: Path) -> bool:
+    """Whether a file lies in a folder discovery never enters (``ANNOTATOR_SKIP_DIRS``: an atlas's own map pictures),
+    anywhere above it: the one rule for discovery and the store's clean-up (``build_store.left_out``)."""
+    return any(part in K.ANNOTATOR_SKIP_DIRS for part in Path(path).resolve().parent.parts)
+
+
 def discover_images(roots: Iterable[Path]) -> list[Path]:
     """Recursively find supported image files below each input root, without duplicate paths or copies.
 
-    Folders named in ``ANNOTATOR_SKIP_DIRS`` (an atlas's own map pictures) are not entered. A file whose path UTF-8
+    A file in a folder named in ``ANNOTATOR_SKIP_DIRS`` (an atlas's own map pictures) is left out, wherever the root
+    is (``in_skipped_folder``). A file whose path UTF-8
     cannot hold is left out (see ``_utf8``). Of files with the same bytes only the first in ``discovery_order`` is
     kept, a pinned test screenshot before the others (``copies``).
     """
@@ -76,15 +83,11 @@ def discover_images(roots: Iterable[Path]) -> list[Path]:
         if root.is_file():
             candidates: Iterable[Path] = (root,)
         elif root.is_dir():
-            candidates = (
-                path
-                for path in root.rglob("*")
-                if not any(part in K.ANNOTATOR_SKIP_DIRS for part in path.relative_to(root).parts[:-1])
-            )
+            candidates = root.rglob("*")
         else:
             continue
         for path in candidates:
-            if path.suffix.lower() in K.ANNOTATOR_IMAGE_EXTENSIONS and path.is_file():
+            if path.suffix.lower() in K.ANNOTATOR_IMAGE_EXTENSIONS and path.is_file() and not in_skipped_folder(path):
                 resolved = path.resolve()
                 if _utf8(str(resolved)):
                     found[os.path.normcase(str(resolved))] = resolved

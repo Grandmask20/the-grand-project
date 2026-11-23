@@ -93,14 +93,25 @@ def _icon_mask(shape: tuple[int, int], icons: list[dict]) -> np.ndarray:
     return mask
 
 
+def _row_bases(icons: list[dict]) -> list[tuple[float, float]]:
+    """Each icon's map base: under the middle of its row of icons (``core.row_bases``, as the atlas places them), so
+    an outer icon of a wide row finds its map node too."""
+    from grand_project.core import row_bases
+
+    return row_bases(
+        [{**icon, "x": float(icon["x"]), "y": float(icon["y"]), "name": icon.get("name")} for icon in icons]
+    )
+
+
 def _misted(nodes: list[dict], icons: list[dict]) -> set[int]:
     """Map nodes whose ground the white mist of a ``BIOME_MIST_ICONS`` map covers: such maps, and maps within
     ``BIOME_MIST_REACH`` of one (the mist spreads over its neighbours)."""
     mist = [i for i, icon in enumerate(icons) if icon.get("name") in K.BIOME_MIST_ICONS]
     if not mist or not nodes:
         return set()
-    # an icon belongs to the map node under its row (ROW_DY below the icon), as cities.icon_maps finds it
-    based = [{**icons[i], "by": float(icons[i]["y"]) + K.ROW_DY} for i in mist]
+    # an icon belongs to the map node under the middle of its row (an outer icon of a wide row is far from it)
+    bases = _row_bases(icons)
+    based = [{**icons[i], "bx": bases[i][0], "by": bases[i][1]} for i in mist]
     sources = set(cities.icon_maps(nodes, based).values())
     if not sources:
         return set()
@@ -192,7 +203,7 @@ def city_area_nodes(
     ]
     if not sources or not nodes:
         return {}
-    based = [{**icon, "by": float(icon["y"]) + K.ROW_DY} for icon in icons]
+    based = [{**icon, "bx": bx, "by": by} for icon, (bx, by) in zip(icons, _row_bases(icons), strict=True)]
     blocked = cities.blocked_maps(nodes, based, landmarks)
     potential = cities.potential_maps(nodes, edges, sources, ground=None, blocked=blocked)
     out: dict[int, tuple[str, int]] = {}

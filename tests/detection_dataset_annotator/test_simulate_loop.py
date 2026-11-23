@@ -17,6 +17,7 @@ from tools.detection_dataset_annotator.simulate_loop import (
     classical_boxes,
     dataset_matches,
     held_out,
+    node_finds,
     parse_rounds,
     report_markdown,
     revealed,
@@ -294,3 +295,13 @@ def test_without_held_out_screenshots_nothing_is_trained(
             "--output-dir", str(tmp_path / "sim")]  # fmt: skip
     with pytest.raises(SystemExit, match="no validation or test screenshots"):
         simulate_loop.main(args)
+
+
+def test_silver_node_finds_pair_by_place_alone() -> None:
+    """A node the model found where the classical detector had one is no silver add or delete, whatever class it gave
+    it and however it moved within the node radius; one with nothing near is."""
+    classical = [_box("map_node_grass", 300, 300), _box("map_node_water", 700, 300)]
+    model = [_box("map_node_vaal", 310, 296), _box("map_node_grass", 1200, 300)]
+    finds = node_finds(model, classical, 1.0)
+    assert (finds.added, finds.deleted) == (1, 1)  # the water node missed, the node at 1200 is new
+    assert score(model, [], classical)["silver"].added == 1

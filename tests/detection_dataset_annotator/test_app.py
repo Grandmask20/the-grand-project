@@ -212,3 +212,15 @@ def test_a_new_editor_drops_the_last_ones_session_memory(monkeypatch: pytest.Mon
     monkeypatch.setattr(app.st, "session_state", session)
     app._forget("old")
     assert session == {app._saved_seq_key("new"): 3}
+
+
+def test_the_undo_memory_keeps_the_detectors_version(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A box saved as moved (manual) is still known as the detector had it, so Ctrl+Z can give back its provenance."""
+    from tools.detection_dataset_annotator import app
+
+    session: dict[str, Any] = {}
+    monkeypatch.setattr(app.st, "session_state", session)
+    detected = {"id": "b0", "label": "icon", "bbox": [1.0, 2.0, 34.0, 34.0], "source": "classical", "score": 0.8}
+    app._remember("editor", [detected])
+    app._remember("editor", [{**detected, "bbox": [9.0, 2.0, 34.0, 34.0], "source": "manual", "score": None}])
+    assert session[app._known_key("editor")]["b0"] == detected

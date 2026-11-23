@@ -40,11 +40,12 @@ from contextlib import closing
 from pathlib import Path, PurePosixPath
 from typing import Any
 
+from grand_project.detect import constants as DK
 from grand_project.detect import labels as L
 from grand_project.detect.rf_detr_model import trained_on
 
 from . import constants as K
-from .effort import EDIT_KINDS, Edits, edit_cost, total
+from .effort import EDIT_KINDS, Edits, corners, edit_cost, match_boxes, total
 from .model_prelabel import merge, model_annotations, predict
 from .state import file_hash
 from .truth_seed import Truth, truth_map_at
@@ -137,10 +138,19 @@ def score(
         prelabels, baseline, scale=scale, families=[f for f in _families(prelabels, baseline) if f != "citadel"]
     )
     silver = total({name: edits for name, edits in others.items() if name != "node"})
-    node = others.get("node", Edits())
-    silver = silver + Edits(deleted=node.deleted, added=node.added)
+    silver = silver + node_finds(prelabels, baseline, scale)
     gold = Edits(kept=gold_nodes.kept, relabelled=gold_nodes.relabelled) + citadels
     return {"gold": gold, "silver": silver}
+
+
+def node_finds(prelabels: Sequence[Mapping[str, Any]], baseline: Sequence[Mapping[str, Any]], scale: float) -> Edits:
+    """The map nodes found or missed against the classical boxes: a one-to-one pairing by place alone, within the node
+    radius (``match_boxes`` without edit costs), whatever their classes or a small move; an unpaired one is added or
+    deleted. Classes are the gold score's."""
+    before = [box for a in prelabels if L.is_node(str(a.get("label", ""))) and (box := corners(a)) is not None]
+    after = [box for a in baseline if L.is_node(str(a.get("label", ""))) and (box := corners(a)) is not None]
+    pairs = match_boxes(before, after, DK.RF_DETR_EVAL_RADIUS["node"] * scale)
+    return Edits(deleted=len(before) - len(pairs), added=len(after) - len(pairs))
 
 
 def _families(*sides: Iterable[Mapping[str, Any]]) -> list[str]:
@@ -449,6 +459,7 @@ __all__ = [
     "classical_boxes",
     "dataset_matches",
     "held_out",
+    "node_finds",
     "parse_rounds",
     "report_markdown",
     "revealed",

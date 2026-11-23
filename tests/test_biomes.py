@@ -98,3 +98,24 @@ def test_a_delirium_icon_without_a_map_under_it_mists_nothing() -> None:
     far_icon = [{"name": "Delirium", "x": 1500, "y": 100}]  # no map node under its row
     (guess,) = biomes.node_biomes(img, [{"x": 600, "y": 540}], far_icon)
     assert (guess.biome, guess.sure) == ("mountain", True)
+
+
+def _row(x: float, y: float, names: list[str]) -> list[dict]:
+    """A row of icons centred over a map at (x, y): 36 px apart, 24 px above its base."""
+    start = x - 36 * (len(names) - 1) / 2
+    return [{"name": name, "x": start + 36 * k, "y": y - 24} for k, name in enumerate(names)]
+
+
+def test_an_outer_icon_of_a_wide_row_belongs_to_the_map_under_the_row() -> None:
+    """The map under a row is under its middle: an outer UniqueMap icon 54 px to the side still keeps its map out of a
+    city's area, and an outer Delirium icon still mists its map."""
+    nodes = [{"x": 600 + 120 * c, "y": 400} for c in range(3)]
+    edges = [{"a": 0, "b": 1}, {"a": 1, "b": 2}]
+    landmarks = [{"kind": "City", "x": 600, "y": 400}]
+    icons = _row(720, 400, ["Breach", "Abyss", "Expedition", "UniqueMap"])  # the UniqueMap icon is 54 px right
+    assert 1 not in biomes.city_area_nodes(nodes, edges, icons, landmarks, {0: "Vaal"})
+    img = _painted([(300, 1700, SNOW)])
+    far = [{"x": 600, "y": 540}, {"x": 1500, "y": 540}]
+    misted = _row(600, 540, ["Breach", "Abyss", "Expedition", "Delirium"])
+    guesses = biomes.node_biomes(img, far, misted)
+    assert guesses[0].biome != "mountain" and (guesses[1].biome, guesses[1].sure) == ("mountain", True)

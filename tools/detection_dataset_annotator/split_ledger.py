@@ -365,6 +365,17 @@ def _check_rows(rows: list[tuple[str, Path, str | None, str]], ledger: Path | No
         by_file.setdefault(entry.file, entry)
     digests = hash_files({str(i): path for i, (_name, path, _split, _where) in enumerate(rows)})
     problems = []
+    # one screenshot (the same bytes) under several names has one split, as settle_splits gives it: checked before a
+    # name could vouch for one of them
+    by_digest: dict[str, list[int]] = defaultdict(list)
+    for i in range(len(rows)):
+        if str(i) in digests:
+            by_digest[digests[str(i)]].append(i)
+    for group in by_digest.values():
+        # copies: other files, not one file the store and a manifest both list (the ledger check names that one)
+        if len({rows[i][0] for i in group}) > 1 and len({rows[i][2] for i in group}) > 1:
+            shown = ", ".join(f"{rows[i][0]} ({rows[i][3]} {rows[i][2]})" for i in group)
+            problems.append(f"same bytes, different splits: {shown}")
     for i, (name, path, split, where) in enumerate(rows):
         pinned = pinned_split(path)
         if pinned is not None and split != pinned:  # the hand truth and reference atlases are always test
