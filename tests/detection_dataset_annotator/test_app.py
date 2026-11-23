@@ -99,15 +99,13 @@ def test_most_guesses_first_orders_the_queue(page) -> None:
 
 
 def test_the_review_timer_adds_up_in_the_review_log() -> None:
-    """Each editor message's active time adds to the screenshot's review log; marking it reviewed notes when."""
+    """Each editor message gives its active time (the store adds it up in the save's write); marking it reviewed
+    notes when."""
     from tools.detection_dataset_annotator import app
 
-    item: dict[str, Any] = {}
-    assert app._review_log(item, {"active_ms": 0}, reviewed=None) is None  # nothing to add: no save
-    first = app._review_log(item, {"active_ms": 12_500}, reviewed=None)
-    assert first == {K.ANNOTATOR_REVIEW_FIELD: {"active_s": 12.5}}
-    done = app._review_log(first, {"active_ms": 2_000}, reviewed=True)[K.ANNOTATOR_REVIEW_FIELD]
-    assert done["active_s"] == 14.5 and "reviewed_at" in done
+    assert app._review_log({"active_ms": 0}, reviewed=None) == {"review_s": 0.0, "reviewed_at": None}
+    assert app._review_log({"active_ms": 12_500}, reviewed=None)["review_s"] == 12.5
+    assert app._review_log({"active_ms": 2_000}, reviewed=True)["reviewed_at"]
 
 
 def test_pre_label_starts_the_model_pass_on_this_store(page, monkeypatch: pytest.MonkeyPatch) -> None:

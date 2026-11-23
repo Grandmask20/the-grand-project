@@ -5,7 +5,7 @@
 ``edit_cost`` compares the boxes a reviewer was first shown (the store's ``prelabels``) with the reviewed boxes,
 family by family (a map node is one of the node classes): each pre-label is matched one-to-one to a reviewed box of
 its family whose middle lies within the family's radius (``RF_DETR_EVAL_RADIUS``, as the detector is scored). A
-matched box is kept, relabelled (another class of its family) and/or moved (overlap under
+matched box is kept or relabelled (another class of its family), and may also be moved (overlap under
 ``ANNOTATOR_EFFORT_MOVE_IOU``); an unmatched pre-label was deleted, an unmatched reviewed box added. The matching is
 the one with the fewest of these edits. The simulated
 loop (``simulate_loop``) measures pre-label policies the same way, against the PM's truth.
@@ -44,11 +44,12 @@ class Edits:
     """What a review did to one family's boxes (or a screenshot's, summed)."""
 
     kept: int = 0
-    """Pre-labels the review left as they were (their class kept and their box within the move overlap)."""
+    """Pre-labels whose class the review kept (moved or not: a moved one is counted in ``moved`` too)."""
     relabelled: int = 0
     """Pre-labels given another class of their family."""
     moved: int = 0
-    """Pre-labels moved or resized (also counted as kept or relabelled: a box can be both)."""
+    """Pre-labels moved or resized (overlap under ``ANNOTATOR_EFFORT_MOVE_IOU``), also counted as kept or relabelled:
+    its seconds are the move's, on top of the box's."""
     deleted: int = 0
     """Pre-labels the review removed."""
     added: int = 0
@@ -114,7 +115,10 @@ def match_boxes(
     distance = np.hypot(*(middles_before[:, None, :] - middles_after[None, :, :]).transpose(2, 0, 1))
     reach = distance <= radius
     if edits is None:
-        rows, cols = linear_sum_assignment(np.where(reach, distance, radius * 1e3))
+        # out of reach costs more than any assignment's summed distances (at most min(n, m) pairs, each within
+        # radius), so one reachable pair more always wins
+        never = (min(len(before), len(after)) + 1) * radius + 1.0
+        rows, cols = linear_sum_assignment(np.where(reach, distance, never))
         return [(int(r), int(c)) for r, c in zip(rows, cols, strict=True) if reach[r, c]]
     n, m = distance.shape
     # three tiers, each outweighing everything below it together: an assignment's summed distances stay under

@@ -143,11 +143,17 @@ def book_pictures(db: Path, old: str, arts: dict, unsure: float) -> tuple[dict |
     return model, out
 
 
-def truth_pictures(old: str, arts: dict, unsure: float) -> list[tuple[Path, str, int, Match]]:
+def _badge_identity(badge: dict) -> tuple:
+    """What tells a truth icon apart: its id, name and place (checked again before its truth file is rewritten)."""
+    return badge.get("id"), badge["name"], badge["x"], badge["y"]
+
+
+def truth_pictures(old: str, arts: dict, unsure: float) -> list[tuple[Path, str, int, Match, tuple]]:
     """The hand-labelled icons of the old type in the truth files, each with its new type.
 
     Returns:
-        (truth file, screenshot name, index in its "badges", match) per icon found whole on its screenshot.
+        (truth file, screenshot name, index in its "badges", match, the icon's ``_badge_identity``) per icon found
+        whole on its screenshot.
     """
     out = []
     for tf, shots in TRUTH_SETS:
@@ -165,7 +171,7 @@ def truth_pictures(old: str, arts: dict, unsure: float) -> list[tuple[Path, str,
                     print(f"  {shot} {b.get('id', i)}: screenshot missing or icon off its edge, left as {old}")
                     continue
                 m = Match(f"{tf.parent.name} {b.get('id', i)}", crop, *closest(icon_refs.feature(crop), arts, unsure))
-                out.append((tf, shot, i, m))
+                out.append((tf, shot, i, m, _badge_identity(b)))
     return out
 
 
@@ -240,7 +246,7 @@ def main(argv: list[str] | None = None) -> int:
     books = {db: book_pictures(db, a.old, arts, a.unsure) for db in dbs}
     truth = [] if a.no_truth else truth_pictures(a.old, arts, a.unsure)
     matches = [m for v in stored.values() for _, m in v] + [m for _, v in books.values() for _, m in v]
-    matches += [m for *_, m in truth]
+    matches += [m for _tf, _shot, _i, m, _identity in truth]
     out = a.sheet or rc_paths.ROOT / "runs" / "split_icon_type" / f"{a.old}.png"
     sheet(out, a.new, matches)
     for m in matches:
@@ -248,6 +254,18 @@ def main(argv: list[str] | None = None) -> int:
     print(f"{len(matches)} pictures of {a.old}; review sheet: {out}")
     if a.dry_run or not matches:
         return 0
+    # the truth files read again before anything is written: an icon changed since it was matched (the truth
+    # labeller saved meanwhile) stops the split, the databases and both files of every truth left as they were
+    fresh = {tf: json.loads(tf.read_text(encoding="utf-8")) for tf in {x[0] for x in truth}}
+    changed = [
+        f"{tf.parent.name} {shot} #{i}"
+        for tf, shot, i, _m, identity in truth
+        if shot not in fresh[tf]
+        or i >= len(fresh[tf][shot]["badges"])
+        or _badge_identity(fresh[tf][shot]["badges"][i]) != identity
+    ]
+    if changed:
+        raise SystemExit(f"truth icons changed while the split ran ({', '.join(changed[:5])}): nothing written")
     for db, rows in stored.items():
         if rows:
             c = icon_refs._db(db)
@@ -264,11 +282,10 @@ def main(argv: list[str] | None = None) -> int:
             info = json.loads(c.execute("SELECT info FROM detector_models WHERE name = 'badges'").fetchone()[0] or "{}")
             c.close()
             models.save_model("badges", model, info, path=db)
-    for tf in {tf for tf, *_ in truth}:
-        data = json.loads(tf.read_text(encoding="utf-8"))
+    for tf, data in fresh.items():
         key_file = tf.parent / "truth_key.json"
         key = json.loads(key_file.read_text(encoding="utf-8")) if key_file.exists() else None
-        for _, shot, i, m in (x for x in truth if x[0] == tf):
+        for _, shot, i, m, _identity in (x for x in truth if x[0] == tf):
             b = data[shot]["badges"][i]
             b["name"] = m.name
             kb = key["badges"].get(b.get("id", "")) if key else None

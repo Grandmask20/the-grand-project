@@ -533,6 +533,9 @@ class ReviewStore:
         unmarked: Iterable[str] = (),
         marked: Mapping[str, Any] | None = None,
         arm_block: tuple[Iterable[str], str] | None = None,
+        split: str | None = None,
+        review_s: float = 0.0,
+        reviewed_at: str | None = None,
     ) -> bool:
         """Save a screenshot's edited boxes, its review flag and/or fields of ``extra``, if it is still at detection
         ``revision``.
@@ -560,12 +563,16 @@ class ReviewStore:
                 mark set meanwhile).
             arm_block: (the screenshots of its spatial block, the pre-label arm saved): save only while none of the
                 others has another arm (``ANNOTATOR_PRELABEL_FIELD``): one block, one arm, also for two passes at once.
+            split: save only while the screenshot has this split (model pre-labels: train only, user's rule).
+            review_s: active review seconds added to its review log (``ANNOTATOR_REVIEW_FIELD``) in the same write,
+                so two saves close together both count.
+            reviewed_at: when it was marked reviewed, kept in its review log.
         """
         with self._write():
             row = self._db.execute(
-                "SELECT edit_version, next_annotation_id FROM images WHERE key = ?", (key,)
+                "SELECT edit_version, next_annotation_id, split FROM images WHERE key = ?", (key,)
             ).fetchone()
-            if row is None or row[0] != revision:
+            if row is None or row[0] != revision or (split is not None and row[2] != split):
                 return False
             if untouched and not self._untouched(key):
                 return False
@@ -590,14 +597,20 @@ class ReviewStore:
                 self._db.execute("UPDATE images SET next_annotation_id = ? WHERE key = ?", (counter, key))
             if reviewed is not None:
                 self._db.execute("UPDATE images SET reviewed = ? WHERE key = ?", (reviewed, key))
-            if extra:
+            if extra or review_s > 0 or reviewed_at:
                 (stored,) = self._db.execute("SELECT extra FROM images WHERE key = ?", (key,)).fetchone()
                 merged = json.loads(stored)
-                for name, value in extra.items():
+                for name, value in (extra or {}).items():
                     if value is None:
                         merged.pop(name, None)
                     else:
                         merged[name] = value
+                if review_s > 0 or reviewed_at:
+                    log = dict(merged.get(K.ANNOTATOR_REVIEW_FIELD) or {})
+                    log["active_s"] = round(float(log.get("active_s", 0.0)) + review_s, 1)
+                    if reviewed_at:
+                        log["reviewed_at"] = reviewed_at
+                    merged[K.ANNOTATOR_REVIEW_FIELD] = log
                 self._db.execute("UPDATE images SET extra = ? WHERE key = ?", (json.dumps(merged), key))
         return True
 
@@ -618,8 +631,16 @@ class ReviewStore:
                     return False
         return True
 
+    def untouched(self, key: str) -> bool:
+        """Whether a screenshot is unreviewed and its boxes are still its pre-labels (False when it is not in the
+        store)."""
+        with self._read():
+            if self._db.execute("SELECT 1 FROM images WHERE key = ?", (key,)).fetchone() is None:
+                return False
+            return self._untouched(key)
+
     def _untouched(self, key: str) -> bool:
-        """Whether a screenshot is unreviewed and its boxes are still its pre-labels (inside a write)."""
+        """Whether a screenshot is unreviewed and its boxes are still its pre-labels (inside a transaction)."""
         if self._db.execute("SELECT reviewed FROM images WHERE key = ?", (key,)).fetchone()[0]:
             return False
         query = f"SELECT {', '.join(_ANNOTATION_COLUMNS)} FROM {{}} WHERE image_key = ? ORDER BY ord"

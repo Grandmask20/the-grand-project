@@ -186,6 +186,9 @@ def test_annotator_manifest_errors_say_what_is_wrong(tmp_path: Path) -> None:
         load_annotator_manifest(
             _manifest(tmp_path, [_image(tmp_path, annotations=[{"label": "zzz", "bbox": [0, 0, 9, 9]}])])
         )
+    with pytest.raises(ValueError, match=r"classes the labels do not have \(my_label\)"):
+        # a reviewer's own class: the model would be refused at inference (load_detector), so it never trains
+        load_annotator_manifest(_manifest(tmp_path, [_image(tmp_path)], labels={"0": "map_node", "1": "my_label"}))
     with pytest.raises(ValueError, match="Invalid annotator bbox"):
         load_annotator_manifest(_manifest(tmp_path, [_image(tmp_path, annotations=[{"label": "icon", "bbox": "box"}])]))
     with pytest.raises(ValueError, match="positive"):

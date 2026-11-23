@@ -88,3 +88,25 @@ def test_a_renamed_icon_call_is_saved_under_its_new_name(tmp_path: Path) -> None
     assert truth.cmd_save(SimpleNamespace(out=str(tmp_path), labels=str(labels))) == 0
     saved = json.loads((tmp_path / "truth.json").read_text(encoding="utf-8"))
     assert [b["name"] for b in saved["shot1.png"]["badges"]] == ["ArcaneHordes"]
+
+
+def test_a_truth_icon_changed_meanwhile_stops_before_anything_is_written(tmp_path: Path, monkeypatch) -> None:
+    """The truth file is read again before any write: an icon moved since it was matched stops the split, the
+    databases and the truth file untouched."""
+    import json
+
+    import pytest
+
+    truth = tmp_path / "truth.json"
+    truth.write_text(json.dumps({"s.png": {"badges": [{"id": "B1", "name": "Old", "x": 105, "y": 100}]}}))
+    before = truth.read_bytes()
+    match = S.Match("truth B1", None, "New", [0.1], False)
+    monkeypatch.setattr(S, "art_features", lambda name: np.zeros((1, 1), np.float32))
+    monkeypatch.setattr(S, "stored_pictures", lambda *a: [])
+    monkeypatch.setattr(S, "book_pictures", lambda *a: (None, []))
+    monkeypatch.setattr(S, "truth_pictures", lambda *a: [(truth, "s.png", 0, match, ("B1", "Old", 100, 100))])
+    monkeypatch.setattr(S, "sheet", lambda *a: None)
+    monkeypatch.setattr(S.models, "save_model", lambda *a, **k: pytest.fail("a database was written"))
+    with pytest.raises(SystemExit, match="changed while the split ran"):
+        S.main(["Old", "New", "--sheet", str(tmp_path / "sheet.png")])
+    assert truth.read_bytes() == before

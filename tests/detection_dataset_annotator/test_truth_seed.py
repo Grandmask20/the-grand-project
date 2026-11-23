@@ -276,3 +276,21 @@ def test_a_dry_run_without_a_store_makes_none(tmp_path: Path, capsys) -> None:
     assert truth_seed.main([str(tmp_path / "truth.json"), "--output-dir", str(out), "--dry-run"]) == 0
     assert "nothing to seed" in capsys.readouterr().out
     assert not out.exists()
+
+
+def test_a_dry_run_counts_only_screenshots_the_save_would_take(
+    tmp_path: Path, review_store: ReviewStore, desert_ring: None, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """An unreviewed screenshot a reviewer already edited keeps its boxes: a dry run does not count it as a change."""
+    monkeypatch.setattr(truth_seed, "_detector_image", lambda path: np.zeros((1080, 1920, 3), np.uint8))
+    paths = [tmp_path / name for name in ("shot.png", "edited.png")]
+    truth = _truth(tmp_path, files=("shot.png", "edited.png"))
+    review_store.add_images(paths)
+    for path in paths:
+        result = {"detected": True, "width": 1920, "height": 1080, "annotations": _boxes(), "error": None}
+        review_store.record_detection(image_key(path), result, force=True)
+    edited = review_store.item(image_key(paths[1]))
+    boxes = [dict(box, source="manual") for box in edited["annotations"]]
+    assert review_store.save_review(image_key(paths[1]), edited["edit_version"], annotations=boxes)
+    assert seed_store(review_store, truth, dry_run=True)[1] == 1
+    assert seed_store(review_store, truth)[1] == 1  # the real run takes the same one

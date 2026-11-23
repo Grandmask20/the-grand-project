@@ -550,3 +550,39 @@ def test_an_explicit_device_that_is_not_there_stops_the_run(monkeypatch: pytest.
             T.check_device(device)
     T.check_device("auto")
     T.check_device("cpu")
+
+
+def test_one_process_on_several_gpus_stops_the_run(monkeypatch: pytest.MonkeyPatch) -> None:
+    """DataParallel would split each image's targets apart from it: one visible GPU, or one process per GPU."""
+    monkeypatch.setattr(T.torch.cuda, "is_available", lambda: True)
+    monkeypatch.setattr(T.torch.cuda, "device_count", lambda: 2)
+    monkeypatch.delenv("WORLD_SIZE", raising=False)
+    for device in ("auto", "cuda"):
+        with pytest.raises(SystemExit, match="2 GPUs"):
+            T.check_device(device)
+    T.check_device("cpu")
+    monkeypatch.setenv("WORLD_SIZE", "2")  # torchrun: one process per GPU
+    T.check_device("cuda")
+
+
+def test_a_skipped_optimizer_step_leaves_the_ema(tmp_path: Path) -> None:
+    """An fp16 overflow skips the optimizer step: the EMA takes no update for it."""
+    args = SimpleNamespace(output_dir=str(tmp_path))
+    model = _tiny(LABELS)
+    callback = T.EmaCallback(0.9, 10.0)
+    callback.on_train_begin(args, None, None, model=model)
+    callback.step_skipped = lambda: True
+    callback.on_step_end(args, None, None, model=model)
+    assert int(callback.ema.n_averaged) == 0
+    callback.step_skipped = lambda: False
+    callback.on_step_end(args, None, None, model=model)
+    assert int(callback.ema.n_averaged) == 1
+
+
+def test_resume_refuses_a_checkpoint_of_other_classes(tmp_path: Path) -> None:
+    """Its class rows, optimizer and EMA would land on the wrong classes: --init-from is the way on."""
+    _tiny(LABELS).save_pretrained(tmp_path / "checkpoint-3")
+    T.check_resume_labels(tmp_path / "checkpoint-3", LABELS)
+    reordered = {str(i): name for i, name in enumerate(reversed(list(LABELS.values())))}
+    with pytest.raises(SystemExit, match="--init-from"):
+        T.check_resume_labels(tmp_path / "checkpoint-3", reordered)

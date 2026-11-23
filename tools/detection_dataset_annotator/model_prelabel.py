@@ -295,7 +295,12 @@ def main(argv: list[str] | None = None) -> int:
         done = skipped = 0
         # a screenshot reviewed, edited, truth-seeded or pre-labelled by another pass meanwhile (the page or another
         # tool open beside this one) keeps what it has: every save checks that in its own write
-        guard = {"untouched": True, "unmarked": (K.ANNOTATOR_TRUTH_MARK, K.ANNOTATOR_PRELABEL_FIELD)}
+        # and stays a training screenshot (held-out ones never get model pre-labels: user's rule)
+        guard = {
+            "untouched": True,
+            "unmarked": (K.ANNOTATOR_TRUTH_MARK, K.ANNOTATOR_PRELABEL_FIELD),
+            "split": "train",
+        }
         for key, item in todo:
             if item.get("split") != "train":  # never: eligible() takes training screenshots only (user's rule)
                 raise RuntimeError(f"refusing to pre-label a {item.get('split')} screenshot: {item['path']}")

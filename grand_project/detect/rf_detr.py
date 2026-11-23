@@ -27,6 +27,7 @@ from typing import Any
 import numpy as np
 
 from . import constants as K
+from . import labels as L
 from . import rf_detr_tiles as T
 from .icon_types import slug  # noqa: F401  (re-exported, see __all__)
 
@@ -91,7 +92,8 @@ def load_annotator_manifest(
         (the records, id -> class name).
 
     Raises:
-        ValueError: not an annotator manifest, a screenshot without a split, a bad box.
+        ValueError: not an annotator manifest, a class the labels do not have (``load_detector`` would refuse the
+            model), a screenshot without a split, a bad box.
         FileNotFoundError: no screenshot of the manifest exists.
     """
     manifest_path = Path(manifest_path)
@@ -102,6 +104,13 @@ def load_annotator_manifest(
     if not labels:
         raise ValueError(f"Annotator manifest has no labels: {manifest_path}")
     label_names = [labels[str(index)] for index in range(len(labels))]
+    unknown = sorted(name for name in label_names if not L.known(name))
+    if unknown:
+        # checked before training: a model with these classes would be refused at inference (load_detector)
+        raise ValueError(
+            f"{manifest_path} has classes the labels do not have ({', '.join(unknown)}): relabel or rerun those "
+            "screenshots in the annotator and export again"
+        )
     name_to_id = {name: index for index, name in enumerate(label_names)}
     records: list[Record] = []
     for item in data.get("images", []):
