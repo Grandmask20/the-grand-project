@@ -1025,25 +1025,49 @@ class MapImageMixin:
         """
         return self._tile_from(self._tile_state, z, x, y, wanted)
 
-    def terrain_tile_for(self, z: int, x: int, y: int, version: int | None, wanted=None) -> tuple[bytes | None, bool]:
+    def pin_ground(self) -> None:
+        """Keep the map image's tiling as it is now for the page's backdrop while jobs run (_tile_before; the worker
+        calls this as a busy spell begins, under the session lock, and lets it go once idle). Its map image levels
+        only: the sharp ground is cut from the live atlas's screenshots, which an Undo or the next add replaces, so
+        an old-version sharp tile would mix new screenshots with the old placement (CodeRabbit); the backdrop asks
+        for those levels only."""
+        if self._tile_before is None:
+            grid, raster, _sharp, version = self._tile_state
+            self._tile_before = (grid, raster, None, version)
+
+    def terrain_tile_for(self, z: int, x: int, y: int, asked: str, wanted=None) -> tuple[bytes | None, bool]:
         """Return a ground tile of the map image version its address names: the current one, or the one from before
-        the jobs running now (_tile_before, the backdrop's), else the current one.
+        the jobs running now (pin_ground, the backdrop's, its map image levels), else the current one.
 
         Args:
             z: Tile level.
             x: Tile column.
             y: Tile row.
-            version: The map image version in its address (None: none given, the current one).
+            asked: Its address's "v": "<tile key>-<map image version>" ("": none given, the current one).
             wanted: Whether the browser still waits for it (terrain_tile).
 
         Returns:
-            (the JPEG bytes or None where there is no ground; whether it is of the version asked, so the browser may
-            keep it under that address).
+            (the JPEG bytes or None where there is no ground; whether it is of the address asked, so the browser may
+            keep it under it: the whole address, this run of the app and this atlas included, as versions restart
+            with every run and a tab outliving one asked with the old run's numbers, CodeRabbit).
         """
         state, before = self._tile_state, self._tile_before
-        if version is not None and version != state[3] and before is not None and before[3] == version:
+        if not asked:
+            return self._tile_from(state, z, x, y, wanted), True
+        key, _, end = asked.rpartition("-")
+        version = int(end) if end.isdigit() else None
+        mine = key == f"{SESSION_RUN}.{self._source.gen}"  # (map_info's tile key)
+        if (
+            mine
+            and version is not None
+            and version != state[3]
+            and before is not None
+            and before[3] == version
+            and before[0] is not None
+            and z <= before[0].zmax  # (its map image levels: deeper, the current ground, not kept)
+        ):
             state = before
-        return self._tile_from(state, z, x, y, wanted), version is None or state[3] == version
+        return self._tile_from(state, z, x, y, wanted), mine and state[3] == version
 
     def _tile_from(self, state: tuple, z: int, x: int, y: int, wanted=None) -> bytes | None:
         """terrain_tile, from one map image's tiling (_tile_state, read once by the caller)."""

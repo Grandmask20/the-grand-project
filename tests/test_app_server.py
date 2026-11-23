@@ -187,7 +187,7 @@ def test_the_backdrop_gets_the_ground_from_before_the_jobs_running_now(app):
     assert st == 200
     canvas, weight, origin = s.terrain
     with s._lock:  # as the worker does when jobs begin, then a job's new map image
-        s._tile_before = s._tile_state
+        s.pin_ground()
         s.set_terrain(canvas // 3, weight, origin, save=False, cities=False)
     new = s.terrain_version
     st, h, body = call(srv, f"{path}?v={key}-{old}")  # the backdrop's address: the old ground, kept
@@ -198,6 +198,12 @@ def test_the_backdrop_gets_the_ground_from_before_the_jobs_running_now(app):
     # address a year, and a map image built again elsewhere put the backdrop off its place)
     st, h, other = call(srv, f"{path}?v={key}-{new + 40}")
     assert other == body and h["Cache-Control"] == "no-store"
+    # another run of the app's address with this version's number (a tab outliving a restart): not kept either
+    assert call(srv, f"{path}?v=0000beef.{s.opened.gen}-{new}")[1]["Cache-Control"] == "no-store"
+    # past the map image's own levels the kept ground has nothing (its sharp ground reads the live atlas): the
+    # current ground, not kept under the old address (CodeRabbit)
+    deeper = f"/api/tiles/terrain/{s.grid.zmax + 1}/{int(wx // 128)}/{int(wy // 128)}.jpg"
+    assert call(srv, f"{deeper}?v={key}-{old}")[1]["Cache-Control"] == "no-store"
     s._tile_before = None  # the jobs ended: the backdrop follows the current ground
     assert call(srv, f"{path}?v={key}-{old}")[1]["Cache-Control"] == "no-store"
 

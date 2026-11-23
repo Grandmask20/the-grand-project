@@ -319,11 +319,13 @@ def test_the_ground_from_before_the_jobs_is_kept_while_they_run(session, two, mo
         seen.append(session._tile_before)
 
     monkeypatch.setattr(session, "run_job", job)
-    threading.Thread(target=session._worker, daemon=True).start()
     session._queue_job([], "recheck_all")
     session._queue_job([], "recheck_all")  # a second job in the same busy spell: still the ground from before both
-    assert wait_until(lambda: not session.working())
-    assert seen and all(t is start for t in seen)  # (the page's backdrop asks for it: user, CodeRabbit)
+    threading.Thread(target=session._worker, daemon=True).start()  # (after both are queued: one busy spell)
+    # (until it is let go too: the worker says it's idle a moment before: CodeRabbit)
+    assert wait_until(lambda: not session.working() and session._tile_before is None)
+    # the ground from before both jobs, its map image levels (the page's backdrop asks for it: user, CodeRabbit)
+    assert len(seen) == 4 and all(t[1] is start[1] and t[3] == start[3] and t[2] is None for t in seen)
     assert session._tile_before is None  # let go once idle: the backdrop follows the current ground
 
 
