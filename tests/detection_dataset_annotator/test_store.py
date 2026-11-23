@@ -404,3 +404,16 @@ def test_one_block_keeps_one_pre_label_arm(tmp_path: Path, review_store: ReviewS
     assert arm(second, "rf_detr")
     other = {K.ANNOTATOR_PRELABEL_FIELD: {"source": K.ANNOTATOR_CLASSICAL_SOURCE}}
     assert review_store.save_review(elsewhere, 1, extra=other, arm_block=([elsewhere], K.ANNOTATOR_CLASSICAL_SOURCE))
+
+
+def test_an_all_or_nothing_claim_writes_none_when_one_is_taken(tmp_path: Path, review_store: ReviewStore) -> None:
+    """``only_if_free``: one screenshot already in another split stops the whole claim, in the same write."""
+    paths = _shots(tmp_path, "a.png", "b.png")
+    keys = [_detected(review_store, path, _box("icon", 10.0)) for path in paths]
+    review_store.claim_splits({keys[0]: "test"})
+    assert review_store.claim_splits({keys[0]: "train", keys[1]: "train"}, only_if_free=True) == {keys[0]: "test"}
+    assert review_store.splits() == {keys[0]: "test"}  # b got none
+    assert review_store.claim_splits({keys[0]: "test", keys[1]: "train"}, only_if_free=True) == {
+        keys[0]: "test",
+        keys[1]: "train",
+    }

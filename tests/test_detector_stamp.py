@@ -52,3 +52,44 @@ def test_a_replaced_screenshot_is_hashed_again(tmp_path):
     os.replace(new, f)
     os.utime(f, ns=(st.st_atime_ns, st.st_mtime_ns))  # (and the same time)
     assert builder.file_digest(f) != d1
+
+
+def _rf_detr_stamp(monkeypatch, folder):
+    monkeypatch.setenv(constants.RF_DETR_USE_ENV, "1")
+    monkeypatch.setenv(constants.RF_DETR_MODEL_ENV, str(folder))
+    monkeypatch.setattr(builder, "_STAMP", [])
+    return builder.detector_stamp()
+
+
+def test_the_rf_detr_stamp_follows_the_model_files_contents(tmp_path, monkeypatch):
+    """The same checkpoint copied elsewhere or touched keeps its stamp (its cached detections stay); other weights in
+    a file of the same name, size and time do not (CodeRabbit)."""
+    first, copy = tmp_path / "best", tmp_path / "copy"
+    for folder in (first, copy):
+        folder.mkdir()
+        (folder / "model.safetensors").write_bytes(b"weights 1")
+        (folder / "labels.json").write_text("{}")
+    os.utime(copy / "model.safetensors", ns=(1, 10**18))
+    stamp = _rf_detr_stamp(monkeypatch, first)
+    assert _rf_detr_stamp(monkeypatch, copy) == stamp
+    st = (first / "model.safetensors").stat()
+    (first / "model.safetensors").write_bytes(b"weights 2")  # the same size
+    os.utime(first / "model.safetensors", ns=(st.st_atime_ns, st.st_mtime_ns))  # and the same time
+    assert _rf_detr_stamp(monkeypatch, first) != stamp
+
+
+def test_a_screenshot_that_cannot_be_detected_fails_the_add(tmp_path, monkeypatch, capsys):
+    """A failed detection is not a run that placed nothing: the builder says which and exits 1 (a rebuild stops)."""
+    from types import SimpleNamespace
+
+    from grand_project import paths
+
+    bad = tmp_path / "broken.png"
+    bad.write_bytes(b"not a picture")
+    monkeypatch.setattr(paths, "DATABASE", tmp_path / "db.sqlite3")
+    (tmp_path / "db.sqlite3").write_bytes(b"")
+    monkeypatch.setattr(builder, "extract_frame", lambda image, cache: (_ for _ in ()).throw(ValueError("unreadable")))
+    args = SimpleNamespace(atlas=str(tmp_path / "atlas.json"), image=[str(bad)], workers=1)
+    assert builder.cmd_add(args) == 1
+    assert "1 screenshots could not be detected: broken.png" in capsys.readouterr().out
+    assert not (tmp_path / "atlas.json").exists()

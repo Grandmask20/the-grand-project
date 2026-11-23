@@ -28,6 +28,7 @@ import os
 import re
 import shutil
 import statistics
+import subprocess
 import tempfile
 import time
 from collections.abc import Callable, Iterator
@@ -157,7 +158,15 @@ def _rebuild_accuracy(
                 print(f"  {backend.name}: rebuilding {folder.name} ...", flush=True)
                 try:
                     scorer.rebuild(folder)
+                except subprocess.CalledProcessError as failed:
+                    # the builder exits 1 when a screenshot could not be detected: no score for a broken backend
+                    output = (failed.stdout or b"") + (failed.stderr or b"")
+                    if isinstance(output, bytes):
+                        output = output.decode("utf-8", "replace")
+                    tail = "\n".join(output.strip().splitlines()[-10:])
+                    raise SystemExit(f"{backend.name}: rebuilding {folder.name} failed:\n{tail}") from failed
                 except FileNotFoundError:
+                    # the builder ran without error and placed nothing: no atlas.json, scored as an empty atlas
                     if (folder / "atlas.json").exists():
                         raise
                     print(f"    {backend.name}: no screenshots placed in {folder.name}; scoring it as empty")

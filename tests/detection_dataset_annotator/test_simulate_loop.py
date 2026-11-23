@@ -273,3 +273,24 @@ def test_a_dataset_is_reused_only_when_built_from_the_same_inputs(tmp_path: Path
     (dataset / "metadata.json").write_text(json.dumps({**meta, "truth_seeded": True}))
     manifest.write_text('{"images": []}')
     assert not dataset_matches(dataset, manifest)  # another export
+
+
+def test_without_held_out_screenshots_nothing_is_trained(
+    tmp_path: Path, review_store: ReviewStore, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """No truth-seeded validation or test screenshot in the export: every round would train for nothing."""
+    atlas = tmp_path / "atlas"
+    atlas.mkdir()
+    shot = atlas / "a1.png"
+    shot.write_bytes(b"a")
+    write_ledger([Entry("sha-a1", "train", f"{relative_source(atlas)}#0", relative_source(shot))])
+    manifest = tmp_path / "manifest.json"
+    manifest.write_text(json.dumps({"images": []}), encoding="utf-8")
+    truth = tmp_path / "truth.json"
+    truth.write_text(json.dumps({"maps": [], "biomes": [], "screenshots": []}), encoding="utf-8")
+    monkeypatch.setattr(simulate_loop.subprocess, "run", lambda *a, **k: pytest.fail("trained without held-out"))
+    args = ["--manifest", str(manifest), "--classical-store", str(review_store.path), "--rounds", "0",
+            "--atlas", relative_source(atlas), "--truth", str(truth),
+            "--output-dir", str(tmp_path / "sim")]  # fmt: skip
+    with pytest.raises(SystemExit, match="no validation or test screenshots"):
+        simulate_loop.main(args)

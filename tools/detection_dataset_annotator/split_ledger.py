@@ -326,8 +326,9 @@ def settle_splits(
                 origins["drawn"] += 1
         new = {key: split for key, split in split_of.items() if stored.get(key) != split}
         if new:
-            claimed = store.claim_splits(new)
-            # a split claimed meanwhile (outside this lock) that is not the one given here: neither is published
+            # all or nothing: a split claimed meanwhile (outside this lock) that is not the one given here stops the
+            # claim before anything is written, and the ledger is not written either
+            claimed = store.claim_splits(new, only_if_free=True)
             moved = [
                 f"{names[key]}: given {new[key]}, store {claimed[key]}"
                 for key in new
@@ -364,7 +365,10 @@ def _check_rows(rows: list[tuple[str, Path, str | None, str]], ledger: Path | No
         by_file.setdefault(entry.file, entry)
     digests = hash_files({str(i): path for i, (_name, path, _split, _where) in enumerate(rows)})
     problems = []
-    for i, (name, _path, split, where) in enumerate(rows):
+    for i, (name, path, split, where) in enumerate(rows):
+        pinned = pinned_split(path)
+        if pinned is not None and split != pinned:  # the hand truth and reference atlases are always test
+            problems.append(f"{name}: {where} {split}, pinned to {pinned}")
         digest = digests.get(str(i))
         if digest is None:
             problems.append(f"{name} ({where}): cannot be read")

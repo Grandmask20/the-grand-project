@@ -80,12 +80,16 @@ def detector_stamp() -> str:
         use_rf_detr = rf_detr_enabled()
         rf_model = rf_detr_model_path()
         if use_rf_detr:
-            h.update(f"rf-detr:{rf_model}".encode())
+            h.update(b"rf-detr")
         if use_rf_detr and rf_model.is_dir():
+            # each file's contents, not its place or time: the same checkpoint copied or swapped in again keeps its
+            # stamp (and its cached detections); other weights under the same name and time do not (CodeRabbit)
             for f in sorted(rf_model.iterdir()):
                 if f.is_file():
-                    stat = f.stat()
-                    h.update(f"{f.name}:{stat.st_size}:{stat.st_mtime_ns}".encode())
+                    h.update(f"{f.name}:".encode())
+                    with open(f, "rb") as fh:
+                        for chunk in iter(lambda: fh.read(1 << 20), b""):
+                            h.update(chunk)
         _STAMP.append(h.hexdigest()[:12])
     return _STAMP[0]
 
@@ -465,10 +469,11 @@ def _detect_one(job):
         return image, repr(e)
 
 
-def detect_many(images: list, cache_dir: Path, workers: int = 1, log=_log) -> list:
+def detect_many(images: list, cache_dir: Path, workers: int = 1, log=_log) -> tuple[list, list[str]]:
     """Detect every screenshot (cached ones are instant), several at once when workers > 1.
 
-    Screenshots whose detection fails are logged and skipped.
+    Screenshots whose detection fails are logged and skipped, and named in the result: a run that detected nothing is
+    not one that placed nothing.
 
     Args:
         images: Screenshot paths.
@@ -477,7 +482,7 @@ def detect_many(images: list, cache_dir: Path, workers: int = 1, log=_log) -> li
         log: Function taking one line of text.
 
     Returns:
-        The Frames of the screenshots detected, in input order.
+        (the Frames of the screenshots detected, in input order; the names of those whose detection failed).
     """
     todo = [i for i in images]
     if workers > 1 and len(todo) > 1:
@@ -488,19 +493,20 @@ def detect_many(images: list, cache_dir: Path, workers: int = 1, log=_log) -> li
             for k, fu in enumerate(as_completed(futs), 1):
                 image, err = fu.result()
                 log(f"[{k}/{len(todo)}] {Path(image).name}" + (f"  FAILED: {err}" if err else ""))
-    frames = []
+    frames, failed = [], []
     for image in images:
         try:
             frame = extract_frame(Path(image), cache_dir)
         except Exception as e:
             log(f"skipped {Path(image).name}: detection failed ({e})")
+            failed.append(Path(image).name)
             continue
         log(
             f"detected {Path(image).name}: {int(frame.usable.sum())} usable nodes, {len(frame.edges)} paths, "
             f"{len(frame.landmarks)} landmarks"
         )
         frames.append(frame)
-    return frames
+    return frames, failed
 
 
 def cmd_add(args) -> int:
@@ -512,7 +518,8 @@ def cmd_add(args) -> int:
         args: Parsed arguments (atlas, image, workers).
 
     Returns:
-        Exit code 0.
+        Exit code 0; 1 when a screenshot could not be detected (what was placed is saved all the same), so a caller
+        tells a failed detection from a run that placed nothing.
 
     Raises:
         SystemExit: The detector database is missing.
@@ -528,7 +535,7 @@ def cmd_add(args) -> int:
     images = []
     for i in args.image:  # a folder = all its screenshots, in name (= time) order
         images += core.screenshots_in(i) if Path(i).is_dir() else [Path(i)]
-    pending = detect_many(images, cache_dir, args.workers)
+    pending, failed = detect_many(images, cache_dir, args.workers)
     added, _ = place_frames(atlas, pending)
     if added:
         atlas.save(atlas_path)
@@ -539,6 +546,9 @@ def cmd_add(args) -> int:
         )
     else:
         print("\nnothing added; atlas unchanged")
+    if failed:
+        print(f"\n{len(failed)} screenshots could not be detected: {', '.join(failed)}")
+        return 1
     return 0
 
 

@@ -32,7 +32,7 @@ from grand_project.detect.labels import dataset_classes, export_class, known
 from . import constants as K
 from .detection import decode_image
 from .splits import split_report
-from .state import relative_source, write_json_atomic
+from .state import relative_source, resolve_path, write_json_atomic
 
 if TYPE_CHECKING:
     from .store import ReviewStore
@@ -172,7 +172,7 @@ def export_dataset(store: ReviewStore, output_dir: Path, *, reviewed_only: bool 
         reviewed = bool(item.get("reviewed", False))
         if not (reviewed or item.get("detected")):
             continue  # never processed: its empty box list is not a labelling
-        path = Path(item["path"])
+        path = resolve_path(item["path"])  # a relative one is the project's, never the output folder's
         if key not in split_of:
             continue  # its file could not be read
         size = _image_size(item, path) if path.is_file() else None
