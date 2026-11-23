@@ -210,12 +210,14 @@ class Annotator {
   }
 
   update(data) {
-    // A new screenshot, detection revision or review state file (output folder) starts a fresh editor.
+    // A new screenshot, detection revision or review state file (output folder) starts a fresh editor, and so does
+    // a reload with the saved boxes (another tab saved this screenshot first).
     const first =
       !this.data ||
       this.data.dataset !== data.dataset ||
       this.data.image_key !== data.image_key ||
-      this.data.revision !== data.revision;
+      this.data.revision !== data.revision ||
+      this.data.reload !== data.reload;
     // A drag on the old screenshot ends without putting anything back: its boxes must never return over the new one
     // (a later Esc would restore them).
     if (first) this.endDrag();
@@ -249,7 +251,8 @@ class Annotator {
     this.stage.style.width = `${data.width}px`;
     this.stage.style.height = `${data.height}px`;
     if (!this.fitted) this.fit();
-    this.renderAll();
+    // An autosave's answer redraws the boxes, not a coordinate field being typed in (its draft and focus stay).
+    this.renderAll({ keepDraft: !first });
   }
 
   scheduleDestroy() {
@@ -1183,10 +1186,10 @@ class Annotator {
 
   // ---- rendering ------------------------------------------------------------------------------------------
 
-  renderAll() {
+  renderAll({ keepDraft = false } = {}) {
     this.applyView();
     this.renderBoxes();
-    this.renderSide();
+    this.renderSide({ keepDraft });
   }
 
   renderBoxes() {
@@ -1217,7 +1220,7 @@ class Annotator {
     node.classList.toggle("guess", isGuess(this.guessSources, box));
   }
 
-  renderSide() {
+  renderSide({ keepDraft = false } = {}) {
     const data = this.data;
     if (!data) return;
     this.positionEl.textContent = data.position ?? "";
@@ -1229,7 +1232,13 @@ class Annotator {
     this.chipsBtn.setAttribute("aria-pressed", String(this.showAllChips));
     this.renderStatus();
     this.renderLegend();
-    this.renderInspector();
+    if (!(keepDraft && this.typingInInspector())) this.renderInspector();
+  }
+
+  typingInInspector() {
+    // Whether the focus is in one of the selected box's fields (X, Y, W, H): redrawing the panel would lose the draft.
+    const active = this.wrap.getRootNode().activeElement;
+    return Boolean(active && active.tagName === "INPUT" && this.inspectorEl.contains(active));
   }
 
   picture(parent, label, className) {

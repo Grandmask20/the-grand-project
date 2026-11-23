@@ -144,12 +144,29 @@ def test_a_split_claimed_meanwhile_that_differs_publishes_nothing(
     paths = _shots(tmp_path / "shots", 3)
     _detect(review_store, paths)
     other = {"train": "test", "validation": "train", "test": "train"}
-    monkeypatch.setattr(
-        review_store, "claim_splits", lambda splits: {key: other[split] for key, split in splits.items()}
-    )
+    asked = []
+
+    def claim(splits, **options):
+        asked.append(options)
+        return {key: other[split] for key, split in splits.items()}
+
+    monkeypatch.setattr(review_store, "claim_splits", claim)
     with pytest.raises(SplitConflict, match="given .*, store"):
         settle_splits(review_store)
     assert not split_ledger_file.exists()
+    assert asked == [{"only_if_free": True}]  # all or nothing: the store writes none of them either
+
+
+def test_a_manifest_row_under_a_pinned_root_must_be_test(
+    tmp_path: Path, split_ledger_file: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The hand truth and reference atlases are always test: a manifest (or store) giving one of them another split
+    is named, whatever the ledger says."""
+    (shot,) = _shots(tmp_path / "truth", 1)
+    write_ledger([Entry(file_hash(shot), "train", "", relative_source(shot))])
+    monkeypatch.setattr(split_ledger, "pinned_split", lambda path: "test" if "truth" in Path(path).parts else None)
+    problems = check_manifest({"images": [{"path": str(shot), "split": "train"}]})
+    assert problems == [f"{relative_source(shot)}: manifest train, pinned to test"]
 
 
 def test_a_file_whose_bytes_changed_keeps_its_split_by_name(tmp_path: Path, review_store: ReviewStore) -> None:

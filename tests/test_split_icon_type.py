@@ -35,3 +35,14 @@ def test_up_to_a_rows_worth_of_types_keeps_one_art_row(tmp_path: Path) -> None:
     S.sheet(sheet, names, [])
     image = cv2.imread(str(sheet))
     assert image.shape == (icon_refs.SIZE * S._TILE + 36, _width(), 3)
+
+
+def test_a_sheet_that_cannot_be_written_stops_before_any_relabelling(tmp_path: Path, monkeypatch) -> None:
+    names = sorted({f.stem.split("__", 1)[1].rstrip("2") for f in ICON_ART_DIR.glob("full__*.webp")})[:2]
+    monkeypatch.setattr(S.cv2, "imwrite", lambda *args: False)  # OpenCV says so by its result, not an error
+    try:
+        S.sheet(tmp_path / "sheet.png", names, [])
+    except OSError as error:
+        assert "could not write the review sheet" in str(error)
+    else:
+        raise AssertionError("no OSError")

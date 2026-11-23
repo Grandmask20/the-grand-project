@@ -465,18 +465,36 @@ class ReviewStore:
         """Image key -> split, for the screenshots that have one."""
         return dict(self._db.execute("SELECT key, split FROM images WHERE split IS NOT NULL"))
 
-    def claim_splits(self, splits: Mapping[str, str]) -> dict[str, str]:
+    def claim_splits(self, splits: Mapping[str, str], *, only_if_free: bool = False) -> dict[str, str]:
         """Give screenshots their split where they have none yet, in one write, so two exports at once cannot give
         one screenshot two splits. A split is kept: nothing here moves a screenshot to another split.
+
+        Args:
+            splits: image key -> the split to give it.
+            only_if_free: all or nothing: when any of them already has another split, none is written (checked in the
+                same write), so the caller can stop with the store as it was.
 
         Returns:
             Image key -> split as the store now has it, for every key of ``splits`` still in the store.
         """
         with self._write():
+            if only_if_free:
+                taken = self._splits_of(list(splits))
+                if any(taken.get(key, split) != split for key, split in splits.items()):
+                    return {key: taken.get(key, split) for key, split in splits.items() if key in taken}
             for key, split in splits.items():
                 self._db.execute("UPDATE images SET split = ? WHERE key = ? AND split IS NULL", (split, key))
             stored = dict(self._db.execute("SELECT key, split FROM images WHERE split IS NOT NULL"))
         return {key: stored[key] for key in splits if key in stored}
+
+    def _splits_of(self, keys: list[str]) -> dict[str, str]:
+        """Image key -> its split, for those of ``keys`` that have one (inside a transaction)."""
+        out: dict[str, str] = {}
+        for start in range(0, len(keys), K.ANNOTATOR_SQL_CHUNK):
+            chunk = keys[start : start + K.ANNOTATOR_SQL_CHUNK]
+            query = f"SELECT key, split FROM images WHERE split IS NOT NULL AND key IN ({', '.join('?' * len(chunk))})"
+            out.update(dict(self._db.execute(query, chunk)))
+        return out
 
     # ---- model pre-label arms ------------------------------------------------------------------------------------
 

@@ -1,7 +1,13 @@
 """Offline tests for detector-comparison report helpers."""
 
-import numpy as np
+import subprocess
+from pathlib import Path
+from types import SimpleNamespace
 
+import numpy as np
+import pytest
+
+from tools import compare_detectors
 from tools.compare_detectors import _f1, _landmark_hits, _normalise_accuracy, _parse_match
 
 
@@ -50,3 +56,20 @@ def test_landmarks_match_one_to_one_whatever_their_order() -> None:
     hall = [{"kind": "Hall", "x": 0.0, "y": 0.0}]  # another kind never matches
     assert _landmark_hits(hall, expected, np.zeros(2), 10.0) == 0
     assert _landmark_hits(predicted, expected, np.array([100.0, 0.0]), 10.0) == 0  # shifted out of reach
+
+
+def test_a_rebuild_whose_detection_failed_stops_the_comparison(tmp_path: Path) -> None:
+    """The builder exits 1 when a screenshot could not be detected: that is no empty atlas to score."""
+    reference = tmp_path / "ref"
+    reference.mkdir()
+    (reference / "atlas.json").write_text("{}")
+    folder = tmp_path / "res_1080_100"
+    folder.mkdir()
+
+    def rebuild(work: Path) -> None:
+        raise subprocess.CalledProcessError(1, ["builder"], output=b"1 screenshots could not be detected: a.png")
+
+    scorer = SimpleNamespace(REFERENCE="ref", rebuild=rebuild)
+    backend = compare_detectors.Backend("RF-DETR", lambda img: {})
+    with pytest.raises(SystemExit, match="RF-DETR: rebuilding res_1080_100 failed:\n1 screenshots could not be"):
+        compare_detectors._rebuild_accuracy(backend, tmp_path, [folder], tmp_path / "model", "cpu", scorer)

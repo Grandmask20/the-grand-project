@@ -196,7 +196,9 @@ def sheet(path: Path, new: list[str], matches: list[Match]) -> None:
         ]
 
     path.parent.mkdir(parents=True, exist_ok=True)
-    cv2.imwrite(str(path), np.vstack(grid(head) + grid(cells)))
+    # OpenCV returns False instead of raising: no sheet, no relabelling (main relabels only after it)
+    if not cv2.imwrite(str(path), np.vstack(grid(head) + grid(cells))):
+        raise OSError(f"could not write the review sheet {path}")
 
 
 def _write_json(path: Path, value) -> None:

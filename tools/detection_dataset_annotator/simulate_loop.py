@@ -404,6 +404,11 @@ def main(argv: list[str] | None = None) -> int:
     ]
     if others:  # before any training: they are left out of the scores
         print(f"{len(others)} held-out screenshots another truth marked, not {truth.source}: left out ({others[:3]})")
+    if not any(shots.values()):  # nothing to score: every round would train for nothing
+        raise SystemExit(
+            f"no validation or test screenshots of {args.atlas} seeded by {truth.source} in {args.manifest}: seed them "
+            "(truth_seed) and export them with the unreviewed ones (export --unreviewed)"
+        )
     classical = classical_boxes(resolve_path(args.classical_store))
     missing = [row["source"] for rows in shots.values() for row in rows if row["source"] not in classical]
     if missing:

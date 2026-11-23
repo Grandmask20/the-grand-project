@@ -291,3 +291,36 @@ def test_a_dry_run_plans_no_arm(tmp_path: Path, review_store: ReviewStore) -> No
     out = review_store.path.parent
     assert model_prelabel.main(["--dry-run", "--output-dir", str(out), "--model", str(tmp_path / "model")]) == 0
     assert review_store.prelabel_plan() == {}
+
+
+def test_a_negative_limit_is_refused(tmp_path: Path) -> None:
+    with pytest.raises(SystemExit):
+        model_prelabel.main(["--dry-run", "--output-dir", str(tmp_path), "--limit", "-1"])
+
+
+def test_a_model_swapped_while_the_pass_ran_stops_it(
+    tmp_path: Path, review_store: ReviewStore, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The weights loaded must be the ones hashed and whose training screenshots were left out: a new best/ swapped in
+    meanwhile stops the pass before it saves anything."""
+    path = tmp_path / "a.png"
+    path.write_bytes(b"a")
+    review_store.add_images([path])
+    result = {"width": 1920, "height": 1080, "annotations": [_box("map_node_grass", 300, 300)]}
+    review_store.record_detection(image_key(path), result, force=False)
+    review_store.claim_splits({image_key(path): "train"})
+    monkeypatch.setattr(model_prelabel, "_blocks", lambda items: {key: key for key, _item in items})
+    model_dir = tmp_path / "model"
+    model_dir.mkdir()
+    (model_dir / "model.safetensors").write_bytes(b"weights 1")
+
+    def swapped(folder):
+        (model_dir / "model.safetensors").write_bytes(b"weights 2")  # a training run kept a new best meanwhile
+        return {}
+
+    monkeypatch.setattr("grand_project.detect.rf_detr_model.load_detector", swapped)
+    monkeypatch.setattr(model_prelabel, "predict", lambda *a: pytest.fail("predicted with another model's weights"))
+    out = review_store.path.parent
+    with pytest.raises(SystemExit, match="changed while this pass ran"):
+        model_prelabel.main(["--model", str(model_dir), "--output-dir", str(out), "--share", "1"])
+    assert K.ANNOTATOR_PRELABEL_FIELD not in review_store.item(image_key(path))

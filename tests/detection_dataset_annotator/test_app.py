@@ -164,3 +164,51 @@ def test_the_page_listens_on_this_computer_unless_told_otherwise(monkeypatch: py
     assert streamlit_args(app, ["--server.address", "::"])[3:] == ["--server.address", "::"]
     monkeypatch.setenv("STREAMLIT_SERVER_ADDRESS", "0.0.0.0")
     assert streamlit_args(app, []) == ["streamlit", "run", "app.py"]
+
+
+def test_a_save_made_on_boxes_another_tab_changed_is_refused(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Two tabs edit one screenshot (one revision), each sending its whole box list: the second save, made on boxes
+    the first already changed, is not stored (that tab reloads the saved boxes), and the first tab's next save is."""
+    from tools.detection_dataset_annotator import app
+    from tools.detection_dataset_annotator.boxes import editor_boxes
+
+    path = tmp_path / "shot.png"
+    cv2.imwrite(str(path), np.full((360, 640, 3), 90, np.uint8))
+    store_path = tmp_path / K.ANNOTATOR_STORE_FILE
+    with ReviewStore.open(store_path) as store:
+        store.add_images([path])
+        key = image_key(path)
+        result = {"detected": True, "width": 640, "height": 360, "annotations": [_box("tower", 10.0)]}
+        store.record_detection(key, result, force=False)
+        item = store.item(key)
+    revision, editor = int(item["edit_version"]), "editor"
+
+    def tab() -> dict[str, Any]:
+        """A browser tab's session, its editor just mounted on the saved boxes (as _render_editor does)."""
+        return {app._base_key(editor): [dict(a) for a in item["annotations"]], app._known_key(editor): {}}
+
+    def autosave(session: dict[str, Any], x: float, seq: int) -> float:
+        boxes = editor_boxes(item["annotations"])
+        boxes[0]["x"] = x
+        session[editor] = {"edit": {"image_key": key, "revision": revision, "seq": seq, "boxes": boxes}}
+        monkeypatch.setattr(app.st, "session_state", session)
+        app._on_edit(store_path, key, revision, editor)
+        with ReviewStore.open(store_path) as store:
+            return store.item(key)["annotations"][0]["bbox"][0]
+
+    first, second = tab(), tab()
+    assert autosave(first, 50.0, 1) == 50.0
+    assert autosave(second, 80.0, 1) == 50.0  # made on the boxes before the first tab's save: refused
+    assert second[K.ANNOTATOR_SESSION_RELOADS] == 1 and K.ANNOTATOR_SESSION_NOTICE in second
+    assert autosave(first, 60.0, 2) == 60.0  # the first tab goes on from what it saved
+    assert first[app._saved_seq_key(editor)] == 2 and K.ANNOTATOR_SESSION_RELOADS not in first
+
+
+def test_a_new_editor_drops_the_last_ones_session_memory(monkeypatch: pytest.MonkeyPatch) -> None:
+    from tools.detection_dataset_annotator import app
+
+    session = {name: 1 for name in (app._saved_seq_key("old"), app._known_key("old"), app._base_key("old"))}
+    session[app._saved_seq_key("new")] = 3
+    monkeypatch.setattr(app.st, "session_state", session)
+    app._forget("old")
+    assert session == {app._saved_seq_key("new"): 3}

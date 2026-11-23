@@ -217,6 +217,10 @@ ANNOTATOR_SESSION_HIDE_REVIEWED = "hide_reviewed"
 ANNOTATOR_SESSION_MOUNTED_EDITOR = "mounted_editor"
 """Streamlit session key: the editor key last mounted, to reset its save counter and undo memory on a new one."""
 
+ANNOTATOR_SESSION_RELOADS = "editor_reloads"
+"""Streamlit session key: how often this session's editor was reloaded with the saved boxes because another tab saved
+the screenshot first (part of the editor key, so the editor mounts anew)."""
+
 ANNOTATOR_SESSION_NOTICE = "detection_notice"
 """Streamlit session key: a message shown as a toast after the next rerun."""
 

@@ -173,6 +173,15 @@ def predict(detector: Mapping[str, Any], path: Path) -> tuple[list[dict[str, Any
     return found, (image.shape[1], image.shape[0]), (raw.shape[1], raw.shape[0])
 
 
+def checkpoint_state(model_dir: Path) -> tuple[str | None, frozenset[str]]:
+    """What identifies a kept model's state: the SHA-256 of its weights (None without them) and the screenshots it
+    trained on (``trained_on``)."""
+    from .state import file_hash
+
+    weights = model_dir / "model.safetensors"
+    return (file_hash(weights) if weights.is_file() else None), frozenset(trained_on(model_dir))
+
+
 def eligible(items: Iterable[tuple[str, Mapping[str, Any]]], skip: set[str]) -> list[tuple[str, Mapping[str, Any]]]:
     """The screenshots model pre-labels may go to: detected, unreviewed, training split, no reviewer's box, not
     pre-labelled by a model yet, not seeded by a hand truth (``ANNOTATOR_TRUTH_MARK``: its boxes are the truth's, and
@@ -250,10 +259,12 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
     if not 0.0 <= args.share <= 1.0:
         parser.error("--share must be between 0 and 1")
+    if args.limit is not None and args.limit < 0:
+        parser.error("--limit must be 0 or more")  # a negative one would count from the end of the list
     model_dir = resolve_path(args.model)
-    from .state import file_hash
-
-    model_sha = file_hash(model_dir / "model.safetensors") if (model_dir / "model.safetensors").is_file() else None
+    # the weights' hash and the screenshots they trained on, read once: the weights loaded later must be these
+    checkpoint = checkpoint_state(model_dir)
+    model_sha, trained = checkpoint
     round_name = f"{model_dir.parent.name}/{model_dir.name} {time.strftime('%Y-%m-%d %H:%M')}"
     store_path = resolve_path(args.output_dir) / K.ANNOTATOR_STORE_FILE
     if not store_path.is_file():  # opening it would create an empty store (and its folder)
@@ -261,7 +272,7 @@ def main(argv: list[str] | None = None) -> int:
         return 0
     with ReviewStore.open(store_path) as store:
         every = list(store.items())
-        todo = eligible(every, trained_on(model_dir))
+        todo = eligible(every, set(trained))
         blocks = _blocks(every)
         # every eligible block is drawn, whatever --limit leaves for later: the share is of all of them, not of a pass.
         # A block keeps the arm planned for it before (a pass that failed or stopped) or an earlier pass gave it.
@@ -301,6 +312,12 @@ def main(argv: list[str] | None = None) -> int:
                 from grand_project.detect.rf_detr_model import load_detector
 
                 detector = load_detector(model_dir)
+                if checkpoint_state(model_dir) != checkpoint:
+                    # train_rf_detr swaps a new best/ in by renaming the folder: the weights just loaded may not be
+                    # the ones hashed and whose training screenshots were left out
+                    raise SystemExit(
+                        f"{model_dir} changed while this pass ran (a training run kept a new best): run it again"
+                    )
             base = store.prelabels(key)  # what the model's boxes are joined with: unchanged until the save
             found, detector_size, raw_size = predict(detector, Path(item["path"]))
             model = model_annotations(found, detector_size, raw_size)
@@ -328,7 +345,17 @@ def main(argv: list[str] | None = None) -> int:
     return 0
 
 
-__all__ = ["draw_arms", "eligible", "merge", "model_annotations", "predict", "recorded_arms", "snap", "trained_on"]
+__all__ = [
+    "checkpoint_state",
+    "draw_arms",
+    "eligible",
+    "merge",
+    "model_annotations",
+    "predict",
+    "recorded_arms",
+    "snap",
+    "trained_on",
+]
 
 
 if __name__ == "__main__":

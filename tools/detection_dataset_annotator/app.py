@@ -80,7 +80,8 @@ def _dataset_id(store_path: Path) -> str:
 
 
 def _editor_key(store_path: Path, key: str, revision: int) -> str:
-    return f"annotator-{_dataset_id(store_path)}-{key}-{revision}"
+    reloads = int(st.session_state.get(K.ANNOTATOR_SESSION_RELOADS, 0))
+    return f"annotator-{_dataset_id(store_path)}-{key}-{revision}-{reloads}"
 
 
 def _saved_seq_key(editor_key: str) -> str:
@@ -89,6 +90,17 @@ def _saved_seq_key(editor_key: str) -> str:
 
 def _known_key(editor_key: str) -> str:
     return f"known-boxes-{editor_key}"
+
+
+def _base_key(editor_key: str) -> str:
+    """The boxes the store held when this editor last read or saved them: what its next save is made against."""
+    return f"base-boxes-{editor_key}"
+
+
+def _forget(editor_key: str) -> None:
+    """Drop an editor's session memory (save counter, undo memory, base boxes): only the editor on screen keeps any."""
+    for name in (_saved_seq_key(editor_key), _known_key(editor_key), _base_key(editor_key)):
+        st.session_state.pop(name, None)
 
 
 def _remember(editor_key: str, annotations: list[dict[str, Any]]) -> None:
@@ -121,11 +133,28 @@ def _edited_annotations(item: dict[str, Any], editor_key: str, payload: dict[str
 
 
 def _accepted(editor_key: str, payload: dict[str, Any], edited: list[dict[str, Any]] | None) -> None:
-    """Note a saved editor message: its boxes join the undo memory, and the editor is told its edits up to the
-    message's ``seq`` are saved."""
+    """Note a saved editor message: its boxes join the undo memory and become the editor's base, and the editor is
+    told its edits up to the message's ``seq`` are saved."""
     if edited is not None:
         _remember(editor_key, edited)
+        st.session_state[_base_key(editor_key)] = copy.deepcopy(edited)
     st.session_state[_saved_seq_key(editor_key)] = int(payload.get("seq", 0))
+
+
+def _changed_elsewhere(item: dict[str, Any], editor_key: str) -> bool:
+    """Whether the screenshot's boxes are no longer the ones this editor's edits were made on: another tab saved
+    them meanwhile (both edit whole box lists). Then this edit is not saved and the editor is reloaded with the saved
+    boxes. An editor this session knows no base for (an old one's late message) never saves."""
+    base = st.session_state.get(_base_key(editor_key))
+    if base is not None and not annotations_changed(base, item.get("annotations", [])):
+        return False
+    if base is not None:
+        st.session_state[K.ANNOTATOR_SESSION_RELOADS] = int(st.session_state.get(K.ANNOTATOR_SESSION_RELOADS, 0)) + 1
+        st.session_state[K.ANNOTATOR_SESSION_NOTICE] = (
+            "This screenshot was saved from another tab meanwhile: your last edit was not saved, and the editor shows "
+            "the saved boxes again."
+        )
+    return True
 
 
 def _review_log(item: dict[str, Any], payload: dict[str, Any], *, reviewed: bool | None) -> dict[str, Any] | None:
@@ -146,12 +175,14 @@ def _on_edit(store_path: Path, image_key: str, revision: int, editor_key: str) -
     payload = (st.session_state.get(editor_key) or {}).get("edit")
     with ReviewStore.open(store_path) as store:
         item = _message_item(store, image_key, revision, payload)
-        if item is None:
+        if item is None or _changed_elsewhere(item, editor_key):
             return
         edited = _edited_annotations(item, editor_key, payload)
         log = _review_log(item, payload, reviewed=None)
-        if (edited is not None or log) and not store.save_review(image_key, revision, annotations=edited, extra=log):
-            return  # a detector rerun landed in between
+        if (edited is not None or log) and not store.save_review(
+            image_key, revision, annotations=edited, extra=log, expect_boxes=item["annotations"]
+        ):
+            return  # a detector rerun or another tab's save landed in between
     _accepted(editor_key, payload, edited)
 
 
@@ -173,14 +204,16 @@ def _on_action(store_path: Path, image_key: str, revision: int, editor_key: str,
     action = (st.session_state.get(editor_key) or {}).get("action")
     with ReviewStore.open(store_path) as store:
         item = _message_item(store, image_key, revision, action)
-        if item is None:
+        if item is None or _changed_elsewhere(item, editor_key):
             return
         edited = _edited_annotations(item, editor_key, action)
         reviewed, target = _action_target(str(action.get("type")), bool(item.get("reviewed")), keys, image_key)
         log = _review_log(item, action, reviewed=reviewed)
         changes = edited is not None or reviewed is not None or log is not None
-        if changes and not store.save_review(image_key, revision, annotations=edited, reviewed=reviewed, extra=log):
-            return  # a detector rerun landed in between
+        if changes and not store.save_review(
+            image_key, revision, annotations=edited, reviewed=reviewed, extra=log, expect_boxes=item["annotations"]
+        ):
+            return  # a detector rerun or another tab's save landed in between
     _accepted(editor_key, action, edited)
     st.session_state[K.ANNOTATOR_SESSION_SELECTED] = target
 
@@ -206,11 +239,16 @@ def _render_editor(store: ReviewStore, key: str, keys: list[str], settings: Sett
 
     revision = int(item["edit_version"])  # the store gives every box an id, so the editor can refer to it
     editor_key = _editor_key(settings.store_path, key, revision)
-    if st.session_state.get(K.ANNOTATOR_SESSION_MOUNTED_EDITOR) != editor_key:
-        # A freshly mounted editor counts its edits from zero and its undo history starts here.
+    mounted = st.session_state.get(K.ANNOTATOR_SESSION_MOUNTED_EDITOR)
+    if mounted != editor_key:
+        # A freshly mounted editor counts its edits from zero, its undo history starts here, and its edits are made on
+        # the boxes saved now; the editor before it keeps no memory.
+        if mounted:
+            _forget(mounted)
         st.session_state[K.ANNOTATOR_SESSION_MOUNTED_EDITOR] = editor_key
         st.session_state[_saved_seq_key(editor_key)] = 0
         st.session_state[_known_key(editor_key)] = {}
+        st.session_state[_base_key(editor_key)] = copy.deepcopy(item.get("annotations", []))
     _remember(editor_key, item.get("annotations", []))
     index = keys.index(key) if key in keys else -1
     options = settings.options
@@ -224,6 +262,7 @@ def _render_editor(store: ReviewStore, key: str, keys: list[str], settings: Sett
         "dataset": _dataset_id(settings.store_path),
         "image_key": key,
         "revision": revision,
+        "reload": int(st.session_state.get(K.ANNOTATOR_SESSION_RELOADS, 0)),
         "image_url": image_url,
         "width": int(item["width"]),
         "height": int(item["height"]),
