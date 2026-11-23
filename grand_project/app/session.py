@@ -40,6 +40,7 @@ from .constants import (
 from .debug import DebugMixin
 from .edits import EditsMixin
 from .events import Events
+from .friends import FriendsMixin
 from .icons import icon_label, icon_rows
 from .library import LibraryMixin
 from .mapimage import MapImageMixin, files_key
@@ -93,6 +94,7 @@ class AtlasSession(
     DebugMixin,
     ReplayMixin,
     UpdatesMixin,
+    FriendsMixin,
 ):
     """The open atlas and its background work (see the module docstring)."""
 
@@ -154,7 +156,9 @@ class AtlasSession(
             {"layers", "multi_only", "only_icon_maps", "near_only", "hidden_types", "style", "replay", "ui",
             "recheck_update"}: "recheck_update" {group: ticked} is what the Re-check box ticks (for every atlas).
         """
-        s = self.settings  # (read only: older settings are brought up to date once, as they load: migrate_settings)
+        # (read only: older settings are brought up to date once, as they load: migrate_settings). A friend's atlas
+        # open: theirs (app/friends.py)
+        s = self.view_settings()
         return {
             "layers": {**LAYER_DEFAULTS, **s.get("layers", {})},
             "multi_only": bool(s.get("multi_only", False)),
@@ -189,7 +193,12 @@ class AtlasSession(
         Returns:
             The flags before the change (_flags), for the tile check.
         """
-        s = self.settings
+        # a friend's atlas open: their view changed for this visit (app/friends.py); the page's own (side panel,
+        # background...) is yours, kept
+        s = self.view_settings()
+        if s is not self.settings and isinstance(changes.get("ui"), dict):
+            mine = {k: v for k, v in changes["ui"].items() if k != "player"}
+            self.settings["ui"] = {**self.settings.get("ui", {}), **mine}
         before = self._flags()
         hidden_before = set(s.get("icon_hidden", []))
         for k in ("layers", "style", "replay", "ui"):
@@ -250,7 +259,8 @@ class AtlasSession(
             elif self.seams_waiting():  # (only queued: nothing ran, its own line says it was taken off)
                 self.stop_seams()
             self.save()
-        name = p.stem if p.stem != "atlas" else p.parent.name
+        friend = self.friend_of(p)
+        name = f"{friend}'s atlas" if friend else p.stem if p.stem != "atlas" else p.parent.name
         with self._lock, self._admit:  # (no job admitted between the check below and the switch: _init_adding)
             if expect_gen is not None and not self.owns(expect_gen):  # another atlas opened while this one loaded
                 return
@@ -263,13 +273,15 @@ class AtlasSession(
                 self._reset_mapimage()  # the other atlas's map image never shows for this one
             before, now = self.opened, self._switch(atlas, p)
             # in the same step as the switch: set after it, an older load finishing late made itself the atlas
-            # opened at the next start (CodeRabbit)
-            self.set_setting("last_atlas", str(p), save=False)
+            # opened at the next start (CodeRabbit). Never a friend's: yours opens at start, and is the one to go
+            # back to (app/friends.py)
+            if not friend:
+                self.set_setting("last_atlas", str(p), save=False)
             if before.scope and before.scope != now.scope:
                 self.events.log(f"switched to atlas {name}", before.scope)
         maps = len((atlas.final or {}).get("nodes", []))
         self.events.log(f"opened atlas {name} ({p}): {len(atlas.frames)} screenshots, {maps} maps", now.scope)
-        if atlas.frames and atlas.final is None:
+        if atlas.frames and atlas.final is None and not friend:
             self.events.log("this atlas predates the atlas-wide check: running it now")
             try:
                 with self._lock:
@@ -279,6 +291,8 @@ class AtlasSession(
                 LOG.exception("atlas-wide check failed")
                 self.events.log(f"atlas-wide check failed: {e}")
         self._after_load()
+        if friend:
+            return  # (their screenshots are on their computer, and nothing is added to a friend's atlas here)
         missing = [f["name"] for f in atlas.frames if not Path(f["path"]).exists()]
         if missing:
             self.events.log(f"screenshots not found (terrain missing there): {', '.join(missing[:20])}" +
@@ -348,6 +362,8 @@ class AtlasSession(
         self.D = {}
         self.model_version += 1
         self.opened = Opened(atlas, p, self.opened.gen + 1, scope)
+        # a friend's atlas shows with their view; yours with your own (app/friends.py)
+        self._view_overlay = self._overlay_for(p) if self.friend_of(p) else None
         self.parts.reset(self.opened.gen)
         self.events.set_scope(scope)
         return self.opened
@@ -389,8 +405,8 @@ class AtlasSession(
         return (job.gen if isinstance(job, Opened) else job) == self.opened.gen
 
     def save(self) -> None:
-        """Save the open atlas (if any)."""
-        if self.atlas is not None and self.path is not None:
+        """Save the open atlas (if any; never a friend's: read-only)."""
+        if self.atlas is not None and self.path is not None and not self.friend_open():
             with self._lock:
                 self.atlas.save(self.path)
 
@@ -452,9 +468,12 @@ class AtlasSession(
         """Refresh everything after an atlas was opened or created: map image, model, locked strongholds."""
         self.load_terrain(cities=False)  # the cached map image first: the model's biomes then use its ground
         self.rebuild_model()
-        self.scan_locks()
-        if self.path:
-            self.remember_atlas(self.path)
+        if self.friend_open():  # (read-only, its screenshots on their computer: not searched, not one of yours)
+            self.events.publish("atlases", None)
+        else:
+            self.scan_locks()
+            if self.path:
+                self.remember_atlas(self.path)
         self.save_settings()
         self.events.publish("atlas", self.atlas_summary())
         self.events.set_status(f"opened {self.path.name}" if self.path else "")
@@ -547,9 +566,12 @@ class AtlasSession(
         if self.atlas is None or self.path is None:
             return None
         N = self.V["nodes"]
+        friend = self.friend_open()
+        name = self.path.stem if self.path.stem != "atlas" else self.path.parent.name
         return {
-            "name": self.path.stem if self.path.stem != "atlas" else self.path.parent.name,
+            "name": f"{friend}'s atlas" if friend else name,
             "path": str(self.path),
+            "friend": friend,
             "maps": sum(1 for n in N if n["status"] != "removed"),
             "icons": len(self.V["icons"]),
             "shots": len(self.atlas.frames),

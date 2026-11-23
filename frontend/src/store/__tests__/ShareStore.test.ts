@@ -5,7 +5,7 @@ import { SharePeer } from "@/logic/share/SharePeer";
 import { resetShare, sendTo, useShareStore } from "@/store/ShareStore";
 import { FakeSocket, resetRelay } from "@/test/FakeRelay";
 import { FakeRtc } from "@/test/FakeRtc";
-import { sharedAtlas } from "@/test/ShareAtlas";
+import { sharedFile, sharedName } from "@/test/ShareAtlas";
 
 const flush = () => new Promise((r) => setTimeout(r, 0));
 const s = () => useShareStore.getState();
@@ -39,23 +39,24 @@ describe("ShareStore", () => {
 		expect(link(watch)).toMatchObject({ state: "live", friend: "pl" });
 	});
 
-	it("a watch link keeps what its sharer sends: their atlas, then where they are", async () => {
+	it("a watch link keeps what its sharer sends: their atlas, where they are, their route", async () => {
 		const { share, watch } = await linked();
-		sendTo(share, { t: "atlas", atlas: sharedAtlas });
+		sendTo(share, { t: "atlas", name: sharedName, file: sharedFile });
 		sendTo(share, { t: "pos", player: { x: 1, y: 2, node: 1 } });
+		sendTo(share, { t: "route", path: [1, 2, 3] });
 		await flush();
-		expect(link(watch)?.atlas).toEqual(sharedAtlas);
+		expect(link(watch)).toMatchObject({ file: sharedFile, atlasName: sharedName, route: [1, 2, 3] });
 		expect(link(watch)?.player).toEqual({ x: 1, y: 2, node: 1 });
-		expect(link(share)?.atlas).toBeNull(); // (a share link shows nothing of theirs)
+		expect(link(share)?.file).toBeNull(); // (a share link keeps nothing of theirs)
+		s().kept(watch, "/friends/pl/atlas.json");
+		expect(link(watch)?.atlasPath).toBe("/friends/pl/atlas.json");
 	});
 
-	it("ending a link closes the other end; the one open over the map is closed too", async () => {
+	it("ending a link closes the other end", async () => {
 		const { share, watch } = await linked();
-		s().view(watch);
 		s().stop(watch);
 		await flush();
 		expect(link(watch)).toBeUndefined();
-		expect(s().viewing).toBeNull();
 		expect(link(share)?.state).toBe("closed");
 	});
 
@@ -109,10 +110,10 @@ describe("ShareStore through the relay (rooms)", () => {
 
 	it("the atlas and position reach the watcher", async () => {
 		const { share, watch } = await room();
-		sendTo(share, { t: "atlas", atlas: sharedAtlas });
+		sendTo(share, { t: "atlas", name: sharedName, file: sharedFile });
 		sendTo(share, { t: "pos", player: { x: 1, y: 2, node: 1 } });
 		await settle();
-		expect(link(watch)).toMatchObject({ atlas: sharedAtlas, player: { x: 1, y: 2, node: 1 } });
+		expect(link(watch)).toMatchObject({ file: sharedFile, player: { x: 1, y: 2, node: 1 } });
 	});
 
 	it("each friend joining counts, and bumps the share link's epoch (they get the atlas whole)", async () => {
@@ -125,11 +126,11 @@ describe("ShareStore through the relay (rooms)", () => {
 
 	it("the sharer stopping: the watcher's link closes, saying so, their atlas kept", async () => {
 		const { share, watch } = await room();
-		sendTo(share, { t: "atlas", atlas: sharedAtlas });
+		sendTo(share, { t: "atlas", name: sharedName, file: sharedFile });
 		await settle();
 		s().stop(share);
 		await settle();
-		expect(link(watch)).toMatchObject({ state: "closed", error: "They stopped sharing.", atlas: sharedAtlas });
+		expect(link(watch)).toMatchObject({ state: "closed", error: "They stopped sharing.", file: sharedFile });
 	});
 
 	it("the last friend leaving: the invite waits for the next", async () => {

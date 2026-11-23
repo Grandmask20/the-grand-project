@@ -7,4 +7,6 @@ export interface AtlasSummary {
 	shots: number;
 	landmarks: number;
 	bookmarks: number;
+	/** A friend's atlas from live sharing (their name): read-only, shown with their view. */
+	friend?: string | null;
 }

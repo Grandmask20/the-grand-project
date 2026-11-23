@@ -189,7 +189,9 @@ class LibraryMixin:
         """
         with ATLAS_LIST_LOCK:
             L = [a for a in self.settings.get("atlases", []) if Path(a["json"]).exists()]
-            for extra in (self.path, self.settings.get("last_atlas")):
+            # (a friend's atlas open: never one of yours, app/friends.py)
+            here = None if self.friend_open() else self.path
+            for extra in (here, self.settings.get("last_atlas")):
                 if extra and Path(extra).exists() and not any(same_file(a["json"], extra) for a in L):
                     L.append({"name": Path(extra).parent.name, "json": str(Path(extra).resolve())})
             self.set_setting("atlases", L, save=False)

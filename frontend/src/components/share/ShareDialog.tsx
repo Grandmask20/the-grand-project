@@ -5,6 +5,8 @@ import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } f
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
+import { useAppState } from "@/hooks/app/UseAppState";
+import { useAtlasActions } from "@/hooks/atlas/UseAtlasActions";
 import { relayOn } from "@/logic/share/RelayConfig";
 import { type Link, useShareStore } from "@/store/ShareStore";
 
@@ -82,6 +84,8 @@ const Live = ({ who }: { who: string }) => (
 /** A link's row: where it is in its two codes, then live, or closed. */
 function LinkRow({ link }: { link: Link }) {
 	const s = useShareStore();
+	const actions = useAtlasActions();
+	const openPath = useAppState().data?.atlas?.path ?? "";
 	const end = (
 		<Button size="xs" variant="ghost" aria-label="End this link" title="End this link" onClick={() => s.stop(link.id)}>
 			<XIcon />
@@ -125,21 +129,28 @@ function LinkRow({ link }: { link: Link }) {
 				head(
 					<span className="flex flex-wrap items-center gap-2">
 						<Live who={link.friend} />
-						{link.role === "watch" && link.atlas && (
+						{link.role === "watch" && link.atlasPath && (
 							<>
-								<span className="truncate text-muted-foreground">{link.atlas.name}</span>
-								<Button
-									size="xs"
-									variant="outline"
-									onClick={() => {
-										s.view(link.id);
-										s.setOpen(false);
-									}}
-								>
-									<EyeIcon />
-									Open
-								</Button>
+								<span className="truncate text-muted-foreground">{link.atlasName}</span>
+								{openPath === link.atlasPath ? (
+									<span className="text-xs text-gold">open</span>
+								) : (
+									<Button
+										size="xs"
+										variant="outline"
+										onClick={() => {
+											void actions.openAtlas(link.atlasPath);
+											s.setOpen(false);
+										}}
+									>
+										<EyeIcon />
+										Open
+									</Button>
+								)}
 							</>
+						)}
+						{link.role === "watch" && link.file && !link.atlasPath && (
+							<span className="text-xs text-muted-foreground">their atlas is coming…</span>
 						)}
 						{link.role === "share" && (
 							<span className="text-xs text-muted-foreground">

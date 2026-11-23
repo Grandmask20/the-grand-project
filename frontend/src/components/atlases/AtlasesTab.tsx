@@ -1,6 +1,7 @@
 import { Trash2Icon } from "lucide-react";
 import { useState } from "react";
 import { GameIcon } from "@/components/common/GameIcon";
+import { FriendAtlases } from "@/components/share/FriendAtlases";
 import { Button } from "@/components/ui/button";
 import {
 	DropdownMenu,
@@ -130,6 +131,7 @@ export function AtlasesTab() {
 					</div>
 				</div>
 			))}
+			<FriendAtlases />
 			{menu && (
 				<DropdownMenu open onOpenChange={(open) => !open && setMenu(null)}>
 					<DropdownMenuTrigger asChild>

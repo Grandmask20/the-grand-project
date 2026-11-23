@@ -13,8 +13,11 @@ const link = (id: number, state: "live" | "invited") => ({
 	state,
 	code: "",
 	friend: "",
-	atlas: null,
+	file: null,
+	atlasName: "",
 	player: null,
+	route: null,
+	atlasPath: "",
 	updated: 0,
 	error: "",
 });

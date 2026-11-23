@@ -3,6 +3,7 @@ import { Undo2Icon } from "lucide-react";
 import { AppQueryKeys } from "@/api/AppQueryKeys";
 import { sameAtlas } from "@/api/Http";
 import tablet from "@/assets/tablet.png";
+import { FriendSwitch } from "@/components/share/FriendSwitch";
 import { ShareButton } from "@/components/share/ShareButton";
 import { Button } from "@/components/ui/button";
 import {
@@ -192,6 +193,7 @@ export function TopBar() {
 				</span>
 			)}
 			{/* live sharing: your atlas to friends, theirs to you (the dot: links live) */}
+			<FriendSwitch />
 			<ShareButton />
 			{/* the version, and whether it is the latest (user's mockup: as Path of Building's update corner) */}
 			<UpdateButton />

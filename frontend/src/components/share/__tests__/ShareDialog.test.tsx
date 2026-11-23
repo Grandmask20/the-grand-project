@@ -1,16 +1,34 @@
 import { screen, waitFor, within } from "@testing-library/react";
+import type userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { ShareDialog } from "@/components/share/ShareDialog";
 import { relay } from "@/logic/share/RelayConfig";
 import { RelayPeer } from "@/logic/share/RelayPeer";
 import { SharePeer } from "@/logic/share/SharePeer";
 import { resetShare, sendTo, useShareStore } from "@/store/ShareStore";
+import type { Call } from "@/test/FakeHttp";
 import { FakeSocket, resetRelay } from "@/test/FakeRelay";
 import { FakeRtc } from "@/test/FakeRtc";
+import { state } from "@/test/Fixtures";
 import { renderWithApp } from "@/test/RenderWithApp";
-import { sharedAtlas } from "@/test/ShareAtlas";
+import { sharedFile, sharedName } from "@/test/ShareAtlas";
 
 const s = () => useShareStore.getState();
+const FRIEND = "/user_data/friends/nyx/atlas.json";
+const ROUTES = { "POST /api/atlas/open": { ...state.atlas, path: FRIEND, friend: "Nyx" } };
+
+/** Their atlas comes, is kept by the app (useFriendSync, not here: done by hand), and Open opens it in the app. */
+async function opensTheirAtlas(user: ReturnType<typeof userEvent.setup>, calls: Call[]) {
+	sendTo(s().links.find((l) => l.role === "share")?.id ?? -1, { t: "atlas", name: sharedName, file: sharedFile });
+	expect(await screen.findByText("their atlas is coming…")).toBeInTheDocument();
+	s().kept(s().links.find((l) => l.role === "watch")?.id ?? -1, FRIEND);
+	expect(await screen.findByText(sharedName)).toBeInTheDocument();
+	await user.click(screen.getByRole("button", { name: "Open" }));
+	await waitFor(() =>
+		expect(calls.some((c) => c.path === "/api/atlas/open" && (c.body as { path: string }).path === FRIEND)).toBe(true),
+	);
+	expect(s().open).toBe(false);
+}
 const share = () => screen.getByRole("region", { name: "Share my atlas" });
 const watch = () => screen.getByRole("region", { name: "Watch a friend" });
 
@@ -30,7 +48,7 @@ describe("ShareDialog", () => {
 	});
 
 	it("both sides in one page: invite, reply, connect, live; the watcher opens their atlas", async () => {
-		const { user } = renderWithApp(<ShareDialog />);
+		const { user, calls } = renderWithApp(<ShareDialog />, ROUTES);
 		const writeText = vi.spyOn(navigator.clipboard, "writeText"); // (user-event's clipboard)
 
 		await user.click(within(share()).getByRole("button", { name: "New invite" }));
@@ -51,10 +69,7 @@ describe("ShareDialog", () => {
 		await waitFor(() => expect(screen.getAllByText(/^live/)).toHaveLength(2));
 		expect(screen.getByText("sees your atlas")).toBeInTheDocument();
 
-		sendTo(s().links.find((l) => l.role === "share")?.id ?? -1, { t: "atlas", atlas: sharedAtlas });
-		await user.click(await screen.findByRole("button", { name: "Open" }));
-		expect(s().viewing).toBe(s().links.find((l) => l.role === "watch")?.id);
-		expect(s().open).toBe(false);
+		await opensTheirAtlas(user, calls);
 	});
 
 	it("a wrong code: said why, nothing kept", async () => {
@@ -90,7 +105,7 @@ describe("ShareDialog with a relay", () => {
 	});
 
 	it("one invite, pasted by the friend: live, nothing sent back; the watcher opens the atlas", async () => {
-		const { user } = renderWithApp(<ShareDialog />);
+		const { user, calls } = renderWithApp(<ShareDialog />, ROUTES);
 		expect(screen.getByText(/the relay can't read your atlas/)).toBeInTheDocument();
 		await user.click(within(share()).getByRole("button", { name: "New invite" }));
 		const invite = (await screen.findByLabelText("Your invite")) as HTMLTextAreaElement;
@@ -104,9 +119,7 @@ describe("ShareDialog with a relay", () => {
 		expect(screen.queryByLabelText("Your reply")).toBeNull(); // (nothing to paste back)
 		expect(screen.getByLabelText("Your invite (more friends can join with it)")).toBeInTheDocument();
 
-		sendTo(s().links.find((l) => l.role === "share")?.id ?? -1, { t: "atlas", atlas: sharedAtlas });
-		await user.click(await screen.findByRole("button", { name: "Open" }));
-		expect(s().viewing).toBe(s().links.find((l) => l.role === "watch")?.id);
+		await opensTheirAtlas(user, calls);
 	});
 
 	it("a direct invite is still there, for no third party", async () => {

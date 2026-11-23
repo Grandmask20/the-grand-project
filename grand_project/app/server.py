@@ -288,6 +288,9 @@ class Handler(BaseHTTPRequestHandler):
         if method not in ("GET", "HEAD") and self.headers.get(HEADER) != "1":
             self._json({"error": f"missing {HEADER} header"}, 403)
             return
+        if self.S.friend_refuses(method, path):  # (a friend's atlas is read-only: app/friends.py)
+            self._json({"error": "This is a friend's atlas: it can't be changed here."}, 403)
+            return
         # the atlas this request was made for: its header, else the one open as it came in (a switch while it is
         # handled refuses its change: CodeRabbit)
         self._req_gen = int(stale) if stale is not None and stale.isdigit() else self.S.generation
@@ -487,6 +490,32 @@ class Handler(BaseHTTPRequestHandler):
         """Save everything and stop the app."""
         self._json({"ok": True})
         threading.Thread(target=self.server.quit, daemon=True).start()  # type: ignore[attr-defined]
+
+    # ------------------------------------------------------------------ live sharing: friends' atlases
+    @route("GET", "/api/share/atlas")
+    def get_share_atlas(self, q) -> None:
+        """This atlas, packed, as live sharing sends it to friends."""
+        self._json(self.S.share_payload())
+
+    @route("GET", "/api/friends")
+    def get_friends(self, q) -> None:
+        """Friends' atlases kept here, and your own to go back to."""
+        self._json(self.S.friends_payload())
+
+    @route("POST", "/api/friends")
+    def post_friend(self, q) -> None:
+        """A friend's atlas as they sent it: kept (and read again when open)."""
+        b = self._body()
+        player = b.get("player") if isinstance(b.get("player"), dict) else None
+        self._json({"json": self.S.save_friend(str(b.get("name") or "Friend"), b.get("file"), player)})
+
+    @route("POST", "/api/friends/player")
+    def post_friend_player(self, q) -> None:
+        """Where a friend is now (I'm here)."""
+        b = self._body()
+        player = b.get("player") if isinstance(b.get("player"), dict) else None
+        self.S.set_friend_player(str(b.get("name") or "Friend"), player)
+        self._json({"ok": True})
 
     # ------------------------------------------------------------------ atlases
     @route("GET", "/api/atlases")
@@ -761,11 +790,6 @@ class Handler(BaseHTTPRequestHandler):
     def get_graph(self, q) -> None:
         """The map graph for routes."""
         self._json(self.S.graph())
-
-    @route("GET", "/api/landmarks")
-    def get_landmarks(self, q) -> None:
-        """The landmarks shown (live sharing sends them to a friend)."""
-        self._json(self.S.landmarks())
 
     @route("POST", "/api/pick")
     def post_pick(self, q) -> None:

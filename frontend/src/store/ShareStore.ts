@@ -1,5 +1,5 @@
 import { create } from "zustand";
-import type { SharedAtlas, SharedPlayer, ShareMessage } from "@/domain/share/SharedAtlas";
+import type { SharedPlayer, ShareMessage } from "@/domain/share/SharedAtlas";
 import { ShareCodeError } from "@/logic/share/Codes";
 import type { Peer } from "@/logic/share/Peer";
 import { relay, relayOn } from "@/logic/share/RelayConfig";
@@ -39,9 +39,14 @@ export interface Link {
 	code: string;
 	/** Their name, once they said it. */
 	friend: string;
-	/** A watch link: their atlas and where they are, as last sent. */
-	atlas: SharedAtlas | null;
+	/** A watch link: their atlas as last sent (packed: the app keeps it, useFriendSync), its name, where they are,
+	 * their route. */
+	file: string | null;
+	atlasName: string;
 	player: SharedPlayer | null;
+	route: number[] | null;
+	/** Their atlas's file in this app once kept ("" until then): opened as any atlas, read-only. */
+	atlasPath: string;
 	/** When their atlas or position last came (ms). */
 	updated: number;
 	/** A room's share link: how many friends watch now. */
@@ -58,9 +63,6 @@ export interface ShareStoreState {
 	open: boolean;
 	setOpen: (open: boolean) => void;
 	links: Link[];
-	/** The watch link whose atlas is open over the map (null: none). */
-	viewing: number | null;
-	view: (id: number | null) => void;
 	/** Share this atlas through the relay: a new room and its invite (relayOn only). */
 	shareRoom: () => Promise<void>;
 	/** Share this atlas browser to browser: a new direct invite. */
@@ -71,6 +73,8 @@ export interface ShareStoreState {
 	join: (invite: string) => Promise<number>;
 	/** A link ended (and forgotten). */
 	stop: (id: number) => void;
+	/** A watch link's atlas kept by the app, at this file. */
+	kept: (id: number, path: string) => void;
 }
 
 const NAME_KEY = "gp.share.name";
@@ -98,8 +102,11 @@ const blank = (id: number, role: LinkRole, via: LinkVia): Link => ({
 	state: "making",
 	code: "",
 	friend: "",
-	atlas: null,
+	file: null,
+	atlasName: "",
 	player: null,
+	route: null,
+	atlasPath: "",
 	updated: 0,
 	watchers: 0,
 	epoch: 0,
@@ -121,8 +128,10 @@ export const useShareStore = create<ShareStoreState>()((set, get) => {
 		if (m?.t === "hello" && typeof m.name === "string") patch(id, { friend: m.name.slice(0, 40) });
 		const link = get().links.find((l) => l.id === id);
 		if (link?.role !== "watch") return;
-		if (m?.t === "atlas" && m.atlas) patch(id, { atlas: m.atlas, updated: Date.now() });
+		if (m?.t === "atlas" && typeof m.file === "string")
+			patch(id, { file: m.file, atlasName: String(m.name ?? ""), updated: Date.now() });
 		if (m?.t === "pos") patch(id, { player: m.player ?? null, updated: Date.now() });
+		if (m?.t === "route") patch(id, { route: Array.isArray(m.path) ? m.path : null });
 	};
 	const peerFor = (id: number) => {
 		const p = new SharePeer({
@@ -180,8 +189,6 @@ export const useShareStore = create<ShareStoreState>()((set, get) => {
 		open: false,
 		setOpen: (open) => set({ open }),
 		links: [],
-		viewing: null,
-		view: (viewing) => set({ viewing }),
 		shareRoom: async () => {
 			const id = ++ids;
 			const invite = newRoom();
@@ -240,10 +247,11 @@ export const useShareStore = create<ShareStoreState>()((set, get) => {
 			}
 			return id;
 		},
+		kept: (id, atlasPath) => patch(id, { atlasPath }),
 		stop: (id) => {
 			peers.get(id)?.close();
 			peers.delete(id);
-			set((s) => ({ links: s.links.filter((l) => l.id !== id), viewing: s.viewing === id ? null : s.viewing }));
+			set((s) => ({ links: s.links.filter((l) => l.id !== id) }));
 		},
 	};
 });
@@ -252,5 +260,5 @@ export const useShareStore = create<ShareStoreState>()((set, get) => {
 export function resetShare(): void {
 	for (const p of peers.values()) p.close();
 	peers.clear();
-	useShareStore.setState({ links: [], viewing: null, open: false });
+	useShareStore.setState({ links: [], open: false });
 }

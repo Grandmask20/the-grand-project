@@ -102,7 +102,7 @@ export function createEventHandler(queryClient: QueryClient) {
 					"list",
 					"info",
 					"graph",
-					"landmarks",
+					"shareAtlas",
 					"frames",
 					"heat",
 					"bookmarks",
@@ -116,7 +116,7 @@ export function createEventHandler(queryClient: QueryClient) {
 				refresh("state", "parts", "graph", "types", "search", "list", "heat");
 				break;
 			case "atlases":
-				refresh("atlases");
+				refresh("atlases", "friends");
 				break;
 			case "update":
 				// the newest kept; a status request under way isn't cancelled (after a reconnect it is the one with the

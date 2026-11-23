@@ -23,7 +23,7 @@ import type { MapInfo } from "@/domain/map/MapInfo";
 import type { Scene3D } from "@/domain/map/Scene3D";
 import type { Frames } from "@/domain/replay/Frames";
 import type { ReplayFog, ReplayPlan } from "@/domain/replay/ReplayPlan";
-import type { SharedLandmark } from "@/domain/share/SharedAtlas";
+import type { FriendAtlases, SharedPlayer } from "@/domain/share/SharedAtlas";
 import type { Http } from "./Http";
 
 type Ok = { ok: boolean };
@@ -101,7 +101,13 @@ export function createAppClient(http: Http) {
 			http.url(`/api/icons/${encodeURIComponent(name)}.png`, { kind: "sprite", style, a: art }),
 		getGraph: () => http.get<Graph>("/api/graph"),
 		/** The landmarks shown (live sharing sends them to a friend). */
-		getLandmarks: () => http.get<SharedLandmark[]>("/api/landmarks"),
+		// live sharing: this atlas packed for friends; friends' atlases kept here
+		getShareAtlas: () => http.get<{ file: string | null }>("/api/share/atlas"),
+		getFriends: () => http.get<FriendAtlases>("/api/friends"),
+		saveFriend: (name: string, file: string, player: SharedPlayer | null) =>
+			http.send<{ json: string }>("POST", "/api/friends", { name, file, player }),
+		setFriendPlayer: (name: string, player: SharedPlayer | null) =>
+			http.send<{ ok: boolean }>("POST", "/api/friends/player", { name, player }),
 		pick: (x: number, y: number, z: number, layers?: Record<string, boolean>) =>
 			http.send<ItemInfo | null>("POST", "/api/pick", { x, y, z, layers }),
 		getInfo: (kind: ItemKind, id: number) => http.get<ItemInfo>("/api/info", { kind, id }),

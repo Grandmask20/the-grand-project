@@ -66,8 +66,6 @@ def test_tiles_over_http(app):
     st, h, body = call(srv, f"/api/tiles/vector/{z}/{int(wx // 256)}/{int(wy // 256)}.pbf")
     assert h["Content-Type"] == "application/x-protobuf" and read_tile(body)["maps"]
     assert call(srv, "/api/icons/Breach.png?kind=sprite")[2][:4] == b"\x89PNG"
-    marks = json.loads(call(srv, "/api/landmarks")[2])  # (live sharing sends them to a friend)
-    assert marks and {"x", "y", "kind", "label"} <= marks[0].keys()
 
 
 def test_changes_need_the_header_and_the_right_host(app):
@@ -363,3 +361,22 @@ def test_the_page_s_log_lines_and_group_names_are_checked(app, caplog):
     with caplog.at_level(logging.INFO, logger=S.LOG.name):
         call(srv, "/api/log", "POST", {"lines": ["two\nlines"]})
     assert "two lines" in caplog.text
+
+
+def test_a_friends_atlas_over_http_read_only(app, tmp_path, monkeypatch):
+    from grand_project import paths as rc_paths
+
+    srv, pts = app
+    monkeypatch.setattr(rc_paths, "USER_DATA", tmp_path / "user_data")
+    packed = json.loads(call(srv, "/api/share/atlas")[2])["file"]
+    st, _h, body = call(
+        srv, "/api/friends", "POST", {"name": "Nyx", "file": packed, "player": {"x": 1, "y": 2, "node": 3}}
+    )
+    friend = json.loads(body)["json"]
+    assert st == 200 and json.loads(call(srv, "/api/friends")[2])["friends"][0]["json"] == friend
+    assert call(srv, "/api/atlas/open", "POST", {"path": friend})[0] == 200
+    st, _h, body = call(srv, "/api/landmark", "POST", {"x": pts[0][0], "y": pts[0][1], "kind": "Tower", "on": "map"})
+    assert st == 403 and "friend's atlas" in json.loads(body)["error"]
+    assert call(srv, "/api/settings", "PATCH", {"near_only": True})[0] == 200  # (their view, for this visit)
+    assert call(srv, "/api/friends/player", "POST", {"name": "Nyx", "player": {"x": 5, "y": 6, "node": 1}})[0] == 200
+    assert json.loads(call(srv, "/api/state")[2])["settings"]["ui"]["player"]["node"] == 1
