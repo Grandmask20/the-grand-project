@@ -89,6 +89,17 @@ def test_held_out_screenshots_are_the_atlas_truth_seeded_validation_and_test() -
     assert [row["source"] for row in shots["test"]] == [f"{ATLAS}/b.png"]
 
 
+def test_an_atlas_outside_the_project_on_windows_holds_its_screenshots() -> None:
+    """Outside the project a source is an absolute path with the system's separators (Windows CI: none were found)."""
+    atlas = r"C:\Users\me\Temp\atlas"
+    images = [
+        {"source": atlas + r"\val.png", "split": "validation", K.ANNOTATOR_TRUTH_MARK: "t.json"},
+        {"source": atlas + r"-backup\tst.png", "split": "test", K.ANNOTATOR_TRUTH_MARK: "t.json"},  # another folder
+    ]
+    shots = held_out({"images": images}, atlas)
+    assert [row["source"] for row in shots["validation"]] == [atlas + r"\val.png"] and shots["test"] == []
+
+
 def test_the_classical_boxes_are_read_from_a_store_copy(tmp_path: Path, review_store: ReviewStore) -> None:
     path = tmp_path / "shot.png"
     path.write_bytes(b"x")

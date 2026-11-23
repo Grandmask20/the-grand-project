@@ -162,12 +162,18 @@ def classical_boxes(store_path: Path) -> dict[str, list[dict[str, Any]]]:
     return out
 
 
+def _posix(source: str) -> PurePosixPath:
+    """A screenshot source (or atlas folder) as a path with "/" separators on every system."""
+    return PurePosixPath(source.replace("\\", "/"))
+
+
 def held_out(manifest: Mapping[str, Any], atlas: str) -> dict[str, list[Mapping[str, Any]]]:
     """The atlas's truth-seeded validation and test screenshots of a manifest, by split."""
     out: dict[str, list[Mapping[str, Any]]] = {"validation": [], "test": []}
     for row in manifest.get("images", []):
-        # by path component: "<atlas>-backup/..." is another folder
-        inside = PurePosixPath(str(row.get("source", ""))).is_relative_to(PurePosixPath(atlas))
+        # by path component: "<atlas>-backup/..." is another folder. A source outside the project is an absolute
+        # path with the system's separators (relative_source): on Windows its backslashes made it one component
+        inside = _posix(str(row.get("source", ""))).is_relative_to(_posix(atlas))
         if row.get("split") in out and row.get(K.ANNOTATOR_TRUTH_MARK) and inside:
             out[row["split"]].append(row)
     return out
