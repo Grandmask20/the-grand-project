@@ -33,6 +33,7 @@ DUP_TOL = 26.0  # atlas units: one map found at two spots by different screensho
 SAME_SPOT = 14.0  # badges this close on one map are one badge
 
 
+ICON_LOOSE_SAME = 60.0  # a loose badge this close (its base) to a kept map with the same badge: the same badge
 ICON_TWIN = 40.0  # a map placed from a badge this close to a found map with the same badge: one map
 
 
@@ -246,3 +247,46 @@ CONTEXT_PAD = 700.0  # evidence margin: > the longest path (300) + parallax; tes
 
 
 SAME_MAP = 15.0  # atlas units: two map nodes this close are one map seen twice (the better-seen one counts)
+
+# --- a map's icons over time (finalize.icon_time; user's rules, v1.23)
+ICON_TIME_GAP = 30.0  # s: screenshots closer together are one moment (a scan: 3 s apart at most on the roa test;
+# running a map takes longer: 46-129 s between the single-map test's screenshots)
+ICON_TIME_DX = 80.0  # px: the icon row searched to each side of the map (5 icons 36 px apart span +-72)
+ICON_TIME_DY = 10.0  # px: ... and above / below its line (24 px above the map)
+ICON_TIME_RIM = 0.30  # rim score of an icon in the row (the finder's candidates start at 0.35; a little lower here)
+ICON_TIME_PEAKS = 6  # the strongest rims in the row that are named
+ICON_TIME_VIEWS = 8  # screenshots of one moment looked at again, the map nearest their middle first
+# 1 - correlation with the icon's own pictures (icon_refs.MAX_DIST 0.40 names an icon): roa test, before / after
+# a change: present 197 of 217 views <= 0.15; gone 202 of 271 > 0.5, 57 between (unsure)
+ICON_TIME_PRESENT = 0.15
+ICON_TIME_ABSENT = 0.50
+# a rim this icon fits within this of its best match (another icon's, or not an icon) might be it: unsure. Roa test:
+# rims left in a row after its icon went fit it at 0.31-0.39 but their best match at 0.02-0.26
+ICON_TIME_MARGIN = 0.10
+# icons never judged over time: no picture of their own, not map content, or not on one map
+ICON_TIME_SKIP = {"Unidentified", "NotABadge", "PlayerOrBookmark", "LostTower"}
+# icons that never appear on a map that didn't have them (user): one found only later was found falsely. Abyss is
+# the abyssal fissure; Trader the merchant; Hideout the blue one (the red one can appear)
+ICON_NEVER_APPEARS = {
+    "Corruption",
+    "Hideout",
+    "Abyss",
+    "AbyssalDepths",
+    "Expedition",
+    "ExpeditionRemnant",
+    "GrandExpedition",
+    "UniqueMap",
+    "Trader",
+}
+# icons that only appear in place of another (user): Cleansed replaces Corruption, never appears otherwise
+ICON_ONLY_REPLACES = {"Sanctification": "Corruption"}
+ICON_DEADLY = "MapBossSpecial"  # the Deadly Map Boss icon: an attempted deadly boss map keeps it, loses the others
+ICON_CITY_REACH = 90.0  # atlas units: a City landmark this close makes the map a City (not a plain deadly boss map)
+ICON_TIME_SNAP = 40.0  # px: a screenshot's own map this close to where the atlas puts it is that map
+# mean grey around the map below which a screenshot shows it in the dark fog (no icons drawn): unsure. Crawl atlas:
+# a fogged view 22, the same map lit 46-50; roa test views 55-124
+ICON_TIME_DARK = 35
+ICON_TIME_WIDE = 70  # px around the row where the icon still counts as there (where a screenshot puts a map can be
+# off: roa atlas 65 px)
+ICON_TIME_TIE = 0.03  # an icon found near the row counts only when it is within this of its best match (roa test: the
+# player marker over a map fit Cleansed's pictures)
