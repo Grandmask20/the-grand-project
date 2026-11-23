@@ -281,6 +281,34 @@ def timed_atlas(folder: Path) -> Path:
     return path
 
 
+def test_a_timelapse_closed_as_its_tiles_are_made_isnt_named_in_their_address(session, tmp_path, monkeypatch):
+    path, pts, _img = make_atlas(tmp_path)
+    session.open_atlas(path)
+    settled(session)
+    g = session.grid
+    wx, wy = g.world_px(*pts[0])
+    with session._source_lock:  # a timelapse open as the page asks for its tab's tiles
+        session._source = session._source.with_(replay={"node": [], "icon": [], "landmark": []}, replay_token=5)
+    real_vector, real_scene = session._vector_made, session._scene_made
+
+    def closing(real):
+        """The timelapse closes between the request's look at it and the build."""
+
+        def made(steps=False):
+            with session._source_lock:
+                session._source = session._source.with_(replay=None)
+            return real(steps)
+
+        return made
+
+    monkeypatch.setattr(session, "_vector_made", closing(real_vector))
+    monkeypatch.setattr(session, "_scene_made", closing(real_scene))
+    _data, tile_address = session.vector_tile_made(g.zmax, int(wx // 256), int(wy // 256), replay=True)
+    _scene, scene_address = session.scene_3d_made(replay=True)
+    # built without steps: not named the timelapse's, so not kept by the browser under its address (CodeRabbit)
+    assert tile_address and "&r=" not in tile_address and scene_address and "&r=" not in scene_address
+
+
 def test_replay_and_colour_by(session, tmp_path):
     session.open_atlas(timed_atlas(tmp_path))
     session.set_replay_settings({"type": "by time", "per_step": 1})

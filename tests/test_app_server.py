@@ -20,6 +20,12 @@ def app(tmp_path):
     path, pts, _img = make_atlas(tmp_path)
     session = AtlasSession(settings={}, worker=False)
     session.open_atlas(path)
+    # opening starts the locked-stronghold search, which ends with a model rebuild (new versions): waited for, it
+    # landed after a test read the versions and before it asked with them (CodeRabbit)
+    t = getattr(session, "_lock_thread", None)
+    if t:
+        t.join(60)
+        assert not t.is_alive(), "the locked-stronghold search didn't end"
     srv = AppServer(session, port=0)
     threading.Thread(target=srv.serve_forever, daemon=True).start()
     yield srv, pts
