@@ -430,12 +430,13 @@ def test_init_from_carries_every_class_head_row_by_name(tmp_path: Path) -> None:
     assert loaded.config.num_labels == 5 and loaded.config.id2label[4] == "citadel_iron"
 
 
-def test_a_fine_tune_keeps_the_pretrained_rows_of_its_head(tmp_path: Path) -> None:
+def test_a_fine_tune_keeps_the_pretrained_rows_of_its_head(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """As the reference: a pre-trained head's first rows start the new classes (no row is random)."""
     pretrained = tmp_path / "pretrained"
     model = _tiny({str(i): f"coco{i}" for i in range(5)})
     _number_rows(model)
     model.save_pretrained(pretrained)
+    monkeypatch.setattr(K, "RF_DETR_MODEL_NAME", str(pretrained))  # the pre-trained branch, not --init-from's
     loaded = T.load_model(pretrained, LABELS)
     assert _rows(loaded) == [[0, 1]] * 3 and loaded.class_embed.out_features == 2
 

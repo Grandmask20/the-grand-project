@@ -292,6 +292,9 @@ def test_a_dataset_is_reused_only_when_built_from_the_same_inputs(tmp_path: Path
     (dataset / "metadata.json").write_text(json.dumps({**meta, "truth_seeded": True}))
     manifest.write_text('{"images": []}')
     assert not dataset_matches(dataset, manifest)  # another export
+    for broken in ("{not json", "[1, 2]"):  # an interrupted build's record: built anew, never an error
+        (dataset / "metadata.json").write_text(broken)
+        assert not dataset_matches(dataset, manifest)
 
 
 def test_without_held_out_screenshots_nothing_is_trained(

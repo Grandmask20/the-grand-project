@@ -733,7 +733,7 @@ def check_resume_labels(checkpoint: Path, label_map: dict[str, str]) -> None:
 def training_arguments(args: argparse.Namespace, checkpoints: Path) -> TrainingArguments:
     """The Trainer's settings: the recipe (``RF_DETR_*``) and the run's options."""
     cuda = args.device in ("auto", "cuda") and torch.cuda.is_available()
-    bf16 = cuda and torch.cuda.is_bf16_supported()
+    bf16 = cuda and torch.cuda.is_bf16_supported(including_emulation=False)  # pre-Ampere: fp16
     workers = max(0, args.workers)
     return TrainingArguments(
         output_dir=str(checkpoints),

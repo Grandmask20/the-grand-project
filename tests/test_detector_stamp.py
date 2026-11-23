@@ -4,7 +4,7 @@ import os
 import sqlite3
 
 from grand_project import builder
-from grand_project.detect import constants
+from grand_project.detect import constants, rf_detr_model
 
 
 def _db(path, blob):
@@ -58,6 +58,7 @@ def _rf_detr_stamp(monkeypatch, folder):
     monkeypatch.setenv(constants.RF_DETR_USE_ENV, "1")
     monkeypatch.setenv(constants.RF_DETR_MODEL_ENV, str(folder))
     monkeypatch.setattr(builder, "_STAMP", [])
+    rf_detr_model.reset_rf_detr_runtime()  # the checkpoint digest too: both are worked out once per process
     return builder.detector_stamp()
 
 

@@ -244,14 +244,31 @@ class ReviewStore:
     # ---- opening -------------------------------------------------------------------------------------------------
 
     @classmethod
-    def open(cls, path: Path, input_roots: Iterable[Path | str] = ()) -> ReviewStore:
+    def open(cls, path: Path, input_roots: Iterable[Path | str] = (), *, read_only: bool = False) -> ReviewStore:
         """Open the store at ``path``, creating it (with ``input_roots`` and the default detection options) when it
         does not exist yet.
 
+        ``read_only`` (a dry run): an existing store opened for reading only, the file left exactly as it is (no
+        journal mode set, no tables made); its writes raise.
+
         Raises:
-            sqlite3.Error: The file is not a database, or is locked for longer than ``ANNOTATOR_STORE_BUSY_S``.
+            sqlite3.Error: The file is not a database, is locked for longer than ``ANNOTATOR_STORE_BUSY_S``, or (read
+                only) does not exist or has no tables yet.
             StoreLayoutError: An older annotator built it (a ``sqlite3.Error`` too).
         """
+        if read_only:
+            # as_uri percent-encodes the path: a raw "#" or "?" in it would end the path early and drop "mode=ro"
+            uri = f"{Path(path).resolve().as_uri()}?mode=ro"
+            connection = sqlite3.connect(uri, uri=True, timeout=K.ANNOTATOR_STORE_BUSY_S, isolation_level=None)
+            try:
+                store = cls(connection, path)
+                if not store._version():
+                    raise sqlite3.OperationalError(f"{path} is not an annotator store yet")
+                store._check_tables()
+            except BaseException:
+                connection.close()
+                raise
+            return store
         path.parent.mkdir(parents=True, exist_ok=True)
         # isolation_level=None: no implicit transactions; _write() and _read() say where each one starts and ends.
         connection = sqlite3.connect(str(path), timeout=K.ANNOTATOR_STORE_BUSY_S, isolation_level=None)
@@ -366,8 +383,9 @@ class ReviewStore:
         Returns:
             (added, existing) screenshot counts.
         """
-        # Keys and names first: resolving paths reads the disk, which should not happen while holding the lock.
-        rows = [(image_key(path), str(path), relative_source(path)) for path in paths]
+        # Keys and names first: resolving paths reads the disk, which should not happen while holding the lock. The
+        # path is stored absolute, as the key resolves it: the split ledger's hash and the export read the same file
+        rows = [(image_key(path), str(Path(path).resolve()), relative_source(path)) for path in paths]
         added = 0
         with self._write():
             position = self._db.execute("SELECT COALESCE(MAX(position) + 1, 0) FROM images").fetchone()[0]
@@ -486,6 +504,13 @@ class ReviewStore:
                 self._db.execute("UPDATE images SET split = ? WHERE key = ? AND split IS NULL", (split, key))
             stored = dict(self._db.execute("SELECT key, split FROM images WHERE split IS NOT NULL"))
         return {key: stored[key] for key in splits if key in stored}
+
+    def release_splits(self, splits: Mapping[str, str]) -> None:
+        """Take back splits a ``claim_splits`` gave (the ledger could not be written after it), in one write: each
+        screenshot that still has the split given loses it."""
+        with self._write():
+            for key, split in splits.items():
+                self._db.execute("UPDATE images SET split = NULL WHERE key = ? AND split = ?", (key, split))
 
     def _splits_of(self, keys: list[str]) -> dict[str, str]:
         """Image key -> its split, for those of ``keys`` that have one (inside a transaction)."""

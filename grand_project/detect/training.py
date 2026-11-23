@@ -383,8 +383,9 @@ def cmd_score_rf_detr() -> int:
     The model is GRAND_PROJECT_RF_DETR_MODEL's, else runs/rf-detr-small/best. The truth screenshots are pinned to the
     annotator's test split, so a model trained by `tools.train_rf_detr` never trained on them; the score is called
     held-out only when the model's own list of training screenshots (RF_DETR_TRAINED_ON) confirms it, beside
-    `score`'s leave-one-out score of the classical detector. Writes the outputs to last_score_outputs_rf_detr.json
-    next to TRUTH.
+    `score`'s leave-one-out score of the classical detector. Icons are named leave-one-out too: with the labelled
+    pictures of the other truth screenshots, not the stored icon model's (which holds every truth screenshot's).
+    Writes the outputs to last_score_outputs_rf_detr.json next to TRUTH.
 
     Returns:
         0 (process exit code); 1 when there is no hand-labelled truth or none of its screenshots can be read.
@@ -396,13 +397,19 @@ def cmd_score_rf_detr() -> int:
     if not truth:
         print("no hand-labelled truth: none of " + ", ".join(str(tf) for tf, _shots in TRUTH_SETS) + " is there")
         return 1
-    new = {}
+    imgs = {}
     for name in truth:
         img = core.read_screenshot(where[name])  # 1080p, as the program reads it and the truth is labelled
         if img is None:
             print(f"cannot read {where[name]}: left out")
             continue
-        out = detect_rf_detr(img)
+        imgs[name] = img
+    new = {}
+    for name, img in imgs.items():
+        # the icons are named with the labelled pictures of the other truth screenshots only, as `score` names them
+        # (the stored icon model's book holds this screenshot's own pictures): the model's weights are what is scored
+        book = badge_book(truth, imgs, [other for other in imgs if other != name])
+        out = detect_rf_detr(img, book=book)
         out["icons"] = [icon for icon in out["icons"] if not icon["name"].startswith("ExpeditionShip")]
         for n, state in zip(out["nodes"], name_states(img, out["nodes"]), strict=True):  # as the program names them
             n["state"] = state

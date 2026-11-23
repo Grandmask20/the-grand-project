@@ -139,7 +139,8 @@ def test_pre_label_starts_the_model_pass_on_this_store(page, monkeypatch: pytest
         assert command[command.index("--output-dir") + 1] == str(out)
         assert command[command.index("--model") + 1] == str((out / "model").resolve())
         assert _button(at, "Pre-label").disabled
-        assert "12 screenshots eligible" in (out / K.ANNOTATOR_PRELABEL_LOG).read_text(encoding="utf-8")
+        (log,) = out.glob(K.ANNOTATOR_PRELABEL_LOG_GLOB)  # its own log: another tab's pass writes another
+        assert "12 screenshots eligible" in log.read_text(encoding="utf-8")
     finally:
         store.close()
 
@@ -160,6 +161,11 @@ def test_the_page_listens_on_this_computer_unless_told_otherwise(monkeypatch: py
         "--server.address=0.0.0.0",
     ]
     assert streamlit_args(app, ["--server.address", "::"])[3:] == ["--server.address", "::"]
+    # after "--" the arguments are the page's own: an address there is not Streamlit's
+    assert streamlit_args(app, ["--", "--server.address", "x"])[3:] == ["--server.address", "127.0.0.1", "--"] + [
+        "--server.address",
+        "x",
+    ]
     monkeypatch.setenv("STREAMLIT_SERVER_ADDRESS", "0.0.0.0")
     assert streamlit_args(app, []) == ["streamlit", "run", "app.py"]
 
@@ -200,6 +206,16 @@ def test_a_save_made_on_boxes_another_tab_changed_is_refused(tmp_path: Path, mon
     assert second[K.ANNOTATOR_SESSION_RELOADS] == 1 and K.ANNOTATOR_SESSION_NOTICE in second
     assert autosave(first, 60.0, 2) == 60.0  # the first tab goes on from what it saved
     assert first[app._saved_seq_key(editor)] == 2 and K.ANNOTATOR_SESSION_RELOADS not in first
+
+    # a save the store refuses in its own write (another tab saved between the check and the write) reloads the
+    # editor the same way, and its edit is not acknowledged
+    with ReviewStore.open(store_path) as store:
+        item = store.item(key)  # the tab mounts on the saved boxes, so it passes the check before the write
+    monkeypatch.setattr(ReviewStore, "save_review", lambda self, *args, **kwargs: False)
+    third = tab()
+    assert autosave(third, 70.0, 1) == 60.0
+    assert third[K.ANNOTATOR_SESSION_RELOADS] == 1 and K.ANNOTATOR_SESSION_NOTICE in third
+    assert app._saved_seq_key(editor) not in third
 
 
 def test_a_new_editor_drops_the_last_ones_session_memory(monkeypatch: pytest.MonkeyPatch) -> None:

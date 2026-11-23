@@ -105,8 +105,29 @@ def test_a_dry_run_says_what_would_change_and_changes_nothing(tmp_path: Path, ol
     with ReviewStore.open(store_file) as store:
         assert {key: store.item(key) for key in store.paths()} == before
     assert list((tmp_path / "out").glob(K.ANNOTATOR_BUILD_BACKUP.format(stamp="*"))) == []
-    assert build_store.build(tmp_path / "none", dry_run=True, say=lambda line: None) == Counter()
+    # the store file as it was too: opened read only (no journal mode set, no tables made)
+    assert sorted(path.name for path in (tmp_path / "out").iterdir() if not path.name.endswith(("-wal", "-shm"))) == [
+        K.ANNOTATOR_STORE_FILE
+    ]
+    # without a store, a dry run plans from an empty one: what discovery would queue (copies and atlas pictures not)
+    lines: list[str] = []
+    planned = build_store.build(tmp_path / "none", roots=[tmp_path / "shots"], dry_run=True, say=lines.append)
+    assert planned == Counter({"added": 3})
+    assert any("3 screenshots not detected yet" in line for line in lines)
     assert not (tmp_path / "none").exists()
+
+
+def test_a_discovered_copy_is_never_queued(tmp_path: Path) -> None:
+    """A copy discovery leaves out is not added only to be removed again: the store gets the original alone."""
+    root = tmp_path / "shots"
+    for folder in ("a", "b"):
+        (root / folder).mkdir(parents=True)
+        (root / folder / "shot.png").write_bytes(b"same bytes")
+    lines: list[str] = []
+    done = build_store.build(tmp_path / "out", roots=[root], truths=[], detect=False, say=lines.append)
+    assert done["added"] == 1 and done["removed"] == 0
+    with ReviewStore.open(tmp_path / "out" / K.ANNOTATOR_STORE_FILE) as store:
+        assert [Path(path).relative_to(root).as_posix() for path in store.paths().values()] == ["a/shot.png"]
 
 
 def test_a_missing_truth_file_is_an_error_but_a_missing_default_is_skipped(

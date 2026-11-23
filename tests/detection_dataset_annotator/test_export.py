@@ -3,7 +3,6 @@ and the truth mark a truth-seeded training round reads (the export itself is tes
 
 from __future__ import annotations
 
-import functools
 import json
 from pathlib import Path
 
@@ -53,13 +52,12 @@ def test_an_export_carries_the_truth_that_seeded_a_screenshot(tmp_path: Path, re
 def test_a_relative_screenshot_path_is_exported_where_the_file_is(
     tmp_path: Path, review_store: ReviewStore, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """A store path relative to the project is written resolved: the trainer reads a relative manifest path from the
-    manifest's own folder, where the screenshot is not. ``tmp_path`` stands in for the project folder (on Windows CI
-    it lies on another drive than the checkout: no path leads from one to the other)."""
-    from tools.detection_dataset_annotator import export, state
+    """A screenshot added by a relative path is stored resolved (as its key resolves it), so the split ledger hashes and
+    the export writes one file: the trainer reads a relative manifest path from the manifest's own folder, where the
+    screenshot is not."""
+    from tools.detection_dataset_annotator import export
 
-    monkeypatch.chdir(tmp_path)  # the split ledger hashes the stored path as it is, from the working folder
-    monkeypatch.setattr(export, "resolve_path", functools.partial(state.resolve_path, root=tmp_path))
+    monkeypatch.chdir(tmp_path)
     shot = tmp_path / "shots" / "a.png"
     shot.parent.mkdir()
     shot.write_bytes(b"a")

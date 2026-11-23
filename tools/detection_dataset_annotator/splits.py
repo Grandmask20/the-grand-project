@@ -74,6 +74,7 @@ def assign_splits(
     pinned: Mapping[str, str] | None = None,
     fixed: Mapping[str, str] | None = None,
     blocks: Mapping[str, Block] | None = None,
+    atlases: Mapping[str, str] | None = None,
     bins: int = K.ANNOTATOR_SPLIT_BINS,
     rounds: int = K.ANNOTATOR_SPLIT_ROUNDS,
 ) -> dict[str, str]:
@@ -86,6 +87,8 @@ def assign_splits(
         pinned: image key -> split it must be in (wins over ``fixed``, and takes its block along).
         fixed: image key -> split it already has (kept).
         blocks: image key -> its block (``blocks.screenshot_blocks``); a key without one is a block of its own.
+        atlases: image key -> the atlas it belongs to, for each atlas's balance (default its block's): a copy joined
+            into another atlas's block (``split_ledger.join_blocks``) moves with that block but counts for its own.
         bins: bins of boxes per screenshot.
         rounds: swaps tried in the refinement.
 
@@ -100,6 +103,7 @@ def assign_splits(
         return {}
     pinned, fixed, blocks = dict(pinned or {}), dict(fixed or {}), dict(blocks or {})
     block_of = {key: blocks.get(key, Block(key)) for key in keys}
+    atlas_of = {key: (atlases or {}).get(key, block_of[key].atlas) for key in keys}
     groups = sorted(set(block_of.values()))
     index = {block: i for i, block in enumerate(groups)}
     members: list[list[str]] = [[] for _ in groups]
@@ -110,16 +114,18 @@ def assign_splits(
     # What the splits balance, per block: its boxes of every class, its screenshots, and its screenshots under the
     # name of its atlas (atlases of several blocks: each atlas reaches every split).
     classes = sorted({name for counts in items.values() for name in counts})
-    per_atlas = Counter(block.atlas for block in groups)
-    atlases = sorted(atlas for atlas, count in per_atlas.items() if count > 1)
+    spread: dict[str, set[Block]] = {}  # each atlas's blocks, by its own screenshots
+    for key in keys:
+        spread.setdefault(atlas_of[key], set()).add(block_of[key])
+    balanced = sorted(atlas for atlas, its_blocks in spread.items() if len(its_blocks) > 1)
     row: dict[str, np.ndarray] = {}  # per screenshot: its boxes of every class, 1 screenshot, 1 of its atlas
     for key in keys:
-        row[key] = np.zeros(len(classes) + 1 + len(atlases))
+        row[key] = np.zeros(len(classes) + 1 + len(balanced))
         for c, name in enumerate(classes):
             row[key][c] = items[key].get(name, 0)
         row[key][len(classes)] = 1
-        if block_of[key].atlas in atlases:
-            row[key][len(classes) + 1 + atlases.index(block_of[key].atlas)] = 1
+        if atlas_of[key] in balanced:
+            row[key][len(classes) + 1 + balanced.index(atlas_of[key])] = 1
     counts = np.array([sum((row[key] for key in keys_of), np.zeros(len(row[keys[0]]))) for keys_of in members])
     bin_of = _bins(counts[:, : len(classes)].sum(axis=1) / size, bins)
     split_of = np.array([_block_split(m, pinned, fixed, names) for m in members])

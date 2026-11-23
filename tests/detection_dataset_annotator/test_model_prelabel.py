@@ -324,3 +324,16 @@ def test_a_model_swapped_while_the_pass_ran_stops_it(
     with pytest.raises(SystemExit, match="changed while this pass ran"):
         model_prelabel.main(["--model", str(model_dir), "--output-dir", str(out), "--share", "1"])
     assert K.ANNOTATOR_PRELABEL_FIELD not in review_store.item(image_key(path))
+
+
+def test_a_named_classical_icon_keeps_its_name_where_the_model_finds_its_icon() -> None:
+    """The model has one icon class: a named classical icon (named icons on) it agrees with keeps its name and is no
+    longer a guess; a class the model really changes is still taken (and checked first)."""
+    classical = [_box("icon_mapboss", 100, 100, 34), _box("map_node_grass", 400, 400)]
+    model = [_model("icon", 101, 100, 34), _model("map_node_desert", 400, 401)]
+    for policy in ("relabel", "union"):
+        boxes = merge(classical, model, policy)
+        assert [(b["label"], b["source"]) for b in boxes] == [
+            ("icon_mapboss", DK.RF_DETR_SOURCE_MODEL),
+            ("map_node_desert", DK.RF_DETR_SOURCE_MODEL_GUESS),
+        ]

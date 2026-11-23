@@ -38,6 +38,7 @@ from typing import Any
 
 from grand_project import core
 from grand_project.detect import constants as DK
+from grand_project.detect.labels import export_class
 from grand_project.detect.proposals import box_at_point, clip_box
 from grand_project.detect.rf_detr_model import trained_on
 
@@ -137,7 +138,8 @@ def merge(
             matched_model.add(theirs[b])
             if box.get("source") in PROTECTED_SOURCES:
                 continue
-            if box["label"] == theirs_box["label"]:
+            # a named classical icon (icon_mapboss ...) is the model's one icon class: both say so, the name stays
+            if theirs_box["label"] in (box["label"], export_class(str(box["label"]))):
                 box["source"] = DK.RF_DETR_SOURCE_MODEL  # both say so: no longer a guess
             else:
                 box["label"] = theirs_box["label"]

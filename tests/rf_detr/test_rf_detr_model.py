@@ -196,7 +196,7 @@ def _detect(monkeypatch, predictions: list[dict], size=(1080, 1920), names=None)
     monkeypatch.setattr(rf_detr_model, "_predict", lambda img: predictions)
     given = iter(names or [])
     monkeypatch.setattr(
-        rf_detr_model, "_name_icons", lambda img, found: [dict(icon, name=next(given)) for icon in found]
+        rf_detr_model, "_name_icons", lambda img, found, book=None: [dict(icon, name=next(given)) for icon in found]
     )
     return rf_detr_model.detect_rf_detr(np.zeros((*size, 3), np.uint8))
 
@@ -373,3 +373,23 @@ def test_the_expedition_rules_come_before_the_paths(monkeypatch: pytest.MonkeyPa
     result = _detect(monkeypatch, predictions, names=[K.EXPEDITION])
     assert [bool(node.get("tower")) for node in traced[0]] == [False]
     assert not any(lm["kind"] == "Tower" for lm in result["landmarks"])
+
+
+def test_the_loaded_checkpoint_is_the_one_the_detector_stamp_names(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The stamp's checkpoint digest is worked out once per process; a checkpoint swapped in after it (a training run
+    keeping a new best/) is refused at the load, so no detection of other weights is saved under the old stamp."""
+    pytest.importorskip("torch")
+    transformers = pytest.importorskip("transformers")
+    _stub_loaders(monkeypatch, transformers, tmp_path, {"0": "map_node", "1": "icon"})
+    try:
+        stamp = rf_detr_model.checkpoint_digest(tmp_path)
+        assert rf_detr_model._load_runtime()["families"]  # the same files: loads
+        rf_detr_model._RUNTIME = None  # a later load in the same process, the digest kept
+        (tmp_path / "model.safetensors").write_bytes(b"other weights")
+        with pytest.raises(RuntimeError, match="changed since this process first read it"):
+            rf_detr_model._load_runtime()
+        assert rf_detr_model.checkpoint_digest(tmp_path) == stamp
+    finally:
+        rf_detr_model.reset_rf_detr_runtime()

@@ -33,7 +33,7 @@ def test_the_hand_truth_scores_the_rf_detr_detector(
     }
     seen = []
 
-    def detect(img: np.ndarray) -> dict:
+    def detect(img: np.ndarray, book=None) -> dict:
         seen.append(img.shape)
         return json.loads(json.dumps(found))
 
@@ -46,6 +46,33 @@ def test_the_hand_truth_scores_the_rf_detr_detector(
     assert saved["shot.png"]["icons"] == [] and len(saved["shot.png"]["nodes"]) == 2
 
 
+def test_each_screenshot_names_its_icons_without_its_own_pictures(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The stored icon model's book holds every truth screenshot's labelled pictures: the score names a screenshot's
+    icons with the other screenshots' pictures only (leave-one-out, as ``score``), whatever the stored model holds."""
+    truth, where = {}, {}
+    for name, icon in (("a.png", "Delirium"), ("b.png", "Breach")):
+        where[name] = tmp_path / name
+        img = np.zeros((1080, 1920, 3), np.uint8)
+        cv2.circle(img, (500, 500), 12, (40, 200, 230) if icon == "Delirium" else (200, 60, 200), -1)
+        cv2.imwrite(str(where[name]), img)
+        truth[name] = {"maps": [], "maybe": [], "not_maps": [], "landmarks": [],
+                       "badges": [{"x": 500.0, "y": 500.0, "name": icon}]}  # fmt: skip
+    monkeypatch.setattr(training, "_truth_screenshots", lambda: (truth, where))
+    monkeypatch.setattr(training, "TRUTH", tmp_path / "truth.json")
+    monkeypatch.setenv(K.RF_DETR_MODEL_ENV, str(tmp_path / "model"))
+    books = []
+
+    def detect(img: np.ndarray, book=None) -> dict:
+        books.append(book["names"])
+        return {"nodes": [], "icons": [], "landmarks": [], "edges": []}
+
+    monkeypatch.setattr(rf_detr_model, "detect_rf_detr", detect)
+    assert training.cmd_score_rf_detr() == 0
+    assert books == [["Breach"], ["Delirium"]]
+
+
 def _one_shot(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     """One hand-labelled 1080p screenshot (no maps) and a detector that finds nothing; the model folder in tmp_path."""
     shot = tmp_path / "shot.png"
@@ -55,7 +82,7 @@ def _one_shot(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     monkeypatch.setattr(training, "TRUTH", tmp_path / "truth.json")
     monkeypatch.setenv(K.RF_DETR_MODEL_ENV, str(tmp_path / "model"))
     empty = {"nodes": [], "icons": [], "landmarks": [], "edges": []}
-    monkeypatch.setattr(rf_detr_model, "detect_rf_detr", lambda img: dict(empty))
+    monkeypatch.setattr(rf_detr_model, "detect_rf_detr", lambda img, book=None: dict(empty))
     (tmp_path / "model").mkdir()
     return shot
 
@@ -96,7 +123,7 @@ def test_screenshots_are_read_as_the_program_reads_them(
     cv2.imwrite(str(shot), np.zeros((2160, 3840, 3), np.uint8))
     seen = []
 
-    def detect(img: np.ndarray) -> dict:
+    def detect(img: np.ndarray, book=None) -> dict:
         seen.append(img.shape)
         return {"nodes": [], "icons": [], "landmarks": [], "edges": []}
 

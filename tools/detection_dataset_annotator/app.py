@@ -9,6 +9,7 @@ Streamlit runs this file as a script, not as part of its package, so it imports 
 from __future__ import annotations
 
 import copy
+import os
 import sqlite3
 import subprocess
 import sys
@@ -155,12 +156,18 @@ def _changed_elsewhere(item: dict[str, Any], editor_key: str) -> bool:
     if base is not None and not annotations_changed(base, item.get("annotations", [])):
         return False
     if base is not None:
-        st.session_state[K.ANNOTATOR_SESSION_RELOADS] = int(st.session_state.get(K.ANNOTATOR_SESSION_RELOADS, 0)) + 1
-        st.session_state[K.ANNOTATOR_SESSION_NOTICE] = (
-            "This screenshot was saved from another tab meanwhile: your last edit was not saved, and the editor shows "
-            "the saved boxes again."
-        )
+        _reload_editor()
     return True
+
+
+def _reload_editor() -> None:
+    """Show the saved boxes again in a fresh editor, saying why: this editor's edit was not saved (another tab or a
+    background pass saved the screenshot first). Its edits are not acknowledged, and the queue stays where it is."""
+    st.session_state[K.ANNOTATOR_SESSION_RELOADS] = int(st.session_state.get(K.ANNOTATOR_SESSION_RELOADS, 0)) + 1
+    st.session_state[K.ANNOTATOR_SESSION_NOTICE] = (
+        "This screenshot was saved from another tab meanwhile: your last edit was not saved, and the editor shows "
+        "the saved boxes again."
+    )
 
 
 def _review_log(payload: dict[str, Any], *, reviewed: bool | None) -> dict[str, Any]:
@@ -185,7 +192,8 @@ def _on_edit(store_path: Path, image_key: str, revision: int, editor_key: str) -
         if (edited is not None or log["review_s"] > 0) and not store.save_review(
             image_key, revision, annotations=edited, expect_boxes=item["annotations"], **log
         ):
-            return  # a detector rerun or another tab's save landed in between
+            _reload_editor()  # a detector rerun or another tab's save landed in between
+            return
     _accepted(editor_key, payload, edited)
 
 
@@ -216,7 +224,8 @@ def _on_action(store_path: Path, image_key: str, revision: int, editor_key: str,
         if changes and not store.save_review(
             image_key, revision, annotations=edited, reviewed=reviewed, expect_boxes=item["annotations"], **log
         ):
-            return  # a detector rerun or another tab's save landed in between
+            _reload_editor()  # a detector rerun or another tab's save landed in between
+            return
     _accepted(editor_key, action, edited)
     st.session_state[K.ANNOTATOR_SESSION_SELECTED] = target
 
@@ -230,6 +239,9 @@ def _render_editor(store: ReviewStore, key: str, keys: list[str], settings: Sett
     if item.get("error"):
         st.error(item["error"])
     if not item.get("detected"):
+        # no editor on screen: the next one mounts fresh, without this one's saved count or undo memory
+        if mounted := st.session_state.pop(K.ANNOTATOR_SESSION_MOUNTED_EDITOR, None):
+            _forget(mounted)
         st.info("This screenshot has not been processed by the classical detector yet. Press **Detect**.")
         return
     try:
@@ -414,7 +426,11 @@ def _model_prelabels(settings: Settings) -> None:
     show its progress."""
     running = st.session_state.get(K.ANNOTATOR_SESSION_PRELABEL)
     busy = running is not None and running.poll() is None
-    log = settings.output_dir / K.ANNOTATOR_PRELABEL_LOG
+    # this session's pass's own log, else the folder's newest (another tab's): every pass writes its own
+    log = st.session_state.get(K.ANNOTATOR_SESSION_PRELABEL_LOG)
+    if log is None or Path(log).parent != settings.output_dir:
+        logs = sorted(settings.output_dir.glob(K.ANNOTATOR_PRELABEL_LOG_GLOB), key=lambda path: path.stat().st_mtime)
+        log = logs[-1] if logs else None
     with st.expander("Model pre-labels"):
         st.caption(
             "An RF-DETR model pre-labels unreviewed training screenshots beside the classical boxes: a share of their "
@@ -425,7 +441,10 @@ def _model_prelabels(settings: Settings) -> None:
         share = st.slider("Share of blocks the model pre-labels", 0.0, 1.0, 0.5, 0.05)
         if st.button("Pre-label", width="stretch", disabled=busy):
             settings.output_dir.mkdir(parents=True, exist_ok=True)
-            with open(log, "w", encoding="utf-8") as out:
+            stamp = f"{time.strftime('%Y%m%d-%H%M%S')}-{os.getpid()}-{time.monotonic_ns()}"
+            log = settings.output_dir / K.ANNOTATOR_PRELABEL_LOG.format(stamp=stamp)
+            st.session_state[K.ANNOTATOR_SESSION_PRELABEL_LOG] = log
+            with open(log, "x", encoding="utf-8") as out:  # a new file: never another pass's
                 st.session_state[K.ANNOTATOR_SESSION_PRELABEL] = subprocess.Popen(
                     [
                         sys.executable,
@@ -446,8 +465,8 @@ def _model_prelabels(settings: Settings) -> None:
             st.rerun()
         if busy:
             st.caption("Pre-labelling… (refresh to follow it)")
-        if log.is_file():
-            lines = log.read_text(encoding="utf-8", errors="replace").splitlines()[-4:]
+        if log is not None and Path(log).is_file():
+            lines = Path(log).read_text(encoding="utf-8", errors="replace").splitlines()[-4:]
             st.code("\n".join(lines) or "(no output yet)", language=None)
 
 

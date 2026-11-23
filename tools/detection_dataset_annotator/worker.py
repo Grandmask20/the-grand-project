@@ -33,6 +33,9 @@ def _answer(message: dict[str, Any]) -> None:
 def main() -> None:
     """Read detection jobs from stdin and answer each with one JSON line."""
     cv2.setNumThreads(max(1, int(os.environ.get(K.ANNOTATOR_OPENCV_THREADS_ENV, "1"))))
+    # the pool writes and reads UTF-8 lines, whatever this system's console encoding (a non-ASCII path)
+    sys.stdin.reconfigure(encoding="utf-8")
+    sys.stdout.reconfigure(encoding="utf-8")
     for line in sys.stdin:
         try:
             request = json.loads(line)

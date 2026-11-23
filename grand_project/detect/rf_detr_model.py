@@ -22,6 +22,7 @@ beside it locked (``landmarks.stronghold_kind``). Paths and fortress walls come 
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 from pathlib import Path
@@ -43,6 +44,8 @@ from .paths import trace_paths
 from .walls import fortress_walls, wall_share
 
 _RUNTIME: dict[str, Any] | None = None
+_DIGESTS: dict[str, str] = {}
+"""Model folder -> its checkpoint digest, worked out once per process (``checkpoint_digest``)."""
 
 
 def rf_detr_enabled() -> bool:
@@ -66,9 +69,32 @@ def trained_on(model_dir: Path) -> set[str]:
 
 
 def reset_rf_detr_runtime() -> None:
-    """Forget a loaded model; useful when a test swaps the model path or feature flag."""
+    """Forget a loaded model and the checkpoint digests; useful when a test swaps the model path or feature flag."""
     global _RUNTIME
     _RUNTIME = None
+    _DIGESTS.clear()
+
+
+def _hash_checkpoint(model_dir: Path) -> str:
+    """Each file's name and contents, not its place or time: the same checkpoint copied or swapped in again has the
+    same digest; other weights under the same name and time do not (CodeRabbit)."""
+    h = hashlib.sha1()
+    for f in sorted(Path(model_dir).iterdir()):
+        if f.is_file():
+            h.update(f"{f.name}:".encode())
+            with open(f, "rb") as fh:
+                for chunk in iter(lambda: fh.read(1 << 20), b""):
+                    h.update(chunk)
+    return h.hexdigest()
+
+
+def checkpoint_digest(model_dir: Path) -> str:
+    """The digest of a checkpoint folder's files, worked out once per process: the detector stamp
+    (``builder.detector_stamp``) and the model ``load_detector`` loads are the same checkpoint state."""
+    key = str(Path(model_dir).resolve())
+    if key not in _DIGESTS:
+        _DIGESTS[key] = _hash_checkpoint(Path(model_dir))
+    return _DIGESTS[key]
 
 
 def _device(torch):
@@ -115,6 +141,7 @@ def load_detector(model_dir: Path) -> dict[str, Any]:
             f"RF-DETR is enabled but its model directory does not exist: {model_dir}. "
             "Run  make train_rf_detr  or set GRAND_PROJECT_RF_DETR_MODEL."
         )
+    expected = checkpoint_digest(model_dir)
     try:
         import torch
         from transformers import AutoImageProcessor, AutoModelForObjectDetection
@@ -124,6 +151,12 @@ def load_detector(model_dir: Path) -> dict[str, Any]:
         model = AutoModelForObjectDetection.from_pretrained(model_dir, use_safetensors=True)
     except Exception as exc:
         raise RuntimeError(f"could not load the RF-DETR model from {model_dir}: {exc}") from exc
+    # the files as loaded must be the ones the detector stamp names (a training run swapping a new best/ in meanwhile
+    # would give detections of other weights under the old stamp): the digest from before the load, checked after it
+    if _hash_checkpoint(model_dir) != expected:
+        raise RuntimeError(
+            f"the RF-DETR model in {model_dir} changed since this process first read it: start the program again"
+        )
     labels = _labels(model_dir, model)
     unknown = sorted(name for name in labels.values() if not L.known(name))
     if unknown:
@@ -252,14 +285,15 @@ def _inside(box: list[float], x: float, y: float) -> bool:
     return box[0] <= x <= box[2] and box[1] <= y <= box[3]
 
 
-def _name_icons(img: np.ndarray, found: list[dict[str, Any]]) -> list[dict[str, Any]]:
+def _name_icons(img: np.ndarray, found: list[dict[str, Any]], book: dict | None = None) -> list[dict[str, Any]]:
     """Name the model's icons with the classical detector's naming step (``badges.name_found_icons``: the stored
     pictures and the icon model's, the whole-icon templates of the icons with their own rim, the Expedition rule).
 
     The model's score is not the rim finder's probability, so the rim finder's influence rule (``INFLUENCE_MIN``) is
-    left out: the model learned from reviewed boxes that terrain circles are no icons.
+    left out: the model learned from reviewed boxes that terrain circles are no icons. ``book``: the icon model's
+    labelled pictures to name with (default ``naming_book()``; a score passes one without the scored screenshot's).
     """
-    return name_found_icons(img, found, naming_book(), influence_min=None)
+    return name_found_icons(img, found, naming_book() if book is None else book, influence_min=None)
 
 
 def _boss_node(nodes: list[dict], x: float, y: float) -> dict | None:
@@ -290,8 +324,13 @@ def hall_node(box: list[float], nodes: list[dict], bosses: list[dict]) -> dict |
     return min(inside, key=lambda n: np.hypot(n["x"] - cx, n["y"] - cy), default=None)
 
 
-def detect_rf_detr(img: np.ndarray) -> dict:
-    """Detect one screenshot with RF-DETR and return the classical detector's result shape."""
+def detect_rf_detr(img: np.ndarray, book: dict | None = None) -> dict:
+    """Detect one screenshot with RF-DETR and return the classical detector's result shape.
+
+    Args:
+        img: the screenshot (BGR, 1080p as the detector reads it).
+        book: the labelled icon pictures to name icons with (``_name_icons``; default the icon model's).
+    """
     detections = _predict(img)
     h, w = img.shape[:2]
     centres = [_centre(d["box"]) for d in detections]
@@ -327,7 +366,7 @@ def detect_rf_detr(img: np.ndarray) -> dict:
             continue  # an icon the model also reports on a reveal button is that button
         found.append({"x": round(x, 1), "y": round(y, 1), "score": round(item["score"], 3), "source": "rf-detr"})
     # icon types that are no icon labels: the detector does not report them as icons
-    icons = [icon for icon in _name_icons(img, found) if icon["name"] not in K.RF_DETR_ICON_EXCLUDED]
+    icons = [icon for icon in _name_icons(img, found, book) if icon["name"] not in K.RF_DETR_ICON_EXCLUDED]
     # a ship button is reported as the classical detector reports it (landmarks.ship_markers): an ExpeditionShip icon
     icons.extend(
         {"name": K.RF_DETR_BUTTON_ICONS[b["kind"]], "x": b["x"], "y": b["y"], "score": b["score"], "source": "rf-detr"}
@@ -419,6 +458,7 @@ def detect_rf_detr(img: np.ndarray) -> dict:
 
 
 __all__ = [
+    "checkpoint_digest",
     "class_families",
     "detect_rf_detr",
     "family_detections",

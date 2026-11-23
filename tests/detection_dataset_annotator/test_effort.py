@@ -109,18 +109,24 @@ def _reviewed(store: ReviewStore, path: Path, final: list[dict], *, arm: str | N
 
 
 def test_the_report_compares_the_arms(tmp_path: Path, review_store: ReviewStore) -> None:
-    """Each reviewed screenshot against its pre-label snapshot, grouped by what pre-labelled it."""
+    """Each reviewed screenshot against its pre-label snapshot, grouped by what pre-labelled it; one no pass gave an
+    arm (reviewed before the A/B loop) is a row of its own, never the classical control arm."""
     folder = tmp_path / "shots"
     folder.mkdir()
     kept = [_box("icon", 10, 10, 34, 34)]
-    _reviewed(review_store, folder / "a.png", kept, arm=None, active_s=20.0)  # classical, untouched
+    _reviewed(review_store, folder / "a.png", kept, arm="classical", active_s=20.0)  # untouched
     _reviewed(review_store, folder / "b.png", [*kept, _box("tower", 500, 100, 80, 220)], arm="rf_detr", active_s=40.0)
+    _reviewed(review_store, folder / "c.png", kept, arm=None, active_s=90.0)
     rows = reviews(review_store)
-    assert [(row.arm, row.edits.edits, row.active_s) for row in rows] == [("classical", 0, 20.0), ("rf_detr", 1, 40.0)]
+    assert [(row.arm, row.edits.edits, row.active_s) for row in rows] == [
+        ("classical", 0, 20.0),
+        ("rf_detr", 1, 40.0),
+        (K.ANNOTATOR_UNASSIGNED_ARM, 0, 90.0),
+    ]
     arms = arm_reports(rows)
     assert arms["rf_detr"].edits_per_screenshot["added"] == 1.0 and arms["classical"].active_s_median == 20.0
     lines = report_lines(rows)
-    assert lines[1].startswith("classical") and lines[2].startswith("rf_detr")
+    assert lines[1].startswith("classical") and lines[2].startswith("rf_detr") and lines[3].startswith("unassigned")
     assert fit_seconds(rows) is None  # too few timed reviews to fit
 
 

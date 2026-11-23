@@ -237,6 +237,9 @@ class Annotator {
       this.selected.clear();
       this.history = [];
       this.future = [];
+      // a resize gesture or wheel steps begun on the last screenshot never carry over to this one
+      this.endScaleGesture();
+      this.wheelSum = 0;
       this.fitted = false;
       this.seq = 0;
       this.sentSeq = 0;
@@ -1073,6 +1076,8 @@ class Annotator {
   }
 
   deleteSelected() {
+    // A box drag ends first (as useLabel), also from the inspector's Delete button: the undo step is the boxes as sent
+    if (this.drag && this.drag.kind !== "pan") this.cancelDrag();
     if (!this.selected.size) return;
     this.snapshot();
     this.boxes = this.boxes.filter((box) => !this.selected.has(box.id));

@@ -13,8 +13,10 @@ LOOPBACK = "127.0.0.1"
 
 
 def streamlit_args(app: Path, args: list[str]) -> list[str]:
-    """``streamlit run`` with the page and ``args``, listening on ``LOOPBACK`` unless the address is given."""
-    given = any(arg == "--server.address" or arg.startswith("--server.address=") for arg in args)
+    """``streamlit run`` with the page and ``args``, listening on ``LOOPBACK`` unless the address is given (among
+    Streamlit's own options: what follows a ``--`` is the page's)."""
+    own = args[: args.index("--")] if "--" in args else args
+    given = any(arg == "--server.address" or arg.startswith("--server.address=") for arg in own)
     default = [] if given or os.environ.get("STREAMLIT_SERVER_ADDRESS") else ["--server.address", LOOPBACK]
     return ["streamlit", "run", str(app), *default, *args]  # before the user's: a "--" in them starts the page's
 
