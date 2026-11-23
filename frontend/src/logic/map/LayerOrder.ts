@@ -9,6 +9,7 @@ import type { StyleSpecification } from "maplibre-gl";
  */
 export const LAYER_ORDER = [
 	"land",
+	"terrain-before", // the ground from before a job's changes, under the new (TileSources)
 	"terrain",
 	"tint-picture", // Colour by: under the biomes
 	"biomes",

@@ -348,6 +348,7 @@ class AtlasSession(
         self.D = {}
         self.model_version += 1
         self.opened = Opened(atlas, p, self.opened.gen + 1, scope)
+        self._source_sync("gen", "V", "D", "model_version")  # (the map's vector tiles are made from it)
         self.parts.reset(self.opened.gen)
         self.events.set_scope(scope)
         return self.opened
@@ -535,7 +536,10 @@ class AtlasSession(
             # close between the check and the replan made the rebuild fail after it said the model was ready,
             # CodeRabbit)
             if getattr(self, "_replay_on", False) and self.atlas and self.atlas.frames:
-                self._replan()
+                self._replan(sync=False)
+            # the map's vector tiles are made from it: the model and its timelapse steps put in as one (apart, a
+            # tile could be made of the new model with the steps of the old)
+            self._source_sync("V", "D", "model_version", "replay", "replay_token")
 
     # ------------------------------------------------------------------ what the page shows of the atlas
     def atlas_summary(self) -> dict | None:
@@ -592,6 +596,7 @@ class AtlasSession(
         self._extra_groups = set()
         self._replay_on, self._plan, self._replay_steps = False, None, None
         self._fog = None
+        self._source_sync("replay")
 
 
 # how a settings key reads in the log (others: their own name)

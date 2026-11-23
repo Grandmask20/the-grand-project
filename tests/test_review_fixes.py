@@ -260,7 +260,7 @@ def test_a_tower_hidden_by_a_filter_isnt_drawn_by_its_map_node(session, monkeypa
     session.rebuild_model()
     node_ok = [session.node_shown(n, session._flags()) for n in session.V["nodes"]]
     pillar = len([sh for sh in session._solid_shapes(node_ok) if sh["pick"] == ("node", 3)])
-    monkeypatch.setattr(type(session), "landmark_shown", lambda self, k, fl: False)  # (as "near only" hides it)
+    monkeypatch.setattr(type(session), "landmark_shown", lambda self, k, fl, src=None: False)  # ("near only")
     assert len([sh for sh in session._solid_shapes(node_ok) if sh["pick"] == ("node", 4)]) == pillar
 
 
@@ -395,7 +395,12 @@ def test_a_stop_while_fix_seams_starts_is_kept(session, monkeypatch):
 def test_the_flat_map_doesnt_build_the_3d_view(session, monkeypatch):
     real = type(session)._solid_shapes
     built = []
-    monkeypatch.setattr(type(session), "_solid_shapes", lambda self, ok: (built.append(1), real(self, ok))[1])
+
+    def counted(self, ok, src=None):
+        built.append(1)
+        return real(self, ok, src)
+
+    monkeypatch.setattr(type(session), "_solid_shapes", counted)
     session._vector_made(False)  # the flat map's tiles
     assert built == []  # (its models were built for every flat map though never in its tiles)
     assert json.loads(session.scene_3d())["models"] and built == [1]  # asked for by the 3D view: built then
@@ -480,7 +485,9 @@ def test_the_timelapse_replans_in_the_models_locked_step(session, monkeypatch):
     monkeypatch.setattr(session, "_replay_on", True)
     # (only this rebuild's replan: a rebuild the opening started behind it can land meanwhile on a busy machine: CI)
     monkeypatch.setattr(
-        session, "_replan", lambda: threading.current_thread() is me and held.append(session._lock._is_owned())
+        session,
+        "_replan",
+        lambda sync=True: threading.current_thread() is me and held.append(session._lock._is_owned()),
     )
     session.rebuild_model()
     assert held == [True]  # (a close between the check and the replan made the rebuild fail)
