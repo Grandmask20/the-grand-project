@@ -1,6 +1,7 @@
 """The annotator's detector worker process speaks a small JSON-lines protocol."""
 
 import json
+import os
 import subprocess
 import sys
 from pathlib import Path
@@ -37,3 +38,25 @@ def test_worker_returns_image_errors_as_json(tmp_path: Path) -> None:
     assert bad_image["key"] == "sample"
     assert bad_image["error"].startswith("ValueError: Could not read image:")
     assert "result" not in bad_image
+
+
+def test_worker_reads_and_answers_utf8_whatever_the_console_encoding(tmp_path: Path) -> None:
+    """The pool writes UTF-8 lines: a non-ASCII path arrives whole even where Python's console encoding is another
+    (a Windows code page)."""
+    image = tmp_path / "bild-ä€.png"
+    image.write_bytes(b"not an image")
+    request = json.dumps(
+        {"key": "k", "path": str(image), "include_paths": False, "named_icons": False}, ensure_ascii=False
+    )
+    completed = subprocess.run(
+        [sys.executable, "-u", "-m", K.ANNOTATOR_WORKER_MODULE],
+        cwd=paths.ROOT,
+        input=(request + "\n").encode("utf-8"),
+        capture_output=True,
+        check=False,
+        timeout=60,
+        env={**os.environ, "PYTHONIOENCODING": "latin-1"},
+    )
+    assert completed.returncode == 0, completed.stderr
+    (answer,) = [json.loads(line) for line in completed.stdout.decode("utf-8").splitlines()]
+    assert str(image) in answer["error"]

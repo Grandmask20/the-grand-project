@@ -226,8 +226,15 @@ ANNOTATOR_SESSION_NOTICE = "detection_notice"
 ANNOTATOR_SESSION_PRELABEL = "prelabel_process"
 """Session state key of the running model pre-label pass (``model_prelabel`` as its own process)."""
 
-ANNOTATOR_PRELABEL_LOG = "model_prelabel.log"
-"""The model pre-label pass's output, in the output folder (the page shows its last lines)."""
+ANNOTATOR_PRELABEL_LOG = "model_prelabel-{stamp}.log"
+"""A model pre-label pass's output, in the output folder (the page shows its last lines): one file per pass (``stamp``:
+the time and the page's process id), so two tabs starting passes on one folder never write into one log."""
+
+ANNOTATOR_PRELABEL_LOG_GLOB = "model_prelabel-*.log"
+"""The pre-label logs of an output folder (a tab that started none shows the newest)."""
+
+ANNOTATOR_SESSION_PRELABEL_LOG = "prelabel_log"
+"""Session state key of the log of the pass this session started."""
 
 # ---- icon and hidden map-node proposals (icon_proposals.py) ----------------------------------------------------
 
@@ -325,6 +332,15 @@ only (the truth labels roughly every stronghold area: 133 of fr-atlas's 176 seed
 ANNOTATOR_EFFORT_MOVE_IOU = 0.75
 """Overlap under which a kept box counts as moved or resized (``effort.edit_cost``): a node box (38.7 px) shifted
 about 5 px, or resized about 10 %. Smaller nudges are within the box rules' tolerance."""
+
+ANNOTATOR_SCORE_ASPECT_TOLERANCE = 0.01
+"""``score_nodes``: how far a screenshot file's width / height may differ from the size its boxes were saved in (as a
+ratio) and still be the same view, its boxes scaled to it (a 1440p copy of a 1080p screenshot); beyond it the file
+was replaced by another view and its boxes are not scored."""
+
+ANNOTATOR_UNASSIGNED_ARM = "unassigned"
+"""The effort report's arm of a review no pre-label pass assigned an arm (reviewed before the A/B loop): its own row,
+never counted in the classical control arm."""
 
 ANNOTATOR_EFFORT_SECONDS = {"kept": 0.3, "relabelled": 1.5, "moved": 3.0, "deleted": 1.0, "added": 5.0}
 """Estimated seconds a reviewer spends per box by what the review did to it (a kept box still has to be checked).

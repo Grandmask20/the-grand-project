@@ -110,3 +110,34 @@ def test_a_truth_icon_changed_meanwhile_stops_before_anything_is_written(tmp_pat
     with pytest.raises(SystemExit, match="changed while the split ran"):
         S.main(["Old", "New", "--sheet", str(tmp_path / "sheet.png")])
     assert truth.read_bytes() == before
+
+
+def test_a_truth_saved_while_the_databases_were_relabelled_is_not_overwritten(tmp_path: Path, monkeypatch) -> None:
+    """Both truth files are checked against their reread bytes right before either is replaced: the truth labeller
+    saving its key meanwhile stops the split there, that edit kept."""
+    import json
+    import sqlite3
+
+    import pytest
+
+    truth = tmp_path / "truth.json"
+    truth.write_text(json.dumps({"s.png": {"badges": [{"id": "B1", "name": "Old", "x": 100, "y": 100}]}}))
+    key_file = tmp_path / "truth_key.json"
+    key_file.write_text(json.dumps({"badges": {"B1": {"detector": "Old"}}}))
+    db = tmp_path / "refs.sqlite3"
+    with sqlite3.connect(db) as c:
+        c.execute("CREATE TABLE detector_models (name TEXT, info TEXT)")
+        c.execute("INSERT INTO detector_models VALUES ('badges', '{}')")
+    before = truth.read_bytes()
+    match = S.Match("truth B1", None, "New", [0.1], False)
+    book = (({"names": ["Old"]}), [(0, S.Match("book #0", None, "New", [0.1], False))])
+    monkeypatch.setattr(S, "art_features", lambda name: np.zeros((1, 1), np.float32))
+    monkeypatch.setattr(S, "stored_pictures", lambda *a: [])
+    monkeypatch.setattr(S, "book_pictures", lambda *a: book)
+    monkeypatch.setattr(S, "truth_pictures", lambda *a: [(truth, "s.png", 0, match, ("B1", "Old", 100, 100))])
+    monkeypatch.setattr(S, "sheet", lambda *a: None)
+    # the labeller saves its key while the stored model is relabelled
+    monkeypatch.setattr(S.models, "save_model", lambda *a, **k: key_file.write_text('{"badges": {}}'))
+    with pytest.raises(SystemExit, match="truth_key.json changed while the split ran"):
+        S.main(["Old", "New", "--db", str(db), "--sheet", str(tmp_path / "sheet.png")])
+    assert truth.read_bytes() == before and key_file.read_text() == '{"badges": {}}'

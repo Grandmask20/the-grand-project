@@ -118,6 +118,7 @@ def test_reviewed_landmarks_reach_the_city_rules(tmp_path: Path, monkeypatch: py
     monkeypatch.setattr(score_nodes, "city_area_nodes", areas)
     boxes = [
         _node("map_node_vaal", 400, 540),
+        _node("map_node_grass", 960, 500),
         {"label": "tower", "bbox": [660, 320, 80, 220]},
         {"label": "hall", "bbox": [900, 400, 120, 120]},
         {"label": "breach_stronghold", "bbox": [1200, 200, 150, 150]},
@@ -126,11 +127,17 @@ def test_reviewed_landmarks_reach_the_city_rules(tmp_path: Path, monkeypatch: py
     guess_nodes(image, boxes, 1920, 1080)
     assert [(lm["kind"], lm["x"], lm["y"]) for lm in seen["landmarks"]] == [
         ("Tower", 700.0, 540.0),
-        ("Hall", 960.0, 460.0),
+        ("Hall", 960.5, 500.5),  # at its map node's middle, as the detector places a Hall
         ("Breach stronghold", 1275.0, 275.0),
         ("City", 400.0, 540.0),
     ]
     assert seen["city_types"] == {3: "Vaal"}
+    # a Hall box with no map node inside is left out (the classical detector reports a Hall only at its map node:
+    # one at the box's middle would keep a neighbouring map out of a city's area); the City keeps its type
+    boxes = [_node("map_node_vaal", 400, 540), {"label": "hall", "bbox": [900, 400, 120, 120]},
+             {"label": "citadel_stone", "bbox": [360, 500, 80, 80]}]  # fmt: skip
+    guess_nodes(image, boxes, 1920, 1080)
+    assert [lm["kind"] for lm in seen["landmarks"]] == ["City"] and seen["city_types"] == {0: "Vaal"}
 
 
 def test_a_reviewed_hall_is_at_its_map_node(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, namer: dict) -> None:
@@ -197,3 +204,23 @@ def test_a_screenshot_without_node_boxes_uses_none_of_the_limit(tmp_path: Path, 
             assert store.save_review(image_key(shot), 1, reviewed=True)
     assert main(["--output-dir", str(out), "--limit", "1"]) == 0
     assert "1 nodes" in capsys.readouterr().out
+
+
+def test_boxes_are_read_in_the_size_they_were_saved_in(tmp_path: Path, capsys) -> None:
+    """A screenshot file replaced by a larger copy of the same view has its boxes scaled to it; one replaced by
+    another view (another aspect ratio) is named and not scored."""
+    shot = tmp_path / "a.png"
+    image = _shot(shot)
+    out = tmp_path / "out"
+    with ReviewStore.open(out / K.ANNOTATOR_STORE_FILE) as store:
+        store.add_images([shot])
+        key = image_key(shot)
+        result = {"detected": True, "width": 1920, "height": 1080, "annotations": [_node("map_node_grass", 400, 540)]}
+        store.record_detection(key, result, force=False)
+        assert store.save_review(key, 1, reviewed=True)
+    cv2.imwrite(str(shot), cv2.resize(image, (3840, 2160), interpolation=cv2.INTER_NEAREST))
+    assert main(["--output-dir", str(out)]) == 0
+    assert "1 nodes, 100.0% right" in capsys.readouterr().out
+    cv2.imwrite(str(shot), image[:, :1080])
+    assert main(["--output-dir", str(out)]) == 1
+    assert "boxes saved for 1920x1080, the file is 1080x1080 (another view): not scored" in capsys.readouterr().out

@@ -199,6 +199,13 @@ def propose_icons(
     matches.sort(key=lambda match: match[0])
 
     found = [(float(icon["x"]), float(icon["y"])) for icon in detection.get("icons", [])]
+    # a ship button is no icon of a row (it stands on water, as hidden_nodes leaves it out): it supports no row, but
+    # an icon is still not proposed on top of one
+    in_rows = [
+        (float(icon["x"]), float(icon["y"]))
+        for icon in detection.get("icons", [])
+        if icon.get("source") != "square button"
+    ]
     proposals: list[dict[str, Any]] = []
 
     def taken(match: tuple[float, str, float, float]) -> bool:
@@ -207,6 +214,7 @@ def propose_icons(
     def accept(match: tuple[float, str, float, float]) -> None:
         dist, name, x, y = match
         found.append((x, y))
+        in_rows.append((x, y))
         proposals.append(
             {"x": x, "y": y, "score": round(1.0 - dist, 3), "name": name, "dist": round(dist, 3), "proposal": True}
         )
@@ -218,7 +226,7 @@ def propose_icons(
             if taken(match):
                 continue
             dist, _name, x, y = match
-            neighbour = any(_row_neighbours(x, y, fx, fy) for fx, fy in found)
+            neighbour = any(_row_neighbours(x, y, fx, fy) for fx, fy in in_rows)
             if dist <= K.ANNOTATOR_ICON_MATCH_SURE or neighbour or _stands_on(x, y, dist, nodes, spots):
                 accept(match)
             else:

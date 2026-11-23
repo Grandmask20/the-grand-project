@@ -58,7 +58,7 @@ def detector_stamp() -> str:
         import sqlite3
 
         from grand_project.detect.constants import BADGE_FINDER_FILE, CITY_BARREL_FILE, DB_PATH
-        from grand_project.detect.rf_detr_model import rf_detr_enabled, rf_detr_model_path
+        from grand_project.detect.rf_detr_model import checkpoint_digest, rf_detr_enabled, rf_detr_model_path
 
         h = hashlib.sha1()
         try:
@@ -82,14 +82,8 @@ def detector_stamp() -> str:
         if use_rf_detr:
             h.update(b"rf-detr")
         if use_rf_detr and rf_model.is_dir():
-            # each file's contents, not its place or time: the same checkpoint copied or swapped in again keeps its
-            # stamp (and its cached detections); other weights under the same name and time do not (CodeRabbit)
-            for f in sorted(rf_model.iterdir()):
-                if f.is_file():
-                    h.update(f"{f.name}:".encode())
-                    with open(f, "rb") as fh:
-                        for chunk in iter(lambda: fh.read(1 << 20), b""):
-                            h.update(chunk)
+            # the checkpoint's contents, as the model loaded in this process is checked against (load_detector)
+            h.update(checkpoint_digest(rf_model).encode())
         _STAMP.append(h.hexdigest()[:12])
     return _STAMP[0]
 

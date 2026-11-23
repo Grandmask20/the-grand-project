@@ -155,10 +155,11 @@ def score(
         "node", Edits()
     )
     citadels = edit_cost(prelabels, reference, scale=scale, families=["citadel"]).get("citadel", Edits())
+    # the node finds are node_finds' (by place alone), the citadels gold's
     others = edit_cost(
-        prelabels, baseline, scale=scale, families=[f for f in _families(prelabels, baseline) if f != "citadel"]
+        prelabels, baseline, scale=scale, families=[f for f in _families(prelabels, baseline) if f not in GOLD_FAMILIES]
     )
-    silver = total({name: edits for name, edits in others.items() if name != "node"})
+    silver = total(others)
     silver = silver + node_finds(prelabels, baseline, scale)
     gold = Edits(kept=gold_nodes.kept, relabelled=gold_nodes.relabelled) + citadels
     return {"gold": gold, "silver": silver}
@@ -289,7 +290,12 @@ def dataset_matches(dataset_dir: Path, manifest: Path) -> bool:
     meta_file = dataset_dir / "metadata.json"
     if not (dataset_dir / "labels.json").is_file() or not meta_file.is_file():
         return False
-    meta = json.loads(meta_file.read_text(encoding="utf-8"))
+    try:
+        meta = json.loads(meta_file.read_text(encoding="utf-8"))
+    except json.JSONDecodeError:
+        return False  # a broken record (an interrupted build): built anew
+    if not isinstance(meta, dict):
+        return False
     ledger = K.ANNOTATOR_SPLIT_LEDGER
     return (
         meta.get("truth_seeded") is True

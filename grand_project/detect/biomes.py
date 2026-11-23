@@ -151,7 +151,8 @@ def node_biomes(img: np.ndarray, nodes: list[dict], icons: list[dict]) -> list[B
     out: list[BiomeGuess] = []
     for index, (x, y) in enumerate(points):
         if ocean[index]:
-            out.append(BiomeGuess("water", True, {"water": 1.0}))
+            # the ocean rule names it water; under the Delirium mist even that is not sure (PM)
+            out.append(BiomeGuess("water", index not in misted, {"water": 1.0}))
             continue
         X, Y = int(round(x)), int(round(y))
         x0, x1, y0, y1 = max(0, X - r), min(w, X + r + 1), max(0, Y - r), min(h, Y + r + 1)

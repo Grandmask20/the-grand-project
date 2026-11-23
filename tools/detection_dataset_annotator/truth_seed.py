@@ -57,6 +57,13 @@ CITY_AREAS = {f"{city_type} city": city_type for city_type in cities.TYPES}
 STRONGHOLD_AREA = "Breach stronghold"
 """The truth's area name of a Breach stronghold."""
 
+CITIES_MISSED = "truth City without a citadel box (draw)"
+FAR_STRONGHOLD = "stronghold far from truth strongholds (check)"
+UNREADABLE = "unreadable screenshot (city nodes left, not marked)"
+DIAGNOSTICS = frozenset({CITIES_MISSED, FAR_STRONGHOLD, UNREADABLE})
+"""``seed_screenshot``'s counts that report what a screenshot shows, saved or not; the others are corrections, counted
+only once they are saved."""
+
 
 @dataclass(frozen=True)
 class Truth:
@@ -154,7 +161,10 @@ def _placing(
     homography = screen_to_atlas(np.asarray(shot["M"], float), rectifier(shot["w"], shot["h"], shot.get("horizon")))
 
     def place(boxes: Sequence[Mapping[str, Any]]) -> np.ndarray:
-        return np.asarray(persp(homography, [_middle(box, sx, sy) for box in boxes]), float).reshape(-1, 2)
+        middles = np.array([_middle(box, sx, sy) for box in boxes], float).reshape(-1, 2)
+        out = np.asarray(persp(homography, middles), float).reshape(-1, 2)
+        out[~np.isfinite(middles).all(axis=1)] = np.nan  # perspectiveTransform makes a NaN point (0, 0)
+        return out
 
     return homography, place
 
@@ -205,7 +215,7 @@ def seed_screenshot(
     width, height = int(item.get("width") or shot["w"]), int(item.get("height") or shot["h"])
     homography, locate = _placing(shot, width, height)
     if not boxes:  # nothing to seed, but a truth City it shows is still one to draw
-        done["truth City without a citadel box (draw)"] += _cities_missed([], truth.cities, homography, shot)
+        done[CITIES_MISSED] += _cities_missed([], truth.cities, homography, shot)
         return None, done, True
     places = locate(boxes)
     city_maps, city_types = truth.city_maps
@@ -241,12 +251,12 @@ def seed_screenshot(
         elif L.landmark_kind(label) == STRONGHOLD_AREA and (
             _nearest(truth.stronghold_maps, place, K.ANNOTATOR_TRUTH_STRONGHOLD_REACH) is None
         ):
-            done["stronghold far from truth strongholds (check)"] += 1
+            done[FAR_STRONGHOLD] += 1
     complete = True
     if ring:
         image = read_image(Path(item["path"]))
         if image is None:
-            done["unreadable screenshot (city nodes left, not marked)"] += len(ring)
+            done[UNREADABLE] += len(ring)
             complete = False
         else:
             changed |= _ring_again(boxes, ring, image, width, height, done)
@@ -255,7 +265,7 @@ def seed_screenshot(
         for box, place, kept in zip(boxes, places, keep, strict=True)
         if kept and L.family(box["label"]) == "citadel"
     ]
-    done["truth City without a citadel box (draw)"] += _cities_missed(citadels, truth.cities, homography, shot)
+    done[CITIES_MISSED] += _cities_missed(citadels, truth.cities, homography, shot)
     return ([box for box, kept in zip(boxes, keep, strict=True) if kept] if changed else None), done, complete
 
 
@@ -355,18 +365,31 @@ def seed_store(store: ReviewStore, truth: Truth, *, dry_run: bool = False) -> tu
         if _ambiguous(named[Path(item["path"]).name]):
             done["skipped: its file name is another screenshot's too (which one the truth means is unknown)"] += 1
             continue
+        other = item.get(K.ANNOTATOR_TRUTH_MARK)
+        if other and other != truth.source:
+            # its boxes are that truth's: seeding over them would mix two truths (restore or regenerate the classical
+            # boxes first, e.g. Rerun detection, then seed with this truth)
+            done[f"skipped: seeded by another truth ({other}): rerun its detection first"] += 1
+            continue
         boxes, counts, complete = seed_screenshot(
             item, truth.screenshots[Path(item["path"]).name], truth, _detector_image
         )
-        done.update(counts)
+        done.update({what: count for what, count in counts.items() if what in DIAGNOSTICS})
+        corrections = Counter({what: count for what, count in counts.items() if what not in DIAGNOSTICS})
         if not complete:
             continue  # neither boxes nor mark: a truth-seeded round must not take it before it is seeded whole
         mark = {K.ANNOTATOR_TRUTH_MARK: truth.source}
-        # a reviewer's edit or review made since the read (the page open beside it) keeps its boxes
-        guard = {"untouched": True, "expect_boxes": item["annotations"]}
+        # a reviewer's edit or review made since the read (the page open beside it) keeps its boxes, and another
+        # truth's mark set meanwhile keeps that truth's (marked: absent or this truth's)
+        guard = {"untouched": True, "expect_boxes": item["annotations"], "marked": mark}
         if boxes is None:
-            marked = dry_run or item.get(K.ANNOTATOR_TRUTH_MARK) == truth.source
-            if not marked and not store.save_review(key, int(item["edit_version"]), extra=mark, **guard):
+            if (
+                dry_run
+                or other == truth.source
+                or store.save_review(key, int(item["edit_version"]), extra=mark, **guard)
+            ):
+                done.update(corrections)
+            else:
                 done[skipped] += 1
             continue
         # a dry run counts what the save would take: a screenshot nobody edited (the save checks it again)
@@ -375,6 +398,7 @@ def seed_store(store: ReviewStore, truth: Truth, *, dry_run: bool = False) -> tu
             and store.save_review(key, int(item["edit_version"]), annotations=boxes, extra=mark, prelabel=True, **guard)
         ):
             changed += 1
+            done.update(corrections)
         else:
             done[skipped] += 1
     return done, changed, len(todo)
@@ -403,7 +427,8 @@ def main(argv: list[str] | None = None) -> int:
     if args.dry_run and not store_path.is_file():  # opening it would create an empty store (and its folder)
         print(f"nothing to seed: no annotator store at {store_path}")
         return 0
-    with ReviewStore.open(store_path) as store:
+    # a dry run reads the store only: no journal change, no new tables
+    with ReviewStore.open(store_path, read_only=args.dry_run) as store:
         done, changed, placed = seed_store(store, truth, dry_run=args.dry_run)
     print("\n".join(seed_lines(done, changed, placed, dry_run=args.dry_run)))
     return 0

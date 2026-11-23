@@ -47,7 +47,10 @@ def _read_images(path: Path) -> tuple[np.ndarray, np.ndarray] | None:
 
 
 def _source(proposal: dict[str, Any]) -> str:
-    """A box's source: the annotator's own proposals (hidden map nodes, matched icons) say so, else the guess's."""
+    """A box's source: a class guess (an unsure biome or city area: drawn dotted) keeps its own; else the annotator's
+    own proposals (hidden map nodes, matched icons) say so, else the detector's."""
+    if proposal["source"] in K.ANNOTATOR_GUESS_SOURCES:
+        return proposal["source"]
     if proposal["item"].get("proposal"):
         return K.ANNOTATOR_HIDDEN_SOURCE if is_node(proposal["label"]) else K.ANNOTATOR_ICON_SOURCE
     return proposal["source"]
@@ -103,6 +106,7 @@ def run_classical_detector(path: Path, options: DetectionOptions = DEFAULT_OPTIO
         ValueError: The screenshot cannot be read.
     """
     # Imported here: they load the detector models, which only the worker processes need.
+    from grand_project.detect.landmarks import expedition_rules
     from grand_project.detect.models import _models
     from grand_project.detect.pipeline import detect_classical, ensure_models, find_maps
 
@@ -129,6 +133,10 @@ def run_classical_detector(path: Path, options: DetectionOptions = DEFAULT_OPTIO
     spots = map_spots(candidates, probabilities)
     detection["icons"] = detection["icons"] + propose_icons(detector_image, detection, _models["badges"], spots)
     detection["nodes"] = detection["nodes"] + hidden_nodes(detector_image, detection, detection["icons"], spots)
+    # the Expedition rules again, as the detector applies them, for a proposed Expedition icon (no Hall under it)
+    detection["nodes"], detection["icons"], detection["landmarks"] = expedition_rules(
+        detection["nodes"], detection["icons"], detection.get("landmarks", [])
+    )
     wall_mask = None
     if options.include_fortress_walls:
         from grand_project.detect.walls import fortress_walls

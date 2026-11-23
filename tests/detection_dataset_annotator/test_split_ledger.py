@@ -372,3 +372,26 @@ def test_one_screenshot_under_two_names_with_two_splits_is_named(tmp_path: Path,
     assert problems[0].startswith("same bytes, different splits:") and relative_source(copy) in problems[0]
     same = {"images": [{"path": str(shot), "split": "train"}, {"path": str(copy), "split": "train"}]}
     assert check_manifest(same) == []
+
+
+def test_a_ledger_that_cannot_be_written_takes_the_store_claims_back(
+    tmp_path: Path, review_store: ReviewStore, split_ledger_file: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A split stands only with the ledger row that keeps it: when the ledger write fails after the store claimed the
+    splits, the claims are released (a rebuilt store would otherwise draw those screenshots again)."""
+    from tools.detection_dataset_annotator import split_ledger
+
+    paths = _shots(tmp_path / "shots", 3)
+    _detect(review_store, paths)
+
+    def full_disk(*args, **kwargs):
+        raise OSError("disk full")
+
+    write = split_ledger.write_ledger
+    monkeypatch.setattr(split_ledger, "write_ledger", full_disk)
+    with pytest.raises(OSError, match="disk full"):
+        settle_splits(review_store)
+    assert review_store.splits() == {} and not split_ledger_file.exists()
+    monkeypatch.setattr(split_ledger, "write_ledger", write)  # (not undo(): that would unpatch the ledger's place)
+    assert len(settle_splits(review_store).split_of) == 3
+    assert len(review_store.splits()) == 3 and split_ledger_file.exists()

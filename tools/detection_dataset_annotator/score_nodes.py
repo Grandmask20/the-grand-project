@@ -96,11 +96,20 @@ def guess_nodes(
         return []
     name_icons(img, icons)
     bosses = [icon for icon in icons if icon["name"] == "MapBossSpecial"]
+    unplaced = set()
     for index, box in halls:
         # the hall's reviewed map node (the one under its deadly-boss icon), as the detector places a Hall
         node = hall_node(box, nodes, bosses)
         if node is not None:
             landmarks[index].update(x=node["x"], y=node["y"])
+        else:
+            unplaced.add(index)
+    if unplaced:
+        # the classical detector reports a Hall only at its map node: one at the box's middle would keep a
+        # neighbouring map out of a city's area (cities.blocked_maps)
+        keep = [i for i in range(len(landmarks)) if i not in unplaced]
+        city_types = {keep.index(i): city for i, city in city_types.items()}
+        landmarks = [landmarks[i] for i in keep]
     # the paths the classical detector keeps: none across a fortress wall (detect.pipeline), or an area would grow
     # through the wall
     wall = fortress_walls(img)
@@ -183,8 +192,16 @@ def _score(store_path: Path, limit: int | None) -> tuple[list[tuple[str, str, bo
             raw = decode_image(Path(item["path"]))
             if raw is None:
                 continue
+            # the boxes are in the size they were saved in: the file now may be another size of the same view
+            width, height = int(item.get("width") or raw.shape[1]), int(item.get("height") or raw.shape[0])
+            if abs((width / height) / (raw.shape[1] / raw.shape[0]) - 1) > K.ANNOTATOR_SCORE_ASPECT_TOLERANCE:
+                print(
+                    f"{item['source']}: boxes saved for {width}x{height}, the file is {raw.shape[1]}x{raw.shape[0]} "
+                    "(another view): not scored"
+                )
+                continue
             img = core.scale_screenshot(raw)
-            found = guess_nodes(img, item.get("annotations", []), raw.shape[1], raw.shape[0])
+            found = guess_nodes(img, item.get("annotations", []), width, height)
             pairs.extend(found)
             scored += bool(found)  # a screenshot without node boxes scores nothing: it uses none of --limit
     return pairs, scored

@@ -155,3 +155,18 @@ def test_screenshots_kept_in_other_splits_than_their_block_count_where_they_are(
     assert {key: splits[key] for key in fixed} == fixed
     counts = {name: list(splits.values()).count(name) for name in K.ANNOTATOR_SPLITS}
     assert counts == {"train": 4, "validation": 2, "test": 2}
+
+
+def test_a_copy_moves_with_its_block_but_counts_for_its_own_atlas() -> None:
+    """A copy joined into another atlas's block (split_ledger.join_blocks) goes where that block goes; its own atlas
+    (``atlases``) is only what it counts for in the balance. Saying each screenshot's own block's atlas changes
+    nothing."""
+    items = _items(60)
+    blocks = {key: Block("a" if i < 30 else "b", i // 6) for i, key in enumerate(sorted(items))}
+    copy = sorted(items)[45]
+    blocks[copy] = blocks[sorted(items)[0]]  # joined into atlas a's first block
+    atlases = {key: ("a" if i < 30 else "b") for i, key in enumerate(sorted(items))}
+    splits = assign_splits(items, blocks=blocks, atlases=atlases)
+    assert splits[copy] == splits[sorted(items)[0]]
+    same = {key: block.atlas for key, block in blocks.items()}
+    assert assign_splits(items, blocks=blocks, atlases=same) == assign_splits(items, blocks=blocks)

@@ -73,3 +73,19 @@ def test_a_rebuild_whose_detection_failed_stops_the_comparison(tmp_path: Path) -
     backend = compare_detectors.Backend("RF-DETR", lambda img: {})
     with pytest.raises(SystemExit, match="RF-DETR: rebuilding res_1080_100 failed:\n1 screenshots could not be"):
         compare_detectors._rebuild_accuracy(backend, tmp_path, [folder], tmp_path / "model", "cpu", scorer)
+
+
+def test_landmarks_are_read_as_the_scorer_counts_them(tmp_path: Path) -> None:
+    """Through the scorer's view model (the user's landmark edits applied), removed ones left out."""
+    loaded = []
+    core = SimpleNamespace(Atlas=SimpleNamespace(load=lambda path: loaded.append(path) or "atlas"))
+
+    def view_model(atlas):
+        assert atlas == "atlas"
+        return {"landmarks": [{"kind": "City", "x": 1, "y": 2, "status": "kept"},
+                              {"kind": "Tower", "x": 3, "y": 4, "status": "removed: edit"}]}  # fmt: skip
+
+    assert compare_detectors._live_landmarks(tmp_path, core, view_model) == [
+        {"kind": "City", "x": 1, "y": 2, "status": "kept"}
+    ]
+    assert loaded == [tmp_path / "atlas.json"]

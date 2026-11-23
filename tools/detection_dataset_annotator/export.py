@@ -32,7 +32,7 @@ from grand_project.detect.labels import dataset_classes, export_class, known
 from . import constants as K
 from .detection import decode_image
 from .splits import split_report
-from .state import relative_source, resolve_path, write_json_atomic
+from .state import relative_source, write_json_atomic
 
 if TYPE_CHECKING:
     from .store import ReviewStore
@@ -172,7 +172,7 @@ def export_dataset(store: ReviewStore, output_dir: Path, *, reviewed_only: bool 
         reviewed = bool(item.get("reviewed", False))
         if not (reviewed or item.get("detected")):
             continue  # never processed: its empty box list is not a labelling
-        path = resolve_path(item["path"])  # a relative one is the project's, never the output folder's
+        path = Path(item["path"])  # as the store keeps it (absolute), the file the split ledger hashed
         if key not in split_of:
             continue  # its file could not be read
         size = _image_size(item, path) if path.is_file() else None
@@ -298,6 +298,8 @@ def main(argv: list[str] | None = None) -> int:
         f"{result.images} screenshots, {result.annotations} boxes, {result.classes} classes -> {result.manifest_path}"
     )
     print(f"splits: {result.splits}; ledger gained {result.ledger_added} screenshots")
+    if result.skipped_annotations:
+        print(f"skipped {result.skipped_annotations} invalid annotations or icons the dataset leaves out")
     if result.unknown:
         print(f"labels outside the dataset's (rerun those screenshots): {result.unknown}")
     if result.report:

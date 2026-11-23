@@ -213,6 +213,18 @@ def sheet(path: Path, new: list[str], matches: list[Match]) -> None:
         raise OSError(f"could not write the review sheet {path}")
 
 
+def _unchanged(read: dict[Path, bytes], paths: list[Path]) -> None:
+    """Stop when one of ``paths`` is no longer the bytes it was reread as (``read``; absent then: absent now): the
+    truth labeller saved it meanwhile, and rewriting it would lose that edit.
+
+    Raises:
+        SystemExit: a file changed.
+    """
+    moved = [f"{p.parent.name}/{p.name}" for p in paths if (p.read_bytes() if p.exists() else None) != read.get(p)]
+    if moved:
+        raise SystemExit(f"{', '.join(moved)} changed while the split ran: not rewritten (run it again)")
+
+
 def _write_json(path: Path, value) -> None:
     """Rewrite a truth file as grand_project/truth.py writes it (indent 1), keeping its line endings (the files
     written on Windows have CRLF ones: rewritten with LF, every line would show as changed). Written whole or not at
@@ -256,7 +268,14 @@ def main(argv: list[str] | None = None) -> int:
         return 0
     # the truth files read again before anything is written: an icon changed since it was matched (the truth
     # labeller saved meanwhile) stops the split, the databases and both files of every truth left as they were
-    fresh = {tf: json.loads(tf.read_text(encoding="utf-8")) for tf in {x[0] for x in truth}}
+    # each file's bytes as reread, to check again right before it is replaced (the labeller may save meanwhile)
+    read = {
+        path: path.read_bytes()
+        for tf in {x[0] for x in truth}
+        for path in (tf, tf.parent / "truth_key.json")
+        if path.exists()
+    }
+    fresh = {tf: json.loads(read[tf].decode("utf-8")) for tf in {x[0] for x in truth}}
     changed = [
         f"{tf.parent.name} {shot} #{i}"
         for tf, shot, i, _m, identity in truth
@@ -266,6 +285,7 @@ def main(argv: list[str] | None = None) -> int:
     ]
     if changed:
         raise SystemExit(f"truth icons changed while the split ran ({', '.join(changed[:5])}): nothing written")
+    _unchanged(read, list(read))  # and nothing saved since the reread, before the databases change
     for db, rows in stored.items():
         if rows:
             c = icon_refs._db(db)
@@ -284,7 +304,7 @@ def main(argv: list[str] | None = None) -> int:
             models.save_model("badges", model, info, path=db)
     for tf, data in fresh.items():
         key_file = tf.parent / "truth_key.json"
-        key = json.loads(key_file.read_text(encoding="utf-8")) if key_file.exists() else None
+        key = json.loads(read[key_file].decode("utf-8")) if key_file in read else None
         for _, shot, i, m, _identity in (x for x in truth if x[0] == tf):
             b = data[shot]["badges"][i]
             b["name"] = m.name
@@ -294,6 +314,8 @@ def main(argv: list[str] | None = None) -> int:
                 # when one row's icons take several new names
                 kb.setdefault("row", kb["detector"])
                 kb["detector"] = m.name
+        # both files checked again just before either is replaced: an edit saved since the reread would be overwritten
+        _unchanged(read, [tf, key_file])
         # the key first: if it cannot be written, the truth keeps its old names, and a retry finds them again
         if key:
             _write_json(key_file, key)

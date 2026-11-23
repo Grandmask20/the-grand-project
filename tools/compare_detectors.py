@@ -178,7 +178,9 @@ def _rebuild_accuracy(
         for folder in run_folders:
             numbers = scorer.numbers(folder, scorer_core, view_model)
             comparison = scorer.compare_to_reference(numbers, reference_numbers)
-            comparison = _add_landmark_metrics(folder, reference, comparison, scorer.MATCH)
+            comparison = _add_landmark_metrics(
+                folder, reference, comparison, scorer.MATCH, scorer_core=scorer_core, view_model=view_model
+            )
             results[folder.name] = _normalise_accuracy(numbers, reference_numbers, comparison)
         return {"reference": reference_name, "atlases": results}
 
@@ -243,11 +245,10 @@ def _f1(precision: float, recall: float) -> float:
     return 2 * precision * recall / (precision + recall) if precision + recall else 0.0
 
 
-def _live_landmarks(folder: Path) -> list[dict[str, Any]]:
-    """Read non-removed landmarks from a scored atlas."""
-    data = json.loads((folder / "atlas.json").read_text(encoding="utf-8"))
-    final = data.get("final") or {}
-    landmarks = final.get("landmarks", data.get("landmarks", []))
+def _live_landmarks(folder: Path, scorer_core, view_model) -> list[dict[str, Any]]:
+    """The non-removed landmarks of a scored atlas as the scorer counts them (``view_model`` of the loaded atlas:
+    the user's landmark edits included)."""
+    landmarks = view_model(scorer_core.Atlas.load(folder / "atlas.json"))["landmarks"]
     return [landmark for landmark in landmarks if not str(landmark.get("status", "kept")).startswith("removed")]
 
 
@@ -272,11 +273,11 @@ def _landmark_hits(
 
 
 def _add_landmark_metrics(
-    folder: Path, reference: Path, comparison: dict[str, Any], match_distance: float
+    folder: Path, reference: Path, comparison: dict[str, Any], match_distance: float, *, scorer_core, view_model
 ) -> dict[str, Any]:
     """Match final landmarks by kind and position using the map-derived alignment shift."""
-    predicted = _live_landmarks(folder)
-    expected = _live_landmarks(reference)
+    predicted = _live_landmarks(folder, scorer_core, view_model)
+    expected = _live_landmarks(reference, scorer_core, view_model)
     shift = np.asarray(comparison.get("shift", [0.0, 0.0]), float)
     hits = _landmark_hits(predicted, expected, shift, match_distance)
     recall = hits / len(expected) if expected else 0.0

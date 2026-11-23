@@ -213,7 +213,8 @@ class Review:
 
     key: str
     arm: str
-    """What pre-labelled it: ``classical`` or ``rf_detr`` (``ANNOTATOR_PRELABEL_FIELD``)."""
+    """What pre-labelled it: ``classical`` or ``rf_detr`` (``ANNOTATOR_PRELABEL_FIELD``), or
+    ``ANNOTATOR_UNASSIGNED_ARM`` when no pass assigned it one (not part of the A/B comparison)."""
     edits: Edits
     boxes: int
     """Its reviewed boxes."""
@@ -246,7 +247,7 @@ def reviews(store) -> list[Review]:
         out.append(
             Review(
                 key=key,
-                arm=str(prelabel.get("source", K.ANNOTATOR_CLASSICAL_SOURCE)),
+                arm=str(prelabel.get("source") or K.ANNOTATOR_UNASSIGNED_ARM),
                 edits=edits,
                 boxes=len(item["annotations"]),
                 active_s=None if active is None else float(active),

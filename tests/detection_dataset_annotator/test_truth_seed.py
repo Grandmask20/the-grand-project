@@ -179,6 +179,10 @@ def test_a_box_without_a_place_is_left(tmp_path: Path) -> None:
     nowhere = {"label": "map_node_vaal", "bbox": [None, None, None, None], "source": "classical"}
     item = {"path": str(tmp_path / "shot.png"), "width": 1920, "height": 1080, "annotations": [nowhere]}
     assert seed_screenshot(item, truth.screenshots["shot.png"], truth, lambda path: None)[0] is None
+    # nor taken to the atlas's corner (cv2.perspectiveTransform makes a NaN point (0, 0)): a citadel there would be a
+    # false City, deleted
+    item["annotations"] = [{"label": "citadel_copper", "bbox": [None, None, None, None], "source": "classical"}]
+    assert seed_screenshot(item, truth.screenshots["shot.png"], truth, lambda path: None)[0] is None
 
 
 def test_a_screenshot_that_cannot_be_read_is_left_unmarked_until_it_can(
@@ -225,6 +229,30 @@ def test_an_edit_made_while_seeding_ran_is_kept(
     item = review_store.item(key)
     assert changed == 0 and done["skipped: reviewed, edited or detected again meanwhile"] == 1
     assert [box["label"] for box in item["annotations"]] == ["tower"] and K.ANNOTATOR_TRUTH_MARK not in item
+    # the corrections the save would have made are not counted; what the screenshot shows still is
+    assert done["node -> Vaal area"] == 0 and done["citadel deleted (no city area)"] == 0
+    assert done["truth City without a citadel box (draw)"] == 1
+
+
+def test_a_screenshot_another_truth_seeded_is_left(
+    tmp_path: Path, review_store: ReviewStore, desert_ring: None, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Its boxes are that truth's: seeding over them would mix two truths, so it is left (rerun its detection
+    first); a screenshot this truth seeded before is seeded again as usual."""
+    monkeypatch.setattr(truth_seed, "_detector_image", lambda path: np.zeros((1080, 1920, 3), np.uint8))
+    path = tmp_path / "shot.png"
+    truth = _truth(tmp_path)
+    review_store.add_images([path])
+    key = image_key(path)
+    result = {"detected": True, "width": 1920, "height": 1080, "annotations": _boxes(), "error": None}
+    review_store.record_detection(key, result, force=True)
+    assert review_store.save_review(key, 1, extra={K.ANNOTATOR_TRUTH_MARK: "other/truth.json"})
+    done, changed, _placed = seed_store(review_store, truth)
+    assert changed == 0 and any("seeded by another truth (other/truth.json)" in what for what in done)
+    item = review_store.item(key)
+    assert item[K.ANNOTATOR_TRUTH_MARK] == "other/truth.json" and item["annotations"][0]["label"] == "map_node_grass"
+    assert review_store.save_review(key, 1, extra={K.ANNOTATOR_TRUTH_MARK: None})  # no mark: seeded
+    assert seed_store(review_store, truth)[1] == 1
 
 
 def test_a_name_with_an_unreadable_file_is_ambiguous(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:

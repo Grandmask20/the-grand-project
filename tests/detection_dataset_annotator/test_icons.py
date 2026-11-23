@@ -231,3 +231,32 @@ def test_a_snap_onto_the_hud_keeps_the_estimate() -> None:
     image = np.zeros((1080, 1920, 3), np.uint8)
     found = icon_proposals.hidden_nodes(image, {"nodes": []}, [{"x": 600, "y": 908}], np.array([[600.0, 938.0]]))
     assert [(node["x"], node["y"]) for node in found] == [(600.0, 932.0)]
+
+
+def test_a_proposed_map_node_keeps_its_class_guess() -> None:
+    """A hidden map node whose biome or city area is only a guess stays a dotted guess, not a plain icon-row box."""
+    from grand_project.detect import constants as DK
+    from tools.detection_dataset_annotator.detection import _source
+
+    guess = {"label": "map_node_grass", "source": DK.RF_DETR_SOURCE_BIOME_GUESS, "item": {"proposal": True}}
+    sure = {"label": "map_node_grass", "source": DK.RF_DETR_SOURCE_CLASSICAL, "item": {"proposal": True}}
+    assert _source(guess) == DK.RF_DETR_SOURCE_BIOME_GUESS
+    assert _source(sure) == "icon_row"
+
+
+def test_a_ship_button_is_no_row_neighbour(monkeypatch: pytest.MonkeyPatch) -> None:
+    """An Expedition ship button stands on water, not in an icon row: a weak match beside it is not kept for it, but no
+    icon is proposed on top of it either."""
+    detection = {
+        "nodes": [{"x": 200, "y": 200}],
+        "icons": [{"x": 440, "y": 168, "name": "ExpeditionShip", "source": "square button"}],
+    }
+    _fake_matches(
+        monkeypatch,
+        {
+            (400, 168): ("Delirium", 0.10),  # weak, beside the ship button only: dropped
+            (442, 170): ("MapBoss", 0.01),  # on the ship button: dropped
+        },
+    )
+    monkeypatch.setattr(icon_proposals, "_in_row", lambda pts, anchors, nodes: np.ones(len(pts), bool))
+    assert icon_proposals.propose_icons(np.zeros((400, 600, 3), np.uint8), detection, {}) == []

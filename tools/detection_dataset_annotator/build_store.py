@@ -123,8 +123,12 @@ def build(
     existed = store_path.is_file()
     if dry_run and not existed:
         say(f"No store at {relative_source(store_path)}: a run would build it from the roots")
-        return done
-    with ReviewStore.open(store_path) as store:
+    # a dry run reads the store only (no journal change, no tables made), and without one plans from an empty queue
+    if dry_run:
+        store = ReviewStore.open(store_path, read_only=True) if existed else None
+    else:
+        store = ReviewStore.open(store_path)
+    try:
         say("1. Back up")
         if dry_run:
             say("  (dry run: no backup)")
@@ -136,23 +140,33 @@ def build(
             say(f"  {relative_source(backup)}")
 
         say("2. Discover")
-        roots = roots or [Path(root) for root in store.input_roots()] or list(K.ANNOTATOR_DEFAULT_INPUT_DIRS)
+        stored_roots = [Path(root) for root in store.input_roots()] if store is not None else []
+        roots = roots or stored_roots or list(K.ANNOTATOR_DEFAULT_INPUT_DIRS)
         for root in roots:
             if not Path(root).exists():
                 say(f"  root {relative_source(Path(root))} is not here")
         found = discover_images(roots)
+        paths = {key: Path(path) for key, path in store.paths().items()} if store is not None else {}
+        queue = store.queue() if store is not None else []
+        # what survives is worked out before anything is added: a discovered byte copy of a screenshot the store
+        # holds (or of an earlier discovered one) is never queued only to be removed again in step 3
+        fresh = {image_key(path): path for path in found if image_key(path) not in paths}
+        why = left_out({**paths, **fresh}, found)
+        new = [path for key, path in fresh.items() if key not in why]
         if dry_run:
-            known = set(store.paths())
-            done["added"] = sum(image_key(path) not in known for path in found)
+            done["added"] = len(new)
         else:
-            done["added"], _existing = store.add_images(found)
+            done["added"], _existing = store.add_images(new)
             store.set_input_roots(roots)
-        say(f"  {len(found)} screenshots below {len(roots)} roots, {done['added']} new")
+        left = len(fresh) - len(new)
+        say(
+            f"  {len(found)} screenshots below {len(roots)} roots, {done['added']} new"
+            + (f" ({left} copies left out)" if left else "")
+        )
 
         say("3. Remove what discovery leaves out")
-        paths = {key: Path(path) for key, path in store.paths().items()}
-        reviewed = {entry.key for entry in store.queue() if entry.reviewed}
-        why = left_out(paths, found)
+        reviewed = {entry.key for entry in queue if entry.reviewed}
+        why = {key: reason for key, reason in why.items() if key in paths}
         for key in sorted(why.keys() & reviewed, key=lambda key: str(paths[key])):
             say(f"  kept, reviewed: {relative_source(paths[key])} ({why[key]})")
         done["kept reviewed"] = len(why.keys() & reviewed)
@@ -164,7 +178,11 @@ def build(
         say(f"  {done['removed']} {'would be ' if dry_run else ''}removed; {done['missing']} files missing (kept)")
 
         say("4. Detect")
-        pending = sum(not entry.detected for entry in store.queue())
+        if dry_run:  # the queue as the run would leave it: the removed ones gone, the new ones undetected
+            gone = set(removable)
+            pending = sum(not entry.detected for entry in queue if entry.key not in gone) + done["added"]
+        else:
+            pending = sum(not entry.detected for entry in store.queue())
         if not pending:
             say("  every screenshot is detected")
         elif dry_run or not detect:
@@ -183,18 +201,26 @@ def build(
         say("5. Seed the biome truths")
         if not truth_files:
             say("  no truth files")
-        for path in truth_files:
+        elif store is None:
+            say("  no store yet: nothing detected to seed")
+        for path in truth_files if store is not None else []:
             say(f"  {relative_source(path)}")
             seeded, changed, placed = seed_store(store, Truth.load(path), dry_run=dry_run)
             done["seeded"] += changed
             for line in seed_lines(seeded, changed, placed, dry_run=dry_run):
                 say(f"    {line}")
 
-        queue = store.queue()
-        say(
-            f"Store: {len(queue)} screenshots, {sum(entry.detected for entry in queue)} detected, "
-            f"{sum(entry.reviewed for entry in queue)} reviewed, {sum(entry.guesses for entry in queue)} guesses"
-        )
+        if dry_run:
+            say(f"Store after the run: {len(paths) + done['added'] - done['removed']} screenshots, {pending} to detect")
+        else:
+            queue = store.queue()
+            say(
+                f"Store: {len(queue)} screenshots, {sum(entry.detected for entry in queue)} detected, "
+                f"{sum(entry.reviewed for entry in queue)} reviewed, {sum(entry.guesses for entry in queue)} guesses"
+            )
+    finally:
+        if store is not None:
+            store.close()
     folder = _quoted(relative_source(output_dir))
     say(
         f"Next: python -m tools.detection_dataset_annotator.split_ledger --output-dir {folder} (every screenshot's "

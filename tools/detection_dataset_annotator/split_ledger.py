@@ -306,7 +306,8 @@ def settle_splits(
 
         fixed = {**stored, **from_ledger}
         # copies join their blocks into one, so they are drawn together with the neighbours of each of their places
-        blocks = join_blocks(screenshot_blocks({key: paths[key] for key in keys}), same_bytes.values())
+        own = screenshot_blocks({key: paths[key] for key in keys}, digests)
+        blocks = join_blocks(own, same_bytes.values())
         for group in same_bytes.values():
             # and they take a split one of them has
             kept = next((pinned.get(key) or fixed.get(key) for key in group if pinned.get(key) or fixed.get(key)), None)
@@ -314,7 +315,9 @@ def settle_splits(
                 if kept is not None and key not in pinned:
                     fixed.setdefault(key, kept)
         items = {key: box_classes(item) for key, item in processed if key in digests}
-        split_of = assign_splits(items, pinned=pinned, fixed=fixed, blocks=blocks)
+        # a copy moves with its joined block, but counts for its own atlas's balance
+        atlases = {key: block.atlas for key, block in own.items()}
+        split_of = assign_splits(items, pinned=pinned, fixed=fixed, blocks=blocks, atlases=atlases)
 
         origins: Counter[str] = Counter()
         for key in keys:
@@ -357,7 +360,12 @@ def settle_splits(
                 seen.add((digests[key], names[key]))
                 added += 1
         if added:
-            write_ledger(rows, ledger)
+            try:
+                write_ledger(rows, ledger)
+            except BaseException:
+                # the claims stand only with the ledger rows that keep them: a ledger not written takes them back
+                store.release_splits(new)
+                raise
     return Settled(split_of, blocks, items, origins, added, unreadable)
 
 

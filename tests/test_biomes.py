@@ -119,3 +119,11 @@ def test_an_outer_icon_of_a_wide_row_belongs_to_the_map_under_the_row() -> None:
     misted = _row(600, 540, ["Breach", "Abyss", "Expedition", "Delirium"])
     guesses = biomes.node_biomes(img, far, misted)
     assert guesses[0].biome != "mountain" and (guesses[1].biome, guesses[1].sure) == ("mountain", True)
+
+
+def test_an_ocean_map_under_the_mist_is_water_but_unsure() -> None:
+    """The ocean rule names it water; under a Delirium icon's mist even that is not sure (as any misted guess)."""
+    img = _painted([(0, 1920, WATER)])
+    nodes = [{"x": 600, "y": 540}, {"x": 1400, "y": 540}]
+    guesses = biomes.node_biomes(img, nodes, [{"name": "Delirium", "x": 600, "y": 516}])
+    assert [(g.biome, g.sure) for g in guesses] == [("water", False), ("water", True)]
