@@ -11,12 +11,14 @@ const PREFIX: Record<CodeKind, string> = { invite: "GPI1", reply: "GPR1" };
 /** A code that can't be read: why, in words to show. */
 export class ShareCodeError extends Error {}
 
-const toB64 = (bytes: Uint8Array): string => {
+/** Bytes as URL-safe base64 (no padding). */
+export const toB64 = (bytes: Uint8Array): string => {
 	let s = "";
 	for (const b of bytes) s += String.fromCharCode(b);
 	return btoa(s).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
 };
-const fromB64 = (text: string): Uint8Array => {
+/** URL-safe base64 back to bytes (throws on characters that aren't base64). */
+export const fromB64 = (text: string): Uint8Array => {
 	const b = atob(text.replace(/-/g, "+").replace(/_/g, "/"));
 	return Uint8Array.from(b, (c) => c.charCodeAt(0));
 };

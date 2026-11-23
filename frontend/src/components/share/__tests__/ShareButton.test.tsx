@@ -7,6 +7,9 @@ import { renderWithApp } from "@/test/RenderWithApp";
 const link = (id: number, state: "live" | "invited") => ({
 	id,
 	role: "share" as const,
+	via: "room" as const,
+	watchers: 0,
+	epoch: 0,
 	state,
 	code: "",
 	friend: "",

@@ -1,5 +1,8 @@
 import { type CodeKind, packCode, unpackCode } from "./Codes";
+import type { Peer, PeerEvents, PeerState } from "./Peer";
 import { Assembler, toFrames } from "./Wire";
+
+export type { PeerState };
 
 /**
  * One live link, browser to browser (WebRTC: no server of our own, no port to open: user). The sharer makes an
@@ -16,14 +19,7 @@ export const ICE_WAIT_MS = 5000;
 const HIGH = 1 << 20;
 const LOW = 256 << 10;
 
-export type PeerState = "connecting" | "open" | "closed";
-
-export interface PeerEvents {
-	onMessage: (msg: unknown) => void;
-	onState: (state: PeerState) => void;
-}
-
-export class SharePeer {
+export class SharePeer implements Peer {
 	/** The browser's (tests swap in their own). */
 	static Rtc: typeof RTCPeerConnection = globalThis.RTCPeerConnection;
 

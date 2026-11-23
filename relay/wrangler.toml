@@ -1,0 +1,24 @@
+# The Grand Project's live-sharing relay (see README.md). Deploy: npm install && npx wrangler deploy
+#
+# PLACEHOLDERS to fill in before the first deploy:
+#   name: the Worker's name; its address becomes https://<name>.<your-account>.workers.dev
+#   account_id: your Cloudflare account (dashboard: Workers & Pages, right column), or leave it out and log in
+#               with `npx wrangler login` (wrangler asks which account)
+name = "grand-project-relay"
+# account_id = "YOUR-CLOUDFLARE-ACCOUNT-ID"
+main = "src/index.ts"
+compatibility_date = "2025-11-01"
+
+# a room is one Durable Object: it holds the room's WebSockets and forwards between them
+[[durable_objects.bindings]]
+name = "ROOMS"
+class_name = "Room"
+
+# SQLite-backed: the kind the Workers Free plan has
+[[migrations]]
+tag = "v1"
+new_sqlite_classes = ["Room"]
+
+[vars]
+# the pages allowed in (scheme://host, any port): the app's page is served from this computer
+ALLOWED_ORIGINS = "http://127.0.0.1,http://localhost"

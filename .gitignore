@@ -21,3 +21,4 @@ e2e-run/
 htmlcov/
 coverage.xml
 The Grand Project.lnk
+.wrangler/

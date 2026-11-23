@@ -1,6 +1,9 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { relay } from "@/logic/share/RelayConfig";
+import { RelayPeer } from "@/logic/share/RelayPeer";
 import { SharePeer } from "@/logic/share/SharePeer";
 import { resetShare, sendTo, useShareStore } from "@/store/ShareStore";
+import { FakeSocket, resetRelay } from "@/test/FakeRelay";
 import { FakeRtc } from "@/test/FakeRtc";
 import { sharedAtlas } from "@/test/ShareAtlas";
 
@@ -68,5 +71,90 @@ describe("ShareStore", () => {
 	it("the name friends see is kept in this browser", () => {
 		s().setName("Nyx");
 		expect(localStorage.getItem("gp.share.name")).toBe("Nyx");
+	});
+});
+
+describe("ShareStore through the relay (rooms)", () => {
+	const settle = async () => {
+		for (let i = 0; i < 8; i++) await flush();
+	};
+	beforeEach(() => {
+		RelayPeer.Socket = FakeSocket as unknown as typeof WebSocket;
+		relay.url = "https://relay.example";
+		localStorage.clear();
+	});
+	afterEach(() => {
+		resetShare();
+		resetRelay();
+		relay.url = "";
+	});
+
+	/** A room shared, and one friend in it (this same page plays both). */
+	async function room() {
+		await s().shareRoom();
+		const share = s().links[0];
+		expect(share).toMatchObject({ role: "share", via: "room", state: "invited" });
+		expect(share.code).toMatch(/^GPS1\./);
+		const watch = await s().join(share.code);
+		await settle();
+		return { share: share.id, watch, code: share.code };
+	}
+
+	it("one invite, nothing to paste back: both live once the friend joins, names told", async () => {
+		s().setName("pl");
+		const { share, watch } = await room();
+		expect(link(share)).toMatchObject({ state: "live", watchers: 1, friend: "pl" });
+		expect(link(watch)).toMatchObject({ state: "live", via: "room", friend: "pl" });
+	});
+
+	it("the atlas and position reach the watcher", async () => {
+		const { share, watch } = await room();
+		sendTo(share, { t: "atlas", atlas: sharedAtlas });
+		sendTo(share, { t: "pos", player: { x: 1, y: 2, node: 1 } });
+		await settle();
+		expect(link(watch)).toMatchObject({ atlas: sharedAtlas, player: { x: 1, y: 2, node: 1 } });
+	});
+
+	it("each friend joining counts, and bumps the share link's epoch (they get the atlas whole)", async () => {
+		const { share, code } = await room();
+		const epoch = link(share)?.epoch ?? 0;
+		await s().join(code);
+		await settle();
+		expect(link(share)).toMatchObject({ watchers: 2, epoch: epoch + 1 });
+	});
+
+	it("the sharer stopping: the watcher's link closes, saying so, their atlas kept", async () => {
+		const { share, watch } = await room();
+		sendTo(share, { t: "atlas", atlas: sharedAtlas });
+		await settle();
+		s().stop(share);
+		await settle();
+		expect(link(watch)).toMatchObject({ state: "closed", error: "They stopped sharing.", atlas: sharedAtlas });
+	});
+
+	it("the last friend leaving: the invite waits for the next", async () => {
+		const { share, watch } = await room();
+		s().stop(watch);
+		await settle();
+		expect(link(share)).toMatchObject({ state: "invited", watchers: 0 });
+	});
+
+	it("a room invite with no relay set up: said why, nothing kept", async () => {
+		await s().shareRoom();
+		const code = s().links[0].code;
+		resetShare();
+		relay.url = "";
+		await expect(s().join(code)).rejects.toThrow("has none set up");
+		expect(s().links).toEqual([]);
+	});
+
+	it("the relay unreachable or refusing: the link closes, saying so", async () => {
+		const { code } = await room();
+		const again = await s().join(code);
+		await settle();
+		expect(link(again)?.state).toBe("live"); // (a second friend is fine)
+		FakeSocket.made.at(-1)?.drop();
+		await settle();
+		expect(link(again)).toMatchObject({ state: "closed", error: expect.stringContaining("relay couldn't be reached") });
 	});
 });

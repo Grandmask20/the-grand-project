@@ -14,10 +14,11 @@ import { sendTo, useShareStore } from "@/store/ShareStore";
  */
 export function useShareHost(): void {
 	const app = useAppClient();
+	// "id.epoch" of each live share link: a room's epoch goes up as a friend joins, who then needs the atlas whole
 	const live = useShareStore((s) =>
 		s.links
 			.filter((l) => l.role === "share" && l.state === "live")
-			.map((l) => l.id)
+			.map((l) => `${l.id}.${l.epoch}`)
 			.join(","),
 	);
 	const on = live !== "";
@@ -37,21 +38,23 @@ export function useShareHost(): void {
 	);
 
 	// each link gets the atlas once per change, and a link newly live gets it at once
-	const sentAtlas = useRef(new Map<number, SharedAtlas>());
-	const sentPos = useRef(new Map<number, string>());
+	// (kept per "id.epoch": a room's newcomer makes a new key, so everything goes again)
+	const sentAtlas = useRef(new Map<string, SharedAtlas>());
+	const sentPos = useRef(new Map<string, string>());
 	useEffect(() => {
-		const ids = live ? live.split(",").map(Number) : [];
-		for (const k of [...sentAtlas.current.keys()]) if (!ids.includes(k)) sentAtlas.current.delete(k);
-		for (const k of [...sentPos.current.keys()]) if (!ids.includes(k)) sentPos.current.delete(k);
+		const keys = live ? live.split(",") : [];
+		for (const k of [...sentAtlas.current.keys()]) if (!keys.includes(k)) sentAtlas.current.delete(k);
+		for (const k of [...sentPos.current.keys()]) if (!keys.includes(k)) sentPos.current.delete(k);
 		const pos = JSON.stringify(player ? { x: player.x, y: player.y, node: player.node } : null);
-		for (const id of ids) {
-			if (atlas && sentAtlas.current.get(id) !== atlas) {
+		for (const key of keys) {
+			const id = Number(key.split(".")[0]);
+			if (atlas && sentAtlas.current.get(key) !== atlas) {
 				sendTo(id, { t: "atlas", atlas });
-				sentAtlas.current.set(id, atlas);
+				sentAtlas.current.set(key, atlas);
 			}
-			if (sentPos.current.get(id) !== pos) {
+			if (sentPos.current.get(key) !== pos) {
 				sendTo(id, { t: "pos", player: JSON.parse(pos) });
-				sentPos.current.set(id, pos);
+				sentPos.current.set(key, pos);
 			}
 		}
 	}, [live, atlas, player]);

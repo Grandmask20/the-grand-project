@@ -1,4 +1,4 @@
-import { screen, waitFor } from "@testing-library/react";
+import { act, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { FriendAtlas } from "@/components/share/FriendAtlas";
 import type { SharedPlayer } from "@/domain/share/SharedAtlas";
@@ -29,7 +29,20 @@ const watching = (state: "live" | "closed", player: SharedPlayer | null = null) 
 	useShareStore.setState({
 		viewing: 7,
 		links: [
-			{ id: 7, role: "watch", state, code: "", friend: "Nyx", atlas: sharedAtlas, player, updated: 0, error: "" },
+			{
+				id: 7,
+				role: "watch",
+				via: "room",
+				state,
+				code: "",
+				friend: "Nyx",
+				atlas: sharedAtlas,
+				player,
+				updated: 0,
+				watchers: 0,
+				epoch: 0,
+				error: "",
+			},
 		],
 	});
 
@@ -65,6 +78,18 @@ describe("FriendAtlas", () => {
 			data("friend-here"),
 		]).toEqual([3, 2, 3, 1, 1]);
 		await waitFor(() => expect([...fm.images.keys()].sort()).toEqual(["Abyss", "Breach", "Ritual"]));
+	});
+
+	it("they move: where they are moves with them", async () => {
+		watching("live", { x: 0, y: 0, node: 1 });
+		renderWithApp(<FriendAtlas />);
+		type Here = { features: { geometry: { coordinates: number[] } }[] };
+		const here = () => (fm.sources.get("friend-here")?.data as Here | undefined)?.features[0]?.geometry.coordinates;
+		const before = here();
+		act(() =>
+			useShareStore.setState((s) => ({ links: s.links.map((l) => ({ ...l, player: { x: 200, y: 50, node: 3 } })) })),
+		);
+		expect(here()).not.toEqual(before);
 	});
 
 	it("their link closed: what they sent last, said so; Close puts your map back", async () => {
