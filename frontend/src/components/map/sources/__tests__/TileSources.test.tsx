@@ -47,6 +47,41 @@ describe("TileSources", () => {
 		const settings = { ...state.settings, layers: { ...state.settings.layers, Terrain: false } };
 		const { fm } = renderOnMap(<TileSources />, withMap({}, settings));
 		expect(fm.layers.find((l) => l.id === "terrain")?.layout.visibility).toBe("none");
+		expect(fm.layers.find((l) => l.id === "terrain-before")?.layout.visibility).toBe("none");
+	});
+
+	it("draws a backdrop of the map image's own levels under the ground", () => {
+		const { fm } = renderOnMap(<TileSources />, withMap());
+		// (never the sharp ground past zmax: slow to make, and the backdrop is there to show something at once)
+		expect(fm.sources.get("terrain-before")).toMatchObject({ type: "raster", maxzoom: mapInfo.zmax });
+		expect(tiles(fm, "terrain-before")).toBe(tiles(fm, "terrain"));
+		expect(fm.layers.find((l) => l.id === "terrain-before")).toMatchObject({ before: "slot:terrain-before" });
+	});
+
+	it("keeps the backdrop on the ground from before a job's changes until the job ends (user)", async () => {
+		const { fm, queryClient } = renderOnMap(<TileSources />, withMap());
+		const set = (over: Record<string, unknown>, busy: boolean) =>
+			act(() => queryClient.setQueryData(["state"], { ...state, busy, map: { ...mapInfo, ...over } }));
+		set({ terrain_version: 2 }, true); // new screenshots pasted in while adding
+		await waitFor(() => expect(tiles(fm, "terrain")).toMatch(/v=k-2$/));
+		expect(tiles(fm, "terrain-before")).toMatch(/v=k-1$/); // the old ground under it, wherever the new isn't in
+		set({ terrain_version: 3 }, true);
+		await waitFor(() => expect(tiles(fm, "terrain")).toMatch(/v=k-3$/));
+		expect(tiles(fm, "terrain-before")).toMatch(/v=k-1$/);
+		set({ terrain_version: 3 }, false); // the job ended
+		await waitFor(() => expect(tiles(fm, "terrain-before")).toMatch(/v=k-3$/));
+	});
+
+	it("never keeps another atlas's ground as the backdrop, even mid-job", async () => {
+		const { fm, queryClient } = renderOnMap(<TileSources />, withMap());
+		act(() =>
+			queryClient.setQueryData(["state"], {
+				...state,
+				busy: true,
+				map: { ...mapInfo, tile_key: "other", terrain_version: 1 },
+			}),
+		);
+		await waitFor(() => expect(tiles(fm, "terrain-before")).toMatch(/v=other-1$/));
 	});
 
 	it("fetches the zoomed-out ground ahead after a while, past tiles that fail", async () => {

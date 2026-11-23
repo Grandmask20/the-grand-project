@@ -21,6 +21,7 @@ import sys
 import tempfile
 import threading
 import time
+from collections.abc import Callable
 from pathlib import Path
 
 import cv2
@@ -51,8 +52,26 @@ from grand_project.webmap.tiles import Grid, RasterTiler, VectorTiler
 
 from .constants import TERRAIN_PIXELS, TILE_CACHE
 from .icons import bgr_hex, icon_art_version, icon_col, icon_label, icon_name
+from .tilesource import TileSource
 
 LOG = atlas_log.get("app")
+# how each part of the tiles' source is read from the session (_source_sync)
+_SOURCE_PARTS = {
+    "gen": lambda s: s.opened.gen,
+    "V": lambda s: s.V,
+    "D": lambda s: s.D,
+    "flags": lambda s: s._flags(),
+    "model_version": lambda s: s.model_version,
+    "filter_version": lambda s: s.filter_version,
+    "terrain_version": lambda s: s.terrain_version,
+    "terrain": lambda s: s.terrain,
+    "grid": lambda s: s.grid,
+    "replay": lambda s: s.replay_steps(),
+    "replay_token": lambda s: s.replay_token,
+}
+# the map image's parts of it (shown, or forgotten)
+MAP_IMAGE_PARTS = ("terrain", "grid", "terrain_version")
+
 SESSION_RUN = os.urandom(4).hex()  # this run of the app: part of every tile URL (map_info "tile_key")
 
 
@@ -146,8 +165,23 @@ class MapImageMixin:
         self._terrain_job = 0
         self.filter_version = 0
         self._vector = None  # (key, VectorTiler)
+        # one build of the vector tiles or 3D scene at a time (never the session lock: they are made from _source)
         self._vector_lock = threading.Lock()
+        # what they are made from (app/tilesource.py), replaced in the same step as each change to it
+        self._source_lock = threading.Lock()
+        self._source = TileSource()
         self._reset_mapimage()
+        self._source_sync(*_SOURCE_PARTS)
+
+    def _source_sync(self, *parts: str) -> None:
+        """Put a new tiles' source in place with these parts as they are now: called in the same step as the change
+        to them (under the session lock where the change is), so a tile is never made from half of a change.
+
+        Args:
+            *parts: Names of TileSource fields that changed.
+        """
+        with self._source_lock:
+            self._source = self._source.with_(**{k: _SOURCE_PARTS[k](self) for k in parts})
 
     def _reset_mapimage(self) -> None:
         """Forget the map image (another atlas, or none)."""
@@ -161,9 +195,16 @@ class MapImageMixin:
         # (grid, raster tiler, sharp tiles, version): the map image's tiling, handed over as one (a crop read the grid
         # and the tiles at different moments of a change: CodeRabbit)
         self._tile_state: tuple = (None, None, None, self.terrain_version)
+        # the tiling in place when the jobs running now began (pinned by the worker, let go when it is idle): the
+        # page's backdrop keeps asking for that ground while they run (user: the old terrain viewable until the new
+        # is in, even offscreen), and answered from the new one, a map image built again elsewhere put it off its
+        # place (CodeRabbit). It holds the old map image's memory meanwhile.
+        self._tile_before: tuple | None = None
         self._ground = None
         self._ground_for = None
         self._tiles.clear()
+        if hasattr(self, "_source"):  # (not yet while the session is being set up: _init_mapimage)
+            self._source_sync(*MAP_IMAGE_PARTS)
 
     # ------------------------------------------------------------------ the map image
     def load_terrain(self, cities: bool = True, background: bool = True) -> None:
@@ -315,6 +356,7 @@ class MapImageMixin:
             self.terrain_version += 1
             self._terrain_snap = (self.terrain, self.terrain_version)
             self._tile_state = (self.grid, self._raster, self._sharp, self.terrain_version)  # (all of it at once)
+            self._source_sync(*MAP_IMAGE_PARTS)
             self._tiles.clear()
             self._vector = None
             self._scene3d = None
@@ -803,6 +845,7 @@ class MapImageMixin:
             publish: Tell the page (a "filters" event with the new version).
         """
         self.filter_version += 1
+        self._source_sync("filter_version", "flags")
         self._vector = None
         self._vector_steps = None
         self._scene3d = None
@@ -827,12 +870,13 @@ class MapImageMixin:
             "hidden": set(s["hidden_types"]),
         }
 
-    def node_shown(self, n: dict, fl: dict) -> bool:
+    def node_shown(self, n: dict, fl: dict, src: TileSource | None = None) -> bool:
         """Whether a map node passes the filters (removed map nodes never do).
 
         Args:
             n: Map node dict.
             fl: _flags().
+            src: The tiles' source it is read from (None: the session as it is now).
 
         Returns:
             True when shown.
@@ -846,7 +890,10 @@ class MapImageMixin:
             shown = {icon_name(r) for r in n.get("icons", [])} - fl["hidden"]
             if not shown and not (
                 "MapBossSpecial" in n.get("icons", [])
-                and any(t.startswith("Deadly Map Boss") and t not in fl["hidden"] for t in self.D.get("icon_types", []))
+                and any(
+                    t.startswith("Deadly Map Boss") and t not in fl["hidden"]
+                    for t in (src or self).D.get("icon_types", [])
+                )
             ):
                 return False
         return True
@@ -868,58 +915,64 @@ class MapImageMixin:
             return False  # drawn by too few of the screenshots that show both maps
         return node_ok[p["a"]] and node_ok[p["b"]]
 
-    def landmark_name(self, i: int) -> str:
+    def landmark_name(self, i: int, src: TileSource | None = None) -> str:
         """Return a landmark's name with the city type: "Vaal city", "Ezomyte city?" (? = guessed by look),
         "Locked Breach stronghold".
 
         Args:
             i: Landmark index in V["landmarks"].
+            src: The tiles' source it is read from (None: the session as it is now).
 
         Returns:
             The name.
         """
-        lm = self.V["landmarks"][i]
-        if i in self.D.get("locked", ()):
+        V, D = (src or self).V, (src or self).D
+        lm = V["landmarks"][i]
+        if i in D.get("locked", ()):
             return "Locked Breach stronghold"
-        ct = self.D.get("city_type", {})
+        ct = D.get("city_type", {})
         if lm["kind"] == "City" and i in ct:
             t, how = ct[i]
             return f"{t} city" + ("?" if how == "look-alike" else "")
         return lm["kind"]
 
-    def landmark_shown(self, i: int, fl: dict) -> bool:
+    def landmark_shown(self, i: int, fl: dict, src: TileSource | None = None) -> bool:
         """Whether a landmark passes the filters.
 
         Args:
             i: Landmark index.
             fl: _flags().
+            src: The tiles' source it is read from (None: the session as it is now).
 
         Returns:
             True when shown.
         """
-        lm = self.V["landmarks"][i]
+        V, D = (src or self).V, (src or self).D
+        lm = V["landmarks"][i]
         if lm["status"].startswith("removed"):
             return fl["removed"]
         if lm["kind"] in fl["hidden"] or (fl["near"] and lm["kind"] != "City"):
             return False
-        t = self.D.get("city_type", {}).get(i)
+        t = D.get("city_type", {}).get(i)
         return not t or f"{t[0]} city" not in fl["hidden"]
 
-    def icon_visible(self, i: int, fl: dict) -> bool:
+    def icon_visible(self, i: int, fl: dict, src: TileSource | None = None) -> bool:
         """Whether an icon passes the filters (its type ticked, and near a city when only those are shown).
 
         Args:
             i: Icon index.
             fl: _flags().
+            src: The tiles' source it is read from (None: the session as it is now).
 
         Returns:
             True when shown.
         """
-        if icon_label(self.V["icons"][i]) in fl["hidden"]:
+        V, D = (src or self).V, (src or self).D
+        if icon_label(V["icons"][i]) in fl["hidden"]:
             return False
         if fl["near"]:
-            v = self.D.get("icon_node", {}).get(i)
-            return v is not None and v in self.D.get("near_city", {})
+            v = D.get("icon_node", {}).get(i)
+            return v is not None and v in D.get("near_city", {})
         return True
 
     # ------------------------------------------------------------------ map info and tiles
@@ -929,7 +982,9 @@ class MapImageMixin:
         Returns:
             The info dict, or None without a map image.
         """
-        g = self.grid
+        # the versions as the tiles are made from them (_source): the page never asks for tiles newer than those
+        src = self._source
+        g = src.grid
         if g is None:
             return None
         zdeep = g.deepest(WEBMAP_SHARP_LEVEL)
@@ -945,10 +1000,10 @@ class MapImageMixin:
             # in every tile URL: this run of the app and the open atlas. The versions alone restart at every start
             # and are shared by every atlas, and the browser keeps tiles for a year, so another atlas's cached tiles
             # showed at some zooms (user; CodeRabbit)
-            "tile_key": f"{SESSION_RUN}.{self.generation}",
-            "terrain_version": self.terrain_version,
-            "model_version": self.model_version,
-            "filter_version": self.filter_version,
+            "tile_key": f"{SESSION_RUN}.{src.gen}",
+            "terrain_version": src.terrain_version,
+            "model_version": src.model_version,
+            "filter_version": src.filter_version,
             "sprite": {
                 "size": WEBMAP_ICON_SPRITE,
                 "units": WEBMAP_ICON_UNITS,
@@ -969,6 +1024,50 @@ class MapImageMixin:
             The JPEG bytes, or None where there is no ground.
         """
         return self._tile_from(self._tile_state, z, x, y, wanted)
+
+    def pin_ground(self) -> None:
+        """Keep the map image's tiling as it is now for the page's backdrop while jobs run (_tile_before; the worker
+        calls this as a busy spell begins, under the session lock, and lets it go once idle). Its map image levels
+        only: the sharp ground is cut from the live atlas's screenshots, which an Undo or the next add replaces, so
+        an old-version sharp tile would mix new screenshots with the old placement (CodeRabbit); the backdrop asks
+        for those levels only."""
+        if self._tile_before is None:
+            grid, raster, _sharp, version = self._tile_state
+            self._tile_before = (grid, raster, None, version)
+
+    def terrain_tile_for(self, z: int, x: int, y: int, asked: str, wanted=None) -> tuple[bytes | None, bool]:
+        """Return a ground tile of the map image version its address names: the current one, or the one from before
+        the jobs running now (pin_ground, the backdrop's, its map image levels), else the current one.
+
+        Args:
+            z: Tile level.
+            x: Tile column.
+            y: Tile row.
+            asked: Its address's "v": "<tile key>-<map image version>" ("": none given, the current one).
+            wanted: Whether the browser still waits for it (terrain_tile).
+
+        Returns:
+            (the JPEG bytes or None where there is no ground; whether it is of the address asked, so the browser may
+            keep it under it: the whole address, this run of the app and this atlas included, as versions restart
+            with every run and a tab outliving one asked with the old run's numbers, CodeRabbit).
+        """
+        state, before = self._tile_state, self._tile_before
+        if not asked:
+            return self._tile_from(state, z, x, y, wanted), True
+        key, _, end = asked.rpartition("-")
+        version = int(end) if end.isdigit() else None
+        mine = key == f"{SESSION_RUN}.{self._source.gen}"  # (map_info's tile key)
+        if (
+            mine
+            and version is not None
+            and version != state[3]
+            and before is not None
+            and before[3] == version
+            and before[0] is not None
+            and z <= before[0].zmax  # (its map image levels: deeper, the current ground, not kept)
+        ):
+            state = before
+        return self._tile_from(state, z, x, y, wanted), mine and state[3] == version
 
     def _tile_from(self, state: tuple, z: int, x: int, y: int, wanted=None) -> bytes | None:
         """terrain_tile, from one map image's tiling (_tile_state, read once by the caller)."""
@@ -1056,7 +1155,7 @@ class MapImageMixin:
         return buf.tobytes() if ok else None
 
     def vector_tile(self, z: int, x: int, y: int, replay: bool = False) -> bytes:
-        """Return a vector tile (MVT) of what the filters show.
+        """Return a vector tile (MVT) of what the filters show (vector_tile_made, without its address).
 
         Args:
             z: Tile level.
@@ -1069,19 +1168,48 @@ class MapImageMixin:
         Returns:
             The tile's bytes (b"" when empty).
         """
-        steps = replay and self.replay_steps() is not None
+        return self.vector_tile_made(z, x, y, replay)[0]
+
+    def vector_tile_made(self, z: int, x: int, y: int, replay: bool = False) -> tuple[bytes, str | None]:
+        """Return a vector tile and the address it was made for (_address): the page may ask with an older one.
+
+        Args:
+            z: Tile level.
+            x: Tile column.
+            y: Tile row.
+            replay: Asked by the page tab playing the timelapse (vector_tile).
+
+        Returns:
+            (the tile's bytes, b"" when empty; its address, None without a map image).
+        """
+        steps = replay and self._source.replay is not None
         made = self._vector_made(steps)
         if made is None:
-            return b""
+            return b"", None
         tiler = made[1]
         # kept under the versions of the tiler that made it: read again, they may name a newer one (CodeRabbit)
-        key = ("v", *made[0], z, x, y)
+        key = ("v", *made[0], made[4], z, x, y)
         hit = self._tiles.get(key)
-        if hit is not None:
-            return hit
-        data = tiler.tile(z, x, y)
-        self._tiles.put(key, data)
-        return data
+        if hit is None:
+            hit = tiler.tile(z, x, y)
+            self._tiles.put(key, hit)
+        return hit, self._address(made)
+
+    @staticmethod
+    def _address(made: tuple) -> str:
+        """The address a vector tile or the 3D scene made at these versions is asked for with: the page's "v" (its
+        vectorVersion: map_info's tile key, then the model, filter and map image versions), and "&r=" the timelapse
+        plan's token when it was made with the timelapse's steps (from the build itself: decided before it, a
+        timelapse closed meanwhile labelled a build without steps with the timelapse's address, CodeRabbit).
+
+        Args:
+            made: (versions, what was made, grid, generation, made with steps) from _made.
+
+        Returns:
+            "<run>.<generation>-<model>-<filters>-<map image>" (+ "&r=<token>").
+        """
+        key, gen = made[0], made[3]
+        return f"{SESSION_RUN}.{gen}-{key[0]}-{key[1]}-{key[2]}" + (f"&r={key[3]}" if made[4] else "")
 
     def _vector_tiler(self, steps: bool = False) -> VectorTiler | None:
         """Return the vector tiler of the current model, filters and map image (made on first use).
@@ -1096,10 +1224,8 @@ class MapImageMixin:
         return made[1] if made is not None else None
 
     def _vector_made(self, steps: bool = False) -> tuple | None:
-        """Return (versions, tiler, 3D scene features, grid) of the current model, filters and map image, made once.
-
-        Versions, grid and features are read together under the session lock: read apart, a change between them
-        made a tiler of one map image keyed by another's versions (CodeRabbit).
+        """Return (versions, tiler, grid, generation, made with steps) of the current model, filters and map image,
+        made once (_made).
 
         Args:
             steps: The timelapse's (items carry their reveal step), kept beside the plain one.
@@ -1107,32 +1233,24 @@ class MapImageMixin:
         Returns:
             The tuple, or None without a map image.
         """
-        slot = "_vector_steps" if steps else "_vector"
-        key = (self.model_version, self.filter_version, self.terrain_version, self.replay_token if steps else 0)
-        v = getattr(self, slot, None)
-        if v is not None and v[0] == key:
-            return v
-        with self._vector_lock, self._lock:
-            key = (self.model_version, self.filter_version, self.terrain_version, self.replay_token if steps else 0)
-            v = getattr(self, slot, None)
-            if v is not None and v[0] == key:
-                return v
-            g = self.grid
-            if g is None:
-                return None
+
+        def build(src: TileSource) -> VectorTiler:
+            """The tiler of what the filters show."""
             # without the 3D view's parts: built only when it asks (scene_3d). Built for every flat map too, they
             # were ~0.8 s of a big atlas's first tiles though never in them (user: what isn't shown shouldn't slow it)
-            layers = self.vector_layers(g, steps, with_3d=False)
+            layers = self.vector_layers(src, steps, with_3d=False)
             for k in ("icon_rows", "solids"):
                 layers.pop(k, None)
-            dense = max(0, g.zmax - 4)  # icons and labels are not drawn zoomed far out
-            made = (key, VectorTiler(layers, g, min_zoom={"icons": dense}), None, g)
-            setattr(self, slot, made)
-            return made
+            dense = max(0, src.grid.zmax - 4)  # icons and labels are not drawn zoomed far out
+            return VectorTiler(layers, src.grid, min_zoom={"icons": dense})
+
+        return self._made("_vector_steps" if steps else "_vector", steps, build)
 
     def _scene_made(self, steps: bool = False) -> tuple | None:
-        """Return (versions, 3D scene features, grid) of the current model, filters and map image, made once and only
-        when the 3D view asks (the flat map's tiles never carry them).
+        """Return (versions, 3D scene features, grid, generation, made with steps) of the current model, filters and
+        map image, made
+        once and only
+        when the 3D view asks (the flat map's tiles never carry them): _made.
 
         The 3D view's icons and models aren't cut into tiles: the page gets them whole (scene_3d); read back from
         loaded tiles they were missing zoomed out, came twice at tile edges and were gathered again after every move
@@ -1144,25 +1262,61 @@ class MapImageMixin:
         Returns:
             The tuple, or None without a map image.
         """
-        slot = "_scene3d_steps" if steps else "_scene3d"
-        key = (self.model_version, self.filter_version, self.terrain_version, self.replay_token if steps else 0)
+
+        def build(src: TileSource) -> dict:
+            """The 3D view's features."""
+            layers = self.vector_layers(src, steps)
+            return {"icon_rows": layers["icon_rows"], "solids": layers["solids"], "paths": layers["paths"]}
+
+        return self._made("_scene3d_steps" if steps else "_scene3d", steps, build)
+
+    def _made(self, slot: str, steps: bool, build: Callable[[TileSource], object]) -> tuple | None:
+        """Return (versions, what `build` made, grid, generation, made with the timelapse's steps) for the tiles'
+        source now (_source), kept in
+        `slot`.
+
+        Made from the source alone, never under the session lock: a job holds that lock for minutes, and the tiles
+        asked for meanwhile waited for it and took all the browser's connections, so even the ground of a spot jumped
+        to stayed black (user). The source's versions, grid and model belong together (it is replaced whole, in the
+        same step as each change: _source_sync), so what is made is always what its versions say.
+
+        Args:
+            slot: The attribute it is kept in.
+            steps: The timelapse's (items carry their reveal step).
+            build: Makes it from the source.
+
+        Returns:
+            The tuple, or None without a map image.
+        """
+        src = self._source
         v = getattr(self, slot, None)
-        if v is not None and v[0] == key:
+        if v is not None and v[0] == src.key(steps):
             return v
-        with self._vector_lock, self._lock:
-            key = (self.model_version, self.filter_version, self.terrain_version, self.replay_token if steps else 0)
+        with self._vector_lock:  # (one build at a time: two requests at once would each make the same)
+            src = self._source  # the newest, a change while this waited included
+            if src.grid is None:
+                return None
+            key = src.key(steps)
             v = getattr(self, slot, None)
             if v is not None and v[0] == key:
                 return v
-            g = self.grid
-            if g is None:
-                return None
-            layers = self.vector_layers(g, steps)
-            made = (key, {"icon_rows": layers["icon_rows"], "solids": layers["solids"], "paths": layers["paths"]}, g)
+            # (with steps only when this source has them: a timelapse closed since the request decided leaves none)
+            made = (key, build(src), src.grid, src.gen, steps and src.replay is not None)
             setattr(self, slot, made)
             return made
 
     def scene_3d(self, replay: bool = False) -> bytes:
+        """The 3D view's icons, paths and models as JSON (scene_3d_made, without its address).
+
+        Args:
+            replay: For the tab playing the timelapse: each item carries the step it appears at.
+
+        Returns:
+            The JSON (scene_3d_made).
+        """
+        return self.scene_3d_made(replay)[0]
+
+    def scene_3d_made(self, replay: bool = False) -> tuple[bytes, str | None]:
         """Return the 3D view's icons, paths and models as JSON, whole (what the filters show, in atlas units).
 
         Built from the same features the vector tiles are cut from, once per model / filter / map image version.
@@ -1174,16 +1328,17 @@ class MapImageMixin:
             JSON {"icons": [[x, y, id, name, slot, lift, step, node]],
             "paths": [{"id", "strong", "abyss", "share", "step", "pts"}],
             "models": [{"rings", "colour", "base", "height" (metres), "ax", "ay", "step", "pick"}]} (step -1: from
-            the start; pick: what a click on it selects, "node:<i>" / "landmark:<i>" / "").
+            the start; pick: what a click on it selects, "node:<i>" / "landmark:<i>" / ""), and the address it was
+            made for (_address; None without a map image).
         """
-        steps = replay and self.replay_steps() is not None
+        steps = replay and self._source.replay is not None
         made = self._scene_made(steps)  # its own snapshot: the slot can be replaced meanwhile (CodeRabbit)
         if made is None:
-            return b'{"icons": [], "paths": [], "models": []}'
-        key, scene, g = made
+            return b'{"icons": [], "paths": [], "models": []}', None
+        key, scene, g, _gen, with_steps = made
         kept = getattr(self, "_scene", None)
-        if kept is not None and kept[0] == (key, steps):
-            return kept[1]
+        if kept is not None and kept[0] == (key, with_steps):
+            return kept[1], self._address(made)
 
         def A(p) -> list[float]:  # world px at zmax -> atlas units
             return [round((p[0] - g.offset) / g.scale + g.x0, 1), round((p[1] - g.offset) / g.scale + g.y0, 1)]
@@ -1208,14 +1363,14 @@ class MapImageMixin:
         import json
 
         data = json.dumps({"icons": icons, "paths": paths, "models": models}, separators=(",", ":")).encode()
-        self._scene = ((key, steps), data)
-        return data
+        self._scene = ((key, with_steps), data)
+        return data, self._address(made)
 
-    def vector_layers(self, grid: Grid, steps: bool = False, with_3d: bool = True) -> dict[str, list[dict]]:
+    def vector_layers(self, src: TileSource, steps: bool = False, with_3d: bool = True) -> dict[str, list[dict]]:
         """Build the vector tile features of what the filters show (world px at zmax).
 
         Args:
-            grid: The map image's grid.
+            src: What they are made from (_source; it has a map image).
             steps: Give items their timelapse reveal step (while one is open).
             with_3d: Also the 3D view's parts (icon rows, models); without them icon_rows and solids stay empty.
 
@@ -1223,12 +1378,12 @@ class MapImageMixin:
             Layer name -> features: land, biomes, paths, removed, maps, icons, landmarks, bookmarks, solids.
         """
         # every path whatever "drawn by at least" says: each carries its share and the page hides the ones below it
-        V, D, fl = self.V, self.D, {**self._flags(), "freq": 0.0}
+        V, D, fl, grid = src.V, src.D, {**src.flags, "freq": 0.0}, src.grid
         nodes = V["nodes"]
         W = grid.world_px
-        node_ok = [self.node_shown(n, fl) for n in nodes]
+        node_ok = [self.node_shown(n, fl, src) for n in nodes]
         potential = D.get("potential", {})
-        rs = self.replay_steps() if steps else None  # the step each item appears at (the page filters)
+        rs = src.replay if steps else None  # the step each item appears at (the page filters)
 
         def step(kind: str, i: int) -> dict:
             """Return {"step": s} for an item while replaying, else {}."""
@@ -1280,7 +1435,11 @@ class MapImageMixin:
                         "abyss": bool(p.get("abyss")),
                         "strong": bool(strong),
                         "share": path_share(p),
-                        **({"step": max(step("node", p["a"])["step"], step("node", p["b"])["step"])} if rs else {}),
+                        **(
+                            {"step": max(step("node", p["a"]).get("step", -1), step("node", p["b"]).get("step", -1))}
+                            if rs
+                            else {}
+                        ),
                     },
                 }
             )
@@ -1296,10 +1455,10 @@ class MapImageMixin:
             for k, i in enumerate(members):
                 slot[i] = k - (len(members) - 1) / 2
         node_of = D.get("icon_node", {})
-        shapes = self._solid_shapes(node_ok) if with_3d else []
+        shapes = self._solid_shapes(node_ok, src) if with_3d else []
         lift = self._model_tops(shapes)
         for i, ic in enumerate(V["icons"]):
-            if not self.icon_visible(i, fl):
+            if not self.icon_visible(i, fl, src):
                 continue
             v = node_of.get(i)
             at = (nodes[v]["x"], nodes[v]["y"]) if v is not None and v < len(nodes) else (ic["x"], ic["y"])
@@ -1331,7 +1490,7 @@ class MapImageMixin:
                 }
             )
         for i, lm in enumerate(V["landmarks"]):
-            if not self.landmark_shown(i, fl):
+            if not self.landmark_shown(i, fl, src):
                 continue
             L["landmarks"].append(
                 {
@@ -1341,7 +1500,7 @@ class MapImageMixin:
                     "props": {
                         "id": i,
                         "kind": lm["kind"],
-                        "name": self.landmark_name(i),
+                        "name": self.landmark_name(i, src),
                         "removed": lm["status"].startswith("removed"),
                         "locked": i in D.get("locked", ()),
                         **step("landmark", i),
@@ -1350,7 +1509,7 @@ class MapImageMixin:
             )
         # (bookmarks: drawn by the page from its bookmark list, so hiding one doesn't make every tile again)
         # the vector ground: land where screenshots show it, and the city / stronghold biome areas (no icon makes one)
-        for poly in self._land():
+        for poly in self._land(src):
             L["land"].append({"kind": "polygon", "rings": [[W(x, y) for x, y in r] for r in poly], "props": {}})
         for kind, polys in biome_polygons(nodes, potential):
             for poly in polys:
@@ -1360,32 +1519,37 @@ class MapImageMixin:
         L["solids"] = self._solids(grid, shapes, rs) if with_3d else []
         return L
 
-    def _land(self) -> list:
-        """Return the land polygons of the map image (webmap.shapes.land_polygons), made once per map image.
+    def _land(self, src: TileSource) -> list:
+        """Return the land polygons of the source's map image (webmap.shapes.land_polygons), made once per map image.
+
+        Args:
+            src: The tiles' source.
 
         Returns:
             Polygons in atlas units ([] without a map image).
         """
-        if self.terrain is None:
+        if src.terrain is None:
             return []
         hit = getattr(self, "_land_cache", None)
-        if hit is None or hit[0] != self.terrain_version:
-            canvas, _w, origin = self.terrain
-            hit = self._land_cache = (self.terrain_version, land_polygons(canvas, origin))
+        if hit is None or hit[0] != src.terrain_version:
+            canvas, _w, origin = src.terrain
+            hit = self._land_cache = (src.terrain_version, land_polygons(canvas, origin))
         return hit[1]
 
-    def _solid_shapes(self, node_ok: list[bool]) -> list[dict]:
+    def _solid_shapes(self, node_ok: list[bool], src: TileSource | None = None) -> list[dict]:
         """The 3D view's extruded shapes (webmap.solids) in atlas units, each with its anchor and pick.
 
         Args:
             node_ok: node_shown of every map node.
+            src: The tiles' source they are made from (None: the session as it is now).
 
         Returns:
             Shapes ("rings", "base", "top", "colour", "anchor", "pick": ("node" | "landmark", index)).
         """
-        V, D = self.V, self.D
+        src = src or self._source
+        V, D = src.V, src.D
         nodes = V["nodes"]
-        fl = self._flags()
+        fl = src.flags
         shapes = []
         for i, nd in enumerate(nodes):
             if not node_ok[i]:
@@ -1407,7 +1571,7 @@ class MapImageMixin:
         for k, lm in enumerate(V["landmarks"]):
             if str(lm.get("status", "")).startswith("removed"):
                 continue
-            if not self.landmark_shown(k, fl):  # hidden type (e.g. Tower): no model either (CodeRabbit)
+            if not self.landmark_shown(k, fl, src):  # hidden type (e.g. Tower): no model either (CodeRabbit)
                 continue
             # a click on it selects the map node it marks (its city, hall, tower or boss map: user), else itself
             v = D.get("landmark_node", {}).get(k)
