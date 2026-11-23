@@ -10,7 +10,7 @@ City types
     are known gets the type that is left ("trio"). Otherwise it takes the type of the most alike
     labelled city in city_refs.npz (colour + edge-direction look of the ground around the city,
     "look-alike"). Faridun is easy to tell by its sand; Vaal vs Ezomyte by look alone is weak, so
-    the trio rule and hand-set types (atlas.city_types, right-click in the viewer) win over it.
+    the trio rule and hand-set types (atlas.city_types, right-click on the map) win over it.
 
 Potential maps
     Maps within a few path steps of a City or a Breach stronghold may take on its biome.
@@ -305,8 +305,8 @@ def city_types(atlas, cities: list[dict], compute_missing=True) -> list[tuple[st
     return [o if o else ("", "") for o in out]
 
 
-def set_type(atlas, x: float, y: float, typ: str | None) -> None:
-    """Store (or with typ None / "" forget) a hand-set type for the city at x, y.
+def set_type(atlas, x: float, y: float, typ: str | None, by: str | None = None) -> None:
+    """Store (or with typ None / "" forget) a set type for the city at x, y.
 
     Any stored type within SAME_CITY of (x, y) is replaced.
 
@@ -315,10 +315,11 @@ def set_type(atlas, x: float, y: float, typ: str | None) -> None:
         x: x of the city in atlas units.
         y: y of the city in atlas units.
         typ: "Ezomyte", "Vaal" or "Faridun"; None or "" to forget.
+        by: What set it, when not your hand ("biome": a city biome painted over it, taken back when it goes).
     """
     atlas.city_types = [c for c in atlas.city_types if np.hypot(c["x"] - x, c["y"] - y) >= SAME_CITY]
     if typ:
-        atlas.city_types.append({"x": round(x, 1), "y": round(y, 1), "type": typ})
+        atlas.city_types.append({"x": round(x, 1), "y": round(y, 1), "type": typ, **({"by": by} if by else {})})
 
 
 def ground_sampler(canvas: np.ndarray, weight: np.ndarray, origin, radius: float = 70.0):
@@ -360,8 +361,51 @@ def ground_sampler(canvas: np.ndarray, weight: np.ndarray, origin, radius: float
         px = lab[cy - r : cy + r + 1, cx - r : cx + r + 1][m]
         return np.concatenate([px.mean(0), px.std(0)])  # spread: Faridun ground is flat, desert mottled
 
+    dy, dx = np.mgrid[-r : r + 1, -r : r + 1]
+    need = disc.sum() * 0.5
+
+    def many(points) -> tuple[np.ndarray, np.ndarray]:
+        """`at` for many atlas points at once (one call per map node took ~2 s on a 24,000-map atlas, user).
+
+        Args:
+            points: (n, 2) atlas x, y.
+
+        Returns:
+            (looks, ok): (n, 6) Lab mean + spread, and (n,) whether each point has one (where `at` gives None, the
+            row is zeros and ok is False).
+        """
+        P = np.asarray(points, float).reshape(-1, 2)
+        out = np.zeros((len(P), 6), np.float32)
+        ok = np.zeros(len(P), bool)
+        cx = np.round((P[:, 0] - x0) * s0).astype(int)
+        cy = np.round((P[:, 1] - y0) * s0).astype(int)
+        inside = np.nonzero((cx - r >= 0) & (cy - r >= 0) & (cx + r + 1 <= W) & (cy + r + 1 <= H))[0]
+        # as many discs as fit the pixel budget (a fixed 512 was 300 MB with big discs: CodeRabbit), at least one
+        chunk = max(1, CITY_GROUND_PIXELS // (2 * r + 1) ** 2)
+        for k in range(0, len(inside), chunk):
+            i = inside[k : k + chunk]
+            ys, xs = cy[i, None, None] + dy, cx[i, None, None] + dx  # (m, 2r+1, 2r+1) each
+            m = (weight[ys, xs] > 0) & disc
+            cnt = m.sum((1, 2))
+            good = cnt >= need
+            if not good.any():
+                continue
+            i, ys, xs, m, cnt = i[good], ys[good], xs[good], m[good], cnt[good]
+            px = lab[ys, xs]  # (m, 2r+1, 2r+1, 3) float32
+            w = m.astype(np.float32)
+            # one pass: sums and sums of squares over the seen part of each disc (totals in float64)
+            s1 = np.einsum("nyxc,nyx->nc", px, w, dtype=np.float64)
+            s2 = np.einsum("nyxc,nyxc,nyx->nc", px, px, w, dtype=np.float64)
+            mean = s1 / cnt[:, None]
+            std = np.sqrt(np.maximum(s2 / cnt[:, None] - mean**2, 0.0))
+            out[i, :3], out[i, 3:], ok[i] = mean, std, True
+        return out, ok
+
+    at.many = many  # type: ignore[attr-defined]
     return at
 
+
+CITY_GROUND_PIXELS = 600_000  # disc pixels read in one go (ground_sampler.many): ~7 MB of Lab pixels a chunk
 
 SHIP_BUTTON = rc_paths.ref("ship_button.png")  # the Expedition ship marker: same square button, ship symbol
 BUTTON_FRAME = 0.86  # frame match (symbol area masked): real buttons 0.87-1.0, anything else <= 0.854
@@ -628,10 +672,17 @@ def potential_maps(
     if ground is not None and starts:
         GV = np.zeros((len(pts), 6), np.float32)
         ok = np.zeros(len(pts), bool)
-        for v in np.nonzero(alive)[0]:
-            gv = g(v)
-            if gv is not None:
-                GV[v], ok[v] = gv, True
+        live = np.nonzero(alive)[0]
+        if hasattr(ground, "many"):  # every map node's ground at once (one by one took ~2 s on rc1, user)
+            looks, seen = ground.many(np.asarray(pts, float)[live])
+            GV[live[seen]], ok[live[seen]] = looks[seen], True
+            for j, v in enumerate(live):
+                gcache.setdefault(int(v), looks[j] if seen[j] else None)
+        else:
+            for v in live:
+                gv = g(v)
+                if gv is not None:
+                    GV[v], ok[v] = gv, True
         S = np.array([[x, y] for _s, x, y, _l in starts], float)
         dmin = np.full(len(pts), 1e9)
         for k in range(0, len(S), 64):
@@ -935,3 +986,108 @@ def near_city(
             if w not in out and w not in blocked:
                 out[w] = (lab, 1)
     return out
+
+
+def biomes(atlas, V: dict, ground=None, kept: bool = True) -> dict:
+    """Work out the city / stronghold biomes of an atlas (the app's model and map use it).
+
+    In order (as the old window did: add_locks, rebuild_cities, apply_biome_edits): locked Breach
+    strongholds from the hand icons, city types, the maps each City or unlocked stronghold may cover, then the
+    biomes drawn by hand on top.
+
+    Args:
+        atlas: The atlas.
+        V: Its view model (app.model.view_model); not changed.
+        ground: ground_sampler of the map image, or None (biomes then ignore the look of the ground).
+        kept: Apply the biomes a Re-check left as they were (atlas.biome_kept); False: as a Re-check works them out.
+
+    Returns:
+        {"potential": map node index -> (biome label, steps), "landmarks": the landmarks with a stronghold added for
+        each hand icon that had none, "locked": indices of locked strongholds in those landmarks, "city_type":
+        landmark index -> (type, how), "blocked": map node index -> why it is not a city map, "icon_node": icon
+        index -> its map node index, "near_city": map node index -> (biome label, steps) for maps on / next to a
+        city biome}.
+    """
+    import math
+
+    L = list(V["landmarks"])
+    locked: set[int] = set()
+    for k in getattr(atlas, "locks", []) or []:
+        if any(
+            math.hypot(e["x"] - k["x"], e["y"] - k["y"]) < 300 and e["kind"] != "Breach stronghold"
+            for e in atlas.landmark_edits
+        ):
+            continue  # the user deleted / changed it: leave it
+        near = [
+            (math.hypot(lm["x"] - k["x"], lm["y"] - k["y"]), i)
+            for i, lm in enumerate(L)
+            if lm["kind"] == "Breach stronghold" and not lm["status"].startswith("removed")
+        ]
+        d, i = min(near) if near else (1e9, -1)
+        if d < 300:
+            locked.add(i)
+        else:
+            L.append(
+                {
+                    "kind": "Breach stronghold",
+                    "x": k["x"],
+                    "y": k["y"],
+                    "n": k["n"],
+                    "could": k["n"],
+                    "conf": 1.0,
+                    "source": "hand badge",
+                    "status": "kept",
+                }
+            )
+            locked.add(len(L) - 1)
+    alive = [i for i, lm in enumerate(L) if not lm["status"].startswith("removed")]
+    cities = [i for i in alive if L[i]["kind"] == "City"]
+    city_type = {}
+    if cities:
+        res = city_types(atlas, [L[i] for i in cities])
+        city_type = {i: r for i, r in zip(cities, res, strict=False) if r[0]}
+    src = [(L[i]["x"], L[i]["y"], f"{city_type[i][0]} city" if i in city_type else "City") for i in cities]
+    src += [
+        (L[i]["x"], L[i]["y"], "Breach stronghold")
+        for i in alive  # locked ones show no maps
+        if L[i]["kind"] == "Breach stronghold" and i not in locked
+    ]
+    icon_node = icon_maps(V["nodes"], V["icons"])
+    live = [L[i] for i in alive if i not in locked] + [L[i] for i in locked]
+    blocked = blocked_maps(V["nodes"], V["icons"], live, icon_node)
+    potential = potential_maps(V["nodes"], V["paths"], src, ground=ground, blocked=blocked) if src else {}
+    edits = getattr(atlas, "biome_edits", []) or []
+    # biomes a Re-check left as they were (you unticked Biomes: app.recheck_choices), each on its map's spot; the
+    # hand-drawn ones go on top
+    held = (getattr(atlas, "biome_kept", []) or []) if kept else []
+    if (edits or held) and V["nodes"]:  # each stored map position -> every map node within 20 units
+        from scipy.spatial import cKDTree
+
+        tree = cKDTree(np.array([[n["x"], n["y"]] for n in V["nodes"]], float))
+        for k in held:
+            for i in tree.query_ball_point([k["x"], k["y"]], 20.0):
+                if V["nodes"][int(i)].get("status") == "removed":
+                    continue
+                if k["biome"]:
+                    potential[int(i)] = (k["biome"], 0)
+                else:
+                    potential.pop(int(i), None)
+        for e in edits:
+            for q in e["maps"]:
+                # all of them: of two map nodes on one spot (a map seen twice) only one took the edit, and the other
+                # kept its biome (user: painting "no biome" didn't stick on some maps)
+                for i in tree.query_ball_point(q, 20.0):
+                    if e["biome"]:
+                        potential[int(i)] = (e["biome"], 0)
+                    else:
+                        potential.pop(int(i), None)
+    near = near_city(V["nodes"], V["paths"], potential, blocked)
+    return {
+        "potential": potential,
+        "landmarks": L,
+        "locked": locked,
+        "city_type": city_type,
+        "blocked": blocked,
+        "icon_node": icon_node,
+        "near_city": near,
+    }

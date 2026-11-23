@@ -1,7 +1,7 @@
 """Where everything lives (one place, so the folders can be found and changed easily).
 
 <program folder>/
-  Start Atlas Viewer.bat      double-click to run
+  Start The Grand Project.bat double-click to run
   atlases/default/            the atlas opened on first start (screenshots + atlas.json)
   references/                 the reference database + every picture / data file the program reads
   program/                    the program (this folder)
@@ -97,6 +97,11 @@ def need_test_data() -> None:
     if why:
         print("SKIP: " + why)
         sys.exit(0)
+
+
+# the browser tests (frontend/e2e) and CI keep the app's settings and log away from the player's own
+if os.environ.get("GRAND_PROJECT_USER_DATA"):
+    USER_DATA = Path(os.environ["GRAND_PROJECT_USER_DATA"]).resolve()
 
 
 # which copy this is: "internal" (the author's working copy: local_paths.json), "develop" (the GitHub develop

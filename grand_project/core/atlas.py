@@ -67,13 +67,17 @@ class Atlas:
         edges: Paths keyed by (node index, node index) -> {seen, could, confirmed}.
         landmarks: Merged landmarks {kind, x, y, n, conf, source}.
         bookmarks: {name, category, note, x, y} set in the viewer.
+        group_looks: {group: {"colour"?, "icon"?}} bookmark groups' own colour and icon (app.bookmarks).
         icons: Every icon (badge), merged across screenshots {name, x, y, bx, by, n, frames, score, source};
             (bx, by) is the map base under the icon's row.
         final: Atlas-wide clean-up result (atlas_finalize), or None.
         city_types: {x, y, type} cities whose type was set by hand.
         city_auto: {x, y, d: [..]} cached look-alike distances per city type.
         landmark_edits: {x, y, kind[, on]} set by hand in the viewer; kind "" = deleted.
+        map_edits: {x, y, op} maps deleted ("remove") or added ("add") by hand (app.model applies them).
         biome_edits: {"biome": "Vaal city"... or "" (none), "maps": [[x, y], ...]} lassoed by hand.
+        biome_kept: {x, y, "biome" ("" = none)} maps whose biome a Re-check left as it was (app.recheck_choices).
+        last_check: {"time", "version"} of the last whole-atlas Re-check, or None (none since 1.23).
         locks: {x, y, n} hand icons = locked Breach strongholds.
         lock_scanned: Screenshots already searched for the hand icon.
         frames: Placed screenshots {name, path, sha, w, h, M, horizon, stats, new_nodes, matched_nodes,
@@ -86,19 +90,41 @@ class Atlas:
         self.nodes: list[dict] = []  # {x,y,n,frames,tower}
         self.edges: dict[tuple[int, int], dict] = {}
         self.landmarks: list[dict] = []
-        self.bookmarks: list[dict] = []  # {name,category,note,x,y} set in the viewer
+        self.bookmarks: list[dict] = []  # {uid,name,group,note,x,y,created,hidden?} (app.bookmarks)
+        # the id the next bookmark gets: one past every id this atlas has had, so a deleted one's id is never given
+        # again (a page still holding it would act on the new bookmark: CodeRabbit)
+        self.bookmark_next_uid = 0
+        self.group_looks: dict[str, dict] = {}  # {group: {colour?, icon?}} (app.bookmarks)
         self.icons: list[dict] = []  # every badge, merged across screenshots
         self.final: dict | None = None  # atlas-wide clean-up result (atlas_finalize)
         self.city_types: list[dict] = []  # {x,y,type} cities whose type was set by hand
         self.city_auto: list[dict] = []  # {x,y,d:[..]} cached look-alike distances per city type
         self.landmark_edits: list[dict] = []  # {x,y,kind[,on]} set by hand in the viewer; kind "" = deleted
+        self.map_edits: list[dict] = []  # {x,y,op} maps deleted ("remove") or added ("add") by hand
         self.biome_edits: list[
             dict
         ] = []  # {"biome": "Vaal city"... or "" (none), "maps": [[x, y], ...]} lassoed by hand
+        self.biome_kept: list[dict] = []  # {x,y,biome} biomes a Re-check left as they were (you unticked Biomes)
+        self.last_check: dict | None = None  # {time, version} of the last whole-atlas Re-check (its prompt says)
         self.locks: list[dict] = []  # {x,y,n} hand badges = locked Breach strongholds
         self.lock_scanned: list[str] = []  # screenshots already searched for the hand badge
         self.frames: list[dict] = []  # {name,path,sha,w,h,M,stats}
-        self._images: dict[str, np.ndarray] = {}
+        self._images: dict[str, np.ndarray] = {}  # (not pickled: __getstate__)
+
+    def __getstate__(self) -> dict:
+        """Pickle without the decoded screenshot cache (up to IMAGE_CACHE pictures, ~6 MB each).
+
+        Fix seams pickles the atlas as its process's input under the session lock: the cache made that write
+        long and held everyone else up (CodeRabbit).
+        """
+        state = self.__dict__.copy()
+        state["_images"] = {}
+        return state
+
+    def __setstate__(self, state: dict) -> None:
+        """Restore a pickled atlas (its screenshot cache empty)."""
+        self.__dict__.update(state)
+        self.__dict__.setdefault("_images", {})
 
     # -------- image access
     IMAGE_CACHE = 90  # decoded screenshots kept in memory (~6 MB each; a terrain
@@ -106,7 +132,7 @@ class Atlas:
 
     _image_lock = threading.Lock()  # the viewer reads images while a worker places
 
-    def image(self, path: str) -> np.ndarray:
+    def image(self, path: str) -> np.ndarray | None:
         """Return a screenshot image, read through a small most-recently-used cache.
 
         IMAGE_CACHE decoded screenshots are kept (~6 MB each; a terrain check of one screenshot reads ~60
@@ -116,7 +142,8 @@ class Atlas:
             path: Screenshot file path.
 
         Returns:
-            BGR image as read by read_screenshot.
+            BGR image as read by read_screenshot, or None while it can't be read (not kept: a file put back is
+            read again, CodeRabbit).
         """
         with Atlas._image_lock:
             if path in self._images:
@@ -124,6 +151,8 @@ class Atlas:
                 self._images[path] = img  # most recently used last
                 return img
         img = _frame.read_screenshot(path)
+        if img is None:
+            return None
         with Atlas._image_lock:
             self._images[path] = img
             while len(self._images) > self.IMAGE_CACHE:
@@ -366,17 +395,19 @@ class Atlas:
         moved = apply(M, frame.pts)
         atlas_pts = self.points()
         mapping: dict[int, int] = {}
-        # greedy one-to-one node merge, closest pairs first
-        if len(atlas_pts):
-            d = np.linalg.norm(moved[:, None, :] - atlas_pts[None, :, :], axis=2)
-            order = np.dstack(np.unravel_index(np.argsort(d, axis=None), d.shape))[0]
+        # greedy one-to-one node merge, closest pairs first; only the pairs within MERGE_TOL are sorted (every pair,
+        # screenshot nodes x atlas nodes, was measured and sorted: slow on a big atlas, GPT audit)
+        if len(atlas_pts) and len(moved):
+            from scipy.spatial import cKDTree
+
+            near = cKDTree(atlas_pts).query_ball_point(moved, MERGE_TOL)
+            pairs = sorted((float(np.hypot(*(moved[i] - atlas_pts[j]))), i, j) for i, js in enumerate(near) for j in js)
             used_a = set()
-            for i, j in order:
-                if d[i, j] > MERGE_TOL:
-                    break
-                if int(i) in mapping or int(j) in used_a:
+            for _d, i, j in pairs:
+                if i in mapping or j in used_a:
                     continue
-                mapping[int(i)], _ = int(j), used_a.add(int(j))
+                mapping[i] = j
+                used_a.add(j)
         new_nodes = 0
         on_hud = getattr(frame, "on_hud", np.zeros(len(moved), bool))
         hud_skipped = 0
@@ -707,6 +738,55 @@ class Atlas:
                 self._merge_icons(fr, np.array(f["M"], float))
 
     # -------- export
+    def terrain_key(self) -> str:
+        """Return the key of the stitched map image: a hash of every screenshot's name and placement.
+
+        A cached map image (map_image_files) is used only when its key matches; the viewer and the web map share it.
+
+        Returns:
+            The hex digest.
+        """
+        import hashlib
+
+        h = hashlib.sha1()
+        for f in self.frames:
+            h.update(f["name"].encode())
+            h.update(np.round(np.array(f["M"], float), 2).tobytes())
+        return h.hexdigest()
+
+    # what an atlas file holds (to_json's fields, besides its version), and which of it is set by hand: Undo puts
+    # everything else back as it was before the add (it restored a picked few, and the locked strongholds found in
+    # the screenshots it took away stayed: GPT audit)
+    SAVED = (
+        "frames",
+        "nodes",
+        "edges",
+        "landmarks",
+        "bookmarks",
+        "bookmark_next_uid",
+        "group_looks",
+        "icons",
+        "city_types",
+        "city_auto",
+        "landmark_edits",
+        "map_edits",
+        "biome_edits",
+        "biome_kept",
+        "last_check",
+        "locks",
+        "lock_scanned",
+        "final",
+    )
+    HAND_EDITS = (
+        "bookmarks",
+        "bookmark_next_uid",
+        "group_looks",
+        "city_types",
+        "landmark_edits",
+        "map_edits",
+        "biome_edits",
+    )
+
     def to_json(self) -> dict:
         """Return the atlas as the dict saved in atlas.json.
 
@@ -746,11 +826,16 @@ class Atlas:
             ],
             "landmarks": self.landmarks,
             "bookmarks": self.bookmarks,
+            "bookmark_next_uid": self.bookmark_next_uid,
+            "group_looks": self.group_looks,
             "icons": self.icons,
             "city_types": self.city_types,
             "city_auto": self.city_auto,
             "landmark_edits": self.landmark_edits,
+            "map_edits": self.map_edits,
             "biome_edits": self.biome_edits,
+            "biome_kept": self.biome_kept,
+            "last_check": self.last_check,
             "locks": self.locks,
             "lock_scanned": self.lock_scanned,
             "final": self.final,
@@ -806,12 +891,17 @@ class Atlas:
         }
         at.landmarks = d["landmarks"]
         at.bookmarks = d.get("bookmarks", [])
+        at.bookmark_next_uid = int(d.get("bookmark_next_uid", 0))
+        at.group_looks = d.get("group_looks") or {}
         at.icons = d.get("icons", [])
         at.final = d.get("final")
         at.city_types = d.get("city_types", [])
         at.city_auto = d.get("city_auto", [])
         at.landmark_edits = d.get("landmark_edits", [])
+        at.map_edits = d.get("map_edits", [])
         at.biome_edits = d.get("biome_edits", [])
+        at.biome_kept = d.get("biome_kept", [])
+        at.last_check = d.get("last_check")
         at.locks = d.get("locks", [])
         at.lock_scanned = d.get("lock_scanned", [])
         keys = ("inliers", "rmse", "ncc", "ratio", "reference", "reason")
@@ -824,7 +914,7 @@ class Atlas:
         return at
 
     # -------- composite image
-    def composite(self, max_pixels: int = 36_000_000, with_weight: bool = False):
+    def composite(self, max_pixels: int = 36_000_000, with_weight: bool = False, progress=None):
         """Stitch the terrain: each spot from the screenshot that shows it most centrally.
 
         Moved or deleted screenshots are skipped. with_weight also returns the per-pixel weight, so screenshots can
@@ -833,6 +923,7 @@ class Atlas:
         Args:
             max_pixels: Largest canvas size in pixels; bigger atlases are scaled down.
             with_weight: Also return the weight map.
+            progress: Called after each screenshot is pasted (the app's heartbeat for the map image), or None.
 
         Returns:
             (canvas, (x0, y0, scale)) or, with with_weight, (canvas, (x0, y0, scale), weight): BGR uint8 canvas,
@@ -855,12 +946,12 @@ class Atlas:
         CW, CH = max(1, int(W * scale)), max(1, int(H * scale))
         best_w = np.zeros((CH, CW), np.float32)
         canvas = np.zeros((CH, CW, 3), np.uint8)
-        self.paste_into(canvas, best_w, (x0, y0, scale), frames)
+        self.paste_into(canvas, best_w, (x0, y0, scale), frames, progress=progress)
         if with_weight:
             return canvas, (x0, y0, scale), best_w
         return canvas, (x0, y0, scale)
 
-    def paste_into(self, canvas, best_w, origin, frames, labels=None, names=None) -> bool:
+    def paste_into(self, canvas, best_w, origin, frames, labels=None, names=None, progress=None) -> bool:
         """Warp screenshots into an existing stitched canvas, each only into its own patch.
 
         A pixel is taken where this screenshot's weight (distance from its masked edge) beats the current one.
@@ -873,6 +964,7 @@ class Atlas:
             labels: Optional (h, w) int map of which screenshot owns each pixel (a clean map's ownership map,
                 core.seams); updated with indices into `names`.
             names: Screenshot names for `labels`; new names are appended.
+            progress: Called after each screenshot (a heartbeat), or None.
 
         Returns:
             False when one falls outside the canvas (then rebuild with composite), else True.
@@ -882,6 +974,8 @@ class Atlas:
         T = np.array([[scale, 0, -x0 * scale], [0, scale, -y0 * scale], [0, 0, 1]], float)
         inside = True
         for f in frames:
+            if progress is not None:
+                progress()
             if not Path(f["path"]).exists():
                 continue
             Hc = T @ screen_to_atlas(np.array(f["M"], float), self.frame_R(f))

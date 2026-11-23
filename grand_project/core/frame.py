@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import contextlib
 import re
+import time
 import zlib
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -125,9 +126,15 @@ def read_screenshot(path) -> np.ndarray | None:
         path: Image file path (non-ASCII paths work).
 
     Returns:
-        BGR image, or None when it can't be read.
+        BGR image, or None when it can't be read (missing, moved, or not a picture).
     """
-    img = cv2.imdecode(np.fromfile(str(path), np.uint8), cv2.IMREAD_COLOR)
+    try:
+        buf = np.fromfile(str(path), np.uint8)
+        # an empty file: OpenCV raises on an empty buffer (CodeRabbit)
+        img = cv2.imdecode(buf, cv2.IMREAD_COLOR) if buf.size else None
+    # missing or unreadable: said so, not raised (Screenshots of this spot answered 500)
+    except (OSError, ValueError, cv2.error):
+        return None
     if img is None or img.shape[0] == K.SCREEN_HEIGHT:
         return img
     if img.shape[0] < 720 or not 1.5 <= img.shape[1] / img.shape[0] <= 2.5:
@@ -173,6 +180,21 @@ def atlas_files(atlas_path) -> Path:
             with contextlib.suppress(OSError):
                 old.rename(new)
     return d
+
+
+def map_image_files(atlas_path) -> tuple[Path, Path]:
+    """Return the cache files of an atlas's stitched map image (written and read by the app).
+
+    Args:
+        atlas_path: Path of the atlas .json file.
+
+    Returns:
+        (<stem>_terrain.png, <stem>_terrain.npz) in the atlas's files folder: the picture, and its key, origin,
+        weight and (after Fix seams) ownership labels.
+    """
+    p = Path(atlas_path)
+    d = atlas_files(p)
+    return d / (p.stem + "_terrain.png"), d / (p.stem + "_terrain.npz")
 
 
 def png_bytes(img: np.ndarray, what: str = "output") -> bytes:
@@ -350,3 +372,28 @@ def row_bases(icons: list[dict]) -> list[tuple[float, float]]:
         for k in r:
             out[k] = (bx, by)
     return out
+
+
+# (moved here from app.replay: the atlas-wide check needs it too, for icons over time)
+STEAM_TIME = re.compile(r"_(\d{14})_\d+$")  # Steam names screenshots <app id>_<YYYYMMDDHHMMSS>_<n>
+
+
+def capture_time(frame: dict) -> float | None:
+    """When a screenshot was taken: from its Steam file name, else the file's modified time.
+
+    Args:
+        frame: Atlas frame dict ("name", "path").
+
+    Returns:
+        Seconds since the epoch (local time), or None when neither is known.
+    """
+    m = STEAM_TIME.search(frame.get("name", ""))
+    if m:
+        try:
+            return time.mktime(time.strptime(m.group(1), "%Y%m%d%H%M%S"))
+        except ValueError:
+            pass
+    try:
+        return Path(frame["path"]).stat().st_mtime
+    except (OSError, KeyError):
+        return None

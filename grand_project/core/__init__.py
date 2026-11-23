@@ -48,14 +48,17 @@ from .constants import (  # noqa: F401
     VOTE_BIN,
 )
 from .frame import (  # noqa: F401
+    STEAM_TIME,
     Frame,
     _hud_cache,
     atlas_files,
+    capture_time,
     hud_mask,
     is_atlas_output,
     is_full_window,
     is_generated,
     is_screenshot,
+    map_image_files,
     on_hud_mask,
     png_bytes,
     read_screenshot,
@@ -85,6 +88,11 @@ from .register import (  # noqa: F401
 from .render import (  # noqa: F401
     _render_final,
     render_overlay,
+)
+from .sharp import (  # noqa: F401
+    build_sharp_tile,
+    footprint,
+    ground_weight,
 )
 from .terrain import (  # noqa: F401
     _MASK_CACHE,
