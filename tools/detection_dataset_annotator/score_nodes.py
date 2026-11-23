@@ -69,6 +69,9 @@ def guess_nodes(
     icons, landmarks, city_types = [], [], {}
     halls: list[tuple[int, list[float]]] = []
     for annotation in annotations:
+        bbox = annotation.get("bbox") or [None] * 4
+        if len(bbox) != 4 or any(value is None for value in bbox):
+            continue  # a box stored without a place (NaN is stored as NULL): the editor and export skip it too
         label = str(annotation.get("label", ""))
         x, y = _middle(annotation, sx, sy)
         if L.is_node(label):

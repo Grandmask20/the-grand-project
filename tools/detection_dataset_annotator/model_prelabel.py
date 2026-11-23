@@ -14,8 +14,10 @@ first, in the same write.
 
 The loop is measured as an A/B test: the eligible screenshots' spatial blocks (the split ledger's) are drawn, a
 ``--share`` of them get the model's pre-labels and the others keep the classical ones, and every screenshot records
-its arm (``ANNOTATOR_PRELABEL_FIELD``), so ``effort`` compares the arms' review edits and times. A block an earlier
-pass gave an arm keeps it for its later screenshots (``recorded_arms``).
+its arm (``ANNOTATOR_PRELABEL_FIELD``), so ``effort`` compares the arms' review edits and times. Each block's arm is
+planned in the store before any work (``ReviewStore.claim_prelabel_arms``): a block keeps it, and so does one an
+earlier pass gave an arm (``recorded_arms``), for its later screenshots and after a pass that failed (its screenshots
+stay eligible until their arm's work is saved).
 
 The model's boxes are snapped to the box rules (``snap``) and joined with the screenshot's current pre-labels by a
 policy (``merge``, ``ANNOTATOR_PRELABEL_POLICIES``); a box the model and the classical detector agree on is
@@ -37,6 +39,7 @@ from typing import Any
 from grand_project import core
 from grand_project.detect import constants as DK
 from grand_project.detect.proposals import box_at_point, clip_box
+from grand_project.detect.rf_detr_model import trained_on
 
 from . import constants as K
 from .effort import box_family, corners, match_boxes
@@ -170,14 +173,6 @@ def predict(detector: Mapping[str, Any], path: Path) -> tuple[list[dict[str, Any
     return found, (image.shape[1], image.shape[0]), (raw.shape[1], raw.shape[0])
 
 
-def trained_on(model_dir: Path) -> set[str]:
-    """The screenshots (project-relative paths) a model trained on."""
-    listed = model_dir / DK.RF_DETR_TRAINED_ON
-    if not listed.is_file():
-        return set()
-    return {line.strip() for line in listed.read_text(encoding="utf-8").splitlines() if line.strip()}
-
-
 def eligible(items: Iterable[tuple[str, Mapping[str, Any]]], skip: set[str]) -> list[tuple[str, Mapping[str, Any]]]:
     """The screenshots model pre-labels may go to: detected, unreviewed, training split, no reviewer's box, not
     pre-labelled by a model yet, not seeded by a hand truth (``ANNOTATOR_TRUTH_MARK``: its boxes are the truth's, and
@@ -231,9 +226,9 @@ def recorded_arms(items: Iterable[tuple[str, Mapping[str, Any]]], blocks: Mappin
 
 def _blocks(items: Sequence[tuple[str, Mapping[str, Any]]]) -> dict[str, str]:
     """Image key -> its ledger block (by its project-relative file; the key itself when the ledger has none)."""
-    from .split_ledger import read_ledger
+    from .split_ledger import read_ledger_rows
 
-    by_file = {entry.file: entry.block for entry in read_ledger().values()}
+    by_file = {entry.file: entry.block for entry in read_ledger_rows()}  # a copy's own name too
     return {key: by_file.get(str(item.get("source")), "") or key for key, item in items}
 
 
@@ -268,8 +263,14 @@ def main(argv: list[str] | None = None) -> int:
         every = list(store.items())
         todo = eligible(every, trained_on(model_dir))
         blocks = _blocks(every)
-        # every eligible block is drawn, whatever --limit leaves for later: the share is of all of them, not of a pass
-        arms = draw_arms({key: blocks[key] for key, _item in todo}, args.share, args.seed, recorded_arms(every, blocks))
+        # every eligible block is drawn, whatever --limit leaves for later: the share is of all of them, not of a pass.
+        # A block keeps the arm planned for it before (a pass that failed or stopped) or an earlier pass gave it.
+        given = {**store.prelabel_plan(), **recorded_arms(every, blocks)}
+        arms = draw_arms({key: blocks[key] for key, _item in todo}, args.share, args.seed, given)
+        if not args.dry_run and todo:
+            # planned before any work, so a model pass that fails leaves its blocks in the model's arm for the next
+            plan = store.claim_prelabel_arms({blocks[key]: arms[key] for key, _item in todo})
+            arms = {key: plan.get(blocks[key], arm) for key, arm in arms.items()}
         if args.limit is not None:
             todo = todo[: args.limit]
         counts = dict(Counter(arms[key] for key, _item in todo))

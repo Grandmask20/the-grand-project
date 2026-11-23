@@ -243,3 +243,36 @@ def test_a_name_with_an_unreadable_file_is_ambiguous(tmp_path: Path, monkeypatch
 
     monkeypatch.setattr(truth_seed, "file_hash", file_hash)
     assert truth_seed._ambiguous(paths)
+
+
+def test_a_name_in_another_atlas_folder_is_not_the_truths(
+    tmp_path: Path, review_store: ReviewStore, desert_ring: None, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The truth names its screenshots by file name only: of two of one name, the one below the truth's own folder is
+    seeded and marked, the other atlas's is left unchanged and unmarked."""
+    monkeypatch.setattr(truth_seed, "_detector_image", lambda path: np.zeros((1080, 1920, 3), np.uint8))
+    atlas = tmp_path / "atlas"
+    mine, other = atlas / "shots" / "shot.png", tmp_path / "other" / "shot.png"
+    for index, path in enumerate((mine, other)):
+        path.parent.mkdir(parents=True)
+        path.write_bytes(bytes([index]))
+    review_store.add_images([mine, other])
+    for path in (mine, other):
+        result = {"detected": True, "width": 1920, "height": 1080, "annotations": _boxes(), "error": None}
+        review_store.record_detection(image_key(path), result, force=True)
+    truth = _truth(atlas)
+    done, changed, placed = seed_store(review_store, truth)
+    assert (changed, placed) == (1, 1)
+    assert review_store.item(image_key(mine))[K.ANNOTATOR_TRUTH_MARK] == truth.source
+    left = review_store.item(image_key(other))
+    assert K.ANNOTATOR_TRUTH_MARK not in left and left["annotations"] == review_store.prelabels(image_key(other))
+    assert sum(count for what, count in done.items() if what.startswith("skipped: a truth file name outside")) == 1
+    assert Truth.load(atlas / "truth.json", tmp_path / "other").places(other)  # --screenshots: another folder
+
+
+def test_a_dry_run_without_a_store_makes_none(tmp_path: Path, capsys) -> None:
+    _truth(tmp_path)
+    out = tmp_path / "dataset"
+    assert truth_seed.main([str(tmp_path / "truth.json"), "--output-dir", str(out), "--dry-run"]) == 0
+    assert "nothing to seed" in capsys.readouterr().out
+    assert not out.exists()

@@ -41,6 +41,7 @@ from pathlib import Path, PurePosixPath
 from typing import Any
 
 from grand_project.detect import labels as L
+from grand_project.detect.rf_detr_model import trained_on
 
 from . import constants as K
 from .effort import EDIT_KINDS, Edits, edit_cost, total
@@ -76,7 +77,7 @@ def revealed(ledger: Mapping[str, Any], atlas: str, rounds: Sequence[Sequence[st
         rounds: the block numbers each round adds.
 
     Raises:
-        ValueError: a block that is not one of the atlas's training blocks.
+        ValueError: a block that is not one of the atlas's training blocks, or a block named twice.
     """
     blocks: dict[str, list[str]] = {}
     for entry in ledger.values():
@@ -84,8 +85,12 @@ def revealed(ledger: Mapping[str, Any], atlas: str, rounds: Sequence[Sequence[st
             blocks.setdefault(entry.block.rsplit("#", 1)[1], []).append(entry.file)
     out: list[list[str]] = []
     seen: list[str] = []
+    used: set[str] = set()
     for adds in rounds:
         for block in adds:
+            if block in used:  # its screenshots would be counted twice
+                raise ValueError(f"{atlas}#{block} is revealed twice: each block is revealed once")
+            used.add(block)
             if block not in blocks:
                 raise ValueError(f"{atlas}#{block} is not a training block (training blocks: {sorted(blocks)})")
             seen += sorted(blocks[block])
@@ -167,7 +172,9 @@ def _posix(source: str) -> PurePosixPath:
     return PurePosixPath(source.replace("\\", "/"))
 
 
-def held_out(manifest: Mapping[str, Any], atlas: str, base: Path | None = None) -> dict[str, list[Mapping[str, Any]]]:
+def held_out(
+    manifest: Mapping[str, Any], atlas: str, base: Path | None = None, truth_source: str | None = None
+) -> dict[str, list[Mapping[str, Any]]]:
     """The atlas's truth-seeded validation and test screenshots of a manifest, by split.
 
     Args:
@@ -175,13 +182,18 @@ def held_out(manifest: Mapping[str, Any], atlas: str, base: Path | None = None) 
         atlas: the atlas folder, project-relative.
         base: the folder a relative ``path`` lies in (the manifest's, as ``rf_detr.load_annotator_manifest`` reads
             it); the rows come back with it joined on. None: paths as they are.
+        truth_source: only rows this truth seeded (their ``ANNOTATOR_TRUTH_MARK`` is its ``Truth.source``): a row
+            another truth marked is no gold for this one. None: any truth's.
     """
     out: dict[str, list[Mapping[str, Any]]] = {"validation": [], "test": []}
     for row in manifest.get("images", []):
         # by path component: "<atlas>-backup/..." is another folder. A source outside the project is an absolute
         # path with the system's separators (relative_source): on Windows its backslashes made it one component
         inside = _posix(str(row.get("source", ""))).is_relative_to(_posix(atlas))
-        if row.get("split") in out and row.get(K.ANNOTATOR_TRUTH_MARK) and inside:
+        mark = row.get(K.ANNOTATOR_TRUTH_MARK)
+        if truth_source is not None and mark and _posix(str(mark)) != _posix(truth_source):
+            continue
+        if row.get("split") in out and mark and inside:
             if base is not None and not Path(str(row["path"])).is_absolute():
                 row = {**row, "path": str(base / str(row["path"]))}
             out[row["split"]].append(row)
@@ -219,6 +231,25 @@ def train_round(
         command += ["--init-from", str(previous)]
     print(" ".join(command), flush=True)
     subprocess.run(command, check=True)
+
+
+def check_round(best: Path, subset: Sequence[str], number: int) -> None:
+    """Stop when a round's kept model did not train on exactly the screenshots this round reveals (its
+    ``RF_DETR_TRAINED_ON``): scoring an existing model (``--skip-train``) under other rounds would report it as
+    something it is not.
+
+    Raises:
+        SystemExit: the model has no training record, or it lists other screenshots.
+    """
+    recorded = trained_on(best)
+    if not recorded:
+        raise SystemExit(f"round {number}: {best} lists no training screenshots: train it again (no --skip-train)")
+    wanted = set(subset)
+    if recorded != wanted:
+        raise SystemExit(
+            f"round {number}: {best} trained on other screenshots than --rounds reveals "
+            f"({len(recorded - wanted)} more, {len(wanted - recorded)} missing): train it again or use its rounds"
+        )
 
 
 def dataset_matches(dataset_dir: Path, manifest: Path) -> bool:
@@ -363,9 +394,17 @@ def main(argv: list[str] | None = None) -> int:
     args.manifest = resolve_path(args.manifest)
     manifest = json.loads(args.manifest.read_text(encoding="utf-8"))
     rounds = revealed(read_ledger(), args.atlas, parse_rounds(args.rounds))
-    shots = held_out(manifest, args.atlas, args.manifest.parent)
-    classical = classical_boxes(resolve_path(args.classical_store))
     truth = Truth.load(resolve_path(args.truth))
+    shots = held_out(manifest, args.atlas, args.manifest.parent, truth.source)
+    others = [
+        str(row["source"])
+        for rows in held_out(manifest, args.atlas).values()
+        for row in rows
+        if _posix(str(row[K.ANNOTATOR_TRUTH_MARK])) != _posix(truth.source)
+    ]
+    if others:  # before any training: they are left out of the scores
+        print(f"{len(others)} held-out screenshots another truth marked, not {truth.source}: left out ({others[:3]})")
+    classical = classical_boxes(resolve_path(args.classical_store))
     missing = [row["source"] for rows in shots.values() for row in rows if row["source"] not in classical]
     if missing:
         raise SystemExit(f"{len(missing)} held-out screenshots are not in the classical store: {missing[:3]}")
@@ -381,6 +420,8 @@ def main(argv: list[str] | None = None) -> int:
         if not args.skip_train:
             train_round(args, round_dir, subset, previous, dataset_dir)
         best = round_dir / "best"
+        if args.skip_train:
+            check_round(best, subset, number)
         summary_file = round_dir / "training_summary.json"
         summary = json.loads(summary_file.read_text(encoding="utf-8")) if summary_file.is_file() else {}
         result = {
@@ -398,6 +439,7 @@ def main(argv: list[str] | None = None) -> int:
 
 
 __all__ = [
+    "check_round",
     "city_area",
     "classical_boxes",
     "dataset_matches",

@@ -328,6 +328,7 @@ from .rf_detr_model import (  # noqa: F401
     reset_rf_detr_runtime,
     rf_detr_enabled,
     rf_detr_model_path,
+    trained_on,
 )
 from .rf_detr_tiles import (  # noqa: F401
     fill_hud,

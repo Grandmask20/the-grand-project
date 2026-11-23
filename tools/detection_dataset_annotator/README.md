@@ -165,9 +165,11 @@ class, locked when a hand button stands within `STRONGHOLD_LOCK_REACH` or no map
 
 ## Splits
 
-Every screenshot in the store, reviewed or not, gets its split once (at `split_ledger freeze` or the first export) and
-keeps it for good, so the splits are settled before the review and a later model never trains on an earlier model's
-validation or test screenshots. The hand truth and reference atlases that `python -m grand_project.detect score` and
+Every screenshot in the store that detection has processed (or that is reviewed) gets its split once (at
+`split_ledger freeze` or the first export) and keeps it for good, so the splits are settled before the review and a
+later model never trains on an earlier model's validation or test screenshots. A screenshot not detected yet gets no
+split until it is: run detection on every screenshot before `split_ledger freeze`, so the blocks are drawn with all of
+them. The hand truth and reference atlases that `python -m grand_project.detect score` and
 `tools/compare_detectors.py` measure on (`ANNOTATOR_SPLIT_PINNED_TEST`) are always test.
 
 Screenshots of one atlas overlap: a map node is on 4.5 roa-atlas and 3.3 fr-atlas screenshots on average, so a split
@@ -234,7 +236,8 @@ one ([Splits](#splits)). Restart the annotator page afterwards: it keeps the scr
 ## Seeding from a biome truth
 
 `python -m tools.detection_dataset_annotator.truth_seed atlas_test_data/fr-atlas/truth.json [--dry-run]` fills the
-city areas and citadels of a hand-labelled atlas's unreviewed screenshots from its truth file (the PM's `truth.json`,
+city areas and citadels of a hand-labelled atlas's unreviewed screenshots (those below the truth file's folder, or
+`--screenshots DIR`: the truth names them by file name only) from its truth file (the PM's `truth.json`,
 see `atlas_test_data/fr-atlas/README.md`), where the classical guesses were about half right:
 
 - a map node at a truth map (20 atlas units) in a city's area takes that area's class; one the guess put in a city's
@@ -294,7 +297,7 @@ make train_rf_detr                       # trains into runs/rf-detr-small (best/
   once.
 - **What it writes**: `runs/<run>/checkpoints/` (the Trainer's, each with the EMA weights in `ema/`; `--resume` goes on
   from the last), `runs/<run>/best/` (the best EMA weights, the processor, `labels.json` and `trained_on.txt`, the
-  screenshots it trained on) and `training_summary.json` (the recipe, every evaluation, the test scores, the data's
+  screenshots it trained on, with those of the `--init-from` model) and `training_summary.json` (the recipe, every evaluation, the test scores, the data's
   hashes, the git commit). `--report-to tensorboard|trackio` logs to that tool when it is installed.
 - **The next round** goes on from a model: `--init-from runs/<run>/best` (each class keeps its rows by name, a new class
   with a `parent` starts from its parent's).

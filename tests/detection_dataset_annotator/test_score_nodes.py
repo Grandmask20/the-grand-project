@@ -68,6 +68,15 @@ def test_guesses_are_compared_with_the_reviewed_classes(tmp_path: Path) -> None:
     assert "2 nodes, 50.0% right" in text and "precision" in text
 
 
+def test_a_box_without_a_place_is_left_out(tmp_path: Path) -> None:
+    """A box stored without a place (NaN is stored as NULL) is skipped; the placed ones are scored as before."""
+    image = _shot(tmp_path / "a.png")
+    nowhere = {"label": "map_node_vaal", "bbox": [None, None, None, None], "source": "manual"}
+    hall = {"label": "hall", "bbox": [None, None, None, None], "source": "manual"}
+    pairs = guess_nodes(image, [nowhere, hall, _node("map_node_grass", 400, 540)], 1920, 1080)
+    assert pairs == [("map_node_grass", "map_node_grass", True)]
+
+
 def test_the_tool_reads_reviewed_screenshots(tmp_path: Path, capsys) -> None:
     shot = tmp_path / "a.png"
     _shot(shot)

@@ -8,9 +8,11 @@ from pathlib import Path
 
 import pytest
 
+from grand_project.detect import constants as DK
 from tools.detection_dataset_annotator import ReviewStore, image_key, relative_source, simulate_loop
 from tools.detection_dataset_annotator import constants as K
 from tools.detection_dataset_annotator.simulate_loop import (
+    check_round,
     city_area,
     classical_boxes,
     dataset_matches,
@@ -45,6 +47,10 @@ def test_rounds_reveal_training_blocks_cumulatively() -> None:
         revealed(ledger, ATLAS, [["7"]])  # the validation block never trains
     with pytest.raises(ValueError, match="no blocks"):
         parse_rounds("8;;0")
+    with pytest.raises(ValueError, match="revealed twice"):
+        revealed(ledger, ATLAS, parse_rounds("8;8,2"))  # its screenshots would be counted twice
+    with pytest.raises(ValueError, match="revealed twice"):
+        revealed(ledger, ATLAS, [["0", "0"]])
 
 
 def test_a_node_counts_for_the_truth_only_by_its_city_area() -> None:
@@ -87,6 +93,30 @@ def test_held_out_screenshots_are_the_atlas_truth_seeded_validation_and_test() -
     shots = held_out({"images": images}, ATLAS)
     assert [row["source"] for row in shots["validation"]] == [f"{ATLAS}/a.png"]
     assert [row["source"] for row in shots["test"]] == [f"{ATLAS}/b.png"]
+
+
+def test_held_out_screenshots_are_the_ones_this_truth_seeded() -> None:
+    """A screenshot another truth marked (a states.json's map nodes, another atlas's truth) is no gold for this one."""
+    images = [
+        {"source": f"{ATLAS}/a.png", "split": "validation", K.ANNOTATOR_TRUTH_MARK: "fr/truth.json"},
+        {"source": f"{ATLAS}/b.png", "split": "test", K.ANNOTATOR_TRUTH_MARK: "fr\\truth.json"},  # Windows' slashes
+        {"source": f"{ATLAS}/c.png", "split": "test", K.ANNOTATOR_TRUTH_MARK: "other/states.json"},
+    ]
+    shots = held_out({"images": images}, ATLAS, truth_source="fr/truth.json")
+    assert [row["source"] for row in shots["validation"]] == [f"{ATLAS}/a.png"]
+    assert [row["source"] for row in shots["test"]] == [f"{ATLAS}/b.png"]
+
+
+def test_an_existing_round_is_scored_only_for_the_screenshots_it_trained_on(tmp_path: Path) -> None:
+    """--skip-train scores a round's kept model: it must have trained on exactly what the round reveals."""
+    best = tmp_path / "best"
+    best.mkdir()
+    with pytest.raises(SystemExit, match="lists no training screenshots"):
+        check_round(best, ["a.png"], 1)
+    (best / DK.RF_DETR_TRAINED_ON).write_text("a.png\nb.png\n", encoding="utf-8")
+    check_round(best, ["b.png", "a.png"], 2)  # unchanged: scored again
+    with pytest.raises(SystemExit, match=r"round 3: .*\(1 more, 0 missing\)"):
+        check_round(best, ["a.png"], 3)
 
 
 def test_a_relative_screenshot_path_lies_next_to_the_manifest(tmp_path: Path) -> None:
@@ -162,8 +192,10 @@ def test_a_simulation_trains_each_round_on_from_the_last_and_scores_every_policy
     for n in ("val", "tst"):
         result = {"width": 1920, "height": 1080, "annotations": [_box("map_node_grass", 300, 300)]}
         review_store.record_detection(image_key(shots[n]), result, force=False)
+    truth = tmp_path / "truth.json"
+    mark = relative_source(truth)  # as truth_seed marks the screenshots it seeded
     rows = [
-        {"source": relative_source(shots[n]), "path": str(shots[n]), "split": split, K.ANNOTATOR_TRUTH_MARK: "t.json",
+        {"source": relative_source(shots[n]), "path": str(shots[n]), "split": split, K.ANNOTATOR_TRUTH_MARK: mark,
          "annotations": [_box("map_node_vaal", 300, 300)]}
         for n, split in (("val", "validation"), ("tst", "test"))
     ]  # fmt: skip
@@ -187,7 +219,7 @@ def test_a_simulation_trains_each_round_on_from_the_last_and_scores_every_policy
     monkeypatch.setattr(simulate_loop, "predict", lambda detector, path: (found, (1920, 1080), (1920, 1080)))
     monkeypatch.setattr("grand_project.detect.rf_detr_model.load_detector", lambda model_dir: {})
     out = tmp_path / "sim"
-    truth = tmp_path / "truth.json"  # a Vaal area map where both held-out screenshots show their node (1:1)
+    # a Vaal area map where both held-out screenshots show their node (1:1)
     truth.write_text(json.dumps({
         "maps": [[300.0, 300.0, "Vaal city"]], "biomes": [],
         "screenshots": [{"name": n, "file": f"{n}.png", "w": 1920, "h": 1080, "M": [[1, 0, 0], [0, 1, 0]],

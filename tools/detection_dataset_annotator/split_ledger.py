@@ -13,7 +13,8 @@ identity, an ``atlas.json`` frame's ``sha``), its split, the block it was drawn 
 ``settle_splits`` (every export, and ``freeze``) gives every processed screenshot of the store its split: the
 ledger's (by bytes; by file name for a file whose bytes changed), else the store's, else test for a pinned one, else
 drawn by spatial blocks (``splits.assign_splits``); files with the same bytes share one. Then the store claims them and
-the ledger gains rows for the screenshots it did not have (rows are never removed: another store may hold them).
+the ledger gains rows for the screenshots it did not have, and one for each copy's own name (with its digest's
+split, so a copy whose bytes change later keeps it by name; rows are never removed: another store may hold them).
 Wherever the ledger, the store or a pinned root disagree, nothing is written: ``SplitConflict`` names the screenshots,
 for a person to decide (moving a screenshot a model trained on into validation or test would leak).
 """
@@ -126,16 +127,18 @@ def _ledger_lock(path: Path | None = None) -> Iterator[None]:
                 fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
 
 
-def read_ledger(path: Path | None = None) -> dict[str, Entry]:
-    """The ledger's rows by hash (empty when there is no ledger yet).
+def read_ledger_rows(path: Path | None = None) -> list[Entry]:
+    """Every row of the ledger, in file order (empty when there is no ledger yet). A digest may have several rows:
+    each file name its bytes were seen under, all with its one split.
 
     Raises:
         ValueError: The file is not a ledger, names an unknown split, or gives one hash two splits.
     """
     path = _ledger_path(path)
     if not path.is_file():
-        return {}
-    out: dict[str, Entry] = {}
+        return []
+    rows: list[Entry] = []
+    split_of: dict[str, Entry] = {}
     with path.open(encoding="utf-8", newline="") as handle:
         reader = csv.DictReader(handle)
         if tuple(reader.fieldnames or ()) != LEDGER_COLUMNS:
@@ -144,9 +147,22 @@ def read_ledger(path: Path | None = None) -> dict[str, Entry]:
             entry = Entry(**{column: row[column] or "" for column in LEDGER_COLUMNS})
             if entry.split not in K.ANNOTATOR_SPLITS:
                 raise ValueError(f"{path}: {entry.file} has the unknown split {entry.split!r}")
-            known = out.setdefault(entry.sha256, entry)
+            known = split_of.setdefault(entry.sha256, entry)
             if known.split != entry.split:
                 raise ValueError(f"{path}: {entry.file} and {known.file} have the same bytes and different splits")
+            rows.append(entry)
+    return rows
+
+
+def read_ledger(path: Path | None = None) -> dict[str, Entry]:
+    """The ledger's rows by hash, the first row of each (empty when there is no ledger yet).
+
+    Raises:
+        ValueError: as ``read_ledger_rows``.
+    """
+    out: dict[str, Entry] = {}
+    for entry in read_ledger_rows(path):
+        out.setdefault(entry.sha256, entry)
     return out
 
 
@@ -244,10 +260,12 @@ def settle_splits(
     keys = sorted(digests)
     names = {key: relative_source(paths[key]) for key in keys}
     with _ledger_lock(ledger):
-        book = read_ledger(ledger)
+        rows = read_ledger_rows(ledger)
+        book: dict[str, Entry] = {}
         by_file: dict[str, Entry] = {}
-        for entry in book.values():
-            by_file.setdefault(entry.file, entry)
+        for entry in rows:
+            book.setdefault(entry.sha256, entry)
+            by_file.setdefault(entry.file, entry)  # every name a digest was seen under: a copy's too
 
         problems = []
         from_ledger: dict[str, str] = {}
@@ -308,23 +326,42 @@ def settle_splits(
                 origins["drawn"] += 1
         new = {key: split for key, split in split_of.items() if stored.get(key) != split}
         if new:
-            split_of.update(store.claim_splits(new))  # another export's claim, made meanwhile, stands
+            claimed = store.claim_splits(new)
+            # a split claimed meanwhile (outside this lock) that is not the one given here: neither is published
+            moved = [
+                f"{names[key]}: given {new[key]}, store {claimed[key]}"
+                for key in new
+                if claimed.get(key, new[key]) != new[key]
+            ]
+            if moved:
+                raise SplitConflict(moved)
+            split_of.update(claimed)
+        # a row for each new digest, and for each copy's own name (files of the same bytes in the store): a copy whose
+        # bytes change later keeps its split by its name, however the store is rebuilt. The same files found in
+        # another folder (another machine, a moved atlas) are no copies and add nothing.
+        seen = {(entry.sha256, entry.file) for entry in rows}
         added = 0
         for key in keys:
-            if digests[key] not in book:
-                book[digests[key]] = Entry(
-                    digests[key], split_of[key], _block_name(blocks[key], names[key]), names[key]
-                )
+            copy = len(same_bytes[digests[key]]) > 1
+            if (digests[key] not in book or copy) and (digests[key], names[key]) not in seen:
+                known = book.get(digests[key])
+                split = known.split if known is not None else split_of[key]  # a digest keeps its split
+                rows.append(Entry(digests[key], split, _block_name(blocks[key], names[key]), names[key]))
+                seen.add((digests[key], names[key]))
                 added += 1
         if added:
-            write_ledger(book.values(), ledger)
+            write_ledger(rows, ledger)
     return Settled(split_of, blocks, items, origins, added, unreadable)
 
 
 def _check_rows(rows: list[tuple[str, Path, str | None, str]], ledger: Path | None) -> list[str]:
     """Where rows (name, path, split, where) disagree with the ledger or are missing from it."""
-    book = read_ledger(ledger)
-    by_file = {entry.file: entry for entry in book.values()}
+    rows_kept = read_ledger_rows(ledger)
+    book: dict[str, Entry] = {}
+    by_file: dict[str, Entry] = {}
+    for entry in rows_kept:
+        book.setdefault(entry.sha256, entry)
+        by_file.setdefault(entry.file, entry)
     digests = hash_files({str(i): path for i, (_name, path, _split, _where) in enumerate(rows)})
     problems = []
     for i, (name, _path, split, where) in enumerate(rows):
@@ -491,6 +528,7 @@ __all__ = [
     "join_blocks",
     "overlap_report",
     "read_ledger",
+    "read_ledger_rows",
     "settle_splits",
     "write_ledger",
 ]

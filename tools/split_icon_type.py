@@ -187,12 +187,16 @@ def sheet(path: Path, new: list[str], matches: list[Match]) -> None:
         tile(m.crop, [("? " if m.unsure else "") + m.name, " ".join(f"{d:.3f}" for d in m.dists)]) for m in matches
     ]
     blank = np.full_like(head[0], 24)
-    rows = [np.hstack(head + [blank] * (_COLS - len(head)))]
-    for i in range(0, len(cells), _COLS):
-        part = cells[i : i + _COLS]
-        rows.append(np.hstack(part + [blank] * (_COLS - len(part))))
+
+    def grid(tiles: list[np.ndarray]) -> list[np.ndarray]:
+        # rows of _COLS tiles, the last padded, so every row of the sheet has the same width
+        return [
+            np.hstack(tiles[i : i + _COLS] + [blank] * (_COLS - len(tiles[i : i + _COLS])))
+            for i in range(0, len(tiles), _COLS)
+        ]
+
     path.parent.mkdir(parents=True, exist_ok=True)
-    cv2.imwrite(str(path), np.vstack(rows))
+    cv2.imwrite(str(path), np.vstack(grid(head) + grid(cells)))
 
 
 def _write_json(path: Path, value) -> None:

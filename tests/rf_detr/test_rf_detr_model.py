@@ -1,5 +1,5 @@
 """The opt-in RF-DETR backend (grand_project/detect/rf_detr_model.py): how a checkpoint's classes come back to the
-program, tiled prediction (with a stand-in model), model loading, icon naming, reveal buttons and the wall mask."""
+program, tiled prediction (with a stand-in model), model loading, icon naming, reveal buttons and the path filter."""
 
 from __future__ import annotations
 
@@ -330,11 +330,24 @@ def test_rf_detr_tower_keeps_its_map_node(monkeypatch) -> None:
     assert [(lm["x"], lm["y"]) for lm in result["landmarks"] if lm["kind"] == "Tower"] == [(900.0, 505.0)]
 
 
-def test_predicted_walls_join_the_classical_wall_mask() -> None:
-    img = np.zeros((200, 300, 3), np.uint8)
-    walls = [{"family": "wall", "box": [10.0, 20.0, 60.0, 80.0]}, {"family": "node", "box": [100, 100, 140, 140]}]
-    mask = rf_detr_model._wall_mask(img, walls)
-    assert mask[50, 30] and not mask[120, 120] and not mask[5, 5]
+def test_a_learned_wall_box_never_cuts_a_path_the_classical_wall_mask_lets_through(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Paths are filtered by the classical wall mask alone: a model's wall box over a path removes nothing."""
+    predictions = [
+        {"label": "map_node_grass", "family": "node", "box": [480.0, 480.0, 520.0, 520.0], "score": 0.9},
+        {"label": "map_node_grass", "family": "node", "box": [780.0, 480.0, 820.0, 520.0], "score": 0.9},
+        {"label": "fortress_wall", "family": "wall", "box": [550.0, 400.0, 750.0, 600.0], "score": 0.9},
+    ]
+    line = [[float(x), 500.0] for x in range(500, 801, 10)]
+    monkeypatch.setattr(rf_detr_model, "classical_path_dashes", lambda img: [])
+    monkeypatch.setattr(rf_detr_model, "trace_paths", lambda nodes, dashes, img: [{"a": 0, "b": 1, "line": line}])
+    monkeypatch.setattr(rf_detr_model, "fortress_walls", lambda img: np.zeros(img.shape[:2], np.uint8))
+    assert len(_detect(monkeypatch, predictions)["edges"]) == 1
+    walled = np.zeros((1080, 1920), np.uint8)
+    walled[400:600, 550:750] = 1  # the classical mask still decides
+    monkeypatch.setattr(rf_detr_model, "fortress_walls", lambda img: walled)
+    assert _detect(monkeypatch, predictions)["edges"] == []
 
 
 def test_a_hall_whose_icon_was_missed_is_at_the_map_node_inside_its_box(monkeypatch: pytest.MonkeyPatch) -> None:

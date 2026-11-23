@@ -11,7 +11,7 @@ it takes milliseconds however many screenshots are detected, and each detection 
   together on disk, so loading or replacing them touches a few pages, however large the dataset grows.
 - ``prelabels``: the boxes a reviewer is first shown (``annotations``' columns): written by detection, truth seeding
   and model pre-labels, never by an edit, so ``effort.py`` can count what the review changed.
-- ``meta``: the discovery roots and the detection options, as JSON.
+- ``meta``: the discovery roots, the detection options and the planned pre-label arms, as JSON.
 
 The database runs in WAL mode, so the editor reads and writes while a detection run writes. Every write is one short
 ``BEGIN IMMEDIATE`` transaction: a check and the change it guards (``save_review``'s revision) cannot be split by
@@ -477,6 +477,27 @@ class ReviewStore:
                 self._db.execute("UPDATE images SET split = ? WHERE key = ? AND split IS NULL", (split, key))
             stored = dict(self._db.execute("SELECT key, split FROM images WHERE split IS NOT NULL"))
         return {key: stored[key] for key in splits if key in stored}
+
+    # ---- model pre-label arms ------------------------------------------------------------------------------------
+
+    def prelabel_plan(self) -> dict[str, str]:
+        """Spatial block -> the pre-label arm planned for it (``model_prelabel``), done or not."""
+        return dict(self._meta(K.ANNOTATOR_PRELABEL_PLAN, {}))
+
+    def claim_prelabel_arms(self, arms: Mapping[str, str]) -> dict[str, str]:
+        """Plan blocks' pre-label arms where they have none yet, in one write: a planned arm is kept until its work is
+        done, also when a pass fails half-way or two passes run at once.
+
+        Returns:
+            The whole plan, block -> arm, as the store now has it.
+        """
+        with self._write():
+            plan = dict(self._meta(K.ANNOTATOR_PRELABEL_PLAN, {}))
+            added = {block: arm for block, arm in arms.items() if block not in plan}
+            if added:
+                plan.update(added)
+                self._set_meta(K.ANNOTATOR_PRELABEL_PLAN, plan)
+        return plan
 
     # ---- the editor ----------------------------------------------------------------------------------------------
 
