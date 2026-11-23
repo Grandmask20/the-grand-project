@@ -18,15 +18,19 @@ import { AtlasMap } from "@/components/map/AtlasMap";
 import { MapNotes } from "@/components/map/MapNotes";
 import { ReplayPanel } from "@/components/replay/ReplayPanel";
 import { TimelapseTab } from "@/components/replay/TimelapseTab";
+import { FriendAtlas } from "@/components/share/FriendAtlas";
+import { ShareDialog } from "@/components/share/ShareDialog";
 import { Button } from "@/components/ui/button";
 import { useAppState } from "@/hooks/app/UseAppState";
 import { useEventStream } from "@/hooks/app/UseEventStream";
 import { useMeta } from "@/hooks/app/UseMeta";
 import { usePageLog } from "@/hooks/app/UsePageLog";
 import { useAtlasActions } from "@/hooks/atlas/UseAtlasActions";
+import { useShareHost } from "@/hooks/share/UseShareHost";
 
 /** The app's one page: top bar, side panel, the map, the status line, and the dialogs. */
 export function AtlasPage() {
+	useShareHost(); // (your atlas to the friends it is shared with)
 	const connected = useEventStream();
 	usePageLog();
 	const state = useAppState();
@@ -103,6 +107,7 @@ export function AtlasPage() {
 						)}
 						<ProgressBox text={s.progress} />
 						<MapNotes />
+						<FriendAtlas />
 						{map && <TimelapseTab />}
 						{s.settings.ui.side_hidden && (
 							<SideReveal
@@ -128,6 +133,7 @@ export function AtlasPage() {
 			<GroupDialog />
 			<SourcesDialog />
 			<DeleteAtlasDialog />
+			<ShareDialog />
 		</div>
 	);
 }

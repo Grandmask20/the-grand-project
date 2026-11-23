@@ -104,6 +104,17 @@ def test_find_score_in_order_stops_at_a_matchs_reach():
     assert _in_order("abd", "xxabcdxx") == 40.0 and _in_order("abd", "a" + "x" * 10 + "bd") is None
 
 
+def test_landmarks_as_the_map_shows_them(opened, tmp_path):
+    s, _path, _pts = opened
+    marks = s.landmarks()
+    assert marks and all({"id", "x", "y", "kind", "label", "node"} <= m.keys() for m in marks)
+    vaal = next(m for m in marks if m["label"].startswith("Vaal"))
+    assert vaal["kind"] == "Vaal city" and vaal["label"] == "Vaal city"
+    s.V["landmarks"][vaal["id"]]["status"] = "removed by you"
+    assert vaal["id"] not in [m["id"] for m in s.landmarks()]  # (a removed one: not shown, not shared)
+    assert AtlasSession(settings={}, worker=False).landmarks() == []  # (no atlas)
+
+
 def test_type_list_and_list_of_one_type(opened):
     s, _path, pts = opened
     s.set_landmark(pts[6][0], pts[6][1], "Tower", on="map")
