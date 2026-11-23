@@ -287,14 +287,20 @@ def test_a_timelapse_closed_as_its_tiles_are_made_isnt_named_in_their_address(se
     settled(session)
     g = session.grid
     wx, wy = g.world_px(*pts[0])
-    with session._source_lock:  # a timelapse open as the page asks for its tab's tiles
-        session._source = session._source.with_(replay={"node": [], "icon": [], "landmark": []}, replay_token=5)
+
+    def open_timelapse() -> None:
+        """A timelapse open as the page asks for its tab's tiles."""
+        with session._source_lock:
+            session._source = session._source.with_(replay={"node": [], "icon": [], "landmark": []}, replay_token=5)
+
+    asked = []  # the steps each request asked its build for (after its own look at the timelapse)
     real_vector, real_scene = session._vector_made, session._scene_made
 
     def closing(real):
         """The timelapse closes between the request's look at it and the build."""
 
         def made(steps=False):
+            asked.append(steps)
             with session._source_lock:
                 session._source = session._source.with_(replay=None)
             return real(steps)
@@ -303,8 +309,11 @@ def test_a_timelapse_closed_as_its_tiles_are_made_isnt_named_in_their_address(se
 
     monkeypatch.setattr(session, "_vector_made", closing(real_vector))
     monkeypatch.setattr(session, "_scene_made", closing(real_scene))
+    open_timelapse()
     _data, tile_address = session.vector_tile_made(g.zmax, int(wx // 256), int(wy // 256), replay=True)
+    open_timelapse()  # (open again for the scene's own request: the tile's left it closed, CodeRabbit)
     _scene, scene_address = session.scene_3d_made(replay=True)
+    assert asked == [True, True]  # each saw it open, then it closed before its build
     # built without steps: not named the timelapse's, so not kept by the browser under its address (CodeRabbit)
     assert tile_address and "&r=" not in tile_address and scene_address and "&r=" not in scene_address
 
