@@ -1410,6 +1410,10 @@ def open_first_atlas(session: AtlasSession, given: str | None, gen: int | None =
 def main(argv: list[str] | None = None) -> int:
     """Start the app: open the atlas (the one given, else the last one), serve the page and open the browser.
 
+    With the optional RF-DETR detector on (``GRAND_PROJECT_USE_RF_DETR``), the process restarts itself once after
+    reading its arguments, with PyTorch's CUDA libraries first (``rf_detr_cuda``), and goes on with the same
+    arguments: ``argv`` when given, else its own command line.
+
     Args:
         argv: Command line (default: sys.argv).
 
@@ -1419,13 +1423,13 @@ def main(argv: list[str] | None = None) -> int:
     from grand_project.detect.rf_detr_cuda import prefer_pip_cuda_libraries
     from grand_project.detect.rf_detr_model import rf_detr_enabled
 
-    if rf_detr_enabled():  # the optional RF-DETR detector on CUDA needs PyTorch's own cuDNN, before torch loads
-        prefer_pip_cuda_libraries()
     ap = argparse.ArgumentParser(prog="python -m grand_project", description="The Grand Project atlas app.")
     ap.add_argument("atlas", nargs="?", help="atlas .json file to open (default: the last one)")
     ap.add_argument("--port", type=int, default=APP_PORT, help=f"first port to try (default {APP_PORT}; 0: any)")
     ap.add_argument("--no-browser", action="store_true", help="don't open the browser")
     args = ap.parse_args(argv)
+    if rf_detr_enabled():  # the optional RF-DETR detector on CUDA needs PyTorch's own cuDNN, before torch loads
+        prefer_pip_cuda_libraries(argv)
     if args.port:
         outcome = reuse_running(args.port, args.atlas, not args.no_browser)
         if outcome != START:  # already running: its page, not a second copy writing the same atlas (user)

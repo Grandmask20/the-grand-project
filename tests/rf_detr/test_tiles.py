@@ -37,6 +37,8 @@ def test_crop_keeps_boxes_half_visible_and_cut_boxes_are_found() -> None:
     assert T.cut_by_inner_edge([700, 10, tile, 40], (0, 0), (1920, 1080))  # runs into the next tile
     assert not T.cut_by_inner_edge([0.5, 10, 40, 40], (0, 0), (1920, 1080))  # the screenshot's own edge
     assert T.cut_by_inner_edge([0.5, 10, 40, 40], (544, 0), (1920, 1080))  # another tile's left edge
+    edge = K.RF_DETR_TILE_EDGE  # reaching the margin, not into it: whole (a 220 px tower fits the overlap exactly so)
+    assert not T.cut_by_inner_edge([edge, edge, tile - edge, tile - edge], (544, 312), (1920, 1080 + tile))
 
 
 def test_hud_is_painted_over_in_whole_windows_only() -> None:
@@ -105,6 +107,14 @@ def test_an_epoch_always_draws_its_length() -> None:
         drawn = T.epoch_indices(factors, 3, random.Random(seed))
         assert len(drawn) == T.epoch_length(factors, 3) == round(3 * sum(factors))
         assert drawn.count(0) == 3 and drawn.count(3) in (7, 8)  # 7.8: its whole 7, maybe one more
+
+
+def test_an_image_gets_one_extra_draw_at_most() -> None:
+    """Fractions 0.9 and 0.6 round up to two extra draws: each image gets one (systematic sampling with a step under
+    0.9 could give the first both)."""
+    for seed in range(50):
+        drawn = T.epoch_indices([1.9, 1.6], 1, random.Random(seed))
+        assert sorted(drawn) == [0, 0, 1, 1]
 
 
 def test_brightness_and_contrast_change_and_the_hue_stays(monkeypatch: pytest.MonkeyPatch) -> None:

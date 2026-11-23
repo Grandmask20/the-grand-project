@@ -246,7 +246,9 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--model", type=Path, default=DK.RF_DETR_DEFAULT_MODEL_DIR, help="a fine-tuned model folder")
     parser.add_argument("--share", type=float, default=0.5, help="fraction of the blocks the model pre-labels")
     parser.add_argument("--seed", type=int, default=0, help="the draw of the blocks")
-    parser.add_argument("--policy", default=K.ANNOTATOR_PRELABEL_POLICY, choices=K.ANNOTATOR_PRELABEL_POLICIES)
+    # "classical" gives no model boxes: its screenshots would join the model's arm with the classical pre-labels
+    policies = [policy for policy in K.ANNOTATOR_PRELABEL_POLICIES if policy != K.ANNOTATOR_CLASSICAL_SOURCE]
+    parser.add_argument("--policy", default=K.ANNOTATOR_PRELABEL_POLICY, choices=policies)
     parser.add_argument("--limit", type=int, default=None, help="pre-label at most this many screenshots")
     parser.add_argument("--dry-run", action="store_true", help="say what would be pre-labelled, change nothing")
     parser.add_argument("--output-dir", default=K.ANNOTATOR_DEFAULT_OUTPUT_DIR, help="the annotator's output folder")
@@ -265,11 +267,15 @@ def main(argv: list[str] | None = None) -> int:
     with ReviewStore.open(store_path) as store:
         every = list(store.items())
         todo = eligible(every, trained_on(model_dir))
+        blocks = _blocks(every)
+        # every eligible block is drawn, whatever --limit leaves for later: the share is of all of them, not of a pass
+        arms = draw_arms({key: blocks[key] for key, _item in todo}, args.share, args.seed, recorded_arms(every, blocks))
         if args.limit is not None:
             todo = todo[: args.limit]
-        blocks = _blocks(every)
-        arms = draw_arms({key: blocks[key] for key, _item in todo}, args.share, args.seed, recorded_arms(every, blocks))
-        counts = {arm: sum(1 for value in arms.values() if value == arm) for arm in set(arms.values())}
+        counts = dict(Counter(arms[key] for key, _item in todo))
+        members: dict[str, set[str]] = {}
+        for key, block in blocks.items():
+            members.setdefault(block, set()).add(key)
         print(f"{len(todo)} screenshots eligible; arms {counts} (policy {args.policy}, model {model_dir})")
         if args.dry_run or not todo:
             return 0
@@ -282,9 +288,11 @@ def main(argv: list[str] | None = None) -> int:
             if item.get("split") != "train":  # never: eligible() takes training screenshots only (user's rule)
                 raise RuntimeError(f"refusing to pre-label a {item.get('split')} screenshot: {item['path']}")
             record = {"source": arms[key], "policy": args.policy, "round": round_name}
+            # its block's other screenshots have no other arm, checked in the save (another pass may run beside this)
+            one_arm = {"arm_block": (members[blocks[key]], arms[key])}
             if arms[key] == K.ANNOTATOR_CLASSICAL_SOURCE:
                 if not store.save_review(
-                    key, int(item["edit_version"]), extra={K.ANNOTATOR_PRELABEL_FIELD: record}, **guard
+                    key, int(item["edit_version"]), extra={K.ANNOTATOR_PRELABEL_FIELD: record}, **guard, **one_arm
                 ):
                     skipped += 1
                 continue
@@ -305,6 +313,7 @@ def main(argv: list[str] | None = None) -> int:
                 extra={K.ANNOTATOR_PRELABEL_FIELD: record},
                 expect_boxes=base,
                 **guard,
+                **one_arm,
             ):
                 done += 1
                 if done % 50 == 0:
@@ -312,8 +321,8 @@ def main(argv: list[str] | None = None) -> int:
             else:
                 skipped += 1
         print(
-            f"done: {done} screenshots pre-labelled by the model, {skipped} left (reviewed, edited, seeded or "
-            f"detected again meanwhile) ({json.dumps(counts)})"
+            f"done: {done} screenshots pre-labelled by the model, {skipped} left (reviewed, edited, seeded, "
+            f"detected again or given another arm meanwhile) ({json.dumps(counts)})"
         )
     return 0
 

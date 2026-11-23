@@ -182,8 +182,8 @@ def city_area_nodes(
         city_types: landmark index -> the City's type ("Ezomyte", "Vaal", "Faridun"), sure or not.
 
     Returns:
-        Map node index -> (city type, path steps from the city's own map; 0 = its own map). A map two cities claim
-        equally is left out.
+        Map node index -> (city type, path steps from the city's own map; 0 = its own map). A map two cities of
+        different types claim equally is left out (two cities of one type give it that type's class either way).
     """
     sources = [
         (float(landmark["x"]), float(landmark["y"]), f"{city_types[index]} city")
@@ -197,7 +197,7 @@ def city_area_nodes(
     potential = cities.potential_maps(nodes, edges, sources, ground=None, blocked=blocked)
     out: dict[int, tuple[str, int]] = {}
     for node, (label, steps) in potential.items():
-        names = label.split(" / ")  # a map claimed equally by two cities: no single answer
+        names = label.split(" / ")  # a map claimed equally by cities of two types: no single answer
         city = names[0].removesuffix(" city")
         if len(names) == 1 and city in cities.TYPES:
             out[int(node)] = (city, int(steps))

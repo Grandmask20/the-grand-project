@@ -89,6 +89,19 @@ def test_held_out_screenshots_are_the_atlas_truth_seeded_validation_and_test() -
     assert [row["source"] for row in shots["test"]] == [f"{ATLAS}/b.png"]
 
 
+def test_a_relative_screenshot_path_lies_next_to_the_manifest(tmp_path: Path) -> None:
+    """As the trainer reads a manifest: a relative path is in the manifest's folder, an absolute one stays."""
+    mark = {K.ANNOTATOR_TRUTH_MARK: "t.json"}
+    images = [
+        {"source": f"{ATLAS}/a.png", "path": "shots/a.png", "split": "validation", **mark},
+        {"source": f"{ATLAS}/b.png", "path": str(tmp_path / "elsewhere" / "b.png"), "split": "test", **mark},
+    ]
+    shots = held_out({"images": images}, ATLAS, tmp_path / "dataset")
+    assert shots["validation"][0]["path"] == str(tmp_path / "dataset" / "shots" / "a.png")
+    assert shots["test"][0]["path"] == str(tmp_path / "elsewhere" / "b.png")
+    assert images[0]["path"] == "shots/a.png"  # the manifest's own rows are left as they are
+
+
 def test_an_atlas_outside_the_project_on_windows_holds_its_screenshots() -> None:
     """Outside the project a source is an absolute path with the system's separators (Windows CI: none were found)."""
     atlas = r"C:\Users\me\Temp\atlas"

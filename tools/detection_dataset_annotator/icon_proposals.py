@@ -318,6 +318,12 @@ def hidden_nodes(
     height, width = img.shape[:2]
     found: list[dict[str, Any]] = []
 
+    def beside_visible(x: float, y: float) -> bool:
+        """Whether a visible map node is this close (``HIDDEN_SNAP``): then it is the row's map node (user's rule)."""
+        return (
+            bool(len(visible)) and np.hypot(visible[:, 0] - x, visible[:, 1] - y).min() <= detect_constants.HIDDEN_SNAP
+        )
+
     def clear(x: float, y: float, others: np.ndarray) -> bool:
         """Whether a map node at x, y keeps clear of the known map nodes and of other rows' icons."""
         if len(known) and np.hypot(known[:, 0] - x, known[:, 1] - y).min() <= detect_constants.MAP_NMS:
@@ -329,7 +335,7 @@ def hidden_nodes(
         x = (row[0]["x"] + row[-1]["x"]) / 2  # the map node sits under the row's middle (user's rule)
         y = float(np.mean([icon["y"] for icon in row]))
         y += offset
-        if len(visible) and np.hypot(visible[:, 0] - x, visible[:, 1] - y).min() <= detect_constants.HIDDEN_SNAP:
+        if beside_visible(x, y):
             continue  # a visible map node this close is the row's map node, not a hidden one next to it (user's rule)
         # the row's own icons stand right above its map node (a single one ROW_DY above, closer than ICON_NMS)
         mine = {id(icon) for icon in row}
@@ -340,8 +346,13 @@ def hidden_nodes(
             distance = np.hypot(spots[:, 0] - x, spots[:, 1] - y)
             nearest = int(np.argmin(distance))
             snapped = float(spots[nearest, 0]), float(spots[nearest, 1])
-            if distance[nearest] <= K.ANNOTATOR_HIDDEN_SNAP and clear(*snapped, others):
-                x, y = snapped  # else the estimate, which is clear of both
+            # a snap that lands beside a visible map node or not clear keeps the estimate, which is clear of all
+            if (
+                distance[nearest] <= K.ANNOTATOR_HIDDEN_SNAP
+                and clear(*snapped, others)
+                and not beside_visible(*snapped)
+            ):
+                x, y = snapped
         if not (0 <= x < width and 0 <= y < height) or core.on_hud_mask([(x, y)], width, height, pad=0)[0]:
             continue
         node = {"x": round(x, 1), "y": round(y, 1), "hidden": True, "source": "icon row", "proposal": True}

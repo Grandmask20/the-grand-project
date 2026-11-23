@@ -214,3 +214,12 @@ def test_a_lone_icon_at_the_crawl_offset_gets_its_hidden_map_node() -> None:
     known = [{"x": 622.0, "y": 430.0, "hidden": True}]  # 23 px from the estimate, 16 px from the glow
     found = icon_proposals.hidden_nodes(image, {"nodes": known}, [{"x": 600, "y": 400}], np.array([[607.0, 426.0]]))
     assert [(node["x"], node["y"]) for node in found] == [(600.0, 424.0)]
+
+
+def test_a_snap_beside_a_visible_map_node_keeps_the_estimate() -> None:
+    """A row whose map node would be 49 px from a visible one is hidden; a faint spot 6 px off, 43 px from the visible
+    one (under HIDDEN_SNAP) is that map node's neighbourhood, not the row's: the estimate stays."""
+    image = np.zeros((1080, 1920, 3), np.uint8)
+    visible = [{"x": 500.0, "y": 500.0}]
+    found = icon_proposals.hidden_nodes(image, {"nodes": visible}, [{"x": 549, "y": 476}], np.array([[543.0, 500.0]]))
+    assert [(node["x"], node["y"]) for node in found] == [(549.0, 500.0)]

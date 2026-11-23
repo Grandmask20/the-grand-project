@@ -47,3 +47,19 @@ def test_nothing_happens_when_it_is_not_needed(packages: list[str], monkeypatch,
         monkeypatch.setattr(sys, "path", [str(tmp_path / "elsewhere")])
     monkeypatch.setattr(rf_detr_cuda.os, "execve", lambda *args: pytest.fail("restarted"))
     rf_detr_cuda.prefer_pip_cuda_libraries()
+
+
+def test_a_main_given_its_own_arguments_restarts_with_them(packages: list[str], monkeypatch) -> None:
+    """``main(argv)`` called with arguments of its own: the restart keeps the interpreter, its options and the module,
+    and runs it with those arguments, not the process's own."""
+    monkeypatch.setenv("LD_LIBRARY_PATH", "/usr/local/cuda/lib64")
+    monkeypatch.setattr(sys, "orig_argv", ["python", "-u", "-m", "grand_project", "old.json"])
+    monkeypatch.setattr(sys, "argv", ["/x/grand_project/__main__.py", "old.json"])
+    calls = []
+    monkeypatch.setattr(rf_detr_cuda.os, "execve", lambda exe, argv, env: calls.append(argv))
+    rf_detr_cuda.prefer_pip_cuda_libraries(["new.json", "--port", "0"])
+    rf_detr_cuda.prefer_pip_cuda_libraries()
+    assert calls == [
+        [sys.executable, "-u", "-m", "grand_project", "new.json", "--port", "0"],
+        [sys.executable, "-u", "-m", "grand_project", "old.json"],
+    ]

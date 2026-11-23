@@ -147,8 +147,9 @@ def screenshot_city_types(
 
     Returns:
         One (type, sure) per point; sure is False when the margin is under CITY_LOOK_SURE, the window is cut off by
-        the screenshot edge, there is nothing to compare with (then the type is TYPES[0]), or a city decided before
-        it closer than TRIO_GAP, whose type ruled one out, is unsure itself.
+        the screenshot edge, there is nothing to compare with (then the type is TYPES[0]), a city decided before
+        it closer than TRIO_GAP, whose type ruled one out, is unsure itself, or the cities closer than TRIO_GAP
+        took every type (contradictory labels: any type is a guess).
     """
     n = len(points)
     out: list[tuple[str, bool] | None] = [None] * n
@@ -172,20 +173,29 @@ def screenshot_city_types(
                 continue
             near = [j for j in np.nonzero(D[k] < TRIO_GAP)[0] if j != k and out[j]]
             taken = {out[j][0] for j in near}
-            al = [t for t in TYPES if t not in taken] or list(TYPES)
+            al = [t for t in TYPES if t not in taken]
+            # every type taken by a close city: the labels around it contradict each other, so its type is a guess
+            stuck = not al
+            al = al or list(TYPES)
             # the neighbours that narrowed the choice (none when every type was taken): their doubt carries over
             leaned = near if len(al) < len(TYPES) else []
             if dist[k] is None:
-                cand = (-1.0, k, al[0], leaned)
+                cand = (-1.0, k, al[0], leaned, stuck)
             else:
                 ds = sorted((dist[k][TYPES.index(t)], t) for t in al)
-                cand = (ds[1][0] - ds[0][0] if len(ds) > 1 else 9.0, k, ds[0][1], leaned)
+                cand = (ds[1][0] - ds[0][0] if len(ds) > 1 else 9.0, k, ds[0][1], leaned, stuck)
             if best is None or cand[0] > best[0]:
                 best = cand
         if best is None:
             break
-        margin, k, t, leaned = best
-        sure = dist[k] is not None and whole[k] and margin >= CITY_LOOK_SURE and all(out[j][1] for j in leaned)
+        margin, k, t, leaned, stuck = best
+        sure = (
+            not stuck
+            and dist[k] is not None
+            and whole[k]
+            and margin >= CITY_LOOK_SURE
+            and all(out[j][1] for j in leaned)
+        )
         out[k] = (t, bool(sure))
     return [o for o in out if o is not None]
 

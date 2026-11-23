@@ -81,6 +81,9 @@ def test_the_tool_reads_reviewed_screenshots(tmp_path: Path, capsys) -> None:
         assert store.save_review(key, 1, reviewed=True)
     assert main(["--output-dir", str(out), "--ring", "20", "40"]) == 0
     assert "1 nodes, 100.0% right" in capsys.readouterr().out
+    assert main(["--output-dir", str(out), "--limit", "0"]) == 1  # none read
+    with pytest.raises(SystemExit):
+        main(["--output-dir", str(out), "--limit", "-1"])
 
 
 def test_a_citadels_own_map_is_guessed_as_its_city(tmp_path: Path) -> None:

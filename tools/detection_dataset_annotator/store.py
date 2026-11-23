@@ -492,6 +492,8 @@ class ReviewStore:
         untouched: bool = False,
         expect_boxes: Iterable[Mapping[str, Any]] | None = None,
         unmarked: Iterable[str] = (),
+        marked: Mapping[str, Any] | None = None,
+        arm_block: tuple[Iterable[str], str] | None = None,
     ) -> bool:
         """Save a screenshot's edited boxes, its review flag and/or fields of ``extra``, if it is still at detection
         ``revision``.
@@ -506,7 +508,8 @@ class ReviewStore:
             reviewed: its new review flag.
             extra: fields merged into ``extra`` (None removes one): a truth mark, a pre-label's arm, the review log.
             prelabel: the boxes are new pre-labels (truth seeding, model pre-labels), not an edit: they also replace
-                the snapshot the review is measured against (``prelabels``).
+                the snapshot the review is measured against (``prelabels``), and raise the revision as a detection
+                does, so an editor showing the old boxes reloads instead of saving them over the new ones.
             untouched: save only while nobody reviewed or edited the screenshot (unreviewed, its boxes still its
                 pre-labels), checked in the same write: a model pass running beside the page never overwrites a review
                 in progress.
@@ -514,6 +517,10 @@ class ReviewStore:
                 worked from): another pass's boxes saved meanwhile are never overwritten with ones made from older.
             unmarked: save only while ``extra`` has none of these fields (a truth mark or a pre-label arm set
                 meanwhile).
+            marked: save only while each of these ``extra`` fields is absent or has this value (another truth's
+                mark set meanwhile).
+            arm_block: (the screenshots of its spatial block, the pre-label arm saved): save only while none of the
+                others has another arm (``ANNOTATOR_PRELABEL_FIELD``): one block, one arm, also for two passes at once.
         """
         with self._write():
             row = self._db.execute(
@@ -526,15 +533,21 @@ class ReviewStore:
             if expect_boxes is not None and self._boxes(key) != [dict(box) for box in expect_boxes]:
                 return False
             marks = tuple(unmarked)
-            if marks:
+            if marks or marked:
                 (stored,) = self._db.execute("SELECT extra FROM images WHERE key = ?", (key,)).fetchone()
-                if any(name in json.loads(stored) for name in marks):
+                have = json.loads(stored)
+                if any(name in have for name in marks):
                     return False
+                if any(have.get(name, value) != value for name, value in (marked or {}).items()):
+                    return False
+            if arm_block is not None and not self._one_arm(key, *arm_block):
+                return False
             if annotations is not None:
                 numbered, counter = _numbered(annotations, row[1])
                 self._replace_annotations(key, numbered)
                 if prelabel:
                     self._replace_prelabels(key, numbered)
+                    self._db.execute("UPDATE images SET edit_version = edit_version + 1 WHERE key = ?", (key,))
                 self._db.execute("UPDATE images SET next_annotation_id = ? WHERE key = ?", (counter, key))
             if reviewed is not None:
                 self._db.execute("UPDATE images SET reviewed = ? WHERE key = ?", (reviewed, key))
@@ -553,6 +566,18 @@ class ReviewStore:
         """A screenshot's boxes in the editor's order, as ``item`` gives them (inside a transaction)."""
         rows = self._db.execute(f"{_SELECT_ANNOTATIONS} WHERE image_key = ? ORDER BY ord", (key,))
         return [_annotation(row) for row in rows]
+
+    def _one_arm(self, key: str, block: Iterable[str], arm: str) -> bool:
+        """Whether no screenshot of ``block`` but ``key`` has a pre-label arm other than ``arm`` (inside a write)."""
+        others = sorted(set(block) - {key})
+        for start in range(0, len(others), K.ANNOTATOR_SQL_CHUNK):
+            chunk = others[start : start + K.ANNOTATOR_SQL_CHUNK]
+            query = f"SELECT extra FROM images WHERE key IN ({', '.join('?' * len(chunk))})"
+            for (stored,) in self._db.execute(query, chunk):
+                given = (json.loads(stored).get(K.ANNOTATOR_PRELABEL_FIELD) or {}).get("source")
+                if given is not None and given != arm:
+                    return False
+        return True
 
     def _untouched(self, key: str) -> bool:
         """Whether a screenshot is unreviewed and its boxes are still its pre-labels (inside a write)."""

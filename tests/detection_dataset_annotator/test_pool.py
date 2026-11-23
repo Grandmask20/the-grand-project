@@ -181,6 +181,24 @@ def test_a_stop_from_the_progress_callback_is_raised_unwrapped(tmp_path: Path, r
     assert sum(item["detected"] for item in _items(review_store, keys).values()) >= 1
 
 
+def test_a_stop_while_the_last_screenshots_fail_is_raised_unwrapped(tmp_path: Path, review_store: ReviewStore) -> None:
+    """Every worker crashed and the screenshots no worker reached are failed after the run: a stop from the progress
+    callback then is Streamlit's own too, raised once all of them are saved as failed."""
+
+    class StopRun(BaseException):
+        pass
+
+    def progress(done: int, _total: int, _path: str) -> None:
+        if done > K.ANNOTATOR_WORKER_IN_FLIGHT:  # the first screenshot failed after the run
+            raise StopRun
+
+    names = [f"crash{i}" for i in range(4)]
+    keys = _add(review_store, tmp_path, *names)
+    with pytest.raises(StopRun):
+        pool.detect_pending(review_store, OPTIONS, max_workers=1, progress=progress)
+    assert all(item["error"] for item in _items(review_store, keys).values())
+
+
 def test_default_workers_fit_the_machine() -> None:
     assert 1 <= pool.default_workers() <= pool.cpu_count()
 

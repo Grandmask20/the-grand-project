@@ -117,6 +117,26 @@ def test_tiles_find_each_object_once_in_screenshot_pixels() -> None:
     assert tuple(tile[y - oy, x - ox]) == K.RF_DETR_HUD_FILL[::-1]  # RGB
 
 
+def test_a_find_in_the_padding_of_a_small_screenshot_is_dropped() -> None:
+    """A screenshot smaller than a tile is padded to one: a box the model puts wholly in the padding clamps to nothing
+    on the screenshot and is no detection."""
+    torch = pytest.importorskip("torch")
+
+    def model(pixel_values):
+        logits = torch.full((len(pixel_values), 1, 4), -20.0)
+        logits[:, 0, 1] = 5.0  # sure: a grass map node
+        tile = K.RF_DETR_TILE
+        boxes = torch.tensor([[[675 / tile, 625 / tile, 50 / tile, 50 / tile]]]).repeat(len(pixel_values), 1, 1)
+        return SimpleNamespace(logits=logits, pred_boxes=boxes)
+
+    def processor(*, images, return_tensors):
+        return {"pixel_values": torch.from_numpy(np.stack(images))}
+
+    families = class_families({0: "map_node", 1: "map_node_grass", 2: "map_node_mountain", 3: "icon"})
+    shot = np.full((500, 600, 3), 40, np.uint8)
+    assert rf_detr_model.predict_tiles(model, processor, shot, families, torch.device("cpu"), threshold=0.35) == []
+
+
 def test_a_missing_model_is_a_clear_error(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv(K.RF_DETR_MODEL_ENV, str(tmp_path / "none"))
     rf_detr_model.reset_rf_detr_runtime()
@@ -212,6 +232,25 @@ def test_citadels_halls_and_deadly_bosses_come_back_as_the_classical_landmarks(m
         (1500.0, 300.0): ("desert", None),
     }  # the node on the HUD is dropped
     assert sorted(i["name"] for i in result["icons"]) == ["MapBossSpecial"] * 3
+
+
+def test_a_deadly_boss_map_beside_a_hall_is_its_own(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A hall's box holds its wide structure, so a neighbouring map can lie inside it: that map's deadly-boss icon
+    still marks a deadly boss map; only the icon over the Hall's own map is the Hall's, whichever icon comes first."""
+    hall_icon = {"label": "icon", "family": "icon", "box": [983.0, 659.0, 1017.0, 693.0], "score": 0.9}
+    other_icon = {"label": "icon", "family": "icon", "box": [893.0, 599.0, 927.0, 633.0], "score": 0.9}
+    for icons in ([hall_icon, other_icon], [other_icon, hall_icon]):
+        predictions = [
+            {"label": "map_node_grass", "family": "node", "box": [980.0, 680.0, 1020.0, 720.0], "score": 0.9},
+            {"label": "hall", "family": "hall", "box": [890.0, 600.0, 1020.0, 725.0], "score": 0.7},
+            {"label": "map_node_grass", "family": "node", "box": [890.0, 620.0, 930.0, 660.0], "score": 0.9},
+            *icons,
+        ]
+        result = _detect(monkeypatch, predictions, names=["MapBossSpecial"] * 2)
+        assert sorted((lm["kind"], lm["x"], lm["y"]) for lm in result["landmarks"]) == [
+            ("Deadly boss map", 910.0, 640.0),
+            ("Hall", 1000.0, 700.0),
+        ]
 
 
 def test_a_citadel_is_a_city_at_the_map_node_inside_its_box(monkeypatch: pytest.MonkeyPatch) -> None:

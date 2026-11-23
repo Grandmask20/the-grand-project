@@ -21,6 +21,7 @@ const HISTORY_LIMIT = 200;
 const MAX_ZOOM = 16;
 const MIN_ZOOM_OF_FIT = 0.5; // zoom out to half the fitted size at most
 const WHEEL_ZOOM_RATE = 0.0015; // zoom factor exponent per wheel delta unit
+const WHEEL_LINE_PX = 40; // a wheel delta given in lines (Firefox's mouse wheel: 3 a notch) is this many pixels each
 const KEY_ZOOM_STEP = 1.25; // + / - zoom factor
 const NEW_BOX_OFFSET = 8; // duplicate offset (source pixels)
 const NUDGE_PX = 1; // arrows move / resize this much (source pixels)
@@ -31,6 +32,7 @@ const SCALE_WHEEL_DELTA = 100; // wheel delta per resize step: one mouse-wheel n
 const SCALE_UNDO_MS = 600; // resize steps closer together than this are one undo step (one wheel gesture)
 const REVEAL_MARGIN_PX = 24; // J / K pan when the box comes closer than this to the viewport edge
 const MANUAL = "manual"; // box source of drawn or changed boxes (constants.ANNOTATOR_MANUAL_SOURCE)
+const DRAG_KEEPS_KEYS = new Set(["Shift", "Control", "Alt", "AltGraph", "Meta", " "]); // keys a box drag goes on with
 
 const HANDLES = ["nw", "n", "ne", "e", "se", "s", "sw", "w"];
 const HANDLE_CURSORS = {
@@ -119,6 +121,47 @@ function round2(value) {
   return Math.round(value * 100) / 100;
 }
 
+// Where a resize handle of a box sits (source pixels).
+export function handleSpot(box, handle) {
+  const x = handle.includes("w") ? box.x : handle.includes("e") ? box.x + box.w : box.x + box.w / 2;
+  const y = handle.includes("n") ? box.y : handle.includes("s") ? box.y + box.h : box.y + box.h / 2;
+  return { x, y };
+}
+
+// The handle nearest the point within reach of it, of the given boxes (the first box wins a tie): on a small box
+// every handle is in reach, and the nearest is the one meant. Exported for tests/detection_dataset_annotator.
+export function closestHandle(point, boxes, reach) {
+  let best = null;
+  for (const box of boxes) {
+    for (const handle of HANDLES) {
+      const spot = handleSpot(box, handle);
+      const dx = Math.abs(point.x - spot.x);
+      const dy = Math.abs(point.y - spot.y);
+      if (dx > reach || dy > reach) continue;
+      const distance = Math.hypot(dx, dy);
+      if (!best || distance < best.distance) best = { box, handle, distance };
+    }
+  }
+  return best && { box: best.box, handle: best.handle };
+}
+
+// A wheel delta in pixels, whatever unit the browser gave it in (WheelEvent.deltaMode: 0 pixels, 1 lines, 2 pages).
+// Exported for tests/detection_dataset_annotator.
+export function wheelPixels(delta, mode, pageHeight) {
+  if (mode === 1) return delta * WHEEL_LINE_PX;
+  if (mode === 2) return delta * pageHeight;
+  return delta;
+}
+
+// A typed coordinate, or null for an empty or unreadable field (Number("") is 0: an emptied field is no 0).
+// Exported for tests/detection_dataset_annotator.
+export function coordinateValue(text) {
+  const trimmed = String(text ?? "").trim();
+  if (!trimmed) return null;
+  const value = Number(trimmed);
+  return Number.isFinite(value) ? value : null;
+}
+
 class Annotator {
   constructor(root) {
     this.root = root;
@@ -137,6 +180,7 @@ class Annotator {
     this.active = true; // keys go to the editor until the user clicks elsewhere on the page
     this.showBoxes = true;
     this.showAllChips = false;
+    this.helpOpener = null; // where the focus was when the shortcuts card opened
     this.seq = 0;
     this.sentSeq = 0;
     this.activeMs = 0; // review time not sent yet (constants.ANNOTATOR_IDLE_MS: gaps longer than that are not counted)
@@ -317,6 +361,15 @@ class Annotator {
       el("td", "", row).textContent = what;
     }
     el("p", "ann-muted", card).textContent = "Edits save automatically. Press ? or Esc to close.";
+    // The card's own button: the focus goes to it when the card opens (see toggleHelp).
+    this.helpCloseBtn = el("button", "ann-btn", card);
+    this.helpCloseBtn.type = "button";
+    this.helpCloseBtn.textContent = "Close";
+    this.helpCloseBtn.title = "Close the shortcuts (Esc)";
+    this.helpCloseBtn.addEventListener("click", (event) => {
+      this.toggleHelp();
+      this.backToCanvas(event);
+    });
 
     const side = el("div", "ann-side", main);
     const nav = el("div", "ann-row", side);
@@ -370,8 +423,8 @@ class Annotator {
 
   backToCanvas(event) {
     // After a mouse click on a side-panel button the shortcuts go on working; a keyboard press (detail 0) keeps the
-    // focus where Tab put it.
-    if (event.detail > 0) this.viewport.focus({ preventScroll: true });
+    // focus where Tab put it, and so does the open shortcuts card (its Close button holds it).
+    if (event.detail > 0 && this.helpEl.hidden) this.viewport.focus({ preventScroll: true });
   }
 
   on(target, type, handler, options) {
@@ -488,19 +541,12 @@ class Annotator {
   }
 
   handleAt(point) {
-    // Handles of the selected box (one selected) or the hovered one, so a small box can be resized directly.
+    // The nearest handle of the selected box (one selected) or the hovered one, so a small box can be resized
+    // directly, from the corner meant.
     const candidates = [];
     if (this.selected.size === 1) candidates.push(this.selectedBoxes()[0]);
     if (this.hoverId) candidates.push(this.byId(this.hoverId));
-    const reach = HANDLE_PX / this.view.zoom;
-    for (const box of candidates) {
-      if (!box) continue;
-      for (const handle of HANDLES) {
-        const spot = this.handlePoint(box, handle);
-        if (Math.abs(point.x - spot.x) <= reach && Math.abs(point.y - spot.y) <= reach) return { box, handle };
-      }
-    }
-    return null;
+    return closestHandle(point, candidates.filter(Boolean), HANDLE_PX / this.view.zoom);
   }
 
   selectedAt(point) {
@@ -513,12 +559,6 @@ class Annotator {
         point.y >= box.y - reach &&
         point.y <= box.y + box.h + reach,
     );
-  }
-
-  handlePoint(box, handle) {
-    const x = handle.includes("w") ? box.x : handle.includes("e") ? box.x + box.w : box.x + box.w / 2;
-    const y = handle.includes("n") ? box.y : handle.includes("s") ? box.y + box.h : box.y + box.h / 2;
-    return { x, y };
   }
 
   byId(id) {
@@ -772,9 +812,13 @@ class Annotator {
   wheel(event) {
     if (this.inHelp(event)) return; // the card scrolls; the boxes and the zoom stay
     event.preventDefault();
+    // in pixels: Firefox gives a mouse wheel's notch in lines (3), which would barely zoom or resize
+    const page = this.viewport.clientHeight || window.innerHeight;
+    const deltaY = wheelPixels(event.deltaY, event.deltaMode, page);
+    const deltaX = wheelPixels(event.deltaX, event.deltaMode, page);
     if (this.selected.size && !(event.ctrlKey || event.metaKey)) {
       // A selected box is resized from its centre; Shift+wheel scrolls sideways in some browsers, so read both.
-      this.wheelSum += event.deltaY || event.deltaX;
+      this.wheelSum += deltaY || deltaX;
       const steps = Math.trunc(this.wheelSum / SCALE_WHEEL_DELTA);
       if (steps) {
         this.wheelSum -= steps * SCALE_WHEEL_DELTA;
@@ -782,14 +826,35 @@ class Annotator {
       }
       return;
     }
-    this.zoomAt(Math.exp(-event.deltaY * WHEEL_ZOOM_RATE), event.clientX, event.clientY);
+    this.zoomAt(Math.exp(-deltaY * WHEEL_ZOOM_RATE), event.clientX, event.clientY);
   }
 
   // ---- keyboard -------------------------------------------------------------------------------------------
 
   keyDown(event) {
+    if (!this.active || !this.data || isTyping(event)) return;
+    if (!this.helpEl.hidden) {
+      // The shortcuts card is open: Esc or ? closes it, wherever the focus is in the editor; every other key keeps
+      // its own meaning (Tab, Enter on Close), so nothing is edited behind the card.
+      if (event.key === "Escape" || event.key === "?") {
+        this.toggleHelp();
+        event.preventDefault();
+        event.stopPropagation();
+      }
+      return;
+    }
     // Shortcuts belong to the canvas: Tab moving the focus and Enter / Space on a focused button keep their meaning.
-    if (!this.active || !this.data || isTyping(event) || !event.composedPath().includes(this.viewport)) return;
+    if (!event.composedPath().includes(this.viewport)) return;
+    if (this.drag && this.drag.kind !== "pan" && !DRAG_KEEPS_KEYS.has(event.key)) {
+      // A key during a box drag ends the drag first (Esc does only that): an edit acts on the boxes as they were, not
+      // on boxes on their way, and an autosave never sends the boxes before the drag under the edit's number.
+      this.cancelDrag();
+      if (event.key === "Escape") {
+        event.preventDefault();
+        event.stopPropagation();
+        return;
+      }
+    }
     const handled = event.ctrlKey || event.metaKey ? this.commandKey(event) : this.plainKey(event);
     if (handled) {
       event.preventDefault();
@@ -1081,8 +1146,19 @@ class Annotator {
   }
 
   toggleHelp() {
-    this.helpEl.hidden = !this.helpEl.hidden;
-    this.helpBtn.setAttribute("aria-pressed", String(!this.helpEl.hidden));
+    const opening = this.helpEl.hidden;
+    this.helpEl.hidden = !opening;
+    this.helpBtn.setAttribute("aria-pressed", String(opening));
+    if (opening) {
+      // The focus goes into the card, and back to where it was when the card closes.
+      const active = this.wrap.getRootNode().activeElement;
+      this.helpOpener = active && this.wrap.contains(active) ? active : this.viewport;
+      this.helpCloseBtn.focus({ preventScroll: true });
+    } else {
+      const back = this.helpOpener?.isConnected ? this.helpOpener : this.viewport;
+      this.helpOpener = null;
+      back.focus({ preventScroll: true });
+    }
   }
 
   boxNode(id) {
@@ -1237,7 +1313,11 @@ class Annotator {
       option.value = option.textContent = box.label;
     }
     select.value = box.label;
-    select.addEventListener("change", () => this.useLabel(select.value));
+    select.addEventListener("change", () => {
+      this.useLabel(select.value);
+      // the panel was drawn anew: the focus goes to its new label list, so Tab and the arrows go on from there
+      if (!select.isConnected) this.inspectorEl.querySelector("select")?.focus({ preventScroll: true });
+    });
     const rule = this.labelByName[box.label]?.rule;
     if (rule) el("p", "ann-muted ann-rule", panel).textContent = rule;
     const grid = el("div", "ann-grid", panel);
@@ -1249,8 +1329,11 @@ class Annotator {
       input.step = "1";
       input.value = String(round2(box[field]));
       input.addEventListener("change", () => {
-        const value = Number(input.value);
-        if (!Number.isFinite(value)) return;
+        const value = coordinateValue(input.value);
+        if (value === null) {
+          input.value = String(round2(box[field])); // emptied or unreadable: the box stays as it was (0 is typed)
+          return;
+        }
         this.snapshot();
         box[field] = value;
         this.clampBox(box);

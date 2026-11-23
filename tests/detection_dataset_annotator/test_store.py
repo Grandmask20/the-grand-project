@@ -349,10 +349,58 @@ def test_a_background_save_needs_the_boxes_it_worked_from_and_no_mark(
     snapshot = review_store.item(key)["annotations"]
     seeded = [_box("map_node_vaal", 10.0)]
     assert review_store.save_review(key, 1, annotations=seeded, prelabel=True, untouched=True)  # another pass
+    revision = review_store.item(key)["edit_version"]
+    assert revision == 2  # new pre-labels: an editor showing the old boxes reloads
     late = [_box("map_node_grass", 10.0)]
-    assert not review_store.save_review(key, 1, annotations=late, prelabel=True, expect_boxes=snapshot)
+    assert not review_store.save_review(key, revision, annotations=late, prelabel=True, expect_boxes=snapshot)
     assert [a["label"] for a in review_store.item(key)["annotations"]] == ["map_node_vaal"]
-    assert review_store.save_review(key, 1, annotations=late, expect_boxes=review_store.item(key)["annotations"])
+    assert review_store.save_review(key, revision, annotations=late, expect_boxes=review_store.item(key)["annotations"])
     assert review_store.save_review(marked, 1, extra={K.ANNOTATOR_TRUTH_MARK: "truth.json"})
     assert not review_store.save_review(marked, 1, annotations=late, unmarked=[K.ANNOTATOR_TRUTH_MARK])
     assert review_store.save_review(marked, 1, extra={"note": 1}, unmarked=["other"])
+
+
+def test_new_pre_labels_turn_away_an_editor_showing_the_old_boxes(tmp_path: Path, review_store: ReviewStore) -> None:
+    """An editor opened before a model or truth pass would save the old boxes (and its edits) over the pass's: the
+    pass raises the revision as a detection does, so the editor's late save is refused and it reloads."""
+    (path,) = _shots(tmp_path, "a.png")
+    key = _detected(review_store, path, _box("icon", 10.0))
+    shown = review_store.item(key)
+    assert review_store.save_review(key, shown["edit_version"], annotations=[_box("tower", 10.0)], prelabel=True)
+    edited = [dict(shown["annotations"][0], label="hall")]
+    assert not review_store.save_review(key, shown["edit_version"], annotations=edited)
+    assert [a["label"] for a in review_store.item(key)["annotations"]] == ["tower"]
+    marked = review_store.item(key)["edit_version"]
+    assert review_store.save_review(key, marked, extra={"note": 1})  # no boxes: the revision stays
+    assert review_store.item(key)["edit_version"] == marked
+
+
+def test_a_save_can_need_its_own_mark_or_none(tmp_path: Path, review_store: ReviewStore) -> None:
+    """``marked``: the field is absent or already this value; another truth's mark set meanwhile refuses the save."""
+    (path,) = _shots(tmp_path, "a.png")
+    key = _detected(review_store, path, _box("icon", 10.0))
+    mine = {K.ANNOTATOR_TRUTH_MARK: "states.json"}
+    assert review_store.save_review(key, 1, extra=mine, marked=mine)  # absent
+    assert review_store.save_review(key, 1, extra={"note": 1}, marked=mine)  # the same
+    assert review_store.save_review(key, 1, extra={K.ANNOTATOR_TRUTH_MARK: "truth.json"})
+    assert not review_store.save_review(key, 1, extra=mine, marked=mine)  # another truth's
+    assert review_store.item(key)[K.ANNOTATOR_TRUTH_MARK] == "truth.json"
+
+
+def test_one_block_keeps_one_pre_label_arm(tmp_path: Path, review_store: ReviewStore) -> None:
+    """Two passes at once could give a block's screenshots different arms: a save refuses an arm another screenshot of
+    its block already has a different one of."""
+    first, second, elsewhere = (
+        _detected(review_store, p, _box("icon", 10.0)) for p in _shots(tmp_path, "a.png", "b.png", "c.png")
+    )
+    block = [first, second]
+
+    def arm(key: str, source: str) -> bool:
+        record = {K.ANNOTATOR_PRELABEL_FIELD: {"source": source}}
+        return review_store.save_review(key, 1, extra=record, arm_block=(block, source))
+
+    assert arm(first, "rf_detr")
+    assert not arm(second, K.ANNOTATOR_CLASSICAL_SOURCE)
+    assert arm(second, "rf_detr")
+    other = {K.ANNOTATOR_PRELABEL_FIELD: {"source": K.ANNOTATOR_CLASSICAL_SOURCE}}
+    assert review_store.save_review(elsewhere, 1, extra=other, arm_block=([elsewhere], K.ANNOTATOR_CLASSICAL_SOURCE))

@@ -19,6 +19,7 @@ from .constants import (
     EXTRA_BADGES,
     EXTRA_MAPS,
     MAP,
+    RF_DETR_TRAINED_ON,
     TESTS,
     TOWER_REFS,
     TREE_NEG_WEIGHT,
@@ -337,27 +338,66 @@ def _truth_screenshots() -> tuple[dict, dict]:
     return truth, where
 
 
+def _project_name(path: Path) -> str:
+    """A screenshot's project-relative name, as a model's ``RF_DETR_TRAINED_ON`` lists it (its absolute path outside
+    the project)."""
+    resolved = Path(path).resolve()
+    try:
+        return resolved.relative_to(rc_paths.ROOT.resolve()).as_posix()
+    except ValueError:
+        return str(resolved)
+
+
+def _held_out(model_dir: Path, shots) -> bool | None:
+    """Whether a model trained on none of the screenshots: its ``RF_DETR_TRAINED_ON`` names none of them (None: the
+    model folder has no such list, so it is not known)."""
+    listed = model_dir / RF_DETR_TRAINED_ON
+    if not listed.is_file():
+        return None
+    trained = {line.strip() for line in listed.read_text(encoding="utf-8").splitlines() if line.strip()}
+    return not any(_project_name(path) in trained for path in shots)
+
+
 def cmd_score_rf_detr() -> int:
     """Command `python -m grand_project.detect score_rf_detr`: the RF-DETR detector on the hand-labelled screenshots.
 
     The model is GRAND_PROJECT_RF_DETR_MODEL's, else runs/rf-detr-small/best. The truth screenshots are pinned to the
-    annotator's test split, so no model ever trained on them: the score is a held-out one, beside `score`'s
-    leave-one-out score of the classical detector. Writes the outputs to last_score_outputs_rf_detr.json next to
-    TRUTH.
+    annotator's test split, so a model trained by `tools.train_rf_detr` never trained on them; the score is called
+    held-out only when the model's own list of training screenshots (RF_DETR_TRAINED_ON) confirms it, beside
+    `score`'s leave-one-out score of the classical detector. Writes the outputs to last_score_outputs_rf_detr.json
+    next to TRUTH.
 
     Returns:
-        0 (process exit code).
+        0 (process exit code); 1 when there is no hand-labelled truth or none of its screenshots can be read.
     """
-    from .rf_detr_model import detect_rf_detr
+    from .rf_detr_model import detect_rf_detr, rf_detr_model_path
 
     t0 = time.time()
     truth, where = _truth_screenshots()
+    if not truth:
+        print("no hand-labelled truth: none of " + ", ".join(str(tf) for tf, _shots in TRUTH_SETS) + " is there")
+        return 1
     new = {}
     for name in truth:
-        out = detect_rf_detr(cv2.imdecode(np.fromfile(str(where[name]), np.uint8), cv2.IMREAD_COLOR))
+        img = core.read_screenshot(where[name])  # 1080p, as the program reads it and the truth is labelled
+        if img is None:
+            print(f"cannot read {where[name]}: left out")
+            continue
+        out = detect_rf_detr(img)
         out["icons"] = [icon for icon in out["icons"] if not icon["name"].startswith("ExpeditionShip")]
         new[name] = out
-    print("\n== RF-DETR detector (held-out: the truth screenshots are always test)")
+    if not new:  # nothing to score: the outputs of the last score stay
+        print("no truth screenshot could be read")
+        return 1
+    model_dir = rf_detr_model_path()
+    held_out = _held_out(model_dir, [where[name] for name in truth])
+    if held_out:
+        kind = "held-out: the model trained on none of the truth screenshots"
+    elif held_out is None:
+        kind = f"not known to be held-out: {model_dir} does not list its training screenshots ({RF_DETR_TRAINED_ON})"
+    else:
+        kind = "NOT held-out: the model trained on some of the truth screenshots"
+    print(f"\n== RF-DETR detector ({kind})")
     atlas_truth.print_score(atlas_truth.score(truth, new))
     (TRUTH.parent / "last_score_outputs_rf_detr.json").write_text(json.dumps(new, default=float), encoding="utf-8")
     print(f"{time.time() - t0:.0f} s")

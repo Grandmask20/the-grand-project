@@ -242,6 +242,26 @@ def _live_landmarks(folder: Path) -> list[dict[str, Any]]:
     return [landmark for landmark in landmarks if not str(landmark.get("status", "kept")).startswith("removed")]
 
 
+def _landmark_hits(
+    predicted: list[dict[str, Any]], expected: list[dict[str, Any]], shift: np.ndarray, match_distance: float
+) -> int:
+    """How many landmarks match one-to-one, kind by kind: the most pairs within ``match_distance`` (after the shift),
+    the closest among those, whatever order the landmarks come in."""
+    from scipy.optimize import linear_sum_assignment
+
+    hits = 0
+    for kind in {lm.get("kind") for lm in predicted} & {lm.get("kind") for lm in expected}:
+        mine = np.array([[float(lm["x"]), float(lm["y"])] for lm in predicted if lm.get("kind") == kind]) + shift
+        theirs = np.array([[float(lm["x"]), float(lm["y"])] for lm in expected if lm.get("kind") == kind])
+        distance = np.hypot(mine[:, None, 0] - theirs[None, :, 0], mine[:, None, 1] - theirs[None, :, 1])
+        eligible = distance <= match_distance
+        # a pair out of reach costs more than every pair in reach together: the most pairs first, then the closest
+        never = (min(distance.shape) + 1) * match_distance + 1.0
+        rows, cols = linear_sum_assignment(np.where(eligible, distance, never))
+        hits += int(eligible[rows, cols].sum())
+    return hits
+
+
 def _add_landmark_metrics(
     folder: Path, reference: Path, comparison: dict[str, Any], match_distance: float
 ) -> dict[str, Any]:
@@ -249,29 +269,7 @@ def _add_landmark_metrics(
     predicted = _live_landmarks(folder)
     expected = _live_landmarks(reference)
     shift = np.asarray(comparison.get("shift", [0.0, 0.0]), float)
-    unused = set(range(len(expected)))
-    hits = 0
-    for landmark in predicted:
-        candidates = [
-            index
-            for index in unused
-            if expected[index].get("kind") == landmark.get("kind")
-            and np.hypot(
-                float(expected[index]["x"]) - float(landmark["x"]) - shift[0],
-                float(expected[index]["y"]) - float(landmark["y"]) - shift[1],
-            )
-            <= match_distance
-        ]
-        if candidates:
-            best = min(
-                candidates,
-                key=lambda index: np.hypot(
-                    float(expected[index]["x"]) - float(landmark["x"]) - shift[0],
-                    float(expected[index]["y"]) - float(landmark["y"]) - shift[1],
-                ),
-            )
-            unused.remove(best)
-            hits += 1
+    hits = _landmark_hits(predicted, expected, shift, match_distance)
     recall = hits / len(expected) if expected else 0.0
     comparison["landmarks"] = f"{hits} of {len(predicted)} match; found {hits} of {len(expected)} ({recall:.0%})"
     return comparison

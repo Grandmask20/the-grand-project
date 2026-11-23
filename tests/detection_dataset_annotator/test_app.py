@@ -133,10 +133,34 @@ def test_pre_label_starts_the_model_pass_on_this_store(page, monkeypatch: pytest
         next(t for t in expander.text_input if t.label == "Model folder").set_value(str(out / "model"))
         _button(at, "Pre-label").click().run()
         ((command, kwargs),) = started
-        assert command[1:3] == ["-m", "tools.detection_dataset_annotator.model_prelabel"]
+        assert command[1:4] == [
+            "-u",
+            "-m",
+            "tools.detection_dataset_annotator.model_prelabel",
+        ]  # unbuffered: a live log
         assert command[command.index("--output-dir") + 1] == str(out)
         assert command[command.index("--model") + 1] == str((out / "model").resolve())
         assert _button(at, "Pre-label").disabled
         assert "12 screenshots eligible" in (out / K.ANNOTATOR_PRELABEL_LOG).read_text(encoding="utf-8")
     finally:
         store.close()
+
+
+def test_the_page_listens_on_this_computer_unless_told_otherwise(monkeypatch: pytest.MonkeyPatch) -> None:
+    """It shows any screenshot below the roots typed into it: loopback by default, an address given is kept."""
+    from tools.detection_dataset_annotator.__main__ import streamlit_args
+
+    monkeypatch.delenv("STREAMLIT_SERVER_ADDRESS", raising=False)
+    app = Path("app.py")
+    assert streamlit_args(app, ["--server.port", "8600"]) == [
+        "streamlit", "run", "app.py", "--server.address", "127.0.0.1", "--server.port", "8600"
+    ]  # fmt: skip
+    assert streamlit_args(app, ["--server.address=0.0.0.0"]) == [
+        "streamlit",
+        "run",
+        "app.py",
+        "--server.address=0.0.0.0",
+    ]
+    assert streamlit_args(app, ["--server.address", "::"])[3:] == ["--server.address", "::"]
+    monkeypatch.setenv("STREAMLIT_SERVER_ADDRESS", "0.0.0.0")
+    assert streamlit_args(app, []) == ["streamlit", "run", "app.py"]

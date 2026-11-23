@@ -337,6 +337,9 @@ ANNOTATOR_PRELABEL_FIELD = "prelabel"
 """The field (in a screenshot's ``extra``) saying what pre-labelled it: ``{"source": "classical" | "rf_detr",
 "model", "model_sha", "policy", "round"}`` (``model_prelabel``), so the effort report compares the arms."""
 
+ANNOTATOR_SQL_CHUNK = 500
+"""Keys bound in one SQL query of the store (SQLite's limit is 999 in older builds)."""
+
 ANNOTATOR_REVIEW_FIELD = "review"
 """The field (in a screenshot's ``extra``) holding its review log: ``{"active_s", "reviewed_at"}``."""
 

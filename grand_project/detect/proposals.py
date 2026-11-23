@@ -46,7 +46,7 @@ def clip_box(left: float, top: float, right: float, bottom: float, width: int, h
     """A box clipped to the image, or None when less than a pixel of it is left."""
     left, top = max(0.0, left), max(0.0, top)
     right, bottom = min(float(width), right), min(float(height), bottom)
-    if right - left <= 1 or bottom - top <= 1:
+    if right - left < 1 or bottom - top < 1:
         return None
     return left, top, right - left, bottom - top
 

@@ -203,3 +203,39 @@ def test_a_screenshot_seeded_while_the_model_looked_keeps_the_truth(
     item = review_store.item(key)
     assert [(b["label"], b["source"]) for b in item["annotations"]] == [("map_node_vaal", K.ANNOTATOR_TRUTH_SOURCE)]
     assert K.ANNOTATOR_PRELABEL_FIELD not in item
+
+
+def test_a_classical_policy_is_no_model_pass(tmp_path: Path) -> None:
+    """``--policy classical`` gives no model boxes: its screenshots would count in the model's arm."""
+    with pytest.raises(SystemExit):
+        model_prelabel.main(["--dry-run", "--output-dir", str(tmp_path), "--policy", "classical"])
+
+
+def test_a_limited_pass_draws_the_arms_of_every_eligible_block(
+    tmp_path: Path, review_store: ReviewStore, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """``--limit`` leaves screenshots for later, not blocks out of the draw: drawn over one block alone, a share of
+    0.5 rounds to no model block at all, pass after pass."""
+    folder = tmp_path / "shots"
+    folder.mkdir()
+    paths = [folder / f"{index}.png" for index in range(4)]
+    for index, path in enumerate(paths):
+        path.write_bytes(bytes([index]))
+    review_store.add_images(paths)
+    for path in paths:
+        result = {"width": 1920, "height": 1080, "annotations": [_box("map_node_grass", 300, 300)]}
+        review_store.record_detection(image_key(path), result, force=False)
+    review_store.claim_splits({image_key(path): "train" for path in paths})
+    monkeypatch.setattr(model_prelabel, "_blocks", lambda items: {key: key for key, _item in items})
+    drawn = []
+    real = model_prelabel.draw_arms
+
+    def draw(blocks, *args):
+        drawn.append(sorted(blocks))
+        return real(blocks, *args)
+
+    monkeypatch.setattr(model_prelabel, "draw_arms", draw)
+    out = review_store.path.parent
+    model = str(tmp_path / "model")
+    assert model_prelabel.main(["--dry-run", "--limit", "1", "--output-dir", str(out), "--model", model]) == 0
+    assert drawn == [sorted(image_key(path) for path in paths)]  # all four drawn; the pass does one

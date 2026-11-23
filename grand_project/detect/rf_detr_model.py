@@ -212,12 +212,10 @@ def predict_tiles(
                 if T.cut_by_inner_edge(det["box"], (x, y), (prepared.shape[1], prepared.shape[0])):
                     continue
                 x0, y0, x1, y1 = det["box"]
-                det["box"] = [
-                    max(0.0, x0 + x),
-                    max(0.0, y0 + y),
-                    min(float(width), x1 + x),
-                    min(float(height), y1 + y),
-                ]
+                box = [max(0.0, x0 + x), max(0.0, y0 + y), min(float(width), x1 + x), min(float(height), y1 + y)]
+                if box[2] <= box[0] or box[3] <= box[1]:
+                    continue  # all in the padding of a screenshot smaller than a tile: nothing of it is on it
+                det["box"] = box
                 detections.append(det)
     return T.nms(detections, K.RF_DETR_FAMILY_NMS_IOU)
 
@@ -263,8 +261,12 @@ def _boss_node(nodes: list[dict], x: float, y: float) -> dict | None:
 
 
 def hall_node(box: list[float], nodes: list[dict], bosses: list[dict]) -> dict | None:
-    """The map node a hall's box stands for: the one inside it under its deadly-boss icon, else (the icon missed) the
+    """The map node a hall's box stands for: the one inside it under a deadly-boss icon, else (the icon missed) the
     one inside it nearest the box's middle, else None.
+
+    Of several maps under deadly-boss icons inside the box (a neighbour inside a wide structure's box), the one nearest
+    the box's bottom edge: the hall's structure rises above its map node (``RF_DETR_HALL_STRUCTURE_DY``). Ties go to
+    the one nearest the box's middle, so the order of the icons never matters.
 
     Args:
         box: the hall's ``xyxy`` box (its map node and structure).
@@ -272,11 +274,10 @@ def hall_node(box: list[float], nodes: list[dict], bosses: list[dict]) -> dict |
         bosses: the deadly-boss icons ("MapBossSpecial"), dicts with "x", "y".
     """
     inside = [n for n in nodes if _inside(box, n["x"], n["y"])]
-    for boss in bosses:
-        node = _boss_node(inside, boss["x"], boss["y"])
-        if node is not None:
-            return node
     cx, cy = _centre(box)
+    bossed = [node for boss in bosses if (node := _boss_node(inside, boss["x"], boss["y"])) is not None]
+    if bossed:
+        return min(bossed, key=lambda n: (box[3] - n["y"], np.hypot(n["x"] - cx, n["y"] - cy), n["x"], n["y"]))
     return min(inside, key=lambda n: np.hypot(n["x"] - cx, n["y"] - cy), default=None)
 
 
@@ -340,11 +341,17 @@ def detect_rf_detr(img: np.ndarray) -> dict:
     locks = [(b["x"], b["y"]) for b in buttons if b["kind"] == "lock"]
 
     landmarks: list[dict[str, Any]] = []
+    own: list[dict] = []  # the map nodes the Cities and Halls are
+    unplaced: list[list[float]] = []  # the boxes of the Cities and Halls with no map node found for them
     for item in by_family.get("citadel", []):
         # the City is its map node (as the classical detector reports it): the one inside the box nearest its middle
         cx, cy = _centre(item["box"])
         inside = [n for n in nodes if _inside(item["box"], n["x"], n["y"])]
         node = min(inside, key=lambda n: np.hypot(n["x"] - cx, n["y"] - cy), default=None)
+        if node is not None:
+            own.append(node)
+        else:
+            unplaced.append(item["box"])
         x, y = (node["x"], node["y"]) if node else (cx, cy)
         landmark = {"kind": "City", "x": round(x, 1), "y": round(y, 1), "score": round(item["score"], 3)}
         if city := L.city_type(item["label"]):
@@ -354,6 +361,10 @@ def detect_rf_detr(img: np.ndarray) -> dict:
     for item in by_family.get("hall", []):
         # the Hall is its map node (as the classical detector reports it)
         node = hall_node(item["box"], nodes, bosses)
+        if node is not None:
+            own.append(node)
+        else:
+            unplaced.append(item["box"])
         x, y = (node["x"], node["y"]) if node else _centre(item["box"])
         landmarks.append({"kind": "Hall", "x": round(x, 1), "y": round(y, 1), "score": round(item["score"], 3)})
     for item in by_family.get("stronghold", []):
@@ -366,8 +377,12 @@ def detect_rf_detr(img: np.ndarray) -> dict:
     places = [d["box"] for d in [*by_family.get("citadel", []), *by_family.get("hall", [])]]
     for boss in bosses:
         node = _boss_node(nodes, boss["x"], boss["y"])
+        if node is not None and any(node is mine for mine in own):
+            continue  # the City's or Hall's own map
         x, y = (node["x"], node["y"]) if node else (boss["x"], boss["y"] + K.ROW_DY)
-        if any(_inside(box, x, y) for box in places):
+        # a map beside a City or Hall inside its box (a hall's structure is wide) is a deadly boss map of its own;
+        # the box alone decides for a City or Hall with no map node found, or an icon over no map node found
+        if any(_inside(box, x, y) for box in (places if node is None else unplaced)):
             continue
         landmarks.append({"kind": "Deadly boss map", "x": round(x, 1), "y": round(y, 1), "score": boss["score"]})
 

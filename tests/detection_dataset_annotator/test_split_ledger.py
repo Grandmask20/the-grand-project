@@ -12,12 +12,14 @@ import pytest
 
 from tools.detection_dataset_annotator import ReviewStore, image_key, split_ledger
 from tools.detection_dataset_annotator import constants as K
+from tools.detection_dataset_annotator.blocks import Block
 from tools.detection_dataset_annotator.split_ledger import (
     Entry,
     SplitConflict,
     check_manifest,
     check_splits,
     held_out_overlap,
+    join_blocks,
     read_ledger,
     settle_splits,
     write_ledger,
@@ -116,6 +118,45 @@ def test_a_file_whose_bytes_changed_keeps_its_split_by_name(tmp_path: Path, revi
     assert settled.split_of[image_key(paths[3])] == split
     assert settled.origins["ledger (by file name: its bytes changed)"] == 1 and settled.added == 1
     assert read_ledger()[file_hash(paths[3])] == Entry(file_hash(paths[3]), split, "", relative_source(paths[3]))
+
+
+def test_a_file_its_bytes_and_its_name_give_two_splits_stops_everything(
+    tmp_path: Path, review_store: ReviewStore
+) -> None:
+    """A file now holding another screenshot's bytes: the ledger knows its bytes in one split and its name in another.
+    Which one it is, a person decides: nothing is written, and the check says so too."""
+    paths = _shots(tmp_path / "shots")
+    _detect(review_store, paths)
+    split_of = settle_splits(review_store).split_of
+    first = paths[0]
+    other = next(path for path in paths if split_of[image_key(path)] != split_of[image_key(first)])
+    other.write_bytes(first.read_bytes())
+    ledger_before = read_ledger()
+    with ReviewStore.open(tmp_path / "rebuilt" / K.ANNOTATOR_STORE_FILE) as rebuilt:
+        _detect(rebuilt, paths)
+        with pytest.raises(SplitConflict) as raised:
+            settle_splits(rebuilt)
+    by_bytes, by_name = split_of[image_key(first)], split_of[image_key(other)]
+    problem = f"{relative_source(other)}: ledger {by_bytes} by its bytes, {by_name} by its file name"
+    assert raised.value.problems == [problem]
+    assert read_ledger() == ledger_before
+    manifest = {"images": [{"path": str(other), "split": by_bytes}]}
+    assert check_manifest(manifest) == [problem]
+
+
+def test_copies_join_their_blocks() -> None:
+    """A copy in two places joins both blocks, so the neighbours of each go with it (moving only the copy into the
+    other block left its own neighbours to be drawn apart)."""
+    blocks = {
+        "a": Block("x", 0),
+        "b": Block("x", 0),
+        "c": Block("y", 1),
+        "d": Block("y", 1),
+        "e": Block("z", 0),
+        "f": Block("w", 2),
+    }
+    joined = join_blocks(blocks, [["c", "a"], ["e"], ["f", "d"]])
+    assert joined == {**dict.fromkeys("abcdf", Block("w", 2)), "e": Block("z", 0)}
 
 
 def test_a_store_split_the_ledger_disagrees_with_stops_everything(tmp_path: Path, review_store: ReviewStore) -> None:

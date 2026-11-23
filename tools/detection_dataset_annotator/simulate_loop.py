@@ -167,14 +167,23 @@ def _posix(source: str) -> PurePosixPath:
     return PurePosixPath(source.replace("\\", "/"))
 
 
-def held_out(manifest: Mapping[str, Any], atlas: str) -> dict[str, list[Mapping[str, Any]]]:
-    """The atlas's truth-seeded validation and test screenshots of a manifest, by split."""
+def held_out(manifest: Mapping[str, Any], atlas: str, base: Path | None = None) -> dict[str, list[Mapping[str, Any]]]:
+    """The atlas's truth-seeded validation and test screenshots of a manifest, by split.
+
+    Args:
+        manifest: the export's manifest.
+        atlas: the atlas folder, project-relative.
+        base: the folder a relative ``path`` lies in (the manifest's, as ``rf_detr.load_annotator_manifest`` reads
+            it); the rows come back with it joined on. None: paths as they are.
+    """
     out: dict[str, list[Mapping[str, Any]]] = {"validation": [], "test": []}
     for row in manifest.get("images", []):
         # by path component: "<atlas>-backup/..." is another folder. A source outside the project is an absolute
         # path with the system's separators (relative_source): on Windows its backslashes made it one component
         inside = _posix(str(row.get("source", ""))).is_relative_to(_posix(atlas))
         if row.get("split") in out and row.get(K.ANNOTATOR_TRUTH_MARK) and inside:
+            if base is not None and not Path(str(row["path"])).is_absolute():
+                row = {**row, "path": str(base / str(row["path"]))}
             out[row["split"]].append(row)
     return out
 
@@ -250,6 +259,34 @@ def score_round(
     from grand_project.detect.rf_detr_model import load_detector
 
     detector = load_detector(best)
+    try:
+        return _score_splits(detector, shots, classical, truth)
+    finally:
+        # the next round trains in its own process: it gets the GPU memory this model held (PyTorch keeps it cached)
+        del detector
+        _free_accelerator()
+
+
+def _free_accelerator() -> None:
+    """Give back the GPU memory freed models leave in PyTorch's cache."""
+    import gc
+
+    gc.collect()
+    try:
+        import torch
+    except ImportError:
+        return
+    if torch.cuda.is_available():
+        torch.cuda.empty_cache()
+
+
+def _score_splits(
+    detector: Mapping[str, Any],
+    shots: Mapping[str, list[Mapping[str, Any]]],
+    classical: Mapping[str, list[dict[str, Any]]],
+    truth: Truth | None,
+) -> dict[str, Any]:
+    """``score_round`` with its model loaded."""
     out: dict[str, Any] = {}
     for split, rows in shots.items():
         sums = {policy: {"gold": Edits(), "silver": Edits()} for policy in K.ANNOTATOR_PRELABEL_POLICIES}
@@ -326,7 +363,7 @@ def main(argv: list[str] | None = None) -> int:
     args.manifest = resolve_path(args.manifest)
     manifest = json.loads(args.manifest.read_text(encoding="utf-8"))
     rounds = revealed(read_ledger(), args.atlas, parse_rounds(args.rounds))
-    shots = held_out(manifest, args.atlas)
+    shots = held_out(manifest, args.atlas, args.manifest.parent)
     classical = classical_boxes(resolve_path(args.classical_store))
     truth = Truth.load(resolve_path(args.truth))
     missing = [row["source"] for rows in shots.values() for row in rows if row["source"] not in classical]

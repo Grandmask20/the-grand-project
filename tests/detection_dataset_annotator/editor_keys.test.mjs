@@ -4,7 +4,14 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { test } from "node:test";
 
-import { isGuess, labelForKey, plainKeyTarget } from "../../tools/detection_dataset_annotator/component/annotator.js";
+import {
+  closestHandle,
+  coordinateValue,
+  isGuess,
+  labelForKey,
+  plainKeyTarget,
+  wheelPixels,
+} from "../../tools/detection_dataset_annotator/component/annotator.js";
 
 const { palette, guessSources } = JSON.parse(readFileSync(process.env.ANNOTATOR_TEST_PALETTE, "utf8"));
 
@@ -52,4 +59,28 @@ test("every guess source is drawn dotted, nothing else is", () => {
   for (const source of ["classical", "manual", "icon_match", "icon_row", undefined]) {
     assert.ok(!isGuess(guesses, { source }), String(source));
   }
+});
+
+test("the nearest handle in reach resizes, so a small box can be resized from any corner", () => {
+  const small = { x: 100, y: 100, w: 8, h: 8 }; // every handle is within reach (9 px) of every other
+  assert.equal(closestHandle({ x: 108, y: 108 }, [small], 9).handle, "se");
+  assert.equal(closestHandle({ x: 101, y: 107 }, [small], 9).handle, "sw");
+  assert.equal(closestHandle({ x: 104, y: 99 }, [small], 9).handle, "n");
+  assert.equal(closestHandle({ x: 130, y: 130 }, [small], 9), null);
+  const other = { x: 107, y: 107, w: 50, h: 50 };
+  assert.equal(closestHandle({ x: 107, y: 107 }, [small, other], 9).box, other); // its corner is right there
+});
+
+test("wheel deltas in lines or pages count in pixels", () => {
+  assert.equal(wheelPixels(100, 0, 800), 100);
+  assert.equal(wheelPixels(3, 1, 800), 120); // Firefox's notch: about one 100 px step, as Chrome's
+  assert.equal(wheelPixels(-1, 2, 800), -800);
+});
+
+test("an emptied coordinate is no 0", () => {
+  assert.equal(coordinateValue(""), null);
+  assert.equal(coordinateValue("   "), null);
+  assert.equal(coordinateValue("abc"), null);
+  assert.equal(coordinateValue("0"), 0);
+  assert.equal(coordinateValue(" 12.5 "), 12.5);
 });

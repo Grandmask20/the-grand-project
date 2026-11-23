@@ -16,9 +16,11 @@ Cities, and how each screenshot is placed (``M``, ``horizon``). For every unrevi
 
 The boxes it sets get the source ``ANNOTATOR_TRUTH_SOURCE`` (no guess: drawn solid; the screenshot is still
 reviewed). Reviewed or edited screenshots are never changed (checked again in the write), a screenshot whose
-ground ring could not be read is left unmarked (seeded on the next run), and a second run changes nothing. It reports
-what it changed, the truth Cities a screenshot shows without a citadel box (to draw while reviewing) and the
-stronghold boxes far from every truth stronghold area (to check: the truth labels roughly every stronghold area).
+ground ring could not be read is left unmarked (seeded on the next run), one whose file name another screenshot in
+the store has too is left alone (the truth names screenshots by file name only; byte copies are one), and a second
+run changes nothing. It reports what it changed, the truth Cities a screenshot shows without a citadel box (to draw
+while reviewing) and the stronghold boxes far from every truth stronghold area (to check: the truth labels roughly
+every stronghold area).
 """
 
 from __future__ import annotations
@@ -44,7 +46,7 @@ from grand_project.detect.icon_types import icon_type
 from . import constants as K
 from .detection import decode_image
 from .score_nodes import name_icons
-from .state import relative_source, resolve_path
+from .state import file_hash, relative_source, resolve_path
 from .store import ReviewStore
 
 CITY_AREAS = {f"{city_type} city": city_type for city_type in cities.TYPES}
@@ -188,10 +190,11 @@ def seed_screenshot(
     """
     done: Counter[str] = Counter()
     boxes = [dict(annotation) for annotation in item.get("annotations", [])]
-    if not boxes:
-        return None, done, True
     width, height = int(item.get("width") or shot["w"]), int(item.get("height") or shot["h"])
     homography, locate = _placing(shot, width, height)
+    if not boxes:  # nothing to seed, but a truth City it shows is still one to draw
+        done["truth City without a citadel box (draw)"] += _cities_missed([], truth.cities, homography, shot)
+        return None, done, True
     places = locate(boxes)
     city_maps, city_types = truth.city_maps
     changed = False
@@ -296,6 +299,21 @@ def _detector_image(path: Path) -> np.ndarray | None:
     return None if raw is None else core.scale_screenshot(raw)
 
 
+def _ambiguous(paths: Sequence[Path]) -> bool:
+    """Whether files of one name are different screenshots (the truth names its screenshots by file name only): copies
+    with the same bytes are one screenshot; a file that cannot be read is not known to be one."""
+    if len(paths) < 2:
+        return False
+
+    def identity(path: Path) -> str:
+        try:
+            return file_hash(path)
+        except OSError:  # missing or unreadable: its own, so the name stays ambiguous
+            return str(path)
+
+    return len({identity(path) for path in paths}) > 1
+
+
 def seed_store(store: ReviewStore, truth: Truth, *, dry_run: bool = False) -> tuple[Counter[str], int, int]:
     """Seed every unreviewed store screenshot the truth places, and mark each one (``ANNOTATOR_TRUTH_MARK``, in its
     ``extra``), changed or not: the truth vouches for its city areas either way, so a truth-seeded training round
@@ -305,15 +323,22 @@ def seed_store(store: ReviewStore, truth: Truth, *, dry_run: bool = False) -> tu
         (what was done, screenshots changed, screenshots the truth places).
     """
     # Read first, then write: the store's item read holds a transaction until it ends.
+    every = list(store.items())
+    named: dict[str, list[Path]] = {}
+    for _key, item in every:
+        named.setdefault(Path(item["path"]).name, []).append(Path(item["path"]))
     todo = [
         (key, item)
-        for key, item in store.items()
+        for key, item in every
         if not item.get("reviewed") and item.get("detected") and Path(item["path"]).name in truth.screenshots
     ]
     done: Counter[str] = Counter()
     changed = 0
     skipped = "skipped: reviewed, edited or detected again meanwhile"
     for key, item in todo:
+        if _ambiguous(named[Path(item["path"]).name]):
+            done["skipped: its file name is another screenshot's too (which one the truth means is unknown)"] += 1
+            continue
         boxes, counts, complete = seed_screenshot(
             item, truth.screenshots[Path(item["path"]).name], truth, _detector_image
         )
