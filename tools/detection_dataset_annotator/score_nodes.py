@@ -63,6 +63,7 @@ def guess_nodes(
 ) -> list[tuple[str, str, bool]]:
     """(reviewed class, guessed class, sure) for every reviewed node box of one screenshot."""
     from grand_project.detect.paths import path_dashes, trace_paths
+    from grand_project.detect.walls import fortress_walls, wall_share
 
     sx, sy = img.shape[1] / width, img.shape[0] / height
     nodes, truth = [], []
@@ -100,7 +101,12 @@ def guess_nodes(
         node = hall_node(box, nodes, bosses)
         if node is not None:
             landmarks[index].update(x=node["x"], y=node["y"])
-    edges = trace_paths(nodes, path_dashes(img), img)
+    # the paths the classical detector keeps: none across a fortress wall (detect.pipeline), or an area would grow
+    # through the wall
+    wall = fortress_walls(img)
+    edges = [
+        edge for edge in trace_paths(nodes, path_dashes(img), img) if wall_share(edge["line"], wall) < DK.WALL_CROSS
+    ]
     areas = city_area_nodes(nodes, edges, icons, landmarks, city_types)
     out = []
     for index, guess in enumerate(node_biomes(img, nodes, icons)):

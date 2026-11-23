@@ -36,7 +36,15 @@ from pathlib import Path
 
 from . import constants as K
 from .pool import detect_pending
-from .state import copies, discover_images, discovery_order, image_key, relative_source, resolve_path
+from .state import (
+    copies,
+    discover_images,
+    discovery_order,
+    image_key,
+    in_skipped_folder,
+    relative_source,
+    resolve_path,
+)
 from .store import ReviewStore
 from .truth_seed import Truth, seed_lines, seed_store
 
@@ -52,10 +60,10 @@ def left_out(paths: Mapping[str, Path], discovered: Iterable[Path]) -> dict[str,
         Image key -> the reason: in a skipped folder, or the same bytes as an earlier file in discovery order.
     """
     out = {
-        key: f"in a {part!r} folder"
+        key: f"in a {next(part for part in Path(path).resolve().parent.parts if part in K.ANNOTATOR_SKIP_DIRS)!r} "
+        "folder"
         for key, path in paths.items()
-        for part in Path(path).parent.parts
-        if part in K.ANNOTATOR_SKIP_DIRS
+        if in_skipped_folder(Path(path))  # discovery's own rule: a second run finds and removes nothing
     }
     kept = {Path(path): key for key, path in paths.items() if key not in out}
     for copy, original in copies(discovery_order({*kept, *discovered})).items():

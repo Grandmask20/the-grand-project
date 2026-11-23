@@ -13,7 +13,7 @@ and takes the name of the closest. Relabelled are:
   classifier and the picture features stay as they are, so nothing is retrained (the stored model may come from
   hand labels that are not in this checkout);
 - the hand-labelled icons of the truth files (TRUTH_SETS) and the detector's call stored for them in the
-  truth_key.json next to each (unless --no-truth).
+  truth_key.json next to each (unless --no-truth); a renamed call keeps its review row as "row".
 
 The review sheet (each picture with its new name and its distance to each new type's art; "?" where the two best
 are within --unsure) is written every time; --dry-run writes only the sheet.
@@ -23,6 +23,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import sqlite3
 from dataclasses import dataclass
 from pathlib import Path
@@ -109,8 +110,13 @@ def stored_pictures(db: Path, old: str, arts: dict, unsure: float) -> list[tuple
         (badge_refs row id, match) per picture.
     """
     c = sqlite3.connect(_read_only(db), uri=True)
-    rows = c.execute("SELECT id, png FROM badge_refs WHERE name = ? ORDER BY id", (old,)).fetchall()
-    c.close()
+    try:
+        # a database with only stored models has no picture table: its book is still split
+        if c.execute("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'badge_refs'").fetchone() is None:
+            return []
+        rows = c.execute("SELECT id, png FROM badge_refs WHERE name = ? ORDER BY id", (old,)).fetchall()
+    finally:
+        c.close()
     out = []
     for rid, png in rows:
         crop = cv2.imdecode(np.frombuffer(png, np.uint8), cv2.IMREAD_COLOR)
@@ -203,10 +209,13 @@ def sheet(path: Path, new: list[str], matches: list[Match]) -> None:
 
 def _write_json(path: Path, value) -> None:
     """Rewrite a truth file as grand_project/truth.py writes it (indent 1), keeping its line endings (the files
-    written on Windows have CRLF ones: rewritten with LF, every line would show as changed)."""
+    written on Windows have CRLF ones: rewritten with LF, every line would show as changed). Written whole or not at
+    all: a temporary file beside it replaces it."""
     crlf = b"\r\n" in path.read_bytes()
     text = json.dumps(value, indent=1)
-    path.write_bytes((text.replace("\n", "\r\n") if crlf else text).encode("utf-8"))
+    temporary = path.with_name(f".{path.name}.new")
+    temporary.write_bytes((text.replace("\n", "\r\n") if crlf else text).encode("utf-8"))
+    os.replace(temporary, path)
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -264,10 +273,14 @@ def main(argv: list[str] | None = None) -> int:
             b["name"] = m.name
             kb = key["badges"].get(b.get("id", "")) if key else None
             if kb and kb.get("detector") == a.old:
+                # the review row it was shown in stays its row (truth.cmd_save applies a row's correction by it), also
+                # when one row's icons take several new names
+                kb.setdefault("row", kb["detector"])
                 kb["detector"] = m.name
-        _write_json(tf, data)
+        # the key first: if it cannot be written, the truth keeps its old names, and a retry finds them again
         if key:
             _write_json(key_file, key)
+        _write_json(tf, data)
     print("relabelled: " + ", ".join(f"{n} {sum(m.name == n for m in matches)}" for n in a.new))
     return 0
 

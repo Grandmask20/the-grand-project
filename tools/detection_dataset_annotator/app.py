@@ -104,9 +104,15 @@ def _forget(editor_key: str) -> None:
 
 
 def _remember(editor_key: str, annotations: list[dict[str, Any]]) -> None:
-    """Keep every annotation version this editor has shown, by id, so Ctrl+Z after a saved delete restores it."""
+    """Keep the annotations this editor has shown, by id, so Ctrl+Z after a saved delete or edit restores them: a
+    detector's (or a truth's) version is kept over a later manual one, the one an undo can give back."""
     known = st.session_state.setdefault(_known_key(editor_key), {})
-    known.update({str(a["id"]): copy.deepcopy(a) for a in annotations if a.get("id") is not None})
+    for annotation in annotations:
+        if annotation.get("id") is None:
+            continue
+        held = known.get(str(annotation["id"]))
+        if held is None or held.get("source") == K.ANNOTATOR_MANUAL_SOURCE:
+            known[str(annotation["id"])] = copy.deepcopy(annotation)
 
 
 def _message_item(store: ReviewStore, image_key: str, revision: int, payload: Any) -> dict[str, Any] | None:

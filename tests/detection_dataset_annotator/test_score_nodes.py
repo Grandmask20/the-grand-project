@@ -159,3 +159,26 @@ def test_a_reviewed_hall_is_at_its_map_node(tmp_path: Path, monkeypatch: pytest.
 def test_a_ring_that_is_no_ring_is_refused(ring: list[str], tmp_path: Path) -> None:
     with pytest.raises(SystemExit):
         main(["--ring", *ring, "--output-dir", str(tmp_path)])
+
+
+def test_paths_across_a_fortress_wall_are_left_out_as_the_detector_does(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A city's area grows over the paths the classical detector keeps: none that runs through a fortress wall."""
+    image = _shot(tmp_path / "a.png")
+    seen = {}
+
+    def areas(nodes, edges, icons, landmarks, city_types):
+        seen["edges"] = edges
+        return {}
+
+    open_path = {"a": 0, "b": 1, "line": [[400.0 + 10 * k, 540.0] for k in range(21)]}
+    walled = {"a": 1, "b": 2, "line": [[600.0 + 10 * k, 540.0] for k in range(21)]}
+    wall = np.zeros((1080, 1920), np.uint8)
+    wall[500:580, 620:780] = 1
+    monkeypatch.setattr(score_nodes, "city_area_nodes", areas)
+    monkeypatch.setattr("grand_project.detect.paths.trace_paths", lambda nodes, dashes, img: [open_path, walled])
+    monkeypatch.setattr("grand_project.detect.walls.fortress_walls", lambda img: wall)
+    nodes = [_node("map_node_grass", x, 540) for x in (400, 600, 800)]
+    guess_nodes(image, nodes, 1920, 1080)
+    assert seen["edges"] == [open_path]

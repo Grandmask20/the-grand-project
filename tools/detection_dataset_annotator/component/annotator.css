@@ -242,7 +242,11 @@
   opacity: 0.8;
 }
 
-.ann-ok {
+/* "saved" and "Reviewed": the text keeps the theme's colour (green text is too faint on the light theme); a green
+   dot before it says so. */
+.ann-ok::before {
+  content: "\25CF";
+  margin-right: 0.35em;
   color: var(--ann-ok);
 }
 

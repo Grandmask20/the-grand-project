@@ -649,7 +649,9 @@ def cmd_save(a) -> int:
                 B.append({"id": mid, "name": nm, "x": m["x"], "y": m["y"], "flags": ["from_map_tile"]})
     row_of = {nm: r for r, nm in key["rows"].items()}
     for bid, b in key["badges"].items():
-        name, fl = n["badges"].get(bid, (n["rows"].get(row_of[b["detector"]], b["detector"]), []))
+        # its row on the sheet: "row" when the call was renamed since (tools/split_icon_type), else the call itself
+        row = row_of.get(b.get("row", b["detector"]))
+        name, fl = n["badges"].get(bid, (n["rows"].get(row, b["detector"]), []))
         if name.lower() != "none":
             truth[b["shot"]]["badges"].append({"id": bid, "name": name, "x": b["x"], "y": b["y"], "flags": fl})
     res = {v.pop("name"): v for v in truth.values()}

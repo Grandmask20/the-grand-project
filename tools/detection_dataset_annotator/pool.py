@@ -212,6 +212,7 @@ async def _drive_worker(run: _Run, options: DetectionOptions, process: asyncio.s
     in_flight: deque[Job] = deque()  # sent, not answered yet; the worker answers in order
     accepting = True
     graceful = False
+    stuck = False  # it missed an answer's deadline: terminated, not waited on
     try:
         while True:
             while accepting and run.pending and len(in_flight) < K.ANNOTATOR_WORKER_IN_FLIGHT:
@@ -234,6 +235,7 @@ async def _drive_worker(run: _Run, options: DetectionOptions, process: asyncio.s
                 while in_flight:
                     error = f"Detection worker did not answer within {K.ANNOTATOR_WORKER_ANSWER_S:g} s; it was stopped."
                     run.fail(in_flight.popleft(), error)
+                stuck = True
                 break
             if not line:  # end of output: the worker exited
                 with contextlib.suppress(TimeoutError):
@@ -243,7 +245,7 @@ async def _drive_worker(run: _Run, options: DetectionOptions, process: asyncio.s
                     run.fail(in_flight.popleft(), error)
                 break
             run.receive(in_flight.popleft(), line.decode("utf-8", errors="replace"))
-        graceful = True
+        graceful = not stuck  # a healthy worker ends at EOF; a stuck one would only make the run wait
     finally:
         await _stop_worker(process, graceful=graceful)
 

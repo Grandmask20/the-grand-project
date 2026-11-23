@@ -84,8 +84,17 @@ def test_a_stuck_worker_is_stopped_and_the_others_finish(
     monkeypatch.setattr(K, "ANNOTATOR_WORKER_ANSWER_S", 1.0)
     names = ["hang0"] + [f"ok{i}" for i in range(6)]
     keys = _add(review_store, tmp_path, *names)
+    stops = []
+    stop = pool._stop_worker
+
+    async def recorded(process, *, graceful):
+        stops.append(graceful)
+        await stop(process, graceful=graceful)
+
+    monkeypatch.setattr(pool, "_stop_worker", recorded)
 
     completed, failed = pool.detect_pending(review_store, OPTIONS, max_workers=2)
+    assert sorted(stops) == [False, True]  # the stuck one terminated at once, the healthy one closed at its end
 
     assert completed + failed == len(names)
     assert 1 <= failed <= K.ANNOTATOR_WORKER_IN_FLIGHT  # the stuck one and what was queued behind it on that worker

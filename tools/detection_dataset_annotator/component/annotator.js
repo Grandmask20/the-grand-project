@@ -299,13 +299,15 @@ class Annotator {
       revision: this.data.revision,
       seq: this.seq,
       active_ms: this.takeActiveMs(),
-      boxes: boxes.map(({ id, label, x, y, w, h }) => ({
+      // the source tells the page which boxes were edited here (manual), however little they moved
+      boxes: boxes.map(({ id, label, x, y, w, h, source }) => ({
         id,
         label,
         x: round2(x),
         y: round2(y),
         w: round2(w),
         h: round2(h),
+        source,
       })),
     };
   }
@@ -447,7 +449,7 @@ class Annotator {
     this.on(viewport, "pointerdown", (event) => this.pointerDown(event));
     this.on(viewport, "pointermove", (event) => this.pointerMove(event));
     this.on(viewport, "pointerup", (event) => this.pointerUp(event));
-    this.on(viewport, "pointercancel", () => this.cancelDrag());
+    this.on(viewport, "pointercancel", (event) => this.ownsDrag(event) && this.cancelDrag());
     this.on(viewport, "pointerleave", () => {
       if (!this.drag) this.setHover(null);
     });
@@ -508,10 +510,17 @@ class Annotator {
     this.applyView();
   }
 
-  zoomAt(factor, clientX, clientY) {
+  origin() {
+    // The stage's origin on the page: inside the viewport's border (getBoundingClientRect is its outer edge), so the
+    // screenshot's corner is (0, 0) and a drawn box is saved where it was drawn.
     const rect = this.viewport.getBoundingClientRect();
-    const px = clientX - rect.left;
-    const py = clientY - rect.top;
+    return { left: rect.left + this.viewport.clientLeft, top: rect.top + this.viewport.clientTop };
+  }
+
+  zoomAt(factor, clientX, clientY) {
+    const { left, top } = this.origin();
+    const px = clientX - left;
+    const py = clientY - top;
     const low = (this.fitZoom ?? this.view.zoom) * MIN_ZOOM_OF_FIT;
     const zoom = clamp(this.view.zoom * factor, low, MAX_ZOOM);
     const applied = zoom / this.view.zoom;
@@ -520,15 +529,15 @@ class Annotator {
   }
 
   zoomCentre(factor) {
-    const rect = this.viewport.getBoundingClientRect();
-    this.zoomAt(factor, rect.left + rect.width / 2, rect.top + rect.height / 2);
+    const { left, top } = this.origin();
+    this.zoomAt(factor, left + this.viewport.clientWidth / 2, top + this.viewport.clientHeight / 2);
   }
 
   toImage(event) {
-    const rect = this.viewport.getBoundingClientRect();
+    const { left, top } = this.origin();
     return {
-      x: (event.clientX - rect.left - this.view.x) / this.view.zoom,
-      y: (event.clientY - rect.top - this.view.y) / this.view.zoom,
+      x: (event.clientX - left - this.view.x) / this.view.zoom,
+      y: (event.clientY - top - this.view.y) / this.view.zoom,
     };
   }
 
@@ -641,8 +650,14 @@ class Annotator {
     return !this.helpEl.hidden && event.composedPath().includes(this.helpEl);
   }
 
+  ownsDrag(event) {
+    // Whether a pointer event belongs to the drag in progress (a second finger or pen never moves or ends it).
+    return Boolean(this.drag) && this.drag.pointerId === event.pointerId;
+  }
+
   pointerDown(event) {
     if (this.inHelp(event)) return;
+    if (this.drag) return; // one drag at a time: another pointer cannot take it over
     this.setActive(true);
     this.viewport.focus({ preventScroll: true });
     if (event.button === 2) return; // keep the browser's menu (Save image as gives the clean screenshot)
@@ -659,6 +674,7 @@ class Annotator {
       this.viewport.classList.toggle("ann-translating", translating);
     }
     this.viewport.setPointerCapture(event.pointerId);
+    this.drag.pointerId = event.pointerId;
     this.drag.moved = false;
     this.renderAll();
   }
@@ -702,6 +718,7 @@ class Annotator {
       this.hoverAt(point, event);
       return;
     }
+    if (!this.ownsDrag(event)) return;
     if (drag.kind === "pan") {
       this.view = {
         ...drag.view,
@@ -784,6 +801,7 @@ class Annotator {
   }
 
   pointerUp(event) {
+    if (this.drag && !this.ownsDrag(event)) return;
     const drag = this.drag;
     this.drag = null;
     this.viewport.classList.remove("ann-translating");
@@ -829,6 +847,8 @@ class Annotator {
     const deltaY = wheelPixels(event.deltaY, event.deltaMode, page);
     const deltaX = wheelPixels(event.deltaX, event.deltaMode, page);
     if (this.selected.size && !(event.ctrlKey || event.metaKey)) {
+      // no resize while a box is dragged: the drag would put back or save boxes it never saw
+      if (this.drag && this.drag.kind !== "pan") return;
       // A selected box is resized from its centre; Shift+wheel scrolls sideways in some browsers, so read both.
       this.wheelSum += deltaY || deltaX;
       const steps = Math.trunc(this.wheelSum / SCALE_WHEEL_DELTA);

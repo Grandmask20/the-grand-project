@@ -46,3 +46,45 @@ def test_a_sheet_that_cannot_be_written_stops_before_any_relabelling(tmp_path: P
         assert "could not write the review sheet" in str(error)
     else:
         raise AssertionError("no OSError")
+
+
+def test_a_database_without_pictures_gives_none_and_its_book_is_still_split(tmp_path: Path) -> None:
+    """A database holding only stored models has no ``badge_refs`` table: no pictures from it, no error."""
+    import sqlite3
+
+    db = tmp_path / "models_only.sqlite3"
+    c = sqlite3.connect(db)
+    c.execute("CREATE TABLE detector_models (name TEXT, blob BLOB, info TEXT, created TEXT)")
+    c.commit()
+    c.close()
+    assert S.stored_pictures(db, "Old", {}, 0.02) == []
+
+
+def test_a_truth_file_is_rewritten_whole_with_its_line_endings(tmp_path: Path) -> None:
+    path = tmp_path / "truth_key.json"
+    path.write_bytes(b'{\r\n "badges": {}\r\n}')
+    S._write_json(path, {"badges": {"B1": {"detector": "New", "row": "Old"}}})
+    assert b"\r\n" in path.read_bytes() and not list(tmp_path.glob(".*.new"))
+
+
+def test_a_renamed_icon_call_is_saved_under_its_new_name(tmp_path: Path) -> None:
+    """After a split renamed a badge's call, ``truth save`` still finds its review row (``row``) and keeps the new
+    name for it (it failed with a KeyError: no row is named after the new type)."""
+    import json
+    from types import SimpleNamespace
+
+    from grand_project import truth
+
+    key = {
+        "shots": {"S1": {"name": "shot1.png"}},
+        "maps": {},
+        "landmarks": {},
+        "badges": {"B1": {"shot": "S1", "x": 100, "y": 100, "detector": "ArcaneHordes", "row": "ArcaneOrProsperous"}},
+        "rows": {"R1": "ArcaneOrProsperous"},
+    }
+    (tmp_path / "truth_key.json").write_text(json.dumps(key), encoding="utf-8")
+    labels = tmp_path / "labels.txt"
+    labels.write_text("", encoding="utf-8")
+    assert truth.cmd_save(SimpleNamespace(out=str(tmp_path), labels=str(labels))) == 0
+    saved = json.loads((tmp_path / "truth.json").read_text(encoding="utf-8"))
+    assert [b["name"] for b in saved["shot1.png"]["badges"]] == ["ArcaneHordes"]

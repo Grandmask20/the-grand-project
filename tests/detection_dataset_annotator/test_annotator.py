@@ -527,3 +527,57 @@ def test_detection_refuses_what_is_not_a_screenshot(tmp_path: Path) -> None:
     broken.write_bytes(b"")
     with pytest.raises(ValueError, match="Could not read image"):
         run_classical_detector(broken)
+
+
+def test_a_screenshot_is_read_as_stored_without_its_exif_rotation(tmp_path: Path) -> None:
+    """Training reads the pixels as stored (PIL, no EXIF rotation): the editor and its boxes must see the same frame."""
+    path = tmp_path / "rotated.jpg"
+    exif = Image.Exif()
+    exif[0x0112] = 6  # "rotate 90 degrees to display"
+    Image.new("RGB", (64, 32), (200, 10, 10)).save(path, exif=exif)
+    assert decode_image(path).shape[:2] == (32, 64)
+
+
+def test_a_box_the_editor_edited_is_saved_however_little_it_moved() -> None:
+    """The editor marks a box it edited ``manual``: a 0.3 px typed change is saved, and a box moved back by hand to
+    where the detector had it stays the reviewer's (no detector score). Undo gives the box its detector source back,
+    and then the saved or known detector box returns."""
+    shown = [{"id": "b0", "label": "map_node", "bbox": [10.0, 10.0, 48.0, 48.0], "area": 2304.0, "iscrowd": 0,
+              "source": "classical", "score": 0.9}]  # fmt: skip
+    (box,) = editor_boxes(shown)
+    typed = {**box, "x": 10.3, "source": "manual"}
+    saved = apply_editor_boxes(shown, [typed], width=500, height=500, known=shown)
+    assert saved[0]["bbox"][0] == 10.3 and saved[0]["source"] == "manual" and "score" not in saved[0]
+    back = {**box, "source": "manual"}  # moved back by hand
+    again = apply_editor_boxes(saved, [back], width=500, height=500, known=shown)
+    assert again[0]["source"] == "manual" and "score" not in again[0]
+    undone = apply_editor_boxes(saved, [box], width=500, height=500, known=shown)  # Ctrl+Z: the detector's again
+    assert undone == shown
+
+
+def test_ids_are_never_handed_out_again() -> None:
+    """The counter passes every kept ``b<n>``: a deleted box's id (its old annotation still known to the editor's undo
+    memory) is never given to a new box, and the counter is kept whenever it moves."""
+    item = {"annotations": [{"id": "b7", "label": "icon"}, {"label": "tower"}], "next_annotation_id": 0}
+    assert ensure_annotation_ids(item)
+    assert item["annotations"][1]["id"] == "b8" and item["next_annotation_id"] == 9
+    kept = {"annotations": [{"id": "b3", "label": "icon"}], "next_annotation_id": 0}
+    assert not ensure_annotation_ids(kept) and kept["next_annotation_id"] == 4  # no id added, the counter still moves
+
+
+def test_discovery_and_the_store_clean_up_skip_the_same_folders(tmp_path: Path) -> None:
+    """An atlas's map pictures are never screenshots, whether the root is the atlas, the atlas_files folder itself or
+    a file in it: discovery takes none and the clean-up removes nothing more (a second run changes nothing)."""
+    from tools.detection_dataset_annotator.build_store import left_out
+
+    pictures = tmp_path / "atlas" / "atlas_files"
+    pictures.mkdir(parents=True)
+    terrain = pictures / "atlas_terrain.png"
+    cv2.imwrite(str(terrain), np.zeros((8, 8, 3), np.uint8))
+    shot = tmp_path / "atlas" / "shot.png"
+    cv2.imwrite(str(shot), np.full((8, 8, 3), 9, np.uint8))
+    for root in (tmp_path / "atlas", pictures, terrain):
+        found = discover_images([root])
+        assert terrain.resolve() not in found
+        assert left_out({image_key(path): path for path in found}, found) == {}
+    assert set(left_out({"t": terrain}, [])) == {"t"}

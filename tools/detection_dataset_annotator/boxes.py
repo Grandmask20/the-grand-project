@@ -124,12 +124,15 @@ def label_palette(labels: Iterable[str]) -> list[dict[str, Any]]:
 def ensure_annotation_ids(item: dict[str, Any]) -> bool:
     """Give every annotation of a screenshot a stable, unique ``id``; return whether any was added.
 
-    A missing or duplicate id gets the next free ``b<n>``; ``next_annotation_id`` remembers the counter, so an id
-    is never handed out twice.
+    A missing or duplicate id gets the next free ``b<n>``; ``next_annotation_id`` remembers the counter, past every
+    ``b<n>`` kept too (saved whenever it moves), so an id is never handed out twice: not even a deleted box's, whose
+    old annotation the editor's undo memory still knows by it.
     """
     annotations = item.get("annotations", [])
     used = {str(annotation["id"]) for annotation in annotations if annotation.get("id") is not None}
-    counter = int(item.get("next_annotation_id", 0))
+    start = int(item.get("next_annotation_id", 0))
+    numbers = [int(name[1:]) for name in used if name[:1] == "b" and name[1:].isdigit()]
+    counter = max([start, *(number + 1 for number in numbers)])
     seen: set[str] = set()
     changed = False
     for annotation in annotations:
@@ -144,7 +147,7 @@ def ensure_annotation_ids(item: dict[str, Any]) -> bool:
         seen.add(annotation["id"])
         counter += 1
         changed = True
-    if changed:
+    if counter != start:
         item["next_annotation_id"] = counter
     return changed
 
@@ -201,13 +204,20 @@ def apply_editor_boxes(
 ) -> list[dict[str, Any]]:
     """Turn the editor's boxes back into saved annotations in source-image pixels.
 
-    Boxes are clipped to the image and dropped when under one pixel. A box whose id, label and geometry match a
-    saved annotation keeps it as is (score and source included). A changed box keeps its id but becomes a manual
-    box without score. ``known`` holds annotations this editor showed earlier and that are no longer saved, so an
-    undone delete brings back the detector's box rather than a manual copy. A box with an id nobody knows is new;
-    it keeps the editor's id (``ensure_annotation_ids`` replaces a missing or duplicate one).
+    Boxes are clipped to the image and dropped when under one pixel. A box whose id, label and geometry (within
+    ``ANNOTATOR_EDITOR_UNCHANGED_PX``: the editor rounds) match a saved annotation keeps it as is (score and source
+    included). A changed box keeps its id but becomes a manual box without score. ``known`` holds annotations this
+    editor showed earlier and that are no longer saved (the server's memory of them), so an undone edit or delete
+    brings back the detector's box rather than a manual copy. A box with an id nobody knows is new; it keeps the
+    editor's id (``ensure_annotation_ids`` replaces a missing or duplicate one).
+
+    The editor sends each box's ``source``: one it marked ``manual`` (moved, resized, typed in or relabelled) is an
+    edit however small, so it is saved as one and never takes a detector box's score back by landing where it was;
+    only a box the editor still has as the detector's (untouched, or undone to it) keeps the saved or known one. A
+    box without a ``source`` is judged by its geometry alone.
     """
-    by_id = {str(annotation["id"]): annotation for annotation in known if annotation.get("id") is not None}
+    remembered = {str(annotation["id"]): annotation for annotation in known if annotation.get("id") is not None}
+    by_id = {**remembered}
     by_id.update({str(annotation["id"]): annotation for annotation in original if annotation.get("id") is not None})
     annotations = []
     used: set[str] = set()
@@ -224,10 +234,15 @@ def apply_editor_boxes(
         bbox = [round(left, 2), round(top, 2), round(right - left, 2), round(bottom - top, 2)]
         box_id = str(box.get("id") or "")
         fresh_id = bool(box_id) and box_id not in used
+        edited = box.get("source") == K.ANNOTATOR_MANUAL_SOURCE
         if fresh_id:
             used.add(box_id)
             saved = by_id.get(box_id)
-            if saved is not None and _unchanged(saved, label, bbox):
+            if saved is not None and box.get("source") and saved.get("source") != box["source"]:
+                # undone to an earlier version: the one this editor was shown with that source
+                earlier = remembered.get(box_id)
+                saved = earlier if earlier is not None and earlier.get("source") == box["source"] else saved
+            if saved is not None and not edited and _unchanged(saved, label, bbox):
                 annotations.append(copy.deepcopy(saved))
                 continue
         annotation: dict[str, Any] = {
