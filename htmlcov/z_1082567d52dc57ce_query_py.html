@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
     <meta http-equiv="Content-Type" content="text/html; charset=utf-8">
-    <title>Coverage for grand_project/app/query.py: 84.9%</title>
+    <title>Coverage for grand_project/app/query.py: 85.2%</title>
     <link rel="icon" sizes="32x32" href="favicon_32_cb_c827f16f.png">
     <link rel="stylesheet" href="style_cb_4667309f.css" type="text/css">
     <script src="coverage_html_cb_54cfdca1.js" defer></script>
@@ -12,7 +12,7 @@
     <div class="content">
         <h1>
             <span class="text">Coverage for </span><b>grand_project<span class="sep">/</span>app<span class="sep">/</span>query.py</b>:
-            <span class="pc_cov">84.9%</span>
+            <span class="pc_cov">85.2%</span>
         </h1>
         <aside id="help_panel_wrapper">
             <input id="help_panel_state" type="checkbox">
@@ -55,8 +55,8 @@
         </aside>
         <h2>
             <span class="text">438 statements &nbsp;</span>
-            <button type="button" class="run button_toggle_run" value="run" data-shortcut="r" title="Toggle lines run">372<span class="text"> run</span></button>
-            <button type="button" class="mis show_mis button_toggle_mis" value="mis" data-shortcut="m" title="Toggle lines missing">66<span class="text"> missing</span></button>
+            <button type="button" class="run button_toggle_run" value="run" data-shortcut="r" title="Toggle lines run">373<span class="text"> run</span></button>
+            <button type="button" class="mis show_mis button_toggle_mis" value="mis" data-shortcut="m" title="Toggle lines missing">65<span class="text"> missing</span></button>
             <button type="button" class="exc show_exc button_toggle_exc" value="exc" data-shortcut="x" title="Toggle lines excluded">0<span class="text"> excluded</span></button>
         </h2>
         <p class="text">
@@ -65,7 +65,7 @@
             <a id="nextFileLink" class="nav" href="z_1082567d52dc57ce_recheck_choices_py.html">&#xbb; next</a>
             &nbsp; &nbsp; &nbsp;
             <a class="nav" href="https://coverage.readthedocs.io/en/7.17.3">coverage.py v7.17.3</a>,
-            created at 2026-11-23 21:45 +0000
+            created at 2026-11-25 05:14 +0000
         </p>
         <aside class="hidden">
             <button type="button" class="button_next_chunk" data-shortcut="j"></button>
@@ -499,7 +499,7 @@
     <p class="run"><span class="n"><a id="t417" href="#t417">417</a></span><span class="t">        <span class="nam">best</span><span class="op">,</span> <span class="nam">bd</span> <span class="op">=</span> <span class="key">None</span><span class="op">,</span> <span class="num">7.0</span> <span class="op">/</span> <span class="nam">max</span><span class="op">(</span><span class="nam">z</span><span class="op">,</span> <span class="num">1e-9</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t418" href="#t418">418</a></span><span class="t">        <span class="key">for</span> <span class="nam">k</span><span class="op">,</span> <span class="nam">p</span> <span class="key">in</span> <span class="nam">enumerate</span><span class="op">(</span><span class="nam">self</span><span class="op">.</span><span class="nam">V</span><span class="op">[</span><span class="str">&quot;paths&quot;</span><span class="op">]</span><span class="op">)</span><span class="op">:</span>&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t419" href="#t419">419</a></span><span class="t">            <span class="key">if</span> <span class="key">not</span> <span class="nam">self</span><span class="op">.</span><span class="nam">path_shown</span><span class="op">(</span><span class="nam">p</span><span class="op">,</span> <span class="nam">node_ok</span><span class="op">,</span> <span class="nam">fl</span><span class="op">)</span><span class="op">:</span>&nbsp;</span><span class="r"></span></p>
-    <p class="mis show_mis"><span class="n"><a id="t420" href="#t420">420</a></span><span class="t">                <span class="key">continue</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run"><span class="n"><a id="t420" href="#t420">420</a></span><span class="t">                <span class="key">continue</span>&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t421" href="#t421">421</a></span><span class="t">            <span class="nam">L</span> <span class="op">=</span> <span class="nam">np</span><span class="op">.</span><span class="nam">array</span><span class="op">(</span><span class="nam">p</span><span class="op">.</span><span class="nam">get</span><span class="op">(</span><span class="str">&quot;line&quot;</span><span class="op">)</span> <span class="key">or</span> <span class="op">[</span><span class="op">[</span><span class="nam">N</span><span class="op">[</span><span class="nam">p</span><span class="op">[</span><span class="str">&quot;a&quot;</span><span class="op">]</span><span class="op">]</span><span class="op">[</span><span class="str">&quot;x&quot;</span><span class="op">]</span><span class="op">,</span> <span class="nam">N</span><span class="op">[</span><span class="nam">p</span><span class="op">[</span><span class="str">&quot;a&quot;</span><span class="op">]</span><span class="op">]</span><span class="op">[</span><span class="str">&quot;y&quot;</span><span class="op">]</span><span class="op">]</span><span class="op">,</span> <span class="op">[</span><span class="nam">N</span><span class="op">[</span><span class="nam">p</span><span class="op">[</span><span class="str">&quot;b&quot;</span><span class="op">]</span><span class="op">]</span><span class="op">[</span><span class="str">&quot;x&quot;</span><span class="op">]</span><span class="op">,</span> <span class="nam">N</span><span class="op">[</span><span class="nam">p</span><span class="op">[</span><span class="str">&quot;b&quot;</span><span class="op">]</span><span class="op">]</span><span class="op">[</span><span class="str">&quot;y&quot;</span><span class="op">]</span><span class="op">]</span><span class="op">]</span><span class="op">,</span> <span class="nam">float</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t422" href="#t422">422</a></span><span class="t">            <span class="nam">L</span><span class="op">[</span><span class="num">0</span><span class="op">]</span><span class="op">,</span> <span class="nam">L</span><span class="op">[</span><span class="op">-</span><span class="num">1</span><span class="op">]</span> <span class="op">=</span> <span class="op">(</span><span class="nam">N</span><span class="op">[</span><span class="nam">p</span><span class="op">[</span><span class="str">&quot;a&quot;</span><span class="op">]</span><span class="op">]</span><span class="op">[</span><span class="str">&quot;x&quot;</span><span class="op">]</span><span class="op">,</span> <span class="nam">N</span><span class="op">[</span><span class="nam">p</span><span class="op">[</span><span class="str">&quot;a&quot;</span><span class="op">]</span><span class="op">]</span><span class="op">[</span><span class="str">&quot;y&quot;</span><span class="op">]</span><span class="op">)</span><span class="op">,</span> <span class="op">(</span><span class="nam">N</span><span class="op">[</span><span class="nam">p</span><span class="op">[</span><span class="str">&quot;b&quot;</span><span class="op">]</span><span class="op">]</span><span class="op">[</span><span class="str">&quot;x&quot;</span><span class="op">]</span><span class="op">,</span> <span class="nam">N</span><span class="op">[</span><span class="nam">p</span><span class="op">[</span><span class="str">&quot;b&quot;</span><span class="op">]</span><span class="op">]</span><span class="op">[</span><span class="str">&quot;y&quot;</span><span class="op">]</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t423" href="#t423">423</a></span><span class="t">            <span class="nam">lo</span><span class="op">,</span> <span class="nam">hi</span> <span class="op">=</span> <span class="nam">L</span><span class="op">.</span><span class="nam">min</span><span class="op">(</span><span class="nam">axis</span><span class="op">=</span><span class="num">0</span><span class="op">)</span> <span class="op">-</span> <span class="nam">bd</span><span class="op">,</span> <span class="nam">L</span><span class="op">.</span><span class="nam">max</span><span class="op">(</span><span class="nam">axis</span><span class="op">=</span><span class="num">0</span><span class="op">)</span> <span class="op">+</span> <span class="nam">bd</span>&nbsp;</span><span class="r"></span></p>
@@ -895,7 +895,7 @@
             <a class="nav" href="z_1082567d52dc57ce_recheck_choices_py.html">&#xbb; next</a>
             &nbsp; &nbsp; &nbsp;
             <a class="nav" href="https://coverage.readthedocs.io/en/7.17.3">coverage.py v7.17.3</a>,
-            created at 2026-11-23 21:45 +0000
+            created at 2026-11-25 05:14 +0000
         </p>
     </div>
 </footer>
