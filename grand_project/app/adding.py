@@ -1046,8 +1046,9 @@ class AddingMixin:
             rec = self.opened
             old = core.Atlas.load(entry["file"])  # (raises: the entry stays, Undo can be tried again: CodeRabbit)
             self._undo.pop()
-            kept = {f["name"] for f in old.frames}
-            self._unkeep([f for f in self.atlas.frames if f["name"] not in kept])  # (out of used/: not in the atlas)
+            # (by content, as below: two screenshots can share a name, and one undone stayed in used/ - CodeRabbit)
+            kept = {f.get("sha") or f["name"] for f in old.frames}
+            self._unkeep([f for f in self.atlas.frames if (f.get("sha") or f["name"]) not in kept])  # (out of used/)
             # each screenshot where it is now: the snapshot names its place from before the add, and the add's sort
             # (or a keep since) moved some into used/ or dump/; the old place kept them there for good (self review)
             # (and what was kept about it since: the time it was taken, its copy slimmed away; CodeRabbit)

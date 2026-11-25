@@ -479,3 +479,17 @@ def test_a_screenshot_deleted_before_it_is_detected_is_left_out_calmly(session, 
     frames, failed = session._detect([tmp_path / "gone.png"], "detecting")
     assert frames == [] and failed == []
     assert any("gone.png: gone before it was detected" in line for line in session.events.log_lines)
+
+
+def test_undo_puts_back_a_screenshot_sharing_its_name_with_one_it_keeps(session, tmp_path):
+    session._keep_screenshots(session.opened, ["a"])
+    snapshot = session._snapshot()  # (before the add: a)
+    (tmp_path / "two").mkdir()
+    screenshot(tmp_path / "two" / "a.png", seed=9)
+    used = tmp_path / core.SCREENSHOTS_USED / "a2.png"  # (another a.png, kept in used/ under a name of its own)
+    screenshot(used, seed=9)
+    session.atlas.frames.append(dict(session.atlas.frames[0], name="a", path=str(used), sha="9" * 64))
+    session._remember_add(["a"], snapshot)
+    session._run_undo()
+    assert not used.exists() and (tmp_path / "a2.png").exists()  # (out of used/: the atlas no longer holds it)
+    assert (tmp_path / core.SCREENSHOTS_USED / "a.png").exists()  # (the first a stays)
