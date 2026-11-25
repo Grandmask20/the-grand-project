@@ -79,10 +79,10 @@ describe("RecheckDialog", () => {
 		await waitFor(() => expect(calls.find((c) => c.path === "/api/settings")?.body).toEqual({ recheck_slim: true }));
 	});
 
-	it("says the slim down needs Fix seams first when there is no clean map to tell", async () => {
+	it("says to run Fix seams first when there is no clean map of the screenshots as they are to tell", async () => {
 		open("/atlases/default/atlas.json", {
 			"GET /api/atlas/recheck-info": { ...info, slim: { count: 0, mb: 0, clean: false } },
 		});
-		expect(await screen.findByText(/needs Fix seams first/)).toBeInTheDocument();
+		expect(await screen.findByText(/run Fix seams first/)).toBeInTheDocument();
 	});
 });

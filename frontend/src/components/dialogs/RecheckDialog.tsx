@@ -97,7 +97,7 @@ export function RecheckDialog() {
 								<span className="font-semibold">Slim down:</span> also remove the copies of screenshots that show no
 								spot of the map{" "}
 								{info.data.slim?.clean === false
-									? "(needs Fix seams first: only its clean map knows, fog included, which ones those are)"
+									? "(run Fix seams first: only a clean map of the screenshots as they are now knows, fog included, which ones)"
 									: info.data.slim?.count
 										? `(${info.data.slim.count} now, about ${info.data.slim.mb} MB)`
 										: "(none right now)"}

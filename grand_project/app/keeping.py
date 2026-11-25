@@ -271,8 +271,8 @@ class KeepingMixin:
             return
         if found is None:
             self.events.log(
-                "slim down: nothing removed, it needs the clean map (Fix seams): only that knows, fog included, which "
-                "screenshots show no spot of the map",
+                "slim down: nothing removed, it needs a clean map (Fix seams) of the screenshots as they are now: only "
+                "that knows, fog included, which ones show no spot of the map",
                 rec.scope,
             )
             return
@@ -369,7 +369,9 @@ class KeepingMixin:
             todo = [(f["name"], f["path"]) for f in atlas.frames if f["name"] in want]
         copied = []
         for i, (name, shot) in enumerate(todo, 1):
-            self.events.set_progress(f"keeping copies of the screenshots {i} / {len(todo)}")
+            c = atlas.copy_path(shot)
+            if c is not None and not c.exists():  # (most were copied as they were detected: no second count)
+                self.events.set_progress(f"keeping copies of the screenshots {i} / {len(todo)}")
             try:
                 if atlas.write_copy(shot):
                     copied.append((name, shot))

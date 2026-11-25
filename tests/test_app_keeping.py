@@ -367,7 +367,7 @@ def test_slim_down_removes_nothing_without_a_clean_map(session, tmp_path):
     session.set_ui_settings({"recheck_slim": True})
     session._slim_down(session.opened)
     assert copy_of(session.atlas, "b").exists()
-    assert any("it needs the clean map (Fix seams)" in line for line in session.events.log_lines)
+    assert any("it needs a clean map (Fix seams)" in line for line in session.events.log_lines)
 
 
 def test_undo_keeps_the_time_a_screenshot_was_taken_recorded_after_its_snapshot(session, tmp_path):
@@ -471,3 +471,10 @@ def test_a_tile_missing_a_screenshot_lost_mid_build_is_not_kept_in_memory_either
     # ...nor kept by the browser: its address stays the same once the picture is back (CodeRabbit)
     monkeypatch.setattr(session, "_tile_state", state)
     assert session.terrain_tile_for(1, 0, 0, "") == (b"tile", False)
+
+
+def test_a_screenshot_deleted_before_it_is_detected_is_left_out_calmly(session, tmp_path):
+    # (checked in the app: a raw "[WinError 2]" line, and auto-add said it would try a file that is gone again)
+    frames, failed = session._detect([tmp_path / "gone.png"], "detecting")
+    assert frames == [] and failed == []
+    assert any("gone.png: gone before it was detected" in line for line in session.events.log_lines)

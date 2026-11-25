@@ -627,6 +627,9 @@ class AddingMixin:
                 fr = builder.extract_frame(p, self._cache_dir())
                 frames.append(fr)
                 self.events.log(f"{p.name}: {int(fr.usable.sum())} maps, {len(getattr(fr, 'icons', []))} icons")
+            except FileNotFoundError:  # deleted or moved before it was read: no fault, and nothing for auto-add to
+                # try again (its raw error and "trying again" read like trouble: checked in the app)
+                self.events.log(f"{p.name}: gone before it was detected (deleted or moved): left out")
             except Exception as e:
                 LOG.exception(f"{p.name}: detection failed")
                 self.events.log(f"{p.name}: detection failed: {e}")
