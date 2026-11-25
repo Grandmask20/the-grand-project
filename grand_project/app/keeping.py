@@ -15,6 +15,8 @@ from __future__ import annotations
 from pathlib import Path
 from typing import TYPE_CHECKING
 
+import numpy as np
+
 from grand_project import core
 from grand_project import logs as atlas_log
 
@@ -206,10 +208,26 @@ class KeepingMixin:
         frames = [f for f in frames if atlas.has_picture(f["path"])]
         labels = None
         if lab is not None and ter is not None:
-            names = set(lab[1])
-            if names <= everyone and all(f["name"] in names for f in frames):
+            names, pictured = set(lab[1]), {f["name"] for f in frames}
+            if names <= everyone and pictured <= names and not self._lost_own_spots(lab, pictured):
                 labels = (lab[0], list(lab[1]), ter[2])
         return frames, labels
+
+    @staticmethod
+    def _lost_own_spots(lab: tuple, pictured: set[str]) -> bool:
+        """Tell whether a screenshot with no picture left still owns spots of a clean map: those spots count for no
+        one, so a screenshot showing them too looked like it showed nothing, and slim down took the last picture of
+        them (CodeRabbit). One slimmed away owns none: the clean map still fits then.
+
+        Args:
+            lab: (ownership map, names) of the clean map.
+            pictured: The names of the screenshots with a picture.
+        """
+        lost = [k for k, n in enumerate(lab[1]) if n not in pictured]
+        if not lost:
+            return False
+        counts = np.bincount(lab[0].ravel().astype(np.int64) + 1, minlength=len(lab[1]) + 1)[1:]
+        return any(counts[k] > 0 for k in lost)
 
     def slim_info(self, atlas, rec: Opened | None = None) -> dict:
         """What Re-check's slim down would remove: the copies of screenshots in dump (owning no spot of the map).

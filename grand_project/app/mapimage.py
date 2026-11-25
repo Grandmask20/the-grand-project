@@ -449,6 +449,13 @@ class MapImageMixin:
             return None
         base = core.atlas_files(self.path) / (self.path.stem + "_sharp")
         key = self.atlas.terrain_key()[:16] + (f"c{self._labels_key()}" if self.labels is not None else "")
+        # (and which screenshots have no picture left: tiles made without one are made again once it is back -
+        # CodeRabbit; never keeping them made every such tile again at each look)
+        lost = [f["name"] for f in list(self.atlas.frames) if not self.atlas.has_picture(f["path"])]
+        if lost:
+            import hashlib
+
+            key += "m" + hashlib.blake2b("|".join(lost).encode(), digest_size=4).hexdigest()
         keep = {key, self._sharp_key}
         if base.exists():
             for d in base.iterdir():  # tiles of other screenshots / placements: never shown again

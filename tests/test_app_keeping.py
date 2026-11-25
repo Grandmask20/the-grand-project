@@ -415,3 +415,32 @@ def test_paths_are_traced_again_through_the_copy_of_a_screenshot_deleted_mid_tra
 def test_no_gold_is_looked_for_in_a_screenshot_with_no_picture_left(session, monkeypatch):
     monkeypatch.setattr(session.atlas, "image", lambda path: None)
     assert traces._gold(session.atlas, {"path": "gone.png", "name": "gone"}) is None  # (the check stopped on it)
+
+
+def test_a_clean_map_whose_spots_belong_to_a_screenshot_with_no_picture_left_is_not_used(
+    session, tmp_path, monkeypatch
+):
+    # (those spots counted for no one: a screenshot showing them too looked like dump - CodeRabbit)
+    session._keep_screenshots(session.opened, ["a"])
+    second_view(session, tmp_path)
+    clean_map(session, monkeypatch)  # (a owns every spot)
+    copy_of(session.atlas, "a").unlink()
+    (tmp_path / core.SCREENSHOTS_USED / "a.png").unlink()  # (a's picture gone for good)
+    assert session._ownership_input(session.atlas, session.opened)[1] is None
+    assert session.slim_info(session.atlas, session.opened)["clean"] is False  # (b's copy is the last picture)
+
+
+def test_a_clean_map_still_fits_when_only_a_slimmed_screenshot_is_gone(session, tmp_path, monkeypatch):
+    slimmed(session, tmp_path, monkeypatch)
+    (tmp_path / core.SCREENSHOTS_DUMP / "b.png").unlink()  # (b owns no spot: nothing lost)
+    assert session._ownership_input(session.atlas, session.opened)[1] is not None
+
+
+def test_sharp_tiles_are_made_again_once_a_missing_picture_is_back(session, tmp_path):
+    before = session._sharp_folder()
+    shot = tmp_path / "a.png"
+    kept = shot.read_bytes()
+    shot.unlink()  # (no copy: its picture is gone, tiles made now leave it out)
+    without = session._sharp_folder()
+    shot.write_bytes(kept)
+    assert without != before and session._sharp_folder() == before  # (CodeRabbit)
