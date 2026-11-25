@@ -108,14 +108,20 @@ def player_readme() -> str:
     return s
 
 
-def release_notes() -> str:
-    """The GitHub release's notes: how to install and start it on each system, every time (manny: tell newcomers
-    which script to run on Windows vs macOS / Linux), then a place for what's new.
+def release_notes(release: str = "") -> str:
+    """The GitHub release's notes, in the user's layout (2026-11-25): the release's header and what's new, the cut line
+    (app/constants.UPDATE_NOTES_CUT: the in-app update shows only what is above it), then how to install and start it
+    on each system, every time (manny: tell newcomers which script to run on Windows vs macOS / Linux).
 
     The install and start part is the README's "How to install and start" section ("Run it" before 1.26: without
     its "Get it", that is on the download page), so the notes and the README never disagree; its ### headings a
     level down, under the notes' own ## heading.
+
+    Args:
+        release: The release number for the header ("1.3.1"); "" for a placeholder.
     """
+    from grand_project.app.constants import UPDATE_NOTES_CUT
+
     s = (HERE / "README.md").read_text(encoding="utf-8").replace("\r\n", "\n")
     run = ""
     for head in ("## How to install and start\n", "## Run it\n"):
@@ -129,10 +135,12 @@ def release_notes() -> str:
         run = run[:g] + run[h:]
     run = re.sub(r"(?m)^### ", "#### ", run)
     return (
+        f"## {release or 'x.y'}\n\n"
+        "- (write the highlights here)\n\n"
+        f"{UPDATE_NOTES_CUT}\n\n"
         f"Program version v{version()}. Download **Source code (zip)** below and unzip it into a folder you can "
         "write to.\n\n"
-        f"## How to install and start\n\n{run}\n\n"
-        "## What's new\n\n- (write the highlights here)\n"
+        f"## How to install and start\n\n{run}\n"
     )
 
 
@@ -217,7 +225,7 @@ def write_manifest(release: str, files: list[str]) -> None:
 
 def main() -> int:
     if "--notes" in sys.argv:
-        print(release_notes())
+        print(release_notes(release_number() if "--release" in sys.argv else ""))
         return 0
     # the release number first: a run without it stops before building anything
     release = release_number() if "--check" not in sys.argv else ""
@@ -271,7 +279,7 @@ def main() -> int:
     )
     git("push", "-q", "-u", "origin", branch, "--force")
     notes = TARGET.parent / f"release_notes_v{v}.md"
-    notes.write_text(release_notes(), encoding="utf-8")
+    notes.write_text(release_notes(release), encoding="utf-8")
     print(f"pushed {branch}: open the pull request into main at\n  {REPO}/compare/main...{branch}?expand=1")
     print(f"release notes (paste into the GitHub release, then add what's new): {notes}")
     print("after merging it:  git -C ../1.0 checkout main && git -C ../1.0 pull")

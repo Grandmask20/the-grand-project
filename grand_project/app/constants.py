@@ -145,6 +145,11 @@ ROUTE_LEGS_MAX = 200  # a saved route: its main leg and at most this many less o
 UPDATE_RELEASES_URL = os.environ.get(  # (another address only for trying an update without GitHub: tests)
     "GRAND_PROJECT_UPDATE_URL", "https://api.github.com/repos/Grandmask20/the-grand-project/releases/latest"
 )
+# the line in a release's notes the update box stops at (user, 2026-11-25): what's new above it, the install steps
+# below are for downloading by hand (tools/make_release writes it; matched ignoring case and markdown marks)
+UPDATE_NOTES_CUT = "Notes below will not be visible in future updates in the app"
+# a release's notes without the line (before 1.3.1): these sections are left out of the box instead
+UPDATE_NOTES_INSTALL = ("how to install and start", "run it")
 UPDATE_AGENT = f"TheGrandProject/{VERSION}"  # the User-Agent GitHub asks for (the app's name only, nothing of yours)
 UPDATE_CHECK_EVERY = 24 * 3600.0  # s: the check at start runs at most once a day (user, as Path of Building)
 # s: GitHub is asked at most this often; in between the last answer stands. GitHub answers 60 checks an hour per
