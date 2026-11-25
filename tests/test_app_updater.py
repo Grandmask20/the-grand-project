@@ -240,3 +240,36 @@ def test_a_launcher_keeps_its_permission_to_run(tmp_path):
         z.writestr("top/" + rm.MANIFEST, json.dumps(m))
     updater.unpack(tmp_path / "dl.zip", tmp_path / "new")
     assert (tmp_path / "new" / "start.sh").stat().st_mode & 0o111
+
+
+NOTES = """## 1.3.1 Hotfix
+
+- Fixed deletion of images crashing stuff
+
+Notes below will not be visible in future updates in the app
+
+Program version v1.27. Download **Source code (zip)** below and unzip it into a folder you can write to.
+
+## How to install and start
+
+#### First time
+1. Install Python"""
+SHOWN = "## 1.3.1 Hotfix\n\n- Fixed deletion of images crashing stuff"
+
+
+def test_the_update_box_shows_whats_new_only_not_how_to_install():
+    # (user, 2026-11-25: the install steps are for downloading by hand; the line says where they start)
+    assert updater.whats_new(NOTES) == SHOWN
+    italic = NOTES.replace("Notes below", "*Notes below").replace("in the app\n", "in the app*\n")
+    assert updater.whats_new(italic) == SHOWN  # (in italics too)
+    got = updater.latest_release(lambda url: dict(github("1.3.1")("x"), body=NOTES.replace("\n", "\r\n")))
+    assert got["notes"] == SHOWN
+
+
+def test_older_notes_without_the_line_lose_their_install_part():
+    old = (
+        "## What's new\n\n- routes\n\nProgram version v1.25. Download **Source code (zip)** below and unzip it.\n\n"
+        "## How to install and start\n\n#### First time\n1. Install Python\n\n## Thanks\n\n- everyone"
+    )
+    assert updater.whats_new(old) == "## What's new\n\n- routes\n\n\n## Thanks\n\n- everyone"
+    assert updater.whats_new("What's new: routes") == "What's new: routes"

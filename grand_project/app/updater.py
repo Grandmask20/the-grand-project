@@ -54,11 +54,36 @@ def latest_release(fetch=None) -> dict:
     return {
         "release": tag.lstrip("vV"),
         "name": data.get("name") or tag,
-        "notes": data.get("body") or "",
+        "notes": whats_new(data.get("body") or ""),
         "url": data.get("html_url") or "",
         "zip": data["zipball_url"],
         "published": data.get("published_at") or "",
     }
+
+
+def whats_new(notes: str) -> str:
+    """Return the part of a release's notes the update box shows: what is above the cut line (K.UPDATE_NOTES_CUT);
+    without one (releases before 1.3.1), the notes without their install part (K.UPDATE_NOTES_INSTALL sections and the
+    "Download Source code (zip)" line). The install steps are for downloading by hand, not for an update (user).
+
+    Args:
+        notes: The release's notes as GitHub has them (markdown).
+
+    Returns:
+        The notes to show.
+    """
+    lines = notes.replace("\r\n", "\n").split("\n")
+    cut = K.UPDATE_NOTES_CUT.lower()
+    for i, line in enumerate(lines):
+        if line.strip().strip("*_>#- ").lower().startswith(cut):  # (bold, italic or quoted, it still counts)
+            return "\n".join(lines[:i]).strip()
+    out, install = [], False
+    for line in lines:
+        if line.startswith("## "):
+            install = line[3:].strip().lower() in K.UPDATE_NOTES_INSTALL
+        if not install and not (line.startswith("Program version v") and "Download" in line):
+            out.append(line)
+    return "\n".join(out).strip()
 
 
 def _get_json(url: str) -> dict:
