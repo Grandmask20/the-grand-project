@@ -7,6 +7,7 @@ import { FileBrowserDialog } from "@/components/dialogs/FileBrowserDialog";
 import { GroupDialog } from "@/components/dialogs/GroupDialog";
 import { PromptDialog } from "@/components/dialogs/PromptDialog";
 import { QuestionDialog } from "@/components/dialogs/QuestionDialog";
+import { KeepDialog } from "@/components/dialogs/KeepDialog";
 import { RecheckDialog } from "@/components/dialogs/RecheckDialog";
 import { SourcesDialog } from "@/components/dialogs/SourcesDialog";
 import { MapImageWait } from "@/components/layout/MapImageWait";
@@ -124,6 +125,7 @@ export function AtlasPage() {
 			<PromptDialog />
 			<ConfirmDialog />
 			<RecheckDialog />
+			<KeepDialog />
 			<BookmarkDialog />
 			<GroupDialog />
 			<SourcesDialog />

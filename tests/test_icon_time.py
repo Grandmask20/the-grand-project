@@ -3,6 +3,7 @@ appeared where it never can is dropped, an attempted deadly boss map keeps only 
 of one moment never disagree, and an unsure look decides nothing."""
 
 import types
+from pathlib import Path
 
 import numpy as np
 import pytest
@@ -29,7 +30,6 @@ def world(tmp_path, monkeypatch):
         path.write_bytes(b"x")
         frames.append({"name": name, "path": str(path), "w": 1920, "h": 1080})
     maps = [(f, np.eye(3)) for f in frames]
-    monkeypatch.setattr(it.core, "read_screenshot", lambda p: p)  # (the "image" is its path)
     monkeypatch.setattr(
         it,
         "icon_check",
@@ -37,7 +37,8 @@ def world(tmp_path, monkeypatch):
             (img.rsplit("\\", 1)[-1][:-4].rsplit("/", 1)[-1], name)
         ),
     )
-    atlas = types.SimpleNamespace(frames_dir=None)
+    # the atlas's pictures (core.Atlas.image: the screenshot, else its copy): the "image" is its path, none when gone
+    atlas = types.SimpleNamespace(frames_dir=None, image=lambda p: p if Path(p).exists() else None)
 
     def run(icons, seen_by=(OLD, NEW, NEW2), tower=False, cities=None):
         node = {"x": 500.0, "y": 500.0, "frames": set(seen_by), "icons": list(range(len(icons))), "tower": tower}

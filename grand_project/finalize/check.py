@@ -801,9 +801,10 @@ def finalize(atlas, log=_log) -> dict:
             for i in vis:
                 if np.min(np.hypot(mp[:, 0] - sp[i, 0], mp[:, 1] - sp[i, 1])) <= LOCAL_RETRACE:
                     local[i] = True
-            if local.sum() >= 2:
+            d = _dashes(atlas, f) if local.sum() >= 2 else None  # (None: its picture gone, copy too)
+            if d is not None:
                 miss = set(missing)
-                for (i, j), r in atlas_detect.screen_paths(_dashes(atlas, f), sp, local, tower).items():
+                for (i, j), r in atlas_detect.screen_paths(d, sp, local, tower).items():
                     if (i in miss or j in miss) and _on_wall(rec, r["line"]) < atlas_detect.WALL_CROSS:
                         add_trace(f, i, j, r["line"], len(r["from"]) == 2, r["dashes"])
         for e in rec["edges"]:

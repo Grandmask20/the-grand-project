@@ -427,3 +427,9 @@ RECHECK_CLEAN_S = 0.4
 RECHECK_TIMING_MIN = 5  # screenshots: a Re-check's timing is kept only when it detected / cleaned up at least this many
 RECHECK_LINE_POINTS = 16  # points along a path's drawn line when two results' lines are compared
 RECHECK_LINE_MOVED = 12.0  # atlas units: a drawn line that moved further than this (its maps' moves aside) changed
+
+# ------------------------------------------------------------------ screenshots kept safe to delete (app.keeping)
+# the "Keep copies" prompt's estimates: a screenshot's WebP copy (core SCREENSHOT_COPY_QUALITY) and the time to read
+# it and write its copy (measured on the crawl atlas's 1080p screenshots, 2026-11-25)
+KEEP_COPY_MB = 0.8
+KEEP_SECONDS_PER_SHOT = 0.35

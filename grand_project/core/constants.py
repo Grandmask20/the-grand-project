@@ -92,6 +92,14 @@ IMAGE_EXT = {".png", ".jpg", ".jpeg", ".webp", ".bmp"}
 # thumbnail or export left in a screenshot folder is never added as a screenshot (user: an overview image
 # landed in Waiting)
 GENERATED_TAG = b"GrandProject"
+# the folders next to an atlas, inside its own folder (user's design, 2026-11-14): the screenshots' 1080p copies the
+# map's pictures are read from when a screenshot is gone, and the originals once detected (safe to delete then)
+SCREENSHOT_COPIES = "terrain"
+SCREENSHOTS_USED = "used"
+# the copies' WebP quality: 0.8 MB a screenshot against 4.1 MB for its PNG (lossless WebP saved only 20%), a mean
+# difference of ~3 / 255 per pixel, invisible on the ground; only pictures are read from them, never the detector
+# (measured on the crawl atlas's screenshots, 2026-11-25)
+SCREENSHOT_COPY_QUALITY = 90
 
 
 # images the atlas itself writes (never screenshots): <atlas>_terrain.png, _composite.png, _network.png, ...

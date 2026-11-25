@@ -40,6 +40,8 @@ from .constants import (  # noqa: F401
     ROW_STEP_PX,
     SCALE_RANGE,
     SCREEN_HEIGHT,
+    SCREENSHOT_COPIES,
+    SCREENSHOTS_USED,
     SIG_DIST1,
     SIG_DIST2,
     TERRAIN_MIN_AGREE,

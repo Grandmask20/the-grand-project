@@ -424,7 +424,7 @@ def clean_composite(atlas, max_pixels: int = 36_000_000, region=None, log=None):
         (canvas, (x0, y0, scale), weight, labels, frame names): BGR canvas, its origin, (h, w) float32 weight,
         (h, w) int16 owner per canvas pixel (index into frame names, -1 = none), and the screenshot names.
     """
-    frames = [f for f in atlas.frames if Path(f["path"]).exists()]
+    frames = [f for f in atlas.frames if atlas.has_picture(f["path"])]  # (the screenshot, else its copy)
     if not frames:
         z = np.zeros((1, 1), np.float32)
         return np.zeros((1, 1, 3), np.uint8), (0, 0, 1.0), z, z.astype(np.int16) - 1, []

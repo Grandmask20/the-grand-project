@@ -523,7 +523,8 @@ class AddingMixin:
         ]
         name = mode[0] if isinstance(mode, tuple) else mode
         what = {"manual": "adding", "watch": "auto-add", "undo": "undo", "recheck_all": "Re-check",
-                "drop": "placing by hand", "retry": "retry"}.get(name, str(name))  # fmt: skip
+                "keep_all": "keeping copies", "drop": "placing by hand",
+                "retry": "retry"}.get(name, str(name))  # fmt: skip
         self.events.log(f"{what} took {took:.1f} s: " + ", ".join(changes))
 
     def _worker(self) -> None:
@@ -646,6 +647,9 @@ class AddingMixin:
         if mode == "recheck_all":
             self._run_recheck()
             return
+        if mode == "keep_all":
+            self._run_keep()
+            return
         retry = isinstance(mode, tuple) and mode[0] == "retry"
         frames, failed = self._detect(paths, "detecting") if paths else ([], [])
         if failed and mode == "watch":
@@ -675,6 +679,7 @@ class AddingMixin:
                         self.events.log(ln)
             else:
                 added, refused = self._place_watched(frames)
+            rec = self.opened  # (the job's atlas, for the copies kept after it: _keep_screenshots)
             if added:
                 new = self.atlas.frames[-added:]
                 self._remember_add([f["name"] for f in new], snapshot)
@@ -693,6 +698,8 @@ class AddingMixin:
                 with contextlib.suppress(OSError):
                     snapshot.unlink()
         self._after_placed(mode, added, refused)
+        if added:  # copies kept, the originals in the atlas's folder moved to used/ (safe to delete: user)
+            self._keep_screenshots(rec, [f["name"] for f in new])
 
     def _run_recheck(self) -> None:
         """Detect again screenshots detected by an older detector, re-check the whole atlas, then ask which of the

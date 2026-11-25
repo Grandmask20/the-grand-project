@@ -2,6 +2,7 @@ import type { Ghost } from "@/domain/adding/Ghost";
 import type { RecentOutline } from "@/domain/adding/RecentOutline";
 import type { WatchState } from "@/domain/adding/WatchState";
 import type { AppState } from "@/domain/app/AppState";
+import type { KeepInfo } from "@/domain/app/KeepInfo";
 import type { Meta, ReplaySettings } from "@/domain/app/Meta";
 import type { Parts } from "@/domain/app/Parts";
 import type { RecheckInfo } from "@/domain/app/RecheckInfo";
@@ -65,6 +66,9 @@ export function createAppClient(http: Http) {
 		closeAtlas: () => http.send<Ok>("POST", "/api/atlas/close"),
 		exportPngs: () => http.send<{ files: string[] }>("POST", "/api/atlas/export"),
 		recheck: () => http.send<Ok>("POST", "/api/atlas/recheck"),
+		// the open atlas's screenshots kept safe to delete: their copies, the originals moved to used/ (a job)
+		keepInfo: () => http.get<KeepInfo>("/api/atlas/keep-info"),
+		keep: () => http.send<Ok>("POST", "/api/atlas/keep"),
 		/** Fix seams; while adding runs it isn't started ({adding}), or is queued after it (afterAdding). */
 		fixSeams: (afterAdding = false) =>
 			http.send<Ok & { adding: boolean; queued: boolean }>("POST", "/api/seams", { after_adding: afterAdding }),

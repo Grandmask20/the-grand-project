@@ -10,7 +10,6 @@ from __future__ import annotations
 
 import math
 from collections.abc import Callable
-from pathlib import Path
 
 import cv2
 import numpy as np
@@ -92,7 +91,7 @@ def build_sharp_tile(
     for f, (poly, bb) in zip(list(atlas.frames), list(footprints), strict=False):
         if bb[2] < ax0 or bb[0] > ax0 + unit or bb[3] < ay0 or bb[1] > ay0 + unit:
             continue
-        if not Path(f["path"]).exists():
+        if not atlas.has_picture(f["path"]):  # (the screenshot, else its copy)
             continue
         sp = (np.asarray(poly, float) - [ax0, ay0]) * s
         x0, y0 = np.floor(sp.min(axis=0)).astype(int)

@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import math
-from pathlib import Path
 
 import cv2
 import numpy as np
@@ -362,13 +361,13 @@ def _settlements(atlas, maps, landmarks, icons) -> list[dict]:
             votes = [
                 _barrel(im, sp[0], sp[1], _screen_nodes(atlas, f, bx, by))
                 for _c, f, sp in atlas.central_views(bx, by, 3)
-                if (im := atlas.image(f["path"]) if Path(f["path"]).exists() else None) is not None
+                if (im := atlas.image(f["path"])) is not None  # (the screenshot, else its copy)
             ]
             barrel = bool(votes) and 2 * sum(votes) > len(votes)
         views = [
-            (atlas.image(f["path"]), sp)
+            (im, sp)
             for _c, f, sp in atlas.central_views(b["x"], b["y"], 3)
-            if Path(f["path"]).exists()
+            if (im := atlas.image(f["path"])) is not None  # (the screenshot, else its copy)
         ]
         ocean = bool(views) and 2 * sum(_ocean(im, sp[0], sp[1]) for im, sp in views) > len(views)
         blue = orange = seen = 0

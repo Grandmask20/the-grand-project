@@ -41,6 +41,7 @@ from .debug import DebugMixin
 from .edits import EditsMixin
 from .events import Events
 from .icons import icon_label, icon_rows
+from .keeping import KeepingMixin
 from .library import LibraryMixin
 from .mapimage import MapImageMixin, files_key
 from .model import view_model
@@ -86,6 +87,7 @@ class AtlasSession(
     LibraryMixin,
     MapImageMixin,
     AddingMixin,
+    KeepingMixin,
     WatchMixin,
     EditsMixin,
     BookmarksMixin,
@@ -279,7 +281,8 @@ class AtlasSession(
                 LOG.exception("atlas-wide check failed")
                 self.events.log(f"atlas-wide check failed: {e}")
         self._after_load()
-        missing = [f["name"] for f in atlas.frames if not Path(f["path"]).exists()]
+        # (a screenshot whose file is gone shows from its 1080p copy: only one gone without a copy loses its ground)
+        missing = [f["name"] for f in atlas.frames if not atlas.has_picture(f["path"])]
         if missing:
             self.events.log(f"screenshots not found (terrain missing there): {', '.join(missing[:20])}" +
                             (f" and {len(missing) - 20} more" if len(missing) > 20 else ""))  # fmt: skip

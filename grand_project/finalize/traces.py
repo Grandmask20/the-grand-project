@@ -108,13 +108,17 @@ def _dashes(atlas, f):
         f: the screenshot (frame) dict (needs "path").
 
     Returns:
-        (path_dashes result: dim / fog dashes, amber_dashes result: amber dash strokes) from the detector.
+        (path_dashes result: dim / fog dashes, amber_dashes result: amber dash strokes) from the detector, or None
+        when its picture can't be read (the screenshot gone, its copy too: the path detector failed on nothing,
+        and the whole check with it).
     """
     key = f["path"]
     if key in _DASHES:
         _DASHES[key] = _DASHES.pop(key)
         return _DASHES[key]
-    img = atlas.image(f["path"])
+    img = atlas.image(f["path"])  # (the screenshot, else its copy)
+    if img is None:
+        return None
     _DASHES[key] = (atlas_detect.path_dashes(img), atlas_detect.amber_dashes(img))
     while len(_DASHES) > GOLD_CACHE:
         _DASHES.pop(next(iter(_DASHES)))
@@ -132,7 +136,9 @@ def _trace_one(job):
     """
 
     path, sp, ok, tower = job
-    img = core.read_screenshot(path)
+    img = core.read_screenshot(path) if path is not None else None
+    if img is None:  # (its picture gone: nothing traced there)
+        return {}
     return atlas_detect.screen_paths((atlas_detect.path_dashes(img), atlas_detect.amber_dashes(img)), sp, ok, tower)
 
 
@@ -153,14 +159,18 @@ def _trace_views(atlas, views, tower, log=None):
     """
     if len(views) >= TRACE_PARALLEL_MIN and TRACE_WORKERS > 1:
         try:
-            jobs = [(f["path"], sp, ok, tower) for f, sp, ok in views]
+            jobs = [(atlas.picture(f["path"]), sp, ok, tower) for f, sp, ok in views]  # (screenshot, else copy)
             with atlas_io.process_pool(TRACE_WORKERS) as ex:
                 res = list(ex.map(_trace_one, jobs, chunksize=4))
             return [(f, sp, ok, r) for (f, sp, ok), r in zip(views, res, strict=False)]
         except Exception:
             if log:
                 log("parallel path tracing failed, tracing one screenshot at a time")
-    return [(f, sp, ok, atlas_detect.screen_paths(_dashes(atlas, f), sp, ok, tower)) for f, sp, ok in views]
+    out = []
+    for f, sp, ok in views:
+        d = _dashes(atlas, f)
+        out.append((f, sp, ok, {} if d is None else atlas_detect.screen_paths(d, sp, ok, tower)))
+    return out
 
 
 _SAVED: dict = {}
@@ -202,7 +212,7 @@ def _saved(atlas, f):
     if data is None:  # cut-off cache: treated as not cached
         return None
     if any(k not in data for k in ("dash_pts", "seen_grid", "wall_grid", "amber_pts")):
-        img = atlas.image(f["path"]) if Path(f["path"]).exists() else None
+        img = atlas.image(f["path"])  # (the screenshot, else its copy)
         if img is None:
             return None
         data.update(atlas_detect.dash_record(img))

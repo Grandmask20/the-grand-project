@@ -36,11 +36,29 @@ def write_text_atomic(path, text: str, encoding: str = "utf-8") -> None:
     Raises:
         PermissionError: The target stayed locked through every try.
     """
+    _write_atomic(path, text.encode(encoding))
+
+
+def write_bytes_atomic(path, data: bytes) -> None:
+    """Write a binary file so readers see the old file or the new one, never half of one (write_text_atomic).
+
+    Args:
+        path: Target file path.
+        data: The file contents.
+
+    Raises:
+        PermissionError: The target stayed locked through every try.
+    """
+    _write_atomic(path, data)
+
+
+def _write_atomic(path, data: bytes) -> None:
+    """The work of write_text_atomic / write_bytes_atomic: a temporary file next to the target, then one replace."""
     path = Path(path)
     fd, tmp = tempfile.mkstemp(prefix=f".{path.name}.", suffix=".tmp", dir=path.parent)
     try:
-        with os.fdopen(fd, "w", encoding=encoding, newline="") as f:
-            f.write(text)
+        with os.fdopen(fd, "wb") as f:
+            f.write(data)
             f.flush()
             os.fsync(f.fileno())
         for attempt in range(5):  # Windows: a virus scanner / cloud sync may hold the target briefly
