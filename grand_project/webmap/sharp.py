@@ -147,7 +147,7 @@ class SharpTiles:
             out[holes] = self._fallback(z, x, y)[holes]
         return out
 
-    def jpeg(self, z: int, x: int, y: int, wanted=None) -> bytes | None:
+    def jpeg(self, z: int, x: int, y: int, wanted=None, skipped: list | None = None) -> bytes | None:
         """Return a sharp tile as JPEG: from the folder when kept there, else built (once, even when asked for
         twice at the same time; at most WEBMAP_SHARP_BUILDERS at a time).
 
@@ -158,6 +158,8 @@ class SharpTiles:
             wanted: Callable telling whether the tile is still wanted (its browser request not given up), asked
                 once a builder is free: zooming in from far, the browser drops most tiles it asked for on the way,
                 and building them all kept the ones finally shown waiting (user: the sharp ground came late).
+            skipped: A list the screenshots left out of the tile built here are added to (their picture gone mid-way),
+                or None: such a tile is never kept, in the folder or by the caller (CodeRabbit).
 
         Returns:
             The JPEG bytes, or None when no longer wanted.
@@ -182,14 +184,14 @@ class SharpTiles:
                 with self._builders:
                     if wanted is not None and not wanted():
                         return None
-                    skipped: list[str] = []
-                    pix = self.build(z, x, y, skipped)
+                    left: list[str] = skipped if skipped is not None else []
+                    pix = self.build(z, x, y, left)
                 ok, buf = cv2.imencode(".jpg", pix, [cv2.IMWRITE_JPEG_QUALITY, WEBMAP_JPEG_QUALITY])
                 if not ok:
                     raise OSError(f"sharp tile {z}/{x}/{y} could not be encoded")
                 data = buf.tobytes()
                 # (one with a screenshot left out, gone mid-build, isn't kept: built again next time - CodeRabbit)
-                if path is not None and not skipped:
+                if path is not None and not left:
                     path.parent.mkdir(parents=True, exist_ok=True)
                     tmp = path.with_name(path.name + ".tmp")
                     tmp.write_bytes(data)

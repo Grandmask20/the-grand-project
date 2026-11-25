@@ -444,3 +444,27 @@ def test_sharp_tiles_are_made_again_once_a_missing_picture_is_back(session, tmp_
     without = session._sharp_folder()
     shot.write_bytes(kept)
     assert without != before and session._sharp_folder() == before  # (CodeRabbit)
+
+
+def test_a_tile_missing_a_screenshot_lost_mid_build_is_not_kept_in_memory_either(session):
+    # (CodeRabbit: the folder skipped it, the app's tile cache didn't)
+    built = []
+
+    class Raster:
+        grid = type("G", (), {"zmax": 0})()
+
+        def pixels(self, z, x, y):
+            return np.zeros((1, 1, 3), np.uint8)
+
+    class Sharp:
+        def has(self, z):
+            return True
+
+        def jpeg(self, z, x, y, wanted=None, skipped=None):
+            built.append((z, x, y))
+            skipped.append("a")
+            return b"tile"
+
+    state = (None, Raster(), Sharp(), 99)
+    assert session._tile_from(state, 1, 0, 0) == b"tile" and session._tile_from(state, 1, 0, 0) == b"tile"
+    assert len(built) == 2  # (made again: never served from memory)

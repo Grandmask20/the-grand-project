@@ -1095,9 +1095,12 @@ class MapImageMixin:
             if raster.pixels(raster.grid.zmax, x >> (z - raster.grid.zmax), y >> (z - raster.grid.zmax)) is None:
                 data = None  # nothing under it at all: no screenshot there
             else:
-                data = sharp.jpeg(z, x, y, wanted)
+                left: list[str] = []
+                data = sharp.jpeg(z, x, y, wanted, left)
                 if data is None:  # given up by the browser: built when asked again, not cached as empty
                     return None
+                if left:  # a screenshot's picture gone mid-build: not kept, made again next time (CodeRabbit)
+                    return data
         else:
             data = raster.jpeg(z, x, y)
         self._tiles.put(key, data or b"")
