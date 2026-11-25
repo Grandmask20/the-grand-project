@@ -221,11 +221,13 @@ def test_the_prompt_counts_only_moves_that_will_happen(session, tmp_path):
     assert session.keep_info()["move"] == 0
 
 
-def second_view(session, tmp_path, name: str = "b"):
-    """Add a screenshot showing exactly what "a" shows (the same placement), kept in used/ with its copy."""
+def second_view(session, tmp_path, name: str = "b", newer: bool = False):
+    """Add a screenshot showing exactly what "a" shows (the same placement), kept in used/ with its copy: taken an
+    hour before "a" (the newer one keeps the spots: core.owned_shares), or after it."""
     f = dict(session.atlas.frames[0], name=name, path=str(tmp_path / core.SCREENSHOTS_USED / f"{name}.png"))
     (tmp_path / core.SCREENSHOTS_USED).mkdir(exist_ok=True)
     screenshot(Path(f["path"]), seed=5)
+    f["taken"] = core.capture_time(session.atlas.frames[0]) + (3600 if newer else -3600)
     session.atlas.frames.append(f)
     session.atlas.write_copy(f["path"])
     return f
@@ -233,7 +235,7 @@ def second_view(session, tmp_path, name: str = "b"):
 
 def test_a_screenshot_shown_better_by_another_goes_to_dump_and_comes_back_when_that_one_goes(session, tmp_path):
     session._keep_screenshots(session.opened, ["a"])
-    second_view(session, tmp_path)  # (b shows nothing a doesn't show at least as centrally)
+    second_view(session, tmp_path)  # (b, older, shows nothing a doesn't show at least as centrally)
     session._sort_dump(session.opened)
     dump = tmp_path / core.SCREENSHOTS_DUMP / "b.png"
     assert dump.exists() and session.atlas.frames[1]["path"] == str(dump)  # delete these first (user)
@@ -280,8 +282,7 @@ def test_the_re_check_prompt_never_waits_for_a_job_to_count_the_slim_down(sessio
 def test_undo_brings_back_to_used_a_screenshot_the_undone_add_sent_to_dump(session, tmp_path):
     session._keep_screenshots(session.opened, ["a"])
     snapshot = session._snapshot()  # (the atlas before the add: a in used/)
-    second_view(session, tmp_path)
-    session.atlas.frames.insert(0, session.atlas.frames.pop())  # (b first: it keeps every spot, a shows none better)
+    second_view(session, tmp_path, newer=True)  # (b newer: it keeps every spot, a shows none better)
     session._remember_add(["b"], snapshot)
     session._sort_dump(session.opened)
     assert (tmp_path / core.SCREENSHOTS_DUMP / "a.png").exists()

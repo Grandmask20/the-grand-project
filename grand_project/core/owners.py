@@ -4,8 +4,10 @@ The map image takes each spot from the screenshot that shows it furthest from it
 wins": core.Atlas.paste_into); Fix seams' clean map keeps which screenshot owns each pixel (its labels). A screenshot
 owning (almost) nothing is dump: everything it shows is shown better elsewhere (the user's "worse placements of an
 area"). Ownership is read from the clean map's labels when there is one; else worked out on a coarse grid from the
-screenshots' placements only (no pictures read), with the same rule: cheap enough to run after every job, so a newer,
-more central screenshot sends an old one to dump, and undoing it brings the old one back.
+screenshots' placements only (no pictures read): cheap enough to run after every job, and undoing a job brings a
+screenshot it sent to dump back. On the grid a newer screenshot keeps a spot unless an older one shows it clearly
+(OWNER_NEWER_MARGIN) more centrally, so an older near-repeat of a view goes to dump (user): only the sorting differs
+from the map image there, and the copies stay, so nothing is lost by it.
 """
 
 from __future__ import annotations
@@ -13,8 +15,8 @@ from __future__ import annotations
 import cv2
 import numpy as np
 
-from .constants import OWNER_GRID, OWNER_SCREEN_STEP
-from .frame import hud_mask
+from .constants import OWNER_GRID, OWNER_NEWER_MARGIN, OWNER_SCREEN_STEP
+from .frame import capture_time, hud_mask
 from .geometry import screen_to_atlas
 from .sharp import footprint
 
@@ -73,8 +75,17 @@ def _from_labels(atlas, frames, owner_map: np.ndarray, names: list[str], origin)
     return out
 
 
+def _newest_first(frames: list[dict]) -> list[int]:
+    """Return the frames' indices, the newest screenshot first (core.capture_time; one with no known time counts as
+    older than any with one; then the atlas's order, a later one being newer)."""
+    times = [capture_time(f) for f in frames]
+    return sorted(range(len(frames)), key=lambda k: (times[k] is not None, times[k] or 0.0, k), reverse=True)
+
+
 def _from_grid(atlas, frames) -> dict[str, float]:
-    """owned_shares on a grid over the screenshots: each cell owned by the screenshot most central there."""
+    """owned_shares on a grid over the screenshots: each cell owned by the screenshot most central there, a newer one
+    keeping it unless an older one is OWNER_NEWER_MARGIN screen px more central (the newest goes first); a cell within
+    that margin of every screenshot's edge is no one's."""
     polys = [footprint(atlas, f) for f in frames]
     x0 = min(b[0] for _p, b in polys)
     y0 = min(b[1] for _p, b in polys)
@@ -86,7 +97,8 @@ def _from_grid(atlas, frames) -> dict[str, float]:
     owner = np.full((H, W), -1, np.int32)
     seen = np.zeros(len(frames), np.int64)
     G = np.array([[1 / cell, 0, -x0 / cell], [0, 1 / cell, -y0 / cell], [0, 0, 1]])
-    for k, (f, (_poly, (bx0, by0, bx1, by1))) in enumerate(zip(frames, polys, strict=True)):
+    for k in _newest_first(frames):
+        f, (_poly, (bx0, by0, bx1, by1)) = frames[k], polys[k]
         a = np.maximum(np.floor([(bx0 - x0) / cell, (by0 - y0) / cell]).astype(int), 0)
         b = np.minimum(np.ceil([(bx1 - x0) / cell, (by1 - y0) / cell]).astype(int) + 1, [W, H])
         if (b <= a).any():
@@ -98,7 +110,9 @@ def _from_grid(atlas, frames) -> dict[str, float]:
         score = cv2.warpPerspective(tpl, Mt, (int(b[0] - a[0]), int(b[1] - a[1])), flags=cv2.INTER_LINEAR)
         seen[k] = int((score > 0).sum())
         sub_b, sub_o = best[a[1] : b[1], a[0] : b[0]], owner[a[1] : b[1], a[0] : b[0]]
-        take = score > sub_b
+        # (a newer one's cells: by the margin; no one's yet: from the margin in, so the strip an older near-repeat
+        # alone shows at its very edge doesn't keep it out of dump)
+        take = score > np.where(sub_o >= 0, sub_b + OWNER_NEWER_MARGIN, OWNER_NEWER_MARGIN)
         sub_b[take] = score[take]
         sub_o[take] = k
     counts = np.bincount(owner.ravel()[owner.ravel() >= 0], minlength=len(frames))

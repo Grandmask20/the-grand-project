@@ -151,3 +151,10 @@ SCREENSHOTS_DUMP = "dump"
 OWNER_DUMP_SHARE = 0.01  # a screenshot owning less of its own area than this is dump (not kept for a sliver)
 OWNER_GRID = 1024  # cells on the atlas's long side for "most central wins" without a clean map (as "times seen")
 OWNER_SCREEN_STEP = 16  # screen px per cell of a screenshot's centrality template (1920 x 1080 -> 120 x 68)
+# on the grid, a newer screenshot keeps a spot unless an older one shows it this many screen px more centrally (further
+# from its edges and interface): an older near-repeat of a view (the camera moved less than this) goes to dump. "Most
+# central wins" alone split the area between the two: a near-copy placed 0.3 units off its view owned 8.5% of it, and
+# nothing ever went to dump (user, 2026-11-25: the newer one keeps the spot). A spot this close to a screenshot's edge
+# counts for none of them, so the thin strip an older near-repeat alone shows there doesn't keep it. 48 px: 2.5% of a
+# 1920 px screen
+OWNER_NEWER_MARGIN = 48.0
