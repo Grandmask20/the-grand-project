@@ -14,6 +14,7 @@ from grand_project import fileio as atlas_io
 
 from . import frame as _frame
 from .constants import (
+    COPY_SHA_CHARS,
     DROP_MIN_INLIERS,
     ICON_MERGE,
     LANDMARK_MERGE,
@@ -24,6 +25,10 @@ from .constants import (
     PARALLAX_MIN_INLIERS,
     PARALLAX_RATIO,
     PARALLAX_TOL,
+    SCREENSHOT_COPIES,
+    SCREENSHOT_COPY_QUALITY,
+    SCREENSHOTS_DUMP,
+    SCREENSHOTS_USED,
     TERRAIN_MIN_AGREE,
     TERRAIN_MIN_NCC,
     TERRAIN_SCALE,
@@ -51,8 +56,12 @@ def find_screenshot(p: str, atlas_dir: Path) -> str:
     q = Path(p)
     if not q.is_absolute():
         return str((atlas_dir / q).resolve())
-    if not q.exists() and (atlas_dir / q.name).exists():
-        return str(atlas_dir / q.name)
+    if not q.exists():
+        # next to the atlas, or in its used/ folder (detected originals are moved there: app/keeping.py), also when
+        # the atlas json still names the place before a move it didn't save
+        for there in (atlas_dir / q.name, atlas_dir / SCREENSHOTS_USED / q.name, atlas_dir / SCREENSHOTS_DUMP / q.name):
+            if there.exists():
+                return str(there)
     return p
 
 
@@ -109,6 +118,9 @@ class Atlas:
         self.locks: list[dict] = []  # {x,y,n} hand badges = locked Breach strongholds
         self.lock_scanned: list[str] = []  # screenshots already searched for the hand badge
         self.frames: list[dict] = []  # {name,path,sha,w,h,M,stats}
+        # the 1080p copies of the screenshots (the atlas folder's terrain/): the pictures are read from them when a
+        # screenshot is gone (user: screenshots safe to delete once detected); set by load and save
+        self.copies_dir: Path | None = None
         self._images: dict[str, np.ndarray] = {}  # (not pickled: __getstate__)
 
     def __getstate__(self) -> dict:
@@ -132,14 +144,97 @@ class Atlas:
 
     _image_lock = threading.Lock()  # the viewer reads images while a worker places
 
+    def copy_path(self, path: str, sha: str | None = None) -> Path | None:
+        """Return where a screenshot's 1080p copy is kept (the atlas folder's terrain/), there or not.
+
+        Args:
+            path: The screenshot file path.
+            sha: Its file's SHA-256 (core.Frame.sha), when it isn't in atlas.frames yet; else looked up there.
+
+        Returns:
+            terrain/<its file name>.<sha's start>.webp, or None for an atlas not saved anywhere yet. The whole file
+            name (a.png and a.jpg shared one copy by stem, self review) and its content: two screenshots of one name
+            from different folders shared one copy, and the second showed the first's pixels once deleted (CodeRabbit).
+            The same wherever the screenshot moves (used/, dump/).
+        """
+        d = getattr(self, "copies_dir", None)
+        if d is None:
+            return None
+        sha = sha or self._sha_of(path)
+        name = Path(path).name
+        return Path(d) / (f"{name}.{sha[:COPY_SHA_CHARS]}.webp" if sha else f"{name}.webp")
+
+    def _sha_of(self, path: str) -> str | None:
+        """Return the SHA-256 of the screenshot at this path in atlas.frames, or None: through an index made again
+        when the frames change (a path missing, moved, frames added or taken out)."""
+        key = str(path)
+        d = self.__dict__
+        idx = d.get("_sha_index")
+        f = None
+        if idx is not None and d.get("_sha_frames") is self.frames and d.get("_sha_count") == len(self.frames):
+            f = idx.get(key)
+        if f is None or f.get("path") != key:
+            idx = {str(g["path"]): g for g in list(self.frames)}
+            d["_sha_index"], d["_sha_frames"], d["_sha_count"] = idx, self.frames, len(self.frames)
+            f = idx.get(key)
+        return None if f is None else f.get("sha")
+
+    def picture(self, path: str) -> str | None:
+        """Return the file a screenshot's picture is read from: the screenshot, else its copy (copy_path).
+
+        Only pictures come from a copy (the map image, the sharp ground, Fix seams, the atlas-wide check's looks at
+        a spot): the detector never runs on one, its result is kept with the atlas.
+
+        Args:
+            path: The screenshot file path.
+
+        Returns:
+            That file's path, or None when neither is there (the screenshot's picture is lost).
+        """
+        if Path(path).exists():
+            return str(path)
+        c = self.copy_path(path)
+        return str(c) if c is not None and c.exists() else None
+
+    def has_picture(self, path: str) -> bool:
+        """Tell whether a screenshot's picture can be read (picture)."""
+        return self.picture(path) is not None
+
+    def write_copy(self, path: str, sha: str | None = None) -> bool:
+        """Keep a 1080p copy of a screenshot (copy_path), unless there is one already: WebP at
+        SCREENSHOT_COPY_QUALITY, written whole or not at all.
+
+        Args:
+            path: The screenshot file path (read as the detector reads it: 1440p / 4K scaled to 1080p).
+            sha: Its SHA-256 when it isn't in atlas.frames yet (just detected), else None.
+
+        Returns:
+            Whether a copy is there now.
+        """
+        c = self.copy_path(path, sha)
+        if c is None:
+            return False
+        if c.exists():
+            return True
+        img = self.image(path)
+        if img is None:
+            return False
+        ok, buf = cv2.imencode(".webp", img, [cv2.IMWRITE_WEBP_QUALITY, SCREENSHOT_COPY_QUALITY])
+        if not ok:
+            return False
+        c.parent.mkdir(parents=True, exist_ok=True)
+        atlas_io.write_bytes_atomic(c, buf.tobytes())
+        return True
+
     def image(self, path: str) -> np.ndarray | None:
-        """Return a screenshot image, read through a small most-recently-used cache.
+        """Return a screenshot image, read through a small most-recently-used cache: the screenshot, else its copy
+        (picture).
 
         IMAGE_CACHE decoded screenshots are kept (~6 MB each; a terrain check of one screenshot reads ~60
         neighbours). Thread-safe: the viewer reads images while a worker places.
 
         Args:
-            path: Screenshot file path.
+            path: Screenshot file path (the cache key, also when read from its copy).
 
         Returns:
             BGR image as read by read_screenshot, or None while it can't be read (not kept: a file put back is
@@ -150,7 +245,11 @@ class Atlas:
                 img = self._images.pop(path)
                 self._images[path] = img  # most recently used last
                 return img
-        img = _frame.read_screenshot(path)
+        src = self.picture(path)
+        img = _frame.read_screenshot(src) if src is not None else None
+        if img is None and src == str(path):  # gone between the check and the read (moved to dump/, deleted): its copy
+            c = self.copy_path(path)
+            img = _frame.read_screenshot(c) if c is not None and c.exists() else None
         if img is None:
             return None
         with Atlas._image_lock:
@@ -515,7 +614,10 @@ class Atlas:
             frame: The new screenshot.
             reg: Its proposed placement (reg.M); updated in place.
         """
-        img_new = self.image(frame.path)
+        img_new = self.image(frame.path)  # (the screenshot, else the copy kept right after its detection)
+        if img_new is None:  # deleted while it was being placed, with no copy: no terrain to compare
+            reg.ncc, reg.ncc_pixels, reg.ref_frame = 0.0, 0, ""
+            return
         best_ncc, best_n, best_ref = -1.0, 0, ""
         H_new = screen_to_atlas(reg.M, frame.R)
         c_new = persp(H_new, [[frame.w / 2, frame.h / 2]])[0]
@@ -524,7 +626,10 @@ class Atlas:
             c_ref = persp(H_ref, [[f["w"] / 2, f["h"] / 2]])[0]
             if np.hypot(*(c_ref - c_new)) > 1.6 * max(f["w"], frame.w):
                 continue  # too far apart to overlap: skip the pixel check
-            ncc, n = terrain_ncc(self.image(f["path"]), img_new, np.linalg.inv(H_ref) @ H_new)
+            img_ref = self.image(f["path"])
+            if img_ref is None:
+                continue  # (gone, its copy too: no picture to compare)
+            ncc, n = terrain_ncc(img_ref, img_new, np.linalg.inv(H_ref) @ H_new)
             if n >= 15000 and ncc > best_ncc:
                 best_ncc, best_n, best_ref = ncc, n, f["name"]
         reg.ncc, reg.ncc_pixels, reg.ref_frame = max(best_ncc, 0.0), best_n, best_ref
@@ -551,6 +656,8 @@ class Atlas:
             pts, d16 = Atlas._feat_cache[key]
             return pts, (None if d16 is None else d16.astype(np.float32))
         img = self.image(path)
+        if img is None:  # (gone, its copy too)
+            return np.zeros((0, 2)), None
         sift = cv2.SIFT_create(6000)  # dark / foggy screenshots need many to find enough matches
         k, d = sift.detectAndCompute(cv2.cvtColor(img, cv2.COLOR_BGR2GRAY), _valid_mask(img))
         pts = persp(R, np.float32([p.pt for p in k])) if k else np.zeros((0, 2))
@@ -856,6 +963,10 @@ class Atlas:
         new_dir = Path(path).with_name(Path(path).stem + "_frames")
         if getattr(self, "frames_dir", None) is None or new_dir.is_dir():
             self.frames_dir = new_dir
+        # the screenshots' copies likewise: an undo snapshot saved elsewhere keeps the atlas folder's
+        copies = Path(path).parent / SCREENSHOT_COPIES
+        if getattr(self, "copies_dir", None) is None or copies.is_dir():
+            self.copies_dir = copies
 
     @staticmethod
     def load(path) -> Atlas:
@@ -872,6 +983,7 @@ class Atlas:
         d = json.loads(Path(path).read_text(encoding="utf-8"))
         at = Atlas()
         at.frames_dir = Path(path).with_name(Path(path).stem + "_frames")  # saved detections (paths, dashes)
+        at.copies_dir = Path(path).parent / SCREENSHOT_COPIES  # the screenshots' 1080p copies (picture)
         at.nodes = [
             {
                 "x": n["x"],
@@ -931,7 +1043,7 @@ class Atlas:
             weight (distance from the screenshot's masked edge).
         """
         corners = []
-        frames = [f for f in self.frames if Path(f["path"]).exists()]  # moved/deleted shots: skip
+        frames = [f for f in self.frames if self.has_picture(f["path"])]  # gone, copy too: skipped
         if not frames:
             empty = (np.zeros((1, 1, 3), np.uint8), (0, 0, 1.0))
             return (*empty, np.zeros((1, 1), np.float32)) if with_weight else empty
@@ -976,7 +1088,7 @@ class Atlas:
         for f in frames:
             if progress is not None:
                 progress()
-            if not Path(f["path"]).exists():
+            if not self.has_picture(f["path"]):  # (gone, its copy too)
                 continue
             Hc = T @ screen_to_atlas(np.array(f["M"], float), self.frame_R(f))
             c = persp(Hc, [[0, 0], [f["w"], 0], [f["w"], f["h"]], [0, f["h"]]])
@@ -989,6 +1101,8 @@ class Atlas:
             Hroi = np.array([[1, 0, -bx0], [0, 1, -by0], [0, 0, 1]], float) @ Hc
             size = (int(bx1 - bx0), int(by1 - by0))
             img = self.image(f["path"])
+            if img is None:  # deleted since the check above, with no copy (user: aggressive checking)
+                continue
             valid = (_valid_mask(img) > 0).astype(np.uint8) * 255  # (the cached mask is read-only)
             dist = cv2.distanceTransform(valid, cv2.DIST_L2, 3)
             wmap = cv2.warpPerspective(dist, Hroi, size, flags=cv2.INTER_LINEAR, borderValue=0)

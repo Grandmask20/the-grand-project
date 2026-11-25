@@ -1,6 +1,7 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { AppQueryKeys } from "@/api/AppQueryKeys";
 import { Button } from "@/components/ui/button";
+import { Checkbox } from "@/components/ui/checkbox";
 import {
 	Dialog,
 	DialogContent,
@@ -10,6 +11,7 @@ import {
 	DialogTitle,
 } from "@/components/ui/dialog";
 import { useAppClient } from "@/hooks/app/UseAppClient";
+import { useSettings, useUpdateSettings } from "@/hooks/app/UseSettings";
 import { useAtlases } from "@/hooks/atlas/UseAtlases";
 import { recheckLines } from "@/logic/Recheck";
 import { useAppStore } from "@/store/AppStore";
@@ -24,6 +26,8 @@ export function RecheckDialog() {
 	const close = useAppStore((s) => s.askRecheck);
 	const showError = useAppStore((s) => s.showError);
 	const atlases = useAtlases();
+	const slim = useSettings()?.recheck_slim ?? false;
+	const updateSettings = useUpdateSettings();
 	const info = useQuery({
 		queryKey: ["recheck-info", json],
 		queryFn: () => app.recheckInfo(json ?? ""),
@@ -81,6 +85,25 @@ export function RecheckDialog() {
 						<p>
 							<span className="text-muted-foreground">Takes:</span> {lines.time}
 						</p>
+						{/* the slim down, packaged with Re-check (user); remembered for every atlas */}
+						<div className="flex items-start gap-2">
+							<Checkbox
+								className="mt-0.5"
+								checked={slim}
+								id="recheck-slim"
+								onCheckedChange={(on) => updateSettings.mutate({ recheck_slim: on === true })}
+							/>
+							<label htmlFor="recheck-slim">
+								<span className="font-semibold">Slim down:</span> also remove the copies of screenshots that show no
+								spot of the map{" "}
+								{info.data.slim?.clean === false
+									? "(run Fix seams first: only a clean map of the screenshots as they are now knows, fog included, which ones)"
+									: info.data.slim?.count
+										? `(${info.data.slim.count} now, about ${info.data.slim.mb} MB)`
+										: "(none right now)"}
+								. Saves space, but one whose screenshot is gone too can't take a spot back later.
+							</label>
+						</div>
 					</div>
 				)}
 				<DialogFooter>

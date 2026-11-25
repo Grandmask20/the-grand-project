@@ -112,20 +112,26 @@ def release_notes() -> str:
     """The GitHub release's notes: how to install and start it on each system, every time (manny: tell newcomers
     which script to run on Windows vs macOS / Linux), then a place for what's new.
 
-    The install and start part is the README's "Run it" section (without "Get it": they are on the download page),
-    so the notes and the README never disagree.
+    The install and start part is the README's "How to install and start" section ("Run it" before 1.26: without
+    its "Get it", that is on the download page), so the notes and the README never disagree; its ### headings a
+    level down, under the notes' own ## heading.
     """
     s = (HERE / "README.md").read_text(encoding="utf-8").replace("\r\n", "\n")
-    a = s.find("## Run it\n")
-    b = s.find("\n---\n", a)
-    run = s[a + len("## Run it\n") : b].strip() if a != -1 and b > a else ""
+    run = ""
+    for head in ("## How to install and start\n", "## Run it\n"):
+        a = s.find(head)
+        if a != -1:
+            b = s.find("\n## ", a + len(head))  # (to the next section; "---" ended it before)
+            run = s[a + len(head) : b if b != -1 else len(s)].split("\n---\n")[0].strip()
+            break
     g, h = run.find("### Get it"), run.find("### First time")
     if g != -1 and h > g:
         run = run[:g] + run[h:]
+    run = re.sub(r"(?m)^### ", "#### ", run)
     return (
         f"Program version v{version()}. Download **Source code (zip)** below and unzip it into a folder you can "
         "write to.\n\n"
-        f"## How to install and start\n\n{run.replace('### ', '#### ')}\n\n"
+        f"## How to install and start\n\n{run}\n\n"
         "## What's new\n\n- (write the highlights here)\n"
     )
 

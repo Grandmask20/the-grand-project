@@ -107,6 +107,10 @@ export function TopBar() {
 					>
 						Re-check the whole atlas
 					</DropdownMenuItem>
+					{/* screenshots safe to delete: copies kept, the detected ones moved to used/ (user's design) */}
+					<DropdownMenuItem disabled={!open || busy || !state?.atlas?.shots} onSelect={() => s.askKeep(true)}>
+						Keep copies of the screenshots…
+					</DropdownMenuItem>
 					{state?.seams ? (
 						<DropdownMenuItem onSelect={() => void app.stopSeams().catch(fail)}>Stop fixing seams</DropdownMenuItem>
 					) : (

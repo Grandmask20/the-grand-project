@@ -182,6 +182,9 @@ export interface AppStoreState {
 	/** The atlas (its .json file) the Re-check prompt asks about. */
 	recheckAtlas: string | null;
 	askRecheck: (json: string | null) => void;
+	/** The "Keep copies" prompt is open (about the open atlas: closed when another opens). */
+	keepCopies: boolean;
+	askKeep: (open: boolean) => void;
 	error: string | null;
 	/** The error is a brief note about the last click (no maps inside a lasso): it closes on the next click. */
 	errorBrief: boolean;
@@ -358,6 +361,8 @@ export const useAppStore = create<AppStoreState>()((set) => ({
 	askDeleteAtlas: (deleteAtlas) => set({ deleteAtlas }),
 	recheckAtlas: null,
 	askRecheck: (recheckAtlas) => set({ recheckAtlas }),
+	keepCopies: false,
+	askKeep: (keepCopies) => set({ keepCopies }),
 	error: null,
 	errorBrief: false,
 	// an answer for the atlas open before isn't an error: the page just draws the new one
@@ -392,6 +397,7 @@ export const useAppStore = create<AppStoreState>()((set) => ({
 			replay: null,
 			prompt: null,
 			confirm: null,
+			keepCopies: false, // (its numbers were the atlas before's)
 			bookmarkEdit: null,
 			groupEdit: null,
 			sources: null,
