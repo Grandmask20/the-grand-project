@@ -446,7 +446,7 @@ def test_sharp_tiles_are_made_again_once_a_missing_picture_is_back(session, tmp_
     assert without != before and session._sharp_folder() == before  # (CodeRabbit)
 
 
-def test_a_tile_missing_a_screenshot_lost_mid_build_is_not_kept_in_memory_either(session):
+def test_a_tile_missing_a_screenshot_lost_mid_build_is_not_kept_in_memory_either(session, monkeypatch):
     # (CodeRabbit: the folder skipped it, the app's tile cache didn't)
     built = []
 
@@ -468,3 +468,6 @@ def test_a_tile_missing_a_screenshot_lost_mid_build_is_not_kept_in_memory_either
     state = (None, Raster(), Sharp(), 99)
     assert session._tile_from(state, 1, 0, 0) == b"tile" and session._tile_from(state, 1, 0, 0) == b"tile"
     assert len(built) == 2  # (made again: never served from memory)
+    # ...nor kept by the browser: its address stays the same once the picture is back (CodeRabbit)
+    monkeypatch.setattr(session, "_tile_state", state)
+    assert session.terrain_tile_for(1, 0, 0, "") == (b"tile", False)

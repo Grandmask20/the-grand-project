@@ -1062,11 +1062,12 @@ class MapImageMixin:
         Returns:
             (the JPEG bytes or None where there is no ground; whether it is of the address asked, so the browser may
             keep it under it: the whole address, this run of the app and this atlas included, as versions restart
-            with every run and a tab outliving one asked with the old run's numbers, CodeRabbit).
+            with every run and a tab outliving one asked with the old run's numbers, CodeRabbit; never a tile with a
+            screenshot left out, its picture gone mid-build: its address stays when the picture is back, CodeRabbit).
         """
         state, before = self._tile_state, self._tile_before
         if not asked:
-            return self._tile_from(state, z, x, y, wanted), True
+            return self._tile_made(state, z, x, y, wanted)
         key, _, end = asked.rpartition("-")
         version = int(end) if end.isdigit() else None
         mine = key == f"{SESSION_RUN}.{self._source.gen}"  # (map_info's tile key)
@@ -1080,17 +1081,23 @@ class MapImageMixin:
             and z <= before[0].zmax  # (its map image levels: deeper, the current ground, not kept)
         ):
             state = before
-        return self._tile_from(state, z, x, y, wanted), mine and state[3] == version
+        data, whole = self._tile_made(state, z, x, y, wanted)
+        return data, whole and mine and state[3] == version
 
     def _tile_from(self, state: tuple, z: int, x: int, y: int, wanted=None) -> bytes | None:
         """terrain_tile, from one map image's tiling (_tile_state, read once by the caller)."""
+        return self._tile_made(state, z, x, y, wanted)[0]
+
+    def _tile_made(self, state: tuple, z: int, x: int, y: int, wanted=None) -> tuple[bytes | None, bool]:
+        """_tile_from, and whether the tile is whole: False for a sharp tile with a screenshot left out (its picture
+        gone mid-build), kept nowhere (its folder, the tile cache, the browser): made again next time."""
         _grid, raster, sharp, version = state
         key = ("t", version, z, x, y)
         hit = self._tiles.get(key)
         if hit is not None:
-            return hit or None
+            return hit or None, True
         if raster is None:
-            return None
+            return None, True
         if sharp is not None and sharp.has(z):
             if raster.pixels(raster.grid.zmax, x >> (z - raster.grid.zmax), y >> (z - raster.grid.zmax)) is None:
                 data = None  # nothing under it at all: no screenshot there
@@ -1098,13 +1105,13 @@ class MapImageMixin:
                 left: list[str] = []
                 data = sharp.jpeg(z, x, y, wanted, left)
                 if data is None:  # given up by the browser: built when asked again, not cached as empty
-                    return None
+                    return None, True
                 if left:  # a screenshot's picture gone mid-build: not kept, made again next time (CodeRabbit)
-                    return data
+                    return data, False
         else:
             data = raster.jpeg(z, x, y)
         self._tiles.put(key, data or b"")
-        return data
+        return data, True
 
     def crop_jpeg(self, x: float, y: float, gen: int) -> bytes | None:
         """Return a small picture of the ground around an atlas point (Find's rows show the map node itself: user's
