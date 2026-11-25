@@ -1047,10 +1047,18 @@ class AddingMixin:
             self._unkeep([f for f in self.atlas.frames if f["name"] not in kept])  # (out of used/: not in the atlas)
             # each screenshot where it is now: the snapshot names its place from before the add, and the add's sort
             # (or a keep since) moved some into used/ or dump/; the old place kept them there for good (self review)
-            now = {f["name"]: f["path"] for f in self.atlas.frames}
+            # (and what was kept about it since: the time it was taken, its copy slimmed away; CodeRabbit)
+            now = {f.get("sha") or f["name"]: f for f in self.atlas.frames}  # (by its content: names can repeat)
             for f in old.frames:
-                if f["name"] in now and Path(now[f["name"]]).exists():
-                    f["path"] = now[f["name"]]
+                cur = now.get(f.get("sha") or f["name"])
+                if cur is None:
+                    continue
+                if Path(cur["path"]).exists():
+                    f["path"] = cur["path"]
+                if f.get("taken") is None and cur.get("taken") is not None:
+                    f["taken"] = cur["taken"]
+                if cur.get("slimmed"):
+                    f["slimmed"] = True
             self._lock_rev = getattr(self, "_lock_rev", 0) + 1  # (a stronghold search running now is out of date)
             for attr in core.Atlas.SAVED:
                 if attr not in core.Atlas.HAND_EDITS:

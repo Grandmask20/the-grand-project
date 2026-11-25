@@ -100,6 +100,9 @@ SCREENSHOTS_USED = "used"
 # difference of ~3 / 255 per pixel, invisible on the ground; only pictures are read from them, never the detector
 # (measured on the crawl atlas's screenshots, 2026-11-25)
 SCREENSHOT_COPY_QUALITY = 90
+# a copy's name carries this much of its screenshot's SHA-256: two of one file name from different folders
+# get copies of their own (CodeRabbit), and the name still says which screenshot it is
+COPY_SHA_CHARS = 12
 
 
 # images the atlas itself writes (never screenshots): <atlas>_terrain.png, _composite.png, _network.png, ...

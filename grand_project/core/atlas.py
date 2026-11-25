@@ -14,6 +14,7 @@ from grand_project import fileio as atlas_io
 
 from . import frame as _frame
 from .constants import (
+    COPY_SHA_CHARS,
     DROP_MIN_INLIERS,
     ICON_MERGE,
     LANDMARK_MERGE,
@@ -143,18 +144,40 @@ class Atlas:
 
     _image_lock = threading.Lock()  # the viewer reads images while a worker places
 
-    def copy_path(self, path: str) -> Path | None:
+    def copy_path(self, path: str, sha: str | None = None) -> Path | None:
         """Return where a screenshot's 1080p copy is kept (the atlas folder's terrain/), there or not.
 
         Args:
             path: The screenshot file path.
+            sha: Its file's SHA-256 (core.Frame.sha), when it isn't in atlas.frames yet; else looked up there.
 
         Returns:
-            terrain/<its file name>.webp (the whole name: a.png and a.jpg shared one copy by stem, self review), or None
-            for an atlas not saved anywhere yet.
+            terrain/<its file name>.<sha's start>.webp, or None for an atlas not saved anywhere yet. The whole file
+            name (a.png and a.jpg shared one copy by stem, self review) and its content: two screenshots of one name
+            from different folders shared one copy, and the second showed the first's pixels once deleted (CodeRabbit).
+            The same wherever the screenshot moves (used/, dump/).
         """
         d = getattr(self, "copies_dir", None)
-        return None if d is None else Path(d) / (Path(path).name + ".webp")
+        if d is None:
+            return None
+        sha = sha or self._sha_of(path)
+        name = Path(path).name
+        return Path(d) / (f"{name}.{sha[:COPY_SHA_CHARS]}.webp" if sha else f"{name}.webp")
+
+    def _sha_of(self, path: str) -> str | None:
+        """Return the SHA-256 of the screenshot at this path in atlas.frames, or None: through an index made again
+        when the frames change (a path missing, moved, frames added or taken out)."""
+        key = str(path)
+        d = self.__dict__
+        idx = d.get("_sha_index")
+        f = None
+        if idx is not None and d.get("_sha_frames") is self.frames and d.get("_sha_count") == len(self.frames):
+            f = idx.get(key)
+        if f is None or f.get("path") != key:
+            idx = {str(g["path"]): g for g in list(self.frames)}
+            d["_sha_index"], d["_sha_frames"], d["_sha_count"] = idx, self.frames, len(self.frames)
+            f = idx.get(key)
+        return None if f is None else f.get("sha")
 
     def picture(self, path: str) -> str | None:
         """Return the file a screenshot's picture is read from: the screenshot, else its copy (copy_path).
@@ -177,17 +200,18 @@ class Atlas:
         """Tell whether a screenshot's picture can be read (picture)."""
         return self.picture(path) is not None
 
-    def write_copy(self, path: str) -> bool:
+    def write_copy(self, path: str, sha: str | None = None) -> bool:
         """Keep a 1080p copy of a screenshot (copy_path), unless there is one already: WebP at
         SCREENSHOT_COPY_QUALITY, written whole or not at all.
 
         Args:
             path: The screenshot file path (read as the detector reads it: 1440p / 4K scaled to 1080p).
+            sha: Its SHA-256 when it isn't in atlas.frames yet (just detected), else None.
 
         Returns:
             Whether a copy is there now.
         """
-        c = self.copy_path(path)
+        c = self.copy_path(path, sha)
         if c is None:
             return False
         if c.exists():

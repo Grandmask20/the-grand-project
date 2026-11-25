@@ -145,6 +145,8 @@ class KeepingMixin:
                 for f in atlas.frames:
                     if f["name"] == name and Path(f["path"]) == src:
                         f["path"] = str(dst)
+                        if dst.parent == used:
+                            f.pop("slimmed", None)  # (its copy is back)
                 to_dump += dst.parent == dump
                 back += dst.parent == used
             if to_dump or back:
@@ -156,7 +158,7 @@ class KeepingMixin:
                     parts.append(f"{back} back to {core.SCREENSHOTS_USED}/ (they show a spot best again)")
                 self.events.log("screenshots sorted: " + "; ".join(parts), rec.scope)
 
-    def _dump_names(self, atlas, rec: Opened | None, wait: bool = True) -> list[str]:
+    def _dump_names(self, atlas, rec: Opened | None, wait: bool = True, clean: bool = False) -> list[str] | None:
         """Return the screenshots that own (almost) no spot of the map picture (core.owned_shares under
         OWNER_DUMP_SHARE): the clean map's ownership for the open atlas when there is one, else the grid.
 
@@ -164,9 +166,16 @@ class KeepingMixin:
             atlas: The atlas.
             rec: Its record when it is the open one (its clean map), else None.
             wait: Wait for the session lock to read the clean map with its screenshots (False: a prompt, which
-                never waits for a job: the grid then, from the screenshots as they are).
+                never waits for a job).
+            clean: Only from the clean map's ownership (None without one): the grid knows placements only, not
+                each screenshot's fog, so it never decides what is deleted (slim down; CodeRabbit).
+
+        Returns:
+            Their names, or None (clean, and no clean map that fits the screenshots).
         """
         frames, labels = self._ownership_input(atlas, rec, wait)
+        if clean and labels is None:
+            return None
         shares = core.owned_shares(atlas, frames, labels)
         return [n for n, v in shares.items() if v < core.OWNER_DUMP_SHARE]
 
@@ -180,17 +189,27 @@ class KeepingMixin:
             wait: Wait for the session lock; False (a prompt, never waiting for a job): without it, from the grid.
 
         Returns:
-            (copies of its frames, (ownership map, names, origin) or None).
+            (copies of its frames that have a picture, (ownership map, names, origin) or None). Only screenshots with
+            a picture compete: one with neither file nor copy won every tie, and a copy that was the last picture
+            of a spot was slimmed away (CodeRabbit). The clean map only when its names are the screenshots as they
+            are: it names one an undo took out, or misses one added while the map image is made again (CodeRabbit).
         """
-        if rec is not None and self._lock.acquire(blocking=wait):
-            try:
-                labels = None
-                if self.owns(rec) and self.labels is not None and self.terrain is not None:
-                    labels = (self.labels[0], list(self.labels[1]), self.terrain[2])
-                return [dict(f) for f in atlas.frames], labels
-            finally:
+        locked = rec is not None and self._lock.acquire(blocking=wait)
+        try:
+            frames = [dict(f) for f in list(atlas.frames)]  # (a copy: placing appends meanwhile)
+            # (unlocked, a prompt: the clean map as it is now; the names check below drops it when it doesn't fit)
+            lab, ter = (self.labels, self.terrain) if rec is not None and self.owns(rec) else (None, None)
+        finally:
+            if locked:
                 self._lock.release()
-        return [dict(f) for f in list(atlas.frames)], None  # (a copy: placing appends meanwhile)
+        everyone = {f["name"] for f in frames}
+        frames = [f for f in frames if atlas.has_picture(f["path"])]
+        labels = None
+        if lab is not None and ter is not None:
+            names = set(lab[1])
+            if names <= everyone and all(f["name"] in names for f in frames):
+                labels = (lab[0], list(lab[1]), ter[2])
+        return frames, labels
 
     def slim_info(self, atlas, rec: Opened | None = None) -> dict:
         """What Re-check's slim down would remove: the copies of screenshots in dump (owning no spot of the map).
@@ -200,20 +219,26 @@ class KeepingMixin:
             rec: Its record when it is the open one.
 
         Returns:
-            {"count", "mb"} of the copies there now.
+            {"count", "mb" of the copies there now, "clean": whether there is a clean map to tell (Fix seams):
+            without one slim down removes nothing}.
         """
+        names = self._dump_names(atlas, rec, wait=False, clean=True)
+        if names is None:
+            return {"count": 0, "mb": 0.0, "clean": False}
+        by_name = {f["name"]: f for f in list(atlas.frames)}
         sizes = []
-        for n in self._dump_names(atlas, rec, wait=False):
-            f = next((f for f in atlas.frames if f["name"] == n), None)
+        for n in names:
+            f = by_name.get(n)
             c = atlas.copy_path(f["path"]) if f is not None else None
             if c is not None and c.exists():
                 sizes.append(c.stat().st_size)
-        return {"count": len(sizes), "mb": round(sum(sizes) / 1e6, 1)}
+        return {"count": len(sizes), "mb": round(sum(sizes) / 1e6, 1), "clean": True}
 
     def _slim_down(self, rec: Opened) -> None:
         """Re-check's slim down (the remembered "recheck_slim" setting, user: packaged with Re-check): remove the
-        copies of the screenshots in dump, those owning no spot of the map. Disk saved, at a cost: one whose original
-        is gone too can't win a spot back later (a newer one undone or deleted). Worker thread, end of a Re-check.
+        copies of the screenshots owning no spot of the map, by the clean map's ownership only (it knows each
+        screenshot's fog; the grid doesn't). Disk saved, at a cost: one whose original is gone too can't win a spot
+        back later (a newer one undone or deleted). Worker thread, end of a Re-check.
 
         Args:
             rec: The atlas's record, taken by the Re-check.
@@ -222,11 +247,20 @@ class KeepingMixin:
             return
         atlas = rec.atlas
         try:
-            names = set(self._dump_names(atlas, rec))
+            found = self._dump_names(atlas, rec, clean=True)
         except Exception:
             LOG.exception("slim down: the screenshots' ownership couldn't be worked out")
             return
+        if found is None:
+            self.events.log(
+                "slim down: nothing removed, it needs the clean map (Fix seams): only that knows, fog included, which "
+                "screenshots show no spot of the map",
+                rec.scope,
+            )
+            return
+        names = set(found)
         removed = freed = 0
+        slimmed = []
         for f in list(atlas.frames):
             if f["name"] not in names:
                 continue
@@ -241,6 +275,13 @@ class KeepingMixin:
                 continue
             removed += 1
             freed += size
+            slimmed.append(f)
+        if slimmed:  # (kept with the atlas: gone for good later, they're no "screenshots not found" warning)
+            with self._lock:
+                if self.owns(rec):
+                    for f in slimmed:
+                        f["slimmed"] = True
+                    atlas.save(rec.path)
         if removed:
             self.events.log(
                 f"slim down: removed the copies of {removed} screenshot(s) that show no spot of the map "
@@ -289,7 +330,7 @@ class KeepingMixin:
         for i, fr in enumerate(frames, 1):
             self.events.set_progress(f"keeping copies of the new screenshots {i} / {len(frames)}")
             try:
-                atlas.write_copy(str(fr.path))
+                atlas.write_copy(str(fr.path), getattr(fr, "sha", None))  # (not in the atlas yet: its content)
             except OSError as e:  # (a full disk, a locked folder: kept after the job instead, or not at all)
                 LOG.warning(f"{Path(str(fr.path)).name}: no copy kept ({e})")
 

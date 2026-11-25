@@ -373,8 +373,8 @@ def _settlements(atlas, maps, landmarks, icons) -> list[dict]:
         blue = orange = seen = 0
         for f, Hi in maps:
             sp, ok = _visible(f, Hi, [[b["x"], b["y"]]], margin=5)
-            if ok[0]:
-                bl, orr = _beam(atlas.image(f["path"]), sp[0, 0], sp[0, 1], b["spread"])
+            if ok[0] and (im := atlas.image(f["path"])) is not None:  # (no picture left: no beam seen there)
+                bl, orr = _beam(im, sp[0, 0], sp[0, 1], b["spread"])
                 blue, orange, seen = blue + bl, orange + orr, seen + 1
         status = "kept"
         if badge is None and not clash and b["detected"].get("City", 0) >= b["detected"].get("Hall", 0):

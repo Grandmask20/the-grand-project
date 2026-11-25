@@ -78,4 +78,11 @@ describe("RecheckDialog", () => {
 		await user.click(screen.getByRole("checkbox"));
 		await waitFor(() => expect(calls.find((c) => c.path === "/api/settings")?.body).toEqual({ recheck_slim: true }));
 	});
+
+	it("says the slim down needs Fix seams first when there is no clean map to tell", async () => {
+		open("/atlases/default/atlas.json", {
+			"GET /api/atlas/recheck-info": { ...info, slim: { count: 0, mb: 0, clean: false } },
+		});
+		expect(await screen.findByText(/needs Fix seams first/)).toBeInTheDocument();
+	});
 });

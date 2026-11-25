@@ -132,13 +132,16 @@ def _trace_one(job):
         job: (screenshot path, map node positions in screen px as (N, 2), visible mask (N,), tower flags (N,)).
 
     Returns:
-        The detector's screen_paths result: (i, j) -> path record (line, from, dashes ...).
+        The detector's screen_paths result: (i, j) -> path record (line, from, dashes ...); {} for a screenshot with
+        no picture left, None when the file picked couldn't be read (deleted since: traced again through its copy).
     """
 
     path, sp, ok, tower = job
-    img = core.read_screenshot(path) if path is not None else None
-    if img is None:  # (its picture gone: nothing traced there)
+    if path is None:  # (its picture gone: nothing traced there)
         return {}
+    img = core.read_screenshot(path)
+    if img is None:  # (deleted after it was picked: _trace_views traces it again, through its copy - CodeRabbit)
+        return None
     return atlas_detect.screen_paths((atlas_detect.path_dashes(img), atlas_detect.amber_dashes(img)), sp, ok, tower)
 
 
@@ -157,20 +160,24 @@ def _trace_views(atlas, views, tower, log=None):
     Returns:
         A list of (frame, screen pts, visible, traced paths) for every view; traced paths as in _trace_one.
     """
+
+    def here(f, sp, ok):
+        """Trace one view in this process (the dashes cache; the picture through atlas.image: else its copy)."""
+        d = _dashes(atlas, f)
+        return {} if d is None else atlas_detect.screen_paths(d, sp, ok, tower)
+
     if len(views) >= TRACE_PARALLEL_MIN and TRACE_WORKERS > 1:
         try:
             jobs = [(atlas.picture(f["path"]), sp, ok, tower) for f, sp, ok in views]  # (screenshot, else copy)
             with atlas_io.process_pool(TRACE_WORKERS) as ex:
                 res = list(ex.map(_trace_one, jobs, chunksize=4))
-            return [(f, sp, ok, r) for (f, sp, ok), r in zip(views, res, strict=False)]
+            return [
+                (f, sp, ok, here(f, sp, ok) if r is None else r) for (f, sp, ok), r in zip(views, res, strict=False)
+            ]
         except Exception:
             if log:
                 log("parallel path tracing failed, tracing one screenshot at a time")
-    out = []
-    for f, sp, ok in views:
-        d = _dashes(atlas, f)
-        out.append((f, sp, ok, {} if d is None else atlas_detect.screen_paths(d, sp, ok, tower)))
-    return out
+    return [(f, sp, ok, here(f, sp, ok)) for f, sp, ok in views]
 
 
 _SAVED: dict = {}
@@ -313,13 +320,15 @@ def _gold(atlas, f):
 
     Returns:
         (dash centres as an (N, 2) float array in screen px, distance-to-gold field in screen px as float16,
-        capped at 255).
+        capped at 255), or None when its picture is gone (CodeRabbit: the check stopped on it).
     """
     key = f["path"]
     if key in _GOLD:
         _GOLD[key] = _GOLD.pop(key)
         return _GOLD[key]
     img = atlas.image(f["path"])
+    if img is None:
+        return None
     gold = gp.gold_stroke_mask(img)
     _, _, _, cen = cv2.connectedComponentsWithStats(gold, 8)
     dist = cv2.distanceTransform(255 - gold, cv2.DIST_L2, 3)

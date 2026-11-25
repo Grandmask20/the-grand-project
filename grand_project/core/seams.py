@@ -489,7 +489,7 @@ def clean_composite(atlas, max_pixels: int = 36_000_000, region=None, log=None):
         L.astype(np.float32), Mi, (CW, CH), flags=cv2.INTER_NEAREST | cv2.WARP_INVERSE_MAP, borderValue=-1
     ).astype(np.int16)
     canvas = np.zeros((CH, CW, 3), np.uint8)
-    best = np.zeros((CH, CW), np.float32)
+    gone = set()
     for i, f in enumerate(frames):
         roi = _roi(T @ _H(atlas, f), f, CW, CH)
         if roi is None:
@@ -499,7 +499,10 @@ def clean_composite(atlas, max_pixels: int = 36_000_000, region=None, log=None):
         if not mine.any():
             continue
         img = atlas.image(f["path"])
-        if img is None:  # deleted while the clean map was worked out, with no copy: its part stays empty
+        if img is None:  # deleted while the clean map was worked out, with no copy: its part stays empty and owned
+            # by no one (owned and weighted, the black kept later quick adds from filling it: CodeRabbit)
+            labels[labels == i] = -1
+            gone.add(i)
             continue
         pix = cv2.warpPerspective(img, Hroi, size, flags=cv2.INTER_LINEAR, borderValue=0)
         canvas[by0 : by0 + size[1], bx0 : bx0 + size[0]][mine] = pix[mine]
@@ -508,7 +511,7 @@ def clean_composite(atlas, max_pixels: int = 36_000_000, region=None, log=None):
     # each spot's score (the quick map's units: later quick adds take over only where more central)
     sgrid = np.zeros((GH, GW), np.float32)
     for i, sh in grid.shot.items():
-        if sh is not None:
+        if sh is not None and i not in gone:
             gx0, gy0, s, _b = sh
             win = (slice(gy0, gy0 + s.shape[0]), slice(gx0, gx0 + s.shape[1]))
             mine = L[win] == i

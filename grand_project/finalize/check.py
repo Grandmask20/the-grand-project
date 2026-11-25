@@ -612,7 +612,7 @@ def finalize(atlas, log=_log) -> dict:
         sp, ok = _visible(f, Hi, pts, margin=6)
         if ok.sum() >= 2:
             views.append((f, sp, ok))
-    fields: dict[str, np.ndarray] = {}
+    fields: dict[str, np.ndarray | None] = {}
 
     def field(f):
         """Return a screenshot's distance-to-gold field as float32, computed once per check.
@@ -621,10 +621,12 @@ def finalize(atlas, log=_log) -> dict:
             f: the screenshot (frame) dict.
 
         Returns:
-            A 2-D float32 array: distance in screen px from each pixel to the nearest gold path dash.
+            A 2-D float32 array: distance in screen px from each pixel to the nearest gold path dash; None when its
+            picture is gone (its detected maps and paths still count, only this look is left out).
         """
         if f["name"] not in fields:
-            fields[f["name"]] = _gold(atlas, f)[1].astype(np.float32)
+            g = _gold(atlas, f)
+            fields[f["name"]] = None if g is None else g[1].astype(np.float32)
         return fields[f["name"]]
 
     cache: dict[tuple[int, int], tuple[float, int, int]] = {}
@@ -649,8 +651,9 @@ def finalize(atlas, log=_log) -> dict:
         key = (min(i, j), max(i, j))
         if key not in cache:
             vals = [
-                gp.route_score(field(views[vi][0]), views[vi][1][i], views[vi][1][j])
+                gp.route_score(fd, views[vi][1][i], views[vi][1][j])
                 for vi in sorted(node_views[i] & node_views[j])
+                if (fd := field(views[vi][0])) is not None  # (no picture left: not scored there, CodeRabbit)
             ]
             cache[key] = ((float(np.mean(vals)) if vals else 0.0), len(vals), sum(v >= PATH_THRESHOLD for v in vals))
         return cache[key]

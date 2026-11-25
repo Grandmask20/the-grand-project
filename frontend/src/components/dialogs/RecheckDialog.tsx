@@ -96,9 +96,11 @@ export function RecheckDialog() {
 							<label htmlFor="recheck-slim">
 								<span className="font-semibold">Slim down:</span> also remove the copies of screenshots that show no
 								spot of the map{" "}
-								{info.data.slim?.count
-									? `(${info.data.slim.count} now, about ${info.data.slim.mb} MB)`
-									: "(none right now)"}
+								{info.data.slim?.clean === false
+									? "(needs Fix seams first: only its clean map knows, fog included, which ones those are)"
+									: info.data.slim?.count
+										? `(${info.data.slim.count} now, about ${info.data.slim.mb} MB)`
+										: "(none right now)"}
 								. Saves space, but one whose screenshot is gone too can't take a spot back later.
 							</label>
 						</div>

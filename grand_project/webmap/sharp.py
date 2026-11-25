@@ -116,13 +116,14 @@ class SharpTiles:
         A = np.array([[f, 0, -px * f], [0, f, -py * f]], float)
         return cv2.warpAffine(img, A, (T, T), flags=cv2.INTER_LINEAR, borderMode=cv2.BORDER_REPLICATE)
 
-    def build(self, z: int, x: int, y: int) -> np.ndarray:
+    def build(self, z: int, x: int, y: int, skipped: list | None = None) -> np.ndarray:
         """Build one sharp tile.
 
         Args:
             z: Tile level (> zmax).
             x: Tile column.
             y: Tile row.
+            skipped: A list the screenshots left out are added to (core.build_sharp_tile), or None.
 
         Returns:
             BGR (WEBMAP_TILE, WEBMAP_TILE, 3).
@@ -139,6 +140,7 @@ class SharpTiles:
             WEBMAP_SHARP_MAX_FRAMES,
             labels=self.labels,
             origin=self.origin,
+            skipped=skipped,
         )
         holes = best <= 0
         if holes.any():
@@ -180,12 +182,14 @@ class SharpTiles:
                 with self._builders:
                     if wanted is not None and not wanted():
                         return None
-                    pix = self.build(z, x, y)
+                    skipped: list[str] = []
+                    pix = self.build(z, x, y, skipped)
                 ok, buf = cv2.imencode(".jpg", pix, [cv2.IMWRITE_JPEG_QUALITY, WEBMAP_JPEG_QUALITY])
                 if not ok:
                     raise OSError(f"sharp tile {z}/{x}/{y} could not be encoded")
                 data = buf.tobytes()
-                if path is not None:
+                # (one with a screenshot left out, gone mid-build, isn't kept: built again next time - CodeRabbit)
+                if path is not None and not skipped:
                     path.parent.mkdir(parents=True, exist_ok=True)
                     tmp = path.with_name(path.name + ".tmp")
                     tmp.write_bytes(data)

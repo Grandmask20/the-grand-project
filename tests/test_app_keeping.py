@@ -23,6 +23,18 @@ def screenshot(path, seed: int = 1) -> np.ndarray:
     return img
 
 
+def copy_of(atlas, name: str) -> Path:
+    """Where a screenshot of the atlas keeps its copy (terrain/<file name>.<its content's sha>.webp)."""
+    return atlas.copy_path(next(f["path"] for f in atlas.frames if f["name"] == name))
+
+
+def clean_map(session, monkeypatch, owner: str = "a") -> None:
+    """A clean map (Fix seams) over the atlas's screenshots in which `owner` shows every spot."""
+    names = [f["name"] for f in session.atlas.frames]
+    monkeypatch.setattr(session, "labels", (np.full((1080, 1920), names.index(owner), np.int16), names))
+    monkeypatch.setattr(session, "terrain", (None, None, (0.0, 0.0, 1.0)))
+
+
 @pytest.fixture
 def session(monkeypatch, tmp_path):
     monkeypatch.setattr(cities, "find_locks", lambda atlas, todo: [])
@@ -39,7 +51,7 @@ def session(monkeypatch, tmp_path):
 
 def test_a_detected_screenshot_in_the_atlas_folder_is_copied_then_moved_to_used(session, tmp_path):
     session._keep_screenshots(session.opened, ["a"])
-    assert (tmp_path / core.SCREENSHOT_COPIES / "a.png.webp").exists()  # the 1080p copy
+    assert copy_of(session.atlas, "a").exists()  # the 1080p copy
     used = tmp_path / core.SCREENSHOTS_USED / "a.png"
     assert used.exists() and not (tmp_path / "a.png").exists()  # the original, safe to delete now
     assert session.atlas.frames[0]["path"] == str(used)
@@ -53,7 +65,7 @@ def test_a_screenshot_outside_the_atlas_folder_is_copied_but_never_moved(session
     (tmp_path / "a.png").rename(steam / "a.png")
     session.atlas.frames[0]["path"] = str(steam / "a.png")
     session._keep_screenshots(session.opened, ["a"])
-    assert (tmp_path / core.SCREENSHOT_COPIES / "a.png.webp").exists()
+    assert copy_of(session.atlas, "a").exists()
     assert (steam / "a.png").exists() and session.atlas.frames[0]["path"] == str(steam / "a.png")  # (user's rule)
 
 
@@ -70,7 +82,7 @@ def test_nothing_is_moved_for_an_atlas_closed_meanwhile(session, tmp_path):
 
     rec.atlas.write_copy = copy_then_switch
     session._keep_screenshots(rec, ["a"])
-    assert (tmp_path / core.SCREENSHOT_COPIES / "a.png.webp").exists()  # (its copy: harmless, the atlas's own)
+    assert copy_of(rec.atlas, "a").exists()  # (its copy: harmless, the atlas's own)
     assert (tmp_path / "a.png").exists()  # not moved: that atlas isn't open any more
 
 
@@ -80,7 +92,7 @@ def test_the_pictures_come_from_the_copy_once_the_screenshot_is_gone(session, tm
     original = cv2.imread(shot)
     (tmp_path / core.SCREENSHOTS_USED / "a.png").unlink()  # the player deletes it
     fresh = core.Atlas.load(tmp_path / "atlas.json")  # (nothing cached)
-    assert fresh.has_picture(shot) and fresh.picture(shot).endswith("a.png.webp")
+    assert fresh.has_picture(shot) and fresh.picture(shot) == str(copy_of(fresh, "a"))
     img = fresh.image(shot)
     assert img is not None and img.shape == original.shape
     assert float(np.abs(img.astype(int) - original.astype(int)).mean()) < 6  # (WebP at quality 90: ~3 / 255)
@@ -108,7 +120,7 @@ def test_an_atlas_finds_its_screenshots_in_used_after_a_move_it_didnt_save(tmp_p
 def test_copies_are_written_whole_and_only_once(session, tmp_path):
     shot = session.atlas.frames[0]["path"]
     assert session.atlas.write_copy(shot)
-    copy = tmp_path / core.SCREENSHOT_COPIES / "a.png.webp"
+    copy = copy_of(session.atlas, "a")
     first = copy.stat().st_mtime_ns
     assert session.atlas.write_copy(shot) and copy.stat().st_mtime_ns == first  # (kept, not written again)
     assert not list((tmp_path / core.SCREENSHOT_COPIES).glob("*.tmp"))  # (no half-written file left)
@@ -121,7 +133,7 @@ def test_the_keep_prompt_says_what_it_will_do(session, tmp_path):
 
 def test_keeping_copies_of_an_atlas_made_before(session, tmp_path):
     session.run_job([], "keep_all")  # (the prompt's job, run here)
-    assert (tmp_path / core.SCREENSHOT_COPIES / "a.png.webp").exists()
+    assert copy_of(session.atlas, "a").exists()
     assert (tmp_path / core.SCREENSHOTS_USED / "a.png").exists()
     assert session.keep_info() | {"seconds": 0} == {
         "shots": 1, "copied": 1, "todo": 0, "lost": 0, "move": 0, "mb": 0.0, "seconds": 0,
@@ -231,21 +243,23 @@ def test_a_screenshot_shown_better_by_another_goes_to_dump_and_comes_back_when_t
     assert (tmp_path / core.SCREENSHOTS_USED / "b.png").exists() and not dump.exists()  # (its copy made it possible)
 
 
-def test_slim_down_removes_the_copies_of_dump_screenshots_only_when_ticked(session, tmp_path):
+def test_slim_down_removes_the_copies_of_dump_screenshots_only_when_ticked(session, tmp_path, monkeypatch):
     session._keep_screenshots(session.opened, ["a"])
     second_view(session, tmp_path)
-    copy_b = tmp_path / core.SCREENSHOT_COPIES / "b.png.webp"
+    clean_map(session, monkeypatch)
+    copy_b = copy_of(session.atlas, "b")
     assert session.slim_info(session.atlas, session.opened)["count"] == 1
     assert session.recheck_info()["slim"]["count"] == 1  # (the Re-check prompt's tick says how many)
     session._slim_down(session.opened)
     assert copy_b.exists()  # (not ticked: nothing removed)
     session.set_ui_settings({"recheck_slim": True})
     session._slim_down(session.opened)
-    assert not copy_b.exists() and (tmp_path / core.SCREENSHOT_COPIES / "a.png.webp").exists()
+    assert not copy_b.exists() and copy_of(session.atlas, "a").exists()
 
 
-def test_the_re_check_prompt_never_waits_for_a_job_to_count_the_slim_down(session, tmp_path):
+def test_the_re_check_prompt_never_waits_for_a_job_to_count_the_slim_down(session, tmp_path, monkeypatch):
     second_view(session, tmp_path)
+    clean_map(session, monkeypatch)
     holding, go = threading.Event(), threading.Event()
 
     def job():
@@ -277,27 +291,28 @@ def test_undo_brings_back_to_used_a_screenshot_the_undone_add_sent_to_dump(sessi
     assert a["path"] == str(tmp_path / core.SCREENSHOTS_USED / "a.png") and Path(a["path"]).exists()
 
 
-def slimmed(session, tmp_path) -> Path:
+def slimmed(session, tmp_path, monkeypatch) -> Path:
     """b shown better by a, in dump/ with its copy removed by a ticked slim down; returns the copy's place."""
     session._keep_screenshots(session.opened, ["a"])
     second_view(session, tmp_path)
     session._sort_dump(session.opened)
+    clean_map(session, monkeypatch)
     session.set_ui_settings({"recheck_slim": True})
+    copy_b = copy_of(session.atlas, "b")
     session._slim_down(session.opened)
-    copy_b = tmp_path / core.SCREENSHOT_COPIES / "b.png.webp"
     assert (tmp_path / core.SCREENSHOTS_DUMP / "b.png").exists() and not copy_b.exists()
     return copy_b
 
 
-def test_a_screenshot_back_from_dump_after_a_slim_down_gets_its_copy_again(session, tmp_path):
-    copy_b = slimmed(session, tmp_path)
-    del session.atlas.frames[0]  # (a taken out: b shows those spots best again)
+def test_a_screenshot_back_from_dump_after_a_slim_down_gets_its_copy_again(session, tmp_path, monkeypatch):
+    copy_b = slimmed(session, tmp_path, monkeypatch)
+    del session.atlas.frames[0]  # (a taken out: b shows those spots best again; the clean map names a: the grid)
     session._sort_dump(session.opened)
     assert (tmp_path / core.SCREENSHOTS_USED / "b.png").exists() and copy_b.exists()  # (used/ stays safe to delete)
 
 
-def test_a_slimmed_screenshot_gone_for_good_is_no_missing_terrain_warning(session, tmp_path):
-    slimmed(session, tmp_path)
+def test_a_slimmed_screenshot_gone_for_good_is_no_missing_terrain_warning(session, tmp_path, monkeypatch):
+    slimmed(session, tmp_path, monkeypatch)
     (tmp_path / core.SCREENSHOTS_DUMP / "b.png").unlink()  # (the player deleted dump/)
     path = session.path
     session.open_atlas(path)  # (opened again)
@@ -307,3 +322,96 @@ def test_a_slimmed_screenshot_gone_for_good_is_no_missing_terrain_warning(sessio
     lines = list(session.events.log_lines)
     assert any("slimmed down" in line for line in lines)
     assert not any("screenshots not found" in line for line in lines)
+
+
+def test_two_screenshots_of_one_name_from_different_folders_keep_copies_of_their_own(session, tmp_path):
+    # (CodeRabbit: the second one's copy was "there" already, and showed the first one's pixels once deleted)
+    (tmp_path / "two").mkdir()
+    screenshot(tmp_path / "two" / "a.png", seed=9)
+    other = dict(session.atlas.frames[0], name="a", path=str(tmp_path / "two" / "a.png"), sha="f" * 64)
+    session.atlas.frames.append(other)
+    first, second = (session.atlas.copy_path(f["path"]) for f in session.atlas.frames)
+    assert first != second
+    assert session.atlas.write_copy(other["path"]) and second.exists() and not first.exists()
+
+
+def test_a_copy_keeps_its_name_when_its_screenshot_moves(session, tmp_path):
+    before = copy_of(session.atlas, "a")
+    session._keep_screenshots(session.opened, ["a"])  # (moved to used/)
+    assert copy_of(session.atlas, "a") == before and before.exists()
+
+
+def test_a_screenshot_with_no_picture_left_never_takes_spots_from_one_with_a_picture(session, tmp_path):
+    second_view(session, tmp_path)  # (b shows what a shows)
+    ghost = dict(session.atlas.frames[0], name="ghost", path=str(tmp_path / "ghost.png"), sha="0" * 64)
+    session.atlas.frames.insert(0, ghost)  # (first: it won every tie, though it has neither file nor copy)
+    dump = session._dump_names(session.atlas, session.opened)
+    assert "a" not in dump and "ghost" not in dump  # (a still shows its spots: CodeRabbit)
+
+
+def test_a_clean_map_naming_a_screenshot_undone_or_missing_a_new_one_is_not_used(session, tmp_path, monkeypatch):
+    second_view(session, tmp_path)
+    clean_map(session, monkeypatch)
+    assert session._ownership_input(session.atlas, session.opened)[1] is not None
+    monkeypatch.setattr(session, "labels", (session.labels[0], ["a", "b", "undone"]))  # (an undo took one out)
+    assert session._ownership_input(session.atlas, session.opened)[1] is None
+    monkeypatch.setattr(session, "labels", (session.labels[0], ["a"]))  # (b added while the map is made again)
+    assert session._ownership_input(session.atlas, session.opened)[1] is None
+
+
+def test_slim_down_removes_nothing_without_a_clean_map(session, tmp_path):
+    # (the grid knows placements, not each screenshot's fog: never what is deleted - CodeRabbit)
+    session._keep_screenshots(session.opened, ["a"])
+    second_view(session, tmp_path)
+    assert session.slim_info(session.atlas, session.opened) == {"count": 0, "mb": 0.0, "clean": False}
+    session.set_ui_settings({"recheck_slim": True})
+    session._slim_down(session.opened)
+    assert copy_of(session.atlas, "b").exists()
+    assert any("it needs the clean map (Fix seams)" in line for line in session.events.log_lines)
+
+
+def test_undo_keeps_the_time_a_screenshot_was_taken_recorded_after_its_snapshot(session, tmp_path):
+    snapshot = session._snapshot()  # (before a's time was kept)
+    second_view(session, tmp_path)
+    session._remember_add(["b"], snapshot)
+    session._keep_screenshots(session.opened, ["a"])  # (records a's time: no Steam name)
+    taken = session.atlas.frames[0]["taken"]
+    (tmp_path / core.SCREENSHOTS_USED / "a.png").unlink()  # (then deleted: its time only in the atlas now)
+    session._run_undo()
+    assert session.atlas.frames[0].get("taken") == pytest.approx(taken)  # (CodeRabbit)
+
+
+def test_a_screenshot_unreadable_mid_fix_seams_owns_no_spot_of_the_clean_map(session, monkeypatch):
+    from grand_project.core import seams
+
+    real, seen = session.atlas.image, set()
+
+    def once(path):  # (read for its scores, deleted before it is drawn, no copy)
+        if path in seen:
+            return None
+        seen.add(path)
+        return real(path)
+
+    monkeypatch.setattr(session.atlas, "image", once)
+    _canvas, _origin, weight, labels, _names = seams.clean_composite(session.atlas)
+    assert int((labels >= 0).sum()) == 0 and float(weight.max()) <= 0  # (CodeRabbit: black, owned and weighted)
+
+
+def test_a_sharp_tile_missing_a_screenshot_gone_mid_build_is_not_kept(session, monkeypatch):
+    f = session.atlas.frames[0]
+    gone_mid_way(session.atlas, monkeypatch)
+    skipped = []
+    core.build_sharp_tile(
+        session.atlas, [core.footprint(session.atlas, f)], 1.0, 0.0, 0.0, 256, lambda f: None, 4, skipped=skipped
+    )
+    assert skipped == ["a"]  # (webmap's SharpTiles keeps no such tile in its folder: built again next time)
+
+
+def test_paths_are_traced_again_through_the_copy_of_a_screenshot_deleted_mid_trace():
+    assert traces._trace_one((None, None, None, None)) == {}  # (no picture left: nothing traced)
+    assert traces._trace_one(("gone.png", None, None, None)) is None  # (picked, then deleted: traced again)
+
+
+def test_no_gold_is_looked_for_in_a_screenshot_with_no_picture_left(session, monkeypatch):
+    monkeypatch.setattr(session.atlas, "image", lambda path: None)
+    assert traces._gold(session.atlas, {"path": "gone.png", "name": "gone"}) is None  # (the check stopped on it)

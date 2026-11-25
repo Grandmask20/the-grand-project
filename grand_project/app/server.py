@@ -597,7 +597,12 @@ class Handler(BaseHTTPRequestHandler):
     @route("GET", "/api/atlas/keep-info")
     def get_keep_info(self, q) -> None:
         """What the "Keep copies" prompt says about the open atlas (its screenshots' copies: app/keeping.py)."""
-        self._json(self.S.keep_info())
+        gen = self.S.generation
+        info = self.S.keep_info()
+        if self.S.generation != gen:  # another atlas opened while it was counted: refused, never a mix (CodeRabbit)
+            raise StaleAtlas()
+        self._resp_gen = gen
+        self._json(info)
 
     @route("POST", "/api/atlas/keep")
     def post_keep(self, q) -> None:
