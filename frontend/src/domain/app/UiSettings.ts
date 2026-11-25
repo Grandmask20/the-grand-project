@@ -12,6 +12,8 @@ export interface UiSettings {
 	ui: PageSettings;
 	/** What a Re-check updates: the box's ticks, for every atlas ({maps, paths, landmarks, towers, biomes, icons}). */
 	recheck_update?: Record<string, boolean>;
+	/** The Re-check prompt's slim down, for every atlas: the copies of screenshots in dump removed at its end. */
+	recheck_slim?: boolean;
 }
 
 /** Settings only the page uses, kept with the others. */

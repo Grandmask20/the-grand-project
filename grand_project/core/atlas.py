@@ -26,6 +26,7 @@ from .constants import (
     PARALLAX_TOL,
     SCREENSHOT_COPIES,
     SCREENSHOT_COPY_QUALITY,
+    SCREENSHOTS_DUMP,
     SCREENSHOTS_USED,
     TERRAIN_MIN_AGREE,
     TERRAIN_MIN_NCC,
@@ -57,7 +58,7 @@ def find_screenshot(p: str, atlas_dir: Path) -> str:
     if not q.exists():
         # next to the atlas, or in its used/ folder (detected originals are moved there: app/keeping.py), also when
         # the atlas json still names the place before a move it didn't save
-        for there in (atlas_dir / q.name, atlas_dir / SCREENSHOTS_USED / q.name):
+        for there in (atlas_dir / q.name, atlas_dir / SCREENSHOTS_USED / q.name, atlas_dir / SCREENSHOTS_DUMP / q.name):
             if there.exists():
                 return str(there)
     return p
@@ -222,6 +223,9 @@ class Atlas:
                 return img
         src = self.picture(path)
         img = _frame.read_screenshot(src) if src is not None else None
+        if img is None and src == str(path):  # gone between the check and the read (moved to dump/, deleted): its copy
+            c = self.copy_path(path)
+            img = _frame.read_screenshot(c) if c is not None and c.exists() else None
         if img is None:
             return None
         with Atlas._image_lock:

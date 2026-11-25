@@ -2,6 +2,9 @@
 detected originals in used/, the pictures read from the copies once a screenshot is gone (user's design, 2026-11-14;
 a Reddit player's question, 2026-11-25)."""
 
+import threading
+from pathlib import Path
+
 import cv2
 import numpy as np
 import pytest
@@ -204,3 +207,57 @@ def test_the_prompt_counts_only_moves_that_will_happen(session, tmp_path):
     (tmp_path / core.SCREENSHOTS_USED).mkdir()
     screenshot(tmp_path / core.SCREENSHOTS_USED / "a.png", seed=3)  # (its name taken in used/: it stays)
     assert session.keep_info()["move"] == 0
+
+
+def second_view(session, tmp_path, name: str = "b"):
+    """Add a screenshot showing exactly what "a" shows (the same placement), kept in used/ with its copy."""
+    f = dict(session.atlas.frames[0], name=name, path=str(tmp_path / core.SCREENSHOTS_USED / f"{name}.png"))
+    (tmp_path / core.SCREENSHOTS_USED).mkdir(exist_ok=True)
+    screenshot(Path(f["path"]), seed=5)
+    session.atlas.frames.append(f)
+    session.atlas.write_copy(f["path"])
+    return f
+
+
+def test_a_screenshot_shown_better_by_another_goes_to_dump_and_comes_back_when_that_one_goes(session, tmp_path):
+    session._keep_screenshots(session.opened, ["a"])
+    second_view(session, tmp_path)  # (b shows nothing a doesn't show at least as centrally)
+    session._sort_dump(session.opened)
+    dump = tmp_path / core.SCREENSHOTS_DUMP / "b.png"
+    assert dump.exists() and session.atlas.frames[1]["path"] == str(dump)  # delete these first (user)
+    assert (tmp_path / core.SCREENSHOTS_USED / "a.png").exists()  # (a still shows its spots best)
+    del session.atlas.frames[0]  # a taken out (an undo): b shows those spots best again
+    session._sort_dump(session.opened)
+    assert (tmp_path / core.SCREENSHOTS_USED / "b.png").exists() and not dump.exists()  # (its copy made it possible)
+
+
+def test_slim_down_removes_the_copies_of_dump_screenshots_only_when_ticked(session, tmp_path):
+    session._keep_screenshots(session.opened, ["a"])
+    second_view(session, tmp_path)
+    copy_b = tmp_path / core.SCREENSHOT_COPIES / "b.png.webp"
+    assert session.slim_info(session.atlas, session.opened)["count"] == 1
+    assert session.recheck_info()["slim"]["count"] == 1  # (the Re-check prompt's tick says how many)
+    session._slim_down(session.opened)
+    assert copy_b.exists()  # (not ticked: nothing removed)
+    session.set_ui_settings({"recheck_slim": True})
+    session._slim_down(session.opened)
+    assert not copy_b.exists() and (tmp_path / core.SCREENSHOT_COPIES / "a.png.webp").exists()
+
+
+def test_the_re_check_prompt_never_waits_for_a_job_to_count_the_slim_down(session, tmp_path):
+    second_view(session, tmp_path)
+    holding, go = threading.Event(), threading.Event()
+
+    def job():
+        with session._lock:
+            holding.set()
+            go.wait(10)
+
+    t = threading.Thread(target=job, daemon=True)
+    t.start()
+    assert holding.wait(10)
+    try:
+        assert session.recheck_info()["slim"]["count"] == 1  # (answered from the grid while the job holds the lock)
+    finally:
+        go.set()
+        t.join(10)

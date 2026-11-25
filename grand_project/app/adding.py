@@ -703,6 +703,7 @@ class AddingMixin:
         self._after_placed(mode, added, refused)
         if added:  # copies kept, the originals in the atlas's folder moved to used/ (safe to delete: user)
             self._keep_screenshots(rec, [f["name"] for f in new])
+            self._sort_dump(rec)  # (a newer, more central screenshot can send an older one to dump/)
 
     def _run_recheck(self) -> None:
         """Detect again screenshots detected by an older detector, re-check the whole atlas, then ask which of the
@@ -760,6 +761,7 @@ class AddingMixin:
                 done = "whole atlas re-checked" + (": nothing changed" if listed is not None else "")
         if listed is None or not any(g["count"] for g in listed.values()):
             self.rebuild_model()
+            self._slim_down(rec)  # (ticked in the Re-check prompt: the copies of dump screenshots removed)
             self._done(done)
             return
         picked = self._ask_recheck(listed)
@@ -798,6 +800,7 @@ class AddingMixin:
         msg = "whole atlas re-checked: " + (f"updated {', '.join(took)}" if took else "nothing updated")
         if left:
             msg += f"; kept as before: {', '.join(left)}"
+        self._slim_down(rec)  # (ticked in the Re-check prompt: the copies of dump screenshots removed)
         self._done(msg)
 
     @staticmethod
@@ -874,6 +877,8 @@ class AddingMixin:
             "missing": missing,
             "estimate_s": round(estimate),
             "groups": sorted(groups.values(), key=lambda g: -g["newest"]),
+            # the slim down's tick (packaged with Re-check: user): the copies of screenshots in dump
+            "slim": self.slim_info(atlas, rec if atlas is rec.atlas else None),
         }
 
     def _biomes_of(self, atlas, final: dict, kept: bool) -> dict:
@@ -1050,6 +1055,7 @@ class AddingMixin:
         self.recent = [n for n in self.recent if n not in gone]
         self.rebuild_model()
         self.load_terrain(cities=True)
+        self._sort_dump(self.opened)  # (a screenshot the undone ones outshone shows its spots again: back to used/)
         self._done(f"undone: {', '.join(entry['names'])}")
 
     # ------------------------------------------------------------------ placing

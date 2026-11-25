@@ -11,4 +11,6 @@ export interface RecheckInfo {
 	estimate_s: number;
 	/** The screenshots by the version that detected them, newest first (version null: before 1.23). */
 	groups: { version: string | null; fresh: boolean; count: number; newest: number; oldest: number }[];
+	/** The slim down's tick: the copies of screenshots in dump (owning no spot of the map) there now. */
+	slim?: { count: number; mb: number };
 }

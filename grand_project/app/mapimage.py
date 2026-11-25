@@ -657,6 +657,7 @@ class MapImageMixin:
                 if line.strip() and line.strip() != "done":
                     self.events.set_progress(line.strip(), scope, owner=owner)
             proc.wait()
+            shown = None
             try:
                 if proc.returncode == 0 and out.exists() and self.owns(gen) and not self._seams_stopped:
                     with np.load(out) as r:
@@ -672,6 +673,9 @@ class MapImageMixin:
                             if self.set_terrain(canvas, weight, origin, labels=(labels, names), gen=gen):
                                 self.events.log(f"Fix seams: clean map ready ({time.monotonic() - t0:.0f} s)", scope)
                                 self._seams_ready(names)
+                                shown = self.opened  # (sorted below, by the clean map's own ownership)
+                    if shown is not None:  # its screenshots into used/ and dump/ (outside the lock: file work)
+                        self._sort_dump(shown)
                 elif self._seams_stopped:
                     self.events.log("Fix seams: stopped (its clean map was left out)", scope)
                 elif proc.returncode != 0:

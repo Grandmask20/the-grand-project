@@ -167,6 +167,8 @@ class AtlasSession(
             "replay": s.get("replay", {}),
             "ui": s.get("ui", {}),
             "recheck_update": {g: bool(_recheck_ticks(s).get(g, True)) for g in RECHECK_GROUPS},
+            # the Re-check prompt's slim down (for every atlas): the copies of screenshots in dump removed
+            "recheck_slim": bool(s.get("recheck_slim", False)),
         }
 
     def set_ui_settings(self, changes: dict) -> dict:
@@ -202,6 +204,8 @@ class AtlasSession(
                 s[k] = bool(changes[k])
         if "hidden_types" in changes:
             s["icon_hidden"] = sorted(set(changes["hidden_types"]))
+        if "recheck_slim" in changes:
+            s["recheck_slim"] = bool(changes["recheck_slim"])
         if isinstance(changes.get("recheck_update"), dict):
             got = {g: bool(v) for g, v in changes["recheck_update"].items() if g in RECHECK_GROUPS}
             s["recheck_update"] = {**_recheck_ticks(s), **got}
@@ -608,6 +612,7 @@ _WORDS = {
     "only_icon_maps": "Find: only maps with a ticked icon",
     "near_only": "Find: only potential city maps",
     "recheck_update": "Re-check updates",
+    "recheck_slim": "Re-check slim down",
     "path_freq": "paths drawn by at least",
     "path_width": "path width",
     "path_style": "path style",

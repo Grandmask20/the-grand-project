@@ -142,3 +142,9 @@ ISLAND_CANDIDATES = 12  # shifts passing the quick count that get the exact chec
 ISLAND_TERRAIN_TRIES = 3  # of those passing it, the best this many get the terrain check
 ISLAND_COVER_CELL = 20.0  # atlas units: grid cell for "which area does an atlas / a group cover"
 ISLAND_QUICK_TOL = 8.0  # px: a map counts as landing on one in the quick count (shifts are rounded to 4 units)
+# the dump folder: detected originals that show no spot the map image uses (every spot of theirs is shown better by
+# a more central screenshot: the user's "worse placements of an area"); safe to delete first, their copies stay
+SCREENSHOTS_DUMP = "dump"
+OWNER_DUMP_SHARE = 0.01  # a screenshot owning less of its own area than this is dump (not kept for a sliver)
+OWNER_GRID = 1024  # cells on the atlas's long side for "most central wins" without a clean map (as "times seen")
+OWNER_SCREEN_STEP = 16  # screen px per cell of a screenshot's centrality template (1920 x 1080 -> 120 x 68)
