@@ -654,6 +654,9 @@ class AddingMixin:
         frames, failed = self._detect(paths, "detecting") if paths else ([], [])
         if failed and mode == "watch":
             self._watch_failed(failed)
+        # their copies kept right away: one deleted while it is placed still has its picture (user: aggressive
+        # checking on files deleted mid-way); made after the job, it had none
+        self._copy_detected(frames)
         self.events.set_progress("placing")
         self._shown_early = set()  # (screenshots pasted while a question was open: _show_placed)
         self._rebuilt_early = False
@@ -1034,6 +1037,8 @@ class AddingMixin:
         with self._lock:
             old = core.Atlas.load(entry["file"])  # (raises: the entry stays, Undo can be tried again: CodeRabbit)
             self._undo.pop()
+            kept = {f["name"] for f in old.frames}
+            self._unkeep([f for f in self.atlas.frames if f["name"] not in kept])  # (out of used/: not in the atlas)
             self._lock_rev = getattr(self, "_lock_rev", 0) + 1  # (a stronghold search running now is out of date)
             for attr in core.Atlas.SAVED:
                 if attr not in core.Atlas.HAND_EDITS:

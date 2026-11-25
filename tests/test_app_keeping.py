@@ -36,7 +36,7 @@ def session(monkeypatch, tmp_path):
 
 def test_a_detected_screenshot_in_the_atlas_folder_is_copied_then_moved_to_used(session, tmp_path):
     session._keep_screenshots(session.opened, ["a"])
-    assert (tmp_path / core.SCREENSHOT_COPIES / "a.webp").exists()  # the 1080p copy
+    assert (tmp_path / core.SCREENSHOT_COPIES / "a.png.webp").exists()  # the 1080p copy
     used = tmp_path / core.SCREENSHOTS_USED / "a.png"
     assert used.exists() and not (tmp_path / "a.png").exists()  # the original, safe to delete now
     assert session.atlas.frames[0]["path"] == str(used)
@@ -50,7 +50,7 @@ def test_a_screenshot_outside_the_atlas_folder_is_copied_but_never_moved(session
     (tmp_path / "a.png").rename(steam / "a.png")
     session.atlas.frames[0]["path"] = str(steam / "a.png")
     session._keep_screenshots(session.opened, ["a"])
-    assert (tmp_path / core.SCREENSHOT_COPIES / "a.webp").exists()
+    assert (tmp_path / core.SCREENSHOT_COPIES / "a.png.webp").exists()
     assert (steam / "a.png").exists() and session.atlas.frames[0]["path"] == str(steam / "a.png")  # (user's rule)
 
 
@@ -67,7 +67,7 @@ def test_nothing_is_moved_for_an_atlas_closed_meanwhile(session, tmp_path):
 
     rec.atlas.write_copy = copy_then_switch
     session._keep_screenshots(rec, ["a"])
-    assert (tmp_path / core.SCREENSHOT_COPIES / "a.webp").exists()  # (its copy: harmless, the atlas's own)
+    assert (tmp_path / core.SCREENSHOT_COPIES / "a.png.webp").exists()  # (its copy: harmless, the atlas's own)
     assert (tmp_path / "a.png").exists()  # not moved: that atlas isn't open any more
 
 
@@ -77,7 +77,7 @@ def test_the_pictures_come_from_the_copy_once_the_screenshot_is_gone(session, tm
     original = cv2.imread(shot)
     (tmp_path / core.SCREENSHOTS_USED / "a.png").unlink()  # the player deletes it
     fresh = core.Atlas.load(tmp_path / "atlas.json")  # (nothing cached)
-    assert fresh.has_picture(shot) and fresh.picture(shot).endswith("a.webp")
+    assert fresh.has_picture(shot) and fresh.picture(shot).endswith("a.png.webp")
     img = fresh.image(shot)
     assert img is not None and img.shape == original.shape
     assert float(np.abs(img.astype(int) - original.astype(int)).mean()) < 6  # (WebP at quality 90: ~3 / 255)
@@ -105,7 +105,7 @@ def test_an_atlas_finds_its_screenshots_in_used_after_a_move_it_didnt_save(tmp_p
 def test_copies_are_written_whole_and_only_once(session, tmp_path):
     shot = session.atlas.frames[0]["path"]
     assert session.atlas.write_copy(shot)
-    copy = tmp_path / core.SCREENSHOT_COPIES / "a.webp"
+    copy = tmp_path / core.SCREENSHOT_COPIES / "a.png.webp"
     first = copy.stat().st_mtime_ns
     assert session.atlas.write_copy(shot) and copy.stat().st_mtime_ns == first  # (kept, not written again)
     assert not list((tmp_path / core.SCREENSHOT_COPIES).glob("*.tmp"))  # (no half-written file left)
@@ -118,7 +118,7 @@ def test_the_keep_prompt_says_what_it_will_do(session, tmp_path):
 
 def test_keeping_copies_of_an_atlas_made_before(session, tmp_path):
     session.run_job([], "keep_all")  # (the prompt's job, run here)
-    assert (tmp_path / core.SCREENSHOT_COPIES / "a.webp").exists()
+    assert (tmp_path / core.SCREENSHOT_COPIES / "a.png.webp").exists()
     assert (tmp_path / core.SCREENSHOTS_USED / "a.png").exists()
     assert session.keep_info() | {"seconds": 0} == {
         "shots": 1, "copied": 1, "todo": 0, "lost": 0, "move": 0, "mb": 0.0, "seconds": 0,
@@ -139,3 +139,68 @@ def test_a_deleted_screenshot_keeps_its_time_for_oldest_to_newest_and_the_timela
     (tmp_path / core.SCREENSHOTS_USED / "a.png").unlink()
     fresh = core.Atlas.load(tmp_path / "atlas.json")
     assert core.capture_time(fresh.frames[0]) == pytest.approx(taken)
+
+
+def gone_mid_way(atlas, monkeypatch):
+    """The screenshot is deleted (no copy) between the "picture there?" check and the read (user: aggressive checking
+    on files deleted mid detection / Fix seams / Re-check)."""
+    monkeypatch.setattr(atlas, "has_picture", lambda path: True)
+    monkeypatch.setattr(atlas, "image", lambda path: None)
+
+
+def test_a_screenshot_deleted_mid_map_image_or_fix_seams_is_left_out(session, monkeypatch):
+    gone_mid_way(session.atlas, monkeypatch)
+    canvas, _origin = session.atlas.composite()  # (the map image)
+    assert canvas is not None
+    from grand_project.core import seams
+
+    seams.clean_composite(session.atlas)  # (Fix seams' clean map: crashed on the missing picture)
+
+
+def test_a_screenshot_deleted_mid_sharp_tile_leaves_a_hole(session, monkeypatch):
+    f = session.atlas.frames[0]
+    gone_mid_way(session.atlas, monkeypatch)
+    out, best = core.build_sharp_tile(
+        session.atlas, [core.footprint(session.atlas, f)], 1.0, 0.0, 0.0, 256, lambda f: None, 4
+    )
+    assert out.shape == (256, 256, 3) and float(best.max()) <= 0  # (nothing from it: the map image fills the hole)
+
+
+def test_a_new_screenshot_gets_its_copy_before_it_is_placed(session, tmp_path, monkeypatch):
+    import types
+
+    from grand_project import builder
+
+    new = tmp_path / "b.png"
+    screenshot(new, seed=2)
+    seen = []
+    monkeypatch.setattr(session, "_detect", lambda paths, what: ([types.SimpleNamespace(path=new)], []))
+
+    def place(atlas, frames, log=None):
+        seen.append((tmp_path / core.SCREENSHOT_COPIES / "b.png.webp").exists())
+        new.unlink()  # deleted while it is placed: its picture is still there (the copy)
+        seen.append(atlas.has_picture(str(new)))
+        return 0, ["b"]
+
+    monkeypatch.setattr(builder, "place_frames", place)
+    session.run_job([new], "manual")
+    assert seen == [True, True]  # (made after the job, there was none: self review)
+
+
+def test_undo_puts_its_screenshots_back_from_used(session, tmp_path):
+    session._keep_screenshots(session.opened, ["a"])
+    assert (tmp_path / core.SCREENSHOTS_USED / "a.png").exists()
+    with session._lock:
+        session._unkeep(list(session.atlas.frames))  # (as Undo does for the screenshots it takes out)
+    assert (tmp_path / "a.png").exists() and not (tmp_path / core.SCREENSHOTS_USED / "a.png").exists()
+
+
+def test_screenshots_sharing_a_stem_get_copies_of_their_own(session, tmp_path):
+    atlas = session.atlas
+    assert atlas.copy_path(str(tmp_path / "x.png")) != atlas.copy_path(str(tmp_path / "x.jpg"))
+
+
+def test_the_prompt_counts_only_moves_that_will_happen(session, tmp_path):
+    (tmp_path / core.SCREENSHOTS_USED).mkdir()
+    screenshot(tmp_path / core.SCREENSHOTS_USED / "a.png", seed=3)  # (its name taken in used/: it stays)
+    assert session.keep_info()["move"] == 0

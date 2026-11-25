@@ -149,10 +149,11 @@ class Atlas:
             path: The screenshot file path.
 
         Returns:
-            terrain/<its name>.webp, or None for an atlas not saved anywhere yet.
+            terrain/<its file name>.webp (the whole name: a.png and a.jpg shared one copy by stem, self review), or None
+            for an atlas not saved anywhere yet.
         """
         d = getattr(self, "copies_dir", None)
-        return None if d is None else Path(d) / (Path(path).stem + ".webp")
+        return None if d is None else Path(d) / (Path(path).name + ".webp")
 
     def picture(self, path: str) -> str | None:
         """Return the file a screenshot's picture is read from: the screenshot, else its copy (copy_path).
@@ -585,7 +586,10 @@ class Atlas:
             frame: The new screenshot.
             reg: Its proposed placement (reg.M); updated in place.
         """
-        img_new = self.image(frame.path)
+        img_new = self.image(frame.path)  # (the screenshot, else the copy kept right after its detection)
+        if img_new is None:  # deleted while it was being placed, with no copy: no terrain to compare
+            reg.ncc, reg.ncc_pixels, reg.ref_frame = 0.0, 0, ""
+            return
         best_ncc, best_n, best_ref = -1.0, 0, ""
         H_new = screen_to_atlas(reg.M, frame.R)
         c_new = persp(H_new, [[frame.w / 2, frame.h / 2]])[0]
@@ -1069,6 +1073,8 @@ class Atlas:
             Hroi = np.array([[1, 0, -bx0], [0, 1, -by0], [0, 0, 1]], float) @ Hc
             size = (int(bx1 - bx0), int(by1 - by0))
             img = self.image(f["path"])
+            if img is None:  # deleted since the check above, with no copy (user: aggressive checking)
+                continue
             valid = (_valid_mask(img) > 0).astype(np.uint8) * 255  # (the cached mask is read-only)
             dist = cv2.distanceTransform(valid, cv2.DIST_L2, 3)
             wmap = cv2.warpPerspective(dist, Hroi, size, flags=cv2.INTER_LINEAR, borderValue=0)

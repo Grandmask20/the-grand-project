@@ -169,7 +169,11 @@ class _Grid:
             self.shot[i] = None
             return None
         gx0, gy0, w, h, Hg = win
-        sc, busy = _score(self.atlas.image(self.frames[i]["path"]))
+        img = self.atlas.image(self.frames[i]["path"])
+        if img is None:  # deleted since Fix seams began, with no copy: it owns nothing (user: aggressive checking)
+            self.shot[i] = None
+            return None
+        sc, busy = _score(img)
         S = np.diag([float(SEAM_SCORE_SCALE), float(SEAM_SCORE_SCALE), 1.0])
         Hroi = np.array([[1, 0, -gx0], [0, 1, -gy0], [0, 0, 1]], float) @ Hg @ S
         # the score is a distance: sample it (no averaging), the busyness averaged over the cell
@@ -494,7 +498,10 @@ def clean_composite(atlas, max_pixels: int = 36_000_000, region=None, log=None):
         mine = labels[by0 : by0 + size[1], bx0 : bx0 + size[0]] == i
         if not mine.any():
             continue
-        pix = cv2.warpPerspective(atlas.image(f["path"]), Hroi, size, flags=cv2.INTER_LINEAR, borderValue=0)
+        img = atlas.image(f["path"])
+        if img is None:  # deleted while the clean map was worked out, with no copy: its part stays empty
+            continue
+        pix = cv2.warpPerspective(img, Hroi, size, flags=cv2.INTER_LINEAR, borderValue=0)
         canvas[by0 : by0 + size[1], bx0 : bx0 + size[0]][mine] = pix[mine]
         if log and i % 100 == 99:
             log(f"clean map: drawn {i + 1} of {len(frames)} screenshots")

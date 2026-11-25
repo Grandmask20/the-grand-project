@@ -49,7 +49,10 @@ class KeepingMixin:
             copied += kept
             todo += here and not kept
             lost += not here and not kept
-            move += here and shot.parent.resolve() == folder
+            # (moved only where its name is free in used/: _keep_screenshots)
+            move += (
+                here and shot.parent.resolve() == folder and not (folder / core.SCREENSHOTS_USED / shot.name).exists()
+            )
         return {
             "shots": len(atlas.frames),
             "copied": copied,
@@ -79,6 +82,50 @@ class KeepingMixin:
             names = [f["name"] for f in rec.atlas.frames] if rec.atlas else []
         self._keep_screenshots(rec, names)
         self._done(f"copies kept of {len(names)} screenshot(s)")
+
+    def _unkeep(self, frames: list[dict]) -> None:
+        """Put screenshots an Undo takes out of the atlas back from used/ into the atlas's folder (under the session
+        lock, the open atlas): in used/, auto-add never saw them again, and deleting used/ deleted screenshots the
+        atlas no longer holds (self review).
+
+        Args:
+            frames: The atlas frames being taken out.
+        """
+        if self.path is None:
+            return
+        folder = self.path.parent.resolve()
+        back = 0
+        for f in frames:
+            src = Path(f["path"])
+            try:
+                if src.parent.resolve() != folder / core.SCREENSHOTS_USED or not src.exists():
+                    continue
+                dst = folder / src.name
+                if dst.exists():
+                    continue
+                src.rename(dst)
+                back += 1
+            except OSError as e:
+                LOG.warning(f"{src.name}: not moved back from {core.SCREENSHOTS_USED}/ ({e})")
+        if back:
+            self.events.log(f"{back} screenshot(s) put back from {core.SCREENSHOTS_USED}/ (undone: not in the atlas)")
+
+    def _copy_detected(self, frames: list) -> None:
+        """Keep copies of screenshots just detected, before they are placed (worker thread, no lock: file work on
+        the job's own atlas, which can't be switched while the job runs).
+
+        Args:
+            frames: The detected screenshots (core.Frame, .path).
+        """
+        atlas = self.atlas
+        if atlas is None or not frames:
+            return
+        for i, fr in enumerate(frames, 1):
+            self.events.set_progress(f"keeping copies of the new screenshots {i} / {len(frames)}")
+            try:
+                atlas.write_copy(str(fr.path))
+            except OSError as e:  # (a full disk, a locked folder: kept after the job instead, or not at all)
+                LOG.warning(f"{Path(str(fr.path)).name}: no copy kept ({e})")
 
     def _keep_screenshots(self, rec: Opened, names: list[str]) -> None:
         """Keep copies of these screenshots of an atlas, then move the ones in its own folder into used/. Worker

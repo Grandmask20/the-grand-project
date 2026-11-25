@@ -78,14 +78,17 @@ class SharpTiles:
             f: The screenshot's entry from atlas.frames.
 
         Returns:
-            Its weight array.
+            Its weight array, or None when its picture is gone.
         """
         key = f["name"]
         with self._lock:
             if key in self._weights:
                 self._weights.move_to_end(key)
                 return self._weights[key]
-        w = core.ground_weight(self.atlas.image(f["path"]))
+        img = self.atlas.image(f["path"])
+        if img is None:  # (deleted, with no copy: the tile leaves it out, core.build_sharp_tile)
+            return None
+        w = core.ground_weight(img)
         with self._lock:
             self._weights[key] = w
             while len(self._weights) > WEBMAP_SHARP_WEIGHTS:

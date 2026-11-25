@@ -119,8 +119,11 @@ def build_sharp_tile(
         Hf = screen_to_atlas(np.array(f["M"], float), atlas.frame_R(f))
         M = np.array([[1, 0, -x0], [0, 1, -y0], [0, 0, 1]]) @ V @ Hf
         sz = (x1 - x0, y1 - y0)
-        pix = cv2.warpPerspective(atlas.image(f["path"]), M, sz, flags=cv2.INTER_LINEAR, borderMode=cv2.BORDER_CONSTANT)
-        wt = cv2.warpPerspective(weight_of(f), M @ S4, sz, flags=cv2.INTER_LINEAR, borderMode=cv2.BORDER_CONSTANT)
+        img, weight = atlas.image(f["path"]), weight_of(f)
+        if img is None or weight is None:  # deleted since the check above, with no copy: a hole (map image there)
+            continue
+        pix = cv2.warpPerspective(img, M, sz, flags=cv2.INTER_LINEAR, borderMode=cv2.BORDER_CONSTANT)
+        wt = cv2.warpPerspective(weight, M @ S4, sz, flags=cv2.INTER_LINEAR, borderMode=cv2.BORDER_CONSTANT)
         sub_b = best[y0:y1, x0:x1]
         take = wt > sub_b
         if owner is not None:  # the clean map's owner, wherever this screenshot shows it
