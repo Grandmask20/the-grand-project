@@ -1040,10 +1040,17 @@ class AddingMixin:
         entry = self._undo[-1]
         self.events.set_progress("undoing the last add")
         with self._lock:
+            rec = self.opened
             old = core.Atlas.load(entry["file"])  # (raises: the entry stays, Undo can be tried again: CodeRabbit)
             self._undo.pop()
             kept = {f["name"] for f in old.frames}
             self._unkeep([f for f in self.atlas.frames if f["name"] not in kept])  # (out of used/: not in the atlas)
+            # each screenshot where it is now: the snapshot names its place from before the add, and the add's sort
+            # (or a keep since) moved some into used/ or dump/; the old place kept them there for good (self review)
+            now = {f["name"]: f["path"] for f in self.atlas.frames}
+            for f in old.frames:
+                if f["name"] in now and Path(now[f["name"]]).exists():
+                    f["path"] = now[f["name"]]
             self._lock_rev = getattr(self, "_lock_rev", 0) + 1  # (a stronghold search running now is out of date)
             for attr in core.Atlas.SAVED:
                 if attr not in core.Atlas.HAND_EDITS:
@@ -1055,7 +1062,7 @@ class AddingMixin:
         self.recent = [n for n in self.recent if n not in gone]
         self.rebuild_model()
         self.load_terrain(cities=True)
-        self._sort_dump(self.opened)  # (a screenshot the undone ones outshone shows its spots again: back to used/)
+        self._sort_dump(rec)  # (a screenshot the undone ones outshone shows its spots again: back to used/)
         self._done(f"undone: {', '.join(entry['names'])}")
 
     # ------------------------------------------------------------------ placing

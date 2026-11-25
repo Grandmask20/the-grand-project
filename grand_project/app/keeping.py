@@ -96,15 +96,9 @@ class KeepingMixin:
             rec: The atlas's record.
         """
         atlas, path = rec.atlas, rec.path
-        if atlas is None or path is None:
+        if atlas is None or path is None or not self.owns(rec):
             return
-        with self._lock:  # (the clean map's ownership and the screenshots as one: a change can't come between)
-            if not self.owns(rec):
-                return
-            frames = [dict(f) for f in atlas.frames]
-            labels = None
-            if self.labels is not None and self.terrain is not None:
-                labels = (self.labels[0], list(self.labels[1]), self.terrain[2])
+        frames, labels = self._ownership_input(atlas, rec)
         try:
             shares = core.owned_shares(atlas, frames, labels)
         except Exception:  # (never the job's end: a failure only leaves the folders as they are)
@@ -122,8 +116,17 @@ class KeepingMixin:
             if here not in (used, dump) or not src.exists():
                 continue  # (not yet kept, elsewhere, or deleted: left alone)
             want = dump if shares.get(f["name"], 1.0) < core.OWNER_DUMP_SHARE else used
-            if want != here and not (want / src.name).exists():
-                moves.append((f["name"], src, want / src.name))
+            if want == here or (want / src.name).exists():
+                continue
+            # used/ is safe to delete only with the copies: slim down removed the ones of dump, so one going back
+            # gets its copy again first (self review)
+            try:
+                if want == used and not atlas.write_copy(str(src)):
+                    continue
+            except OSError as e:
+                LOG.warning(f"{f['name']}: no copy kept, left in {core.SCREENSHOTS_DUMP}/ ({e})")
+                continue
+            moves.append((f["name"], src, want / src.name))
         if not moves:
             return
         with self._lock:
@@ -131,6 +134,8 @@ class KeepingMixin:
                 return
             to_dump = back = 0
             for name, src, dst in moves:
+                if not src.exists() or dst.exists():
+                    continue  # (moved meanwhile, by another sort or the player; rename replaces a file on Linux/macOS)
                 try:
                     dst.parent.mkdir(exist_ok=True)
                     src.rename(dst)
@@ -161,18 +166,31 @@ class KeepingMixin:
             wait: Wait for the session lock to read the clean map with its screenshots (False: a prompt, which
                 never waits for a job: the grid then, from the screenshots as they are).
         """
-        labels = None
-        if rec is not None and self._lock.acquire(blocking=wait):
-            try:
-                if self.owns(rec) and self.labels is not None and self.terrain is not None:
-                    labels = (self.labels[0], list(self.labels[1]), self.terrain[2])
-                frames = [dict(f) for f in atlas.frames]
-            finally:
-                self._lock.release()
-        else:
-            frames = [dict(f) for f in list(atlas.frames)]  # (a copy: placing appends meanwhile)
+        frames, labels = self._ownership_input(atlas, rec, wait)
         shares = core.owned_shares(atlas, frames, labels)
         return [n for n, v in shares.items() if v < core.OWNER_DUMP_SHARE]
+
+    def _ownership_input(self, atlas, rec: Opened | None, wait: bool = True) -> tuple[list[dict], tuple | None]:
+        """Return what core.owned_shares works from: the screenshots, and the clean map's ownership while rec is the
+        open atlas, taken as one under the session lock (a change can't come between them).
+
+        Args:
+            atlas: The atlas.
+            rec: Its record when it is the open one, else None (the grid).
+            wait: Wait for the session lock; False (a prompt, never waiting for a job): without it, from the grid.
+
+        Returns:
+            (copies of its frames, (ownership map, names, origin) or None).
+        """
+        if rec is not None and self._lock.acquire(blocking=wait):
+            try:
+                labels = None
+                if self.owns(rec) and self.labels is not None and self.terrain is not None:
+                    labels = (self.labels[0], list(self.labels[1]), self.terrain[2])
+                return [dict(f) for f in atlas.frames], labels
+            finally:
+                self._lock.release()
+        return [dict(f) for f in list(atlas.frames)], None  # (a copy: placing appends meanwhile)
 
     def slim_info(self, atlas, rec: Opened | None = None) -> dict:
         """What Re-check's slim down would remove: the copies of screenshots in dump (owning no spot of the map).

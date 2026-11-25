@@ -674,8 +674,6 @@ class MapImageMixin:
                                 self.events.log(f"Fix seams: clean map ready ({time.monotonic() - t0:.0f} s)", scope)
                                 self._seams_ready(names)
                                 shown = self.opened  # (sorted below, by the clean map's own ownership)
-                    if shown is not None:  # its screenshots into used/ and dump/ (outside the lock: file work)
-                        self._sort_dump(shown)
                 elif self._seams_stopped:
                     self.events.log("Fix seams: stopped (its clean map was left out)", scope)
                 elif proc.returncode != 0:
@@ -688,6 +686,10 @@ class MapImageMixin:
                     self._seams_proc, self._seams_busy = None, False
                 self.events.set_progress(None, owner=owner)
                 self.events.publish("seams", False)
+            # its screenshots into used/ and dump/ by the clean map's own ownership: after the clean-up above (it
+            # waits for the session lock, and a job holding it kept "fixing seams" on the page: self review)
+            if shown is not None:
+                self._sort_dump(shown)
 
         threading.Thread(target=watch, daemon=True).start()
         return "started"

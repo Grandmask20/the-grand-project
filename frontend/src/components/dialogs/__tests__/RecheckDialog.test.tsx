@@ -74,7 +74,7 @@ describe("RecheckDialog", () => {
 			"GET /api/atlas/recheck-info": { ...info, slim: { count: 12, mb: 9.6 } },
 			"PATCH /api/settings": { ok: true },
 		});
-		expect(await screen.findByText(/12 screenshots that show no spot of the map \(about 9\.6/)).toBeInTheDocument();
+		expect(await screen.findByText(/\(12 now, about 9\.6 MB\)/)).toBeInTheDocument();
 		await user.click(screen.getByRole("checkbox"));
 		await waitFor(() => expect(calls.find((c) => c.path === "/api/settings")?.body).toEqual({ recheck_slim: true }));
 	});

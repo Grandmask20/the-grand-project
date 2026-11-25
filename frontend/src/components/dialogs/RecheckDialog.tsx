@@ -94,9 +94,12 @@ export function RecheckDialog() {
 								onCheckedChange={(on) => updateSettings.mutate({ recheck_slim: on === true })}
 							/>
 							<label htmlFor="recheck-slim">
-								<span className="font-semibold">Slim down:</span> also remove the copies of the{" "}
-								{info.data.slim?.count ?? 0} screenshots that show no spot of the map (about {info.data.slim?.mb ?? 0}{" "}
-								MB). Saves space, but one whose screenshot is gone too can't take a spot back later.
+								<span className="font-semibold">Slim down:</span> also remove the copies of screenshots that show no
+								spot of the map{" "}
+								{info.data.slim?.count
+									? `(${info.data.slim.count} now, about ${info.data.slim.mb} MB)`
+									: "(none right now)"}
+								. Saves space, but one whose screenshot is gone too can't take a spot back later.
 							</label>
 						</div>
 					</div>

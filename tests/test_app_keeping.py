@@ -261,3 +261,49 @@ def test_the_re_check_prompt_never_waits_for_a_job_to_count_the_slim_down(sessio
     finally:
         go.set()
         t.join(10)
+
+
+def test_undo_brings_back_to_used_a_screenshot_the_undone_add_sent_to_dump(session, tmp_path):
+    session._keep_screenshots(session.opened, ["a"])
+    snapshot = session._snapshot()  # (the atlas before the add: a in used/)
+    second_view(session, tmp_path)
+    session.atlas.frames.insert(0, session.atlas.frames.pop())  # (b first: it keeps every spot, a shows none better)
+    session._remember_add(["b"], snapshot)
+    session._sort_dump(session.opened)
+    assert (tmp_path / core.SCREENSHOTS_DUMP / "a.png").exists()
+    session._run_undo()
+    a = next(f for f in session.atlas.frames if f["name"] == "a")
+    # (the snapshot named used/a.png from before the add: kept, a stayed in dump/ for good - self review)
+    assert a["path"] == str(tmp_path / core.SCREENSHOTS_USED / "a.png") and Path(a["path"]).exists()
+
+
+def slimmed(session, tmp_path) -> Path:
+    """b shown better by a, in dump/ with its copy removed by a ticked slim down; returns the copy's place."""
+    session._keep_screenshots(session.opened, ["a"])
+    second_view(session, tmp_path)
+    session._sort_dump(session.opened)
+    session.set_ui_settings({"recheck_slim": True})
+    session._slim_down(session.opened)
+    copy_b = tmp_path / core.SCREENSHOT_COPIES / "b.png.webp"
+    assert (tmp_path / core.SCREENSHOTS_DUMP / "b.png").exists() and not copy_b.exists()
+    return copy_b
+
+
+def test_a_screenshot_back_from_dump_after_a_slim_down_gets_its_copy_again(session, tmp_path):
+    copy_b = slimmed(session, tmp_path)
+    del session.atlas.frames[0]  # (a taken out: b shows those spots best again)
+    session._sort_dump(session.opened)
+    assert (tmp_path / core.SCREENSHOTS_USED / "b.png").exists() and copy_b.exists()  # (used/ stays safe to delete)
+
+
+def test_a_slimmed_screenshot_gone_for_good_is_no_missing_terrain_warning(session, tmp_path):
+    slimmed(session, tmp_path)
+    (tmp_path / core.SCREENSHOTS_DUMP / "b.png").unlink()  # (the player deleted dump/)
+    path = session.path
+    session.open_atlas(path)  # (opened again)
+    t = getattr(session, "_lock_thread", None)
+    if t:
+        t.join(60)
+    lines = list(session.events.log_lines)
+    assert any("slimmed down" in line for line in lines)
+    assert not any("screenshots not found" in line for line in lines)

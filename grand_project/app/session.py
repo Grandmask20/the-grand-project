@@ -287,6 +287,16 @@ class AtlasSession(
         self._after_load()
         # (a screenshot whose file is gone shows from its 1080p copy: only one gone without a copy loses its ground)
         missing = [f["name"] for f in atlas.frames if not atlas.has_picture(f["path"])]
+        if missing:  # (ones slimmed down showed no spot of the map: nothing is missing there, no warning: self review)
+            shown_by_others = set(self._dump_names(atlas, None))
+            slimmed = [n for n in missing if n in shown_by_others]
+            missing = [n for n in missing if n not in shown_by_others]
+            if slimmed:
+                self.events.log(
+                    f"{len(slimmed)} screenshot(s) gone with their copies (slimmed down): they showed no spot of the "
+                    "map, others show it",
+                    now.scope,
+                )
         if missing:
             self.events.log(f"screenshots not found (terrain missing there): {', '.join(missing[:20])}" +
                             (f" and {len(missing) - 20} more" if len(missing) > 20 else ""))  # fmt: skip
