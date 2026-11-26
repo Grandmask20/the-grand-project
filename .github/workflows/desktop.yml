@@ -76,6 +76,10 @@ jobs:
           python -m pip install -r requirements.txt pyinstaller
           pyinstaller desktop/grand-project.spec --noconfirm --distpath desktop/build --workpath desktop/build/pyinstaller
           python desktop/icons.py
+      - name: the frozen program loads its detector models
+        run: |
+          exe=desktop/build/backend/grand-project; [ -f "$exe.exe" ] && exe="$exe.exe"
+          GRAND_PROJECT_HOME="$RUNNER_TEMP/gp-home" "$exe" --self-check
       - name: the frozen program starts
         run: |
           exe=desktop/build/backend/grand-project; [ -f "$exe.exe" ] && exe="$exe.exe"

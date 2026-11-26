@@ -30,3 +30,9 @@ def test_anything_else_is_the_app_s_server(monkeypatch):
     monkeypatch.setattr("grand_project.app.server.main", lambda argv: got.append(argv) or 7)
     assert _backend().main(["--no-browser"]) == 7
     assert got == [["--no-browser"]]
+
+
+def test_the_self_check_loads_every_stored_detector_model(capsys):
+    assert _backend().main(["--self-check"]) == 0
+    said = capsys.readouterr().out.splitlines()
+    assert said and all(": " in line and not line.endswith(": NoneType") for line in said)

@@ -13,9 +13,11 @@ ROOT = Path(SPECPATH).parent  # noqa: F821 (PyInstaller's)
 datas = [(str(ROOT / "references"), "references"), (str(ROOT / "frontend" / "dist"), "frontend/dist")]
 datas += [(str(ROOT / f), ".") for f in ("channel.txt", "manifest.json", "LICENSE") if (ROOT / f).is_file()]
 
-# every module of the program (some are started by name: python -m grand_project.core.seams), and what the stored
-# detector models are made of (skops builds them by name: grand_project/detect/models.py)
-hidden = collect_submodules("grand_project") + collect_submodules("sklearn.ensemble._hist_gradient_boosting")
+# every module of the program (some are started by name: python -m grand_project.core.seams), skops's own (it imports
+# its parts by name: skops.io._sklearn, ...), and what the stored detector models are made of (skops builds them by
+# name: grand_project/detect/models.py). desktop/backend.py --self-check loads them all (CI: desktop.yml)
+hidden = collect_submodules("grand_project") + collect_submodules("skops")
+hidden += collect_submodules("sklearn.ensemble._hist_gradient_boosting")
 hidden += ["sklearn._loss._loss", "sklearn._loss.link", "sklearn._loss.loss", "sklearn.preprocessing._label", "skops.io"]
 
 a = Analysis(  # noqa: F821
