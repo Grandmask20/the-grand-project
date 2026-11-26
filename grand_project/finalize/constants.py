@@ -290,3 +290,7 @@ ICON_TIME_WIDE = 70  # px around the row where the icon still counts as there (w
 # off: roa atlas 65 px)
 ICON_TIME_TIE = 0.03  # an icon found near the row counts only when it is within this of its best match (roa test: the
 # player marker over a map fit Cleansed's pictures)
+# the gold fields kept at once by the path check (~4 MB each; kept for every screenshot, they were its peak) and the
+# cell of the curve the links are scored along (atlas units: a few links per cell, a screenshot spans several)
+CHECK_FIELDS_KEEP = 48
+CHECK_CURVE_CELL = 200.0

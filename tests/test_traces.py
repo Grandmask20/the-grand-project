@@ -67,3 +67,18 @@ def test_gold_keeps_the_most_recently_used(monkeypatch):
 def test_gold_of_a_gone_picture_is_none_and_not_kept():
     assert traces._gold(_atlas({}), {"path": "gone.png"}) is None
     assert "gone.png" not in traces._GOLD
+
+
+class _EmptiedMeanwhile(dict):
+    """A cache the idle release (app.idle) empties between the eviction's size check and its pick."""
+
+    def __iter__(self):
+        self.clear()
+        return super().__iter__()
+
+
+def test_gold_eviction_tolerates_an_emptied_cache(monkeypatch):
+    monkeypatch.setattr(traces, "GOLD_CACHE", 0)  # (every add evicts)
+    monkeypatch.setattr(traces, "_GOLD", _EmptiedMeanwhile())
+    got = traces._gold(_atlas({"a.png": _screenshot(3)}), {"path": "a.png"})
+    assert got is not None  # (no StopIteration: the add goes on)

@@ -21,7 +21,8 @@ import time
 import tracemalloc
 from pathlib import Path
 
-os.environ.setdefault("GRAND_PROJECT_USER_DATA", tempfile.mkdtemp(prefix="gp-memory-"))  # (before the app imports)
+# always a throwaway (even when one is set: its viewer settings would be overwritten); before the app imports
+os.environ["GRAND_PROJECT_USER_DATA"] = tempfile.mkdtemp(prefix="gp-memory-")
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 import numpy as np  # noqa: E402
@@ -155,9 +156,11 @@ def main() -> int:
     t0 = time.time()
     report("start", None, t0)
     from grand_project.app.session import AtlasSession
+    from grand_project.core.atlas import Atlas
 
+    Atlas.save = lambda self, path: None  # (nothing written to the atlas file: opening one may finalize and save it)
     S = AtlasSession(settings={}, worker=False)
-    S.save = lambda: None  # (nothing written to the atlas file)
+    S.save = lambda: None
     report("libraries loaded", S, t0)
     S.open_atlas(Path(a.atlas))
     t = getattr(S, "_lock_thread", None)

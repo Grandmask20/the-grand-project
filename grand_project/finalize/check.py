@@ -17,6 +17,8 @@ from .constants import (
     ABYSS_LINK,
     ABYSS_NAMES,
     ABYSS_TOWER_CLEAR,
+    CHECK_CURVE_CELL,
+    CHECK_FIELDS_KEEP,
     CHECK_SEEN,
     CLUMP_N,
     CLUMP_R,
@@ -110,11 +112,6 @@ from .traces import (
     _trace_views,
     _visible,
 )
-
-# the gold fields kept at once by the path check (~4 MB each; kept for every screenshot, they were its peak) and the
-# cell of the curve the links are scored along (atlas units: a few links per cell, a screenshot spans several)
-FIELDS_KEEP = 48
-CURVE_CELL = 200.0
 
 
 def _curve_keys(points: np.ndarray, cell: float) -> np.ndarray:
@@ -647,14 +644,14 @@ def finalize(atlas, log=_log) -> dict:
         sp, ok = _visible(f, Hi, pts, margin=6)
         if ok.sum() >= 2:
             views.append((f, sp, ok))
-    fields: dict[str, np.ndarray | None] = {}  # (most recently used last: FIELDS_KEEP of them)
+    fields: dict[str, np.ndarray | None] = {}  # (most recently used last: CHECK_FIELDS_KEEP of them)
     built = [0]
 
     def field(f):
-        """Return a screenshot's distance-to-gold field; the FIELDS_KEEP most recently used are kept.
+        """Return a screenshot's distance-to-gold field; the CHECK_FIELDS_KEEP most recently used are kept.
 
         Kept float16 (route_score reads a few dozen pixels as float32): a float32 copy per screenshot doubled the
-        check's memory (~8 MB per screenshot seen). And only FIELDS_KEEP of them (~4 MB each): kept for every
+        check's memory (~8 MB per screenshot seen). And only CHECK_FIELDS_KEEP of them (~4 MB each): kept for every
         screenshot the check touched, they were the check's peak (2.8 GB on a 384-screenshot atlas). The links are
         scored along the atlas (score_all), so the ones in use are the few around; one let go is worked out again
         (~12-25 ms).
@@ -673,7 +670,7 @@ def finalize(atlas, log=_log) -> dict:
             g = _gold(atlas, f)
             fields[name] = None if g is None else g[1]
             built[0] += 1
-            while len(fields) > FIELDS_KEEP:
+            while len(fields) > CHECK_FIELDS_KEEP:
                 fields.pop(next(iter(fields)))
         return fields[name]
 
@@ -766,7 +763,7 @@ def finalize(atlas, log=_log) -> dict:
 
         The loop goes through the maps by index, which jumps around the atlas: each link wanted gold fields of
         screenshots anywhere, so all of them were kept (the check's peak). Scored along the atlas first, the
-        screenshots in use are the few around, and FIELDS_KEEP of their fields are enough. score() keeps every
+        screenshots in use are the few around, and CHECK_FIELDS_KEEP of their fields are enough. score() keeps every
         link's score, so the loop then finds the same links in the same order: only when the fields are worked out
         changes. Records every link the loop may ask for (a stand-in score of 0 never stops it early: a superset).
         """
@@ -779,15 +776,19 @@ def finalize(atlas, log=_log) -> dict:
         propose(record)
         if not asked:
             return
-        mid = np.array([(pts[a] + pts[b]) / 2 for a, b in asked])
-        for k in np.argsort(_curve_keys(mid, CURVE_CELL), kind="stable"):
-            score(*list(asked)[k])
+        links = list(asked)
+        mid = np.array([(pts[a] + pts[b]) / 2 for a, b in links])
+        for k in np.argsort(_curve_keys(mid, CHECK_CURVE_CELL), kind="stable"):
+            score(*links[k])
 
     score_all()
     proposals = propose(score)
     n = len(pts)  # (read further on)
     if log:
-        log(f"path check: {built[0]} gold fields worked out ({len(views)} screenshots, {FIELDS_KEEP} kept at once)")
+        log(
+            f"path check: {built[0]} gold fields worked out "
+            f"({len(views)} screenshots, {CHECK_FIELDS_KEEP} kept at once)"
+        )
     supported = {(x, y): c for x, y, c, _ in proposals}
     proposals = [
         p

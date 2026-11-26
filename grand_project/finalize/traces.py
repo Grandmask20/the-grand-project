@@ -337,7 +337,7 @@ def _gold(atlas, f):
         hit = (cen[1:].astype(float), np.packbits(gold > 0), gold.shape)
     _GOLD[key] = hit  # most recently used last
     while len(_GOLD) > GOLD_CACHE:
-        _GOLD.pop(next(iter(_GOLD)))
+        _GOLD.pop(next(iter(_GOLD), None), None)  # (the idle release may empty it meanwhile: app.idle)
     cen, packed, shape = hit
     gold = np.unpackbits(packed, count=shape[0] * shape[1]).reshape(shape) * np.uint8(255)
     dist = cv2.distanceTransform(255 - gold, cv2.DIST_L2, 3)

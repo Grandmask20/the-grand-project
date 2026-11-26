@@ -125,7 +125,7 @@ def ground_of(img) -> tuple[np.ndarray, np.ndarray]:
         _OCEAN.pop(id(img), None)
         _OCEAN[id(img)] = got
         while len(_OCEAN) > _OCEAN_KEEP:
-            _OCEAN.pop(next(iter(_OCEAN)))
+            _OCEAN.pop(next(iter(_OCEAN), None), None)  # (the idle release may empty it meanwhile: app.idle)
     return got[1], got[2]
 
 

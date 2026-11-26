@@ -44,3 +44,19 @@ def test_ground_of_is_kept_without_keeping_the_screenshot():
     del img
     gc.collect()
     assert ref() is None  # (the screenshot went: the cache doesn't hold it)
+
+
+class _EmptiedMeanwhile(dict):
+    """A cache the idle release (app.idle) empties between the eviction's size check and its pick."""
+
+    def __iter__(self):
+        self.clear()
+        return super().__iter__()
+
+
+def test_ground_of_eviction_tolerates_an_emptied_cache(monkeypatch):
+    monkeypatch.setattr(fl, "_OCEAN_KEEP", 0)  # (every add evicts)
+    monkeypatch.setattr(fl, "_OCEAN", _EmptiedMeanwhile())
+    img = np.random.default_rng(7).integers(0, 255, (270, 480, 3), dtype=np.uint8)
+    cls, bad = fl.ground_of(img)  # (no StopIteration: the add goes on)
+    assert cls.shape == bad.shape == img.shape[:2]
