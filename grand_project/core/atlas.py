@@ -280,6 +280,13 @@ class Atlas:
                 self._images.pop(next(iter(self._images)))
         return img
 
+    def trim_images(self) -> None:
+        """Let the oldest decoded screenshots go down to IMAGE_CACHE (after lowering it: a cache already full is
+        otherwise only trimmed at the next screenshot read anew)."""
+        with Atlas._image_lock:
+            while len(self._images) > self.IMAGE_CACHE:
+                self._images.pop(next(iter(self._images)))
+
     def release_images(self) -> int:
         """Let the decoded screenshots go (they are read again when next asked for).
 

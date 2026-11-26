@@ -158,6 +158,7 @@ def finalize(atlas, log=_log) -> dict:
     """
     own = atlas.__dict__.get("IMAGE_CACHE")  # (an atlas of its own: else the class's)
     atlas.IMAGE_CACHE = min(atlas.IMAGE_CACHE, FINAL_IMAGE_CACHE)
+    atlas.trim_images()  # (a cache a placement just filled kept all 90 when every read was a hit: CodeRabbit)
     try:
         return _finalize(atlas, log)
     finally:

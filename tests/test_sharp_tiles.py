@@ -97,3 +97,24 @@ def test_a_screenshots_terrain_mask_goes_with_it():
     del img
     gc.collect()
     assert key not in terrain._MASKS
+
+
+def test_a_tile_weight_is_the_same_worked_out_or_kept_and_a_cache_hit_counts_as_use(tmp_path):
+    # (full precision when worked out, rounded once kept: a near tie picked by what was cached; and a hit wasn't use,
+    # so panning over the same spots let the idle release clear them - CodeRabbit)
+    img = np.full((1080, 1920, 3), 90, np.uint8)
+    img[300:700, 500:1400] = 160
+    cv2.imwrite(str(tmp_path / "a.png"), img)
+    at = core.Atlas()
+    at.frames.append({"name": "a", "path": str(tmp_path / "a.png"), "sha": "a", "w": 1920, "h": 1080,
+                      "M": [[1.0, 0, 0], [0, 1.0, 0]], "stats": {}})  # fmt: skip
+    canvas, origin, _w = at.composite(max_pixels=2_000_000, with_weight=True)
+    grid = Grid(origin, canvas.shape[1], canvas.shape[0])
+    sharp = SharpTiles(
+        at, [core.footprint(at, f) for f in at.frames], grid, RasterTiler(canvas, grid), grid.deepest(2.0)
+    )
+    first, again = sharp._weight(at.frames[0]), sharp._weight(at.frames[0])
+    assert first.dtype == again.dtype == np.float32 and np.array_equal(first, again)
+    at.images_used = 0.0
+    sharp._image(at.frames[0]["path"])  # (kept by the tiles: a hit)
+    assert at.images_used > 0

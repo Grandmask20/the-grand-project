@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import collections
 import threading
+import time
 from pathlib import Path
 
 import cv2
@@ -90,13 +91,15 @@ class SharpTiles:
         img = self._image(f["path"])
         if img is None:  # (deleted, with no copy: the tile leaves it out, core.build_sharp_tile)
             return None
-        w = core.ground_weight(img)
+        # (kept float16: it only picks which screenshot shows a spot, half the memory; warped as float32). Given as
+        # kept also when just worked out: full precision then, rounded once kept, one tile picked another screenshot on
+        # a near tie by what was cached (CodeRabbit)
+        w = core.ground_weight(img).astype(np.float16)
         with self._lock:
-            # (kept float16: it only picks which screenshot shows a spot, half the memory; warped as float32)
-            self._weights[key] = w.astype(np.float16)
+            self._weights[key] = w
             while len(self._weights) > WEBMAP_SHARP_WEIGHTS:
                 self._weights.popitem(last=False)
-        return w
+        return w.astype(np.float32)
 
     def _image(self, path: str) -> np.ndarray | None:
         """Return a screenshot for the zoomed-in ground: from its own WEBMAP_SHARP_IMAGES, else the atlas's (one a
@@ -111,6 +114,8 @@ class SharpTiles:
         with self._lock:
             if path in self._images:
                 self._images.move_to_end(path)
+                # (a screenshot used, as Atlas.image says it: panning over the same spots isn't idle time - CodeRabbit)
+                self.atlas.images_used = time.monotonic()
                 return self._images[path]
         img = self.atlas.image(path, keep=False)
         if img is None:

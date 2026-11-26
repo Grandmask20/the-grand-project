@@ -32,3 +32,19 @@ def test_the_check_keeps_fewer_decoded_screenshots_while_it_runs(monkeypatch):
     check.finalize(at)
     assert seen == [check.FINAL_IMAGE_CACHE] and at.IMAGE_CACHE == core.Atlas.IMAGE_CACHE  # (placing's again after)
     assert "IMAGE_CACHE" not in vars(at)
+
+
+def test_the_check_trims_a_cache_a_placement_just_filled(monkeypatch):
+    # (lowered, it was trimmed only at the next new read: all 90 kept when every read was a hit - CodeRabbit)
+    import numpy as np
+
+    from grand_project import core
+    from grand_project.finalize import check
+
+    at = core.Atlas()
+    for k in range(check.FINAL_IMAGE_CACHE + 10):
+        at._images[f"s{k}.png"] = np.zeros((2, 2, 3), np.uint8)
+    seen = []
+    monkeypatch.setattr(check, "_finalize", lambda atlas, log=None: seen.append(len(atlas._images)) or {})
+    check.finalize(at)
+    assert seen == [check.FINAL_IMAGE_CACHE] and "s0.png" not in at._images  # (the oldest let go)
