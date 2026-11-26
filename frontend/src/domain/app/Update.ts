@@ -6,8 +6,10 @@ export interface UpdateStatus {
 	release: string | null;
 	/** The program version ("1.21"). */
 	program: string;
-	/** It can update itself in the app; else why not (a development copy: git). */
+	/** It can update itself in the app; else why not (a development copy: git; the desktop app: it updates itself). */
 	can: boolean;
+	/** Frozen inside the desktop app (desktop/): checked and shown here, put in place by the desktop app. */
+	desktop?: boolean;
 	why: string;
 	/** Check once a day when the app starts. */
 	auto: boolean;

@@ -75,6 +75,23 @@ describe("UpdateButton", () => {
 		expect(calls.some((c) => c.path === "/api/update/check")).toBe(false);
 	});
 
+	it("the desktop app checks and shows what's new, but the desktop app puts it in place (no Update now)", async () => {
+		const desk = { ...base, can: false, desktop: true, why: "The desktop app updates itself" };
+		const found = { ...desk, latest: latest("1.4"), available: true, checked: 1 };
+		const { user, calls } = renderWithApp(<UpdateButton />, {
+			"GET /api/update": desk,
+			"POST /api/update/check": found,
+		});
+		await user.click(await screen.findByRole("button", { name: /Check update.*1\.3/i }));
+		expect(screen.getByText("The desktop app updates itself")).toBeInTheDocument();
+		await user.click(screen.getByRole("button", { name: "Check now" }));
+		expect(await screen.findByText("The Grand Project 1.4 is out.")).toBeInTheDocument();
+		expect(screen.getByRole("link", { name: "The release on GitHub" })).toBeInTheDocument();
+		expect(screen.queryByRole("button", { name: "Update now" })).toBeNull();
+		expect(calls.some((c) => c.path === "/api/update/install")).toBe(false);
+		expect(pillOf({ ...desk, latest: latest("1.3") })).toEqual({ label: "Up to date", ok: true });
+	});
+
 	it("the app back on another version: the page reloads itself", async () => {
 		const reload = vi.fn();
 		vi.stubGlobal("location", { ...window.location, reload });

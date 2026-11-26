@@ -165,6 +165,14 @@ UPDATE_HTTP_WAIT = 30.0  # s: GitHub's answer / each part of the download, at mo
 UPDATE_CHUNK = 256 * 1024  # bytes read at a time while downloading
 UPDATE_PROGRESS_EVERY = 0.25  # s: the download's progress goes to the page at most this often
 UPDATE_RESULT = "update_result.json"  # in user_data: what the last update did (update_apply.py writes it)
+# the desktop app (paths.DESKTOP) is updated by itself, not by the in-app update: the box still checks and shows
+# what's new. Windows: electron-updater downloads the new release and puts it in place when the app closes; macOS: the
+# app isn't signed (Apple's fee), so it can't update itself: the new .dmg is downloaded from the release by hand
+UPDATE_DESKTOP_WHY = (
+    "The desktop app updates itself: a new release downloads in the background and is put in place when you close "
+    "the app."
+)
+UPDATE_DESKTOP_WHY_MAC = "The desktop app can't update itself on macOS: download the new release's .dmg from GitHub."
 
 
 RECENT_KEEP = 200  # screenshots listed under Recently added (one line each, newest first)

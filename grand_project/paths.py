@@ -99,6 +99,16 @@ def need_test_data() -> None:
         sys.exit(0)
 
 
+# the desktop app (desktop/: Electron, with this program frozen inside it) sets these: its program folder is replaced by
+# each update, so the player's atlases and settings live in a folder of their own (GRAND_PROJECT_HOME: the desktop
+# app's data folder, e.g. %APPDATA%/The Grand Project), and the in-app update is the desktop app's (app/updater.py)
+DESKTOP = bool(os.environ.get("GRAND_PROJECT_DESKTOP"))
+if os.environ.get("GRAND_PROJECT_HOME"):
+    _HOME = Path(os.environ["GRAND_PROJECT_HOME"]).resolve()
+    ATLASES, USER_DATA = _HOME / "atlases", _HOME / "user_data"
+    DEFAULT_ATLAS = ATLASES / "default" / "atlas.json"
+
+
 # the browser tests (frontend/e2e) and CI keep the app's settings and log away from the player's own
 if os.environ.get("GRAND_PROJECT_USER_DATA"):
     USER_DATA = Path(os.environ["GRAND_PROJECT_USER_DATA"]).resolve()
