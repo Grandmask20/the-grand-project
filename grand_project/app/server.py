@@ -1342,7 +1342,7 @@ def reuse_running(port: int, atlas: str | None, browser: bool) -> str:
         return START
     url, version = found
     if version != VERSION:
-        _say(f"An older copy (v{version}) is running: closing it to start v{VERSION}")
+        _say("Another version of the app is running: closing it to start this one")
         _local(url + "api/quit", {})
         t0 = time.monotonic()
         old_port = int(url.rstrip("/").rsplit(":", 1)[1])
@@ -1442,6 +1442,19 @@ def open_first_atlas(session: AtlasSession, given: str | None, gen: int | None =
         )
 
 
+def shown_version() -> str:
+    """The version as the players know it: the release (1.3.1) in a player release, else the program's own version
+    (v1.xx: develop's, one up per merge; user: players only ever see release numbers).
+
+    Returns:
+        "release 1.3.1" or "v1.29".
+    """
+    from grand_project import release_manifest as rm
+
+    m = rm.read(rc_paths.ROOT) if rc_paths.CHANNEL == "release" else None
+    return f"release {m['release']}" if m and m.get("release") else f"v{VERSION}"
+
+
 def main(argv: list[str] | None = None) -> int:
     """Start the app: open the atlas (the one given, else the last one), serve the page and open the browser.
 
@@ -1491,7 +1504,7 @@ def main(argv: list[str] | None = None) -> int:
     # a copy started on another port was not found, and that launch gave up (CodeRabbit)
     with contextlib.suppress(OSError):
         (rc_paths.USER_DATA / APP_URL_FILE).write_text(server.url, encoding="utf-8")
-    _say(f"The Grand Project {VERSION}: {server.url}  (Ctrl+C to quit)")
+    _say(f"The Grand Project {shown_version()}: {server.url}  (Ctrl+C to quit)")
     LOG.info(f"serving on {server.url}")
     if not args.no_browser:
         threading.Timer(0.4, lambda: webbrowser.open(server.url)).start()

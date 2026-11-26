@@ -272,8 +272,24 @@ def test_the_update_box_shows_whats_new_only_not_how_to_install():
 
 def test_older_notes_without_the_line_lose_their_install_part():
     old = (
-        "## What's new\n\n- routes\n\nProgram version v1.25. Download **Source code (zip)** below and unzip it.\n\n"
+        "## What's new\n\n- routes\n\nVersion v1.3. Download **Source code (zip)** below and unzip it.\n\n"
         "## How to install and start\n\n#### First time\n1. Install Python\n\n## Thanks\n\n- everyone"
     )
     assert updater.whats_new(old) == "## What's new\n\n- routes\n\n\n## Thanks\n\n- everyone"
     assert updater.whats_new("What's new: routes") == "What's new: routes"
+
+
+def test_the_last_updates_line_reaches_the_first_atlas_log(installed):
+    # (checked in the app: said at start, before any atlas was open, it never showed in the Log tab)
+    from tests.webmap_data import make_atlas
+
+    s, _root, tmp = installed
+    (rc_paths.USER_DATA).mkdir(parents=True, exist_ok=True)
+    (rc_paths.USER_DATA / K.UPDATE_RESULT).write_text(json.dumps({"ok": True, "from": "1.3", "to": "1.3.1"}))
+    s.after_update()
+    (tmp / "atlas").mkdir()
+    path, _pts, _img = make_atlas(tmp / "atlas")
+    s.open_atlas(path)
+    assert any(line.endswith("Updated from release 1.3 to 1.3.1") for line in s.events.log_lines)
+    s.say_update(s.opened.scope)  # (once: not again in the next atlas)
+    assert sum(line.endswith("Updated from release 1.3 to 1.3.1") for line in s.events.log_lines) == 1

@@ -92,9 +92,12 @@ def version() -> str:
     return m.group(1)
 
 
-def player_readme() -> str:
-    """the README without the developer section (that part lives on the develop branch)"""
+def player_readme(release: str = "") -> str:
+    """the README without the developer section (that part lives on the develop branch); its title names the release
+    (v1.3.1), not the program version (v1.xx counts develop's merges: players only see release numbers, user)"""
     s = (HERE / "README.md").read_text(encoding="utf-8")
+    if release:
+        s = re.sub(r"\A(# [^\n]*? — )v[0-9.]+", lambda m: f"{m.group(1)}v{release}", s)
     a, b = s.find("## For developers"), s.find("## License and credits")
     if a != -1 and b > a:
         s = (
@@ -139,7 +142,8 @@ def release_notes(release: str = "") -> str:
         f"## {release or 'x.y'}\n\n"
         "- (write the highlights here)\n\n"
         f"{UPDATE_NOTES_CUT}\n\n"
-        f"Program version v{version()}. Download **Source code (zip)** below and unzip it into a folder you can "
+        # (the release number, as the user's 1.3 notes had it: v1.xx is develop's own count, not the players')
+        f"Version v{release or 'x.y'}. Download **Source code (zip)** below and unzip it into a folder you can "
         "write to.\n\n"
         f"## How to install and start\n\n{run}\n"
     )
@@ -254,7 +258,7 @@ def main() -> int:
     for f in files:
         (TARGET / f).parent.mkdir(parents=True, exist_ok=True)
         shutil.copy2(HERE / f, TARGET / f)
-    (TARGET / "README.md").write_text(player_readme(), encoding="utf-8")
+    (TARGET / "README.md").write_text(player_readme(release), encoding="utf-8")
     (TARGET / ".gitignore").write_text(GITIGNORE, encoding="utf-8")
     (TARGET / ".gitattributes").write_text(GITATTRIBUTES, encoding="utf-8")
     (TARGET / "channel.txt").write_text("release\n", encoding="utf-8")

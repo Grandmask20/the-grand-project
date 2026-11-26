@@ -16,6 +16,7 @@ from __future__ import annotations
 import http.client
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -82,7 +83,7 @@ def whats_new(notes: str) -> str:
     for line in lines:
         if line.startswith("## "):
             install = line[3:].strip().lower() in K.UPDATE_NOTES_INSTALL
-        if not install and not (line.startswith("Program version v") and "Download" in line):
+        if not install and not re.match(r"(program )?version v\S+\s+download", line.lower()):
             out.append(line)
     return "\n".join(out).strip()
 
@@ -415,12 +416,29 @@ class UpdatesMixin:
             return None
         f.unlink(missing_ok=True)
         if r.get("ok"):
-            self.events.log(f"Updated from release {r.get('from')} to {r.get('to')}")
             shutil.rmtree(rc_paths.USER_DATA / "update", ignore_errors=True)
-        else:
-            self.events.log(f"The update to release {r.get('to')} failed, nothing changed: {r.get('error')}")
+        self.events.log(_update_line(r))
         self._update_state()["just"] = r
         return r
+
+    def say_update(self, scope: str) -> None:
+        """Say the last update's result in the first atlas opened after it too: at start it went to the app's own log,
+        before any atlas was open, and the Log tab shows the atlas's (checked in the app: it was never seen there).
+
+        Args:
+            scope: That atlas's log.
+        """
+        r = self._update_state().get("just")
+        if r and not r.get("said"):
+            r["said"] = True
+            self.events.log(_update_line(r), scope)
+
+
+def _update_line(r: dict) -> str:
+    """The log line for an update's result (update_apply.py's)."""
+    if r.get("ok"):
+        return f"Updated from release {r.get('from')} to {r.get('to')}"
+    return f"The update to release {r.get('to')} failed, nothing changed: {r.get('error')}"
 
 
 def _download(url: str, dest: Path, progress) -> None:
