@@ -62,8 +62,9 @@ def latest_release(fetch=None) -> dict:
 
 
 def whats_new(notes: str) -> str:
-    """Return the part of a release's notes the update box shows: what is above the cut line (K.UPDATE_NOTES_CUT);
-    without one (releases before 1.3.1), the notes without their install part (K.UPDATE_NOTES_INSTALL sections and the
+    """Return the part of a release's notes the update box shows: what is above the divider (the first line of dashes
+    only, K.UPDATE_NOTES_CUT_MIN or more: K.UPDATE_NOTES_CUT); without one (releases before 1.3.1), the notes without
+    their install part (K.UPDATE_NOTES_INSTALL sections and the
     "Download Source code (zip)" line). The install steps are for downloading by hand, not for an update (user).
 
     Args:
@@ -73,9 +74,9 @@ def whats_new(notes: str) -> str:
         The notes to show.
     """
     lines = notes.replace("\r\n", "\n").split("\n")
-    cut = K.UPDATE_NOTES_CUT.lower()
     for i, line in enumerate(lines):
-        if line.strip().strip("*_>#- ").lower().startswith(cut):  # (bold, italic or quoted, it still counts)
+        s = line.strip()
+        if len(s) >= K.UPDATE_NOTES_CUT_MIN and set(s) == {"-"}:  # (a table's |---| row has more than dashes)
             return "\n".join(lines[:i]).strip()
     out, install = [], False
     for line in lines:

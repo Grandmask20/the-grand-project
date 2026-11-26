@@ -246,11 +246,14 @@ NOTES = """## 1.3.1 Hotfix
 
 - Fixed deletion of images crashing stuff
 
-Notes below will not be visible in future updates in the app
+---
 
 Program version v1.27. Download **Source code (zip)** below and unzip it into a folder you can write to.
 
 ## How to install and start
+
+| | Once, to install | Every time, to start |
+|---|---|---|
 
 #### First time
 1. Install Python"""
@@ -258,10 +261,11 @@ SHOWN = "## 1.3.1 Hotfix\n\n- Fixed deletion of images crashing stuff"
 
 
 def test_the_update_box_shows_whats_new_only_not_how_to_install():
-    # (user, 2026-11-25: the install steps are for downloading by hand; the line says where they start)
+    # (user: the install steps are for downloading by hand; a line of dashes says where they start)
     assert updater.whats_new(NOTES) == SHOWN
-    italic = NOTES.replace("Notes below", "*Notes below").replace("in the app\n", "in the app*\n")
-    assert updater.whats_new(italic) == SHOWN  # (in italics too)
+    assert updater.whats_new(NOTES.replace("\n---\n", "\n  ----------  \n")) == SHOWN  # (any length, spaces)
+    # (two dashes are no divider: the install part goes as in notes without one)
+    assert updater.whats_new(NOTES.replace("\n---\n", "\n--\n")) == SHOWN + "\n\n--"
     got = updater.latest_release(lambda url: dict(github("1.3.1")("x"), body=NOTES.replace("\n", "\r\n")))
     assert got["notes"] == SHOWN
 

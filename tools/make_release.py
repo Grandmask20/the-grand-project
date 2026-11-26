@@ -109,8 +109,9 @@ def player_readme() -> str:
 
 
 def release_notes(release: str = "") -> str:
-    """The GitHub release's notes, in the user's layout (2026-11-25): the release's header and what's new, the cut line
-    (app/constants.UPDATE_NOTES_CUT: the in-app update shows only what is above it), then how to install and start it
+    """The GitHub release's notes, in the user's layout (2026-11-25): the release's header and what's new, a divider
+    (app/constants.UPDATE_NOTES_CUT, a line of dashes: the in-app update shows only what is above it), then how to
+    install and start it
     on each system, every time (manny: tell newcomers which script to run on Windows vs macOS / Linux).
 
     The install and start part is the README's "How to install and start" section ("Run it" before 1.26: without
