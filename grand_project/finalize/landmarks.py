@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import math
+import weakref
 
 import cv2
 import numpy as np
@@ -76,7 +77,7 @@ def _screen_nodes(atlas, f, x, y, reach: float = 80.0) -> np.ndarray:
     return core.persp(Hi, near)
 
 
-_OCEAN: dict = {}  # id(screenshot) -> (screenshot, ground classes, unusable pixels): recent ones kept
+_OCEAN: dict = {}  # id(screenshot) -> (weak ref to it, ground classes, unusable pixels): recent ones kept
 _OCEAN_KEEP = 24  # the re-check goes back and forth between screenshots (one kept: ~300 rebuilds per 80 adds)
 
 
@@ -87,10 +88,11 @@ def _ground_classes(hsv: np.ndarray) -> np.ndarray:
         hsv: the screenshot in OpenCV HSV (H 0-179, S and V 0-255), shape (h, w, 3).
 
     Returns:
-        An (h, w) int array: 0 water, 1 sand, 2 rock / snow, 3 grass, 4 forest, -1 unknown.
+        An (h, w) int8 array: 0 water, 1 sand, 2 rock / snow, 3 grass, 4 forest, -1 unknown (int8: _OCEAN_KEEP
+        of them in int64 were ~380 MB, kept after every re-check).
     """
-    H, S, V = hsv[..., 0].astype(int), hsv[..., 1].astype(int), hsv[..., 2].astype(int)
-    out = np.full(H.shape, -1, int)
+    H, S, V = hsv[..., 0].astype(np.int16), hsv[..., 1].astype(np.int16), hsv[..., 2].astype(np.int16)
+    out = np.full(H.shape, -1, np.int8)
     out[(H >= 78) & (H <= 112) & (S >= 85) & (V >= 50)] = 0  # water (blue-grey rock shadow is less saturated)
     out[(H >= 10) & (H <= 30) & (S >= 25) & (S <= 140) & (V >= 135)] = 1  # sand / desert
     out[(S < 40) & (V >= 95)] = 2  # rock / snow
@@ -112,12 +114,14 @@ def ground_of(img) -> tuple[np.ndarray, np.ndarray]:
         both of shape (h, w).
     """
     got = _OCEAN.get(id(img))
-    if got is None or got[0] is not img:
+    # (a weak ref: the screenshot goes when the atlas's own cache lets it go, not kept here as well; the identity
+    # check stays, an id can be reused)
+    if got is None or got[0]() is not img:
         cls = _ground_classes(cv2.cvtColor(img, cv2.COLOR_BGR2HSV))
         bad = (
             (gp.gold_stroke_mask(img) > 0) | (cv2.cvtColor(img, cv2.COLOR_BGR2GRAY) < 22) | (core._valid_mask(img) == 0)
         )
-        got = (img, cls, bad)
+        got = (weakref.ref(img), cls, bad)
         _OCEAN.pop(id(img), None)
         _OCEAN[id(img)] = got
         while len(_OCEAN) > _OCEAN_KEEP:

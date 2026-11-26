@@ -332,7 +332,9 @@ def ground_sampler(canvas: np.ndarray, weight: np.ndarray, origin, radius: float
         leaves the canvas or less than half of it was seen.
     """
     x0, y0, s0 = origin
-    lab = cv2.cvtColor(canvas, cv2.COLOR_BGR2LAB).astype(np.float32)
+    # kept as OpenCV gives it (uint8), each disc read as float32 when sampled: the same looks, a quarter of the memory
+    # (a float32 Lab copy of the whole map image was ~460 MB on a 384-screenshot atlas, kept with the sampler)
+    lab = cv2.cvtColor(canvas, cv2.COLOR_BGR2LAB)
     r = max(2, int(round(radius * s0)))
     yy, xx = np.mgrid[-r : r + 1, -r : r + 1]
     disc = np.hypot(xx, yy) <= r
@@ -354,7 +356,7 @@ def ground_sampler(canvas: np.ndarray, weight: np.ndarray, origin, radius: float
         m = disc & (weight[cy - r : cy + r + 1, cx - r : cx + r + 1] > 0)
         if m.sum() < disc.sum() * 0.5:
             return None
-        px = lab[cy - r : cy + r + 1, cx - r : cx + r + 1][m]
+        px = lab[cy - r : cy + r + 1, cx - r : cx + r + 1][m].astype(np.float32)
         return np.concatenate([px.mean(0), px.std(0)])  # spread: Faridun ground is flat, desert mottled
 
     dy, dx = np.mgrid[-r : r + 1, -r : r + 1]
@@ -387,7 +389,7 @@ def ground_sampler(canvas: np.ndarray, weight: np.ndarray, origin, radius: float
             if not good.any():
                 continue
             i, ys, xs, m, cnt = i[good], ys[good], xs[good], m[good], cnt[good]
-            px = lab[ys, xs]  # (m, 2r+1, 2r+1, 3) float32
+            px = lab[ys, xs].astype(np.float32)  # (m, 2r+1, 2r+1, 3)
             w = m.astype(np.float32)
             # one pass: sums and sums of squares over the seen part of each disc (totals in float64)
             s1 = np.einsum("nyxc,nyx->nc", px, w, dtype=np.float64)
