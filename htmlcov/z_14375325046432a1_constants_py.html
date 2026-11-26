@@ -54,8 +54,8 @@
             </div>
         </aside>
         <h2>
-            <span class="text">91 statements &nbsp;</span>
-            <button type="button" class="run button_toggle_run" value="run" data-shortcut="r" title="Toggle lines run">91<span class="text"> run</span></button>
+            <span class="text">94 statements &nbsp;</span>
+            <button type="button" class="run button_toggle_run" value="run" data-shortcut="r" title="Toggle lines run">94<span class="text"> run</span></button>
             <button type="button" class="mis show_mis button_toggle_mis" value="mis" data-shortcut="m" title="Toggle lines missing">0<span class="text"> missing</span></button>
             <button type="button" class="exc show_exc button_toggle_exc" value="exc" data-shortcut="x" title="Toggle lines excluded">0<span class="text"> excluded</span></button>
         </h2>
@@ -65,7 +65,7 @@
             <a id="nextFileLink" class="nav" href="z_14375325046432a1_icon_time_py.html">&#xbb; next</a>
             &nbsp; &nbsp; &nbsp;
             <a class="nav" href="https://coverage.readthedocs.io/en/7.17.5">coverage.py v7.17.5</a>,
-            created at 2026-11-26 15:47 +0000
+            created at 2026-11-26 23:27 +0000
         </p>
         <aside class="hidden">
             <button type="button" class="button_next_chunk" data-shortcut="j"></button>
@@ -372,6 +372,15 @@
     <p class="pln"><span class="n"><a id="t290" href="#t290">290</a></span><span class="t"><span class="com"># off: roa atlas 65 px)</span>&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t291" href="#t291">291</a></span><span class="t"><span class="nam">ICON_TIME_TIE</span> <span class="op">=</span> <span class="num">0.03</span>  <span class="com"># an icon found near the row counts only when it is within this of its best match (roa test: the</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t292" href="#t292">292</a></span><span class="t"><span class="com"># player marker over a map fit Cleansed&#x27;s pictures)</span>&nbsp;</span><span class="r"></span></p>
+    <p class="pln"><span class="n"><a id="t293" href="#t293">293</a></span><span class="t"><span class="com"># the gold fields kept at once by the path check (~4 MB each; kept for every screenshot, they were its peak) and the</span>&nbsp;</span><span class="r"></span></p>
+    <p class="pln"><span class="n"><a id="t294" href="#t294">294</a></span><span class="t"><span class="com"># cell of the curve the links are scored along (atlas units: a few links per cell, a screenshot spans several)</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run"><span class="n"><a id="t295" href="#t295">295</a></span><span class="t"><span class="nam">CHECK_FIELDS_KEEP</span> <span class="op">=</span> <span class="num">48</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run"><span class="n"><a id="t296" href="#t296">296</a></span><span class="t"><span class="nam">CHECK_CURVE_CELL</span> <span class="op">=</span> <span class="num">200.0</span>&nbsp;</span><span class="r"></span></p>
+    <p class="pln"><span class="n"><a id="t297" href="#t297">297</a></span><span class="t"><span class="com"># decoded screenshots kept while the atlas-wide check runs (~6 MB each; placing keeps core.Atlas.IMAGE_CACHE, 90, for</span>&nbsp;</span><span class="r"></span></p>
+    <p class="pln"><span class="n"><a id="t298" href="#t298">298</a></span><span class="t"><span class="com"># its terrain checks of ~60 neighbours): the check keeps what it works out from each screenshot in caches of its own</span>&nbsp;</span><span class="r"></span></p>
+    <p class="pln"><span class="n"><a id="t299" href="#t299">299</a></span><span class="t"><span class="com"># (gold fields, dashes), so 90 only held ~540 MB more at its peak. Measured on the roa atlas (1261 screenshots): peak</span>&nbsp;</span><span class="r"></span></p>
+    <p class="pln"><span class="n"><a id="t300" href="#t300">300</a></span><span class="t"><span class="com"># 2.42 -&gt; 1.97 GB, the same time (559 / 566 s) and the very same result</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run"><span class="n"><a id="t301" href="#t301">301</a></span><span class="t"><span class="nam">FINAL_IMAGE_CACHE</span> <span class="op">=</span> <span class="num">24</span>&nbsp;</span><span class="r"></span></p>
 </main>
 <footer>
     <div class="content">
@@ -381,7 +390,7 @@
             <a class="nav" href="z_14375325046432a1_icon_time_py.html">&#xbb; next</a>
             &nbsp; &nbsp; &nbsp;
             <a class="nav" href="https://coverage.readthedocs.io/en/7.17.5">coverage.py v7.17.5</a>,
-            created at 2026-11-26 15:47 +0000
+            created at 2026-11-26 23:27 +0000
         </p>
     </div>
 </footer>
