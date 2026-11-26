@@ -545,7 +545,8 @@ class MapImageMixin:
         canvas, weight, (ox, oy, sc) = terrain
         # grid cell (c, r) -> map image px ((x0 + c * cell - ox) * sc, ...)
         A = np.array([[cell * sc, 0, (x0 - ox) * sc], [0, cell * sc, (y0 - oy) * sc]], np.float32)
-        grey = canvas.mean(axis=2).astype(np.float32) if canvas.ndim == 3 else canvas.astype(np.float32)
+        # (averaged in float32 directly: the same values, without a float64 copy of a map image of up to 40 Mpx)
+        grey = canvas.mean(axis=2, dtype=np.float32) if canvas.ndim == 3 else canvas.astype(np.float32)
         wt = (weight > 0).astype(np.float32)
         flags = cv2.INTER_AREA | cv2.WARP_INVERSE_MAP
         g = cv2.warpAffine(grey, A, (w, h), flags=flags, borderValue=0.0)

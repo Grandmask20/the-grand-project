@@ -615,18 +615,21 @@ def finalize(atlas, log=_log) -> dict:
     fields: dict[str, np.ndarray | None] = {}
 
     def field(f):
-        """Return a screenshot's distance-to-gold field as float32, computed once per check.
+        """Return a screenshot's distance-to-gold field, computed once per check.
+
+        Kept float16 (route_score reads a few dozen pixels as float32): a float32 copy per screenshot doubled the
+        check's memory (~8 MB per screenshot seen).
 
         Args:
             f: the screenshot (frame) dict.
 
         Returns:
-            A 2-D float32 array: distance in screen px from each pixel to the nearest gold path dash; None when its
+            A 2-D float16 array: distance in screen px from each pixel to the nearest gold path dash; None when its
             picture is gone (its detected maps and paths still count, only this look is left out).
         """
         if f["name"] not in fields:
             g = _gold(atlas, f)
-            fields[f["name"]] = None if g is None else g[1].astype(np.float32)
+            fields[f["name"]] = None if g is None else g[1]
         return fields[f["name"]]
 
     cache: dict[tuple[int, int], tuple[float, int, int]] = {}

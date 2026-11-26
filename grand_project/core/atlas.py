@@ -66,6 +66,22 @@ def find_screenshot(p: str, atlas_dir: Path) -> str:
 
 
 # ------------------------------------------------------------------ the atlas
+def _compact_descriptors(d: np.ndarray) -> np.ndarray:
+    """Return SIFT descriptors in the smallest type that keeps them exactly, for Atlas._feat_cache.
+
+    OpenCV's SIFT gives float32 descriptors holding whole numbers 0..255, so uint8 keeps them exactly at a quarter
+    of the size; other values (another OpenCV) are kept as float16, as before.
+
+    Args:
+        d: (n, 128) float32 descriptors.
+
+    Returns:
+        (n, 128) uint8 or float16 array.
+    """
+    d8 = d.astype(np.uint8)
+    return d8 if np.array_equal(d8, d) else d.astype(np.float16)
+
+
 class Atlas:
     """The stitched atlas: placed screenshots and the map nodes, paths, landmarks and icons merged from them.
 
@@ -641,7 +657,8 @@ class Atlas:
         """Return SIFT terrain features of a screenshot in flattened coordinates (cached).
 
         6000 features: dark / foggy screenshots need many to find enough matches. Up to 300 screenshots are cached
-        with float16 descriptors (~1 MB each).
+        with uint8 descriptors (~0.8 MB each): OpenCV's SIFT values are whole numbers 0..255, so nothing is lost
+        (float16 took twice that, ~450 MB with the cache full).
 
         Args:
             path: Screenshot file path (the cache key).
@@ -653,16 +670,16 @@ class Atlas:
         """
         key = path
         if key in Atlas._feat_cache:
-            pts, d16 = Atlas._feat_cache[key]
-            return pts, (None if d16 is None else d16.astype(np.float32))
+            pts, dk = Atlas._feat_cache[key]
+            return pts, (None if dk is None else dk.astype(np.float32))
         img = self.image(path)
         if img is None:  # (gone, its copy too)
             return np.zeros((0, 2)), None
         sift = cv2.SIFT_create(6000)  # dark / foggy screenshots need many to find enough matches
         k, d = sift.detectAndCompute(cv2.cvtColor(img, cv2.COLOR_BGR2GRAY), _valid_mask(img))
         pts = persp(R, np.float32([p.pt for p in k])) if k else np.zeros((0, 2))
-        Atlas._feat_cache[key] = (pts, None if d is None else d.astype(np.float16))  # ~1.5 MB each
-        while len(Atlas._feat_cache) > 300:  # ~1 MB each
+        Atlas._feat_cache[key] = (pts, None if d is None else _compact_descriptors(d))  # ~0.8 MB each
+        while len(Atlas._feat_cache) > 300:
             Atlas._feat_cache.pop(next(iter(Atlas._feat_cache)))
         return pts, d
 
