@@ -594,6 +594,22 @@ class Handler(BaseHTTPRequestHandler):
         """What the Re-check prompt says about an atlas (?path=: another one than the open one, read, not opened)."""
         self._json(self.S.recheck_info(q.get("path", [None])[0] or None))
 
+    @route("GET", "/api/atlas/keep-info")
+    def get_keep_info(self, q) -> None:
+        """What the "Keep copies" prompt says about the open atlas (its screenshots' copies: app/keeping.py)."""
+        gen = self.S.generation
+        info = self.S.keep_info()
+        if self.S.generation != gen:  # another atlas opened while it was counted: refused, never a mix (CodeRabbit)
+            raise StaleAtlas()
+        self._resp_gen = gen
+        self._json(info)
+
+    @route("POST", "/api/atlas/keep")
+    def post_keep(self, q) -> None:
+        """Keep copies of the open atlas's screenshots and move the detected ones in its folder to used/ (a job)."""
+        self.S.keep_all()
+        self._json({"ok": True})
+
     @route("POST", "/api/atlas/recheck-file")
     def post_recheck_file(self, q) -> None:
         """Re-check an atlas from the Atlases tab ({"path"}: opened first when another one is open)."""
@@ -1326,7 +1342,7 @@ def reuse_running(port: int, atlas: str | None, browser: bool) -> str:
         return START
     url, version = found
     if version != VERSION:
-        _say(f"An older copy (v{version}) is running: closing it to start v{VERSION}")
+        _say("Another version of the app is running: closing it to start this one")
         _local(url + "api/quit", {})
         t0 = time.monotonic()
         old_port = int(url.rstrip("/").rsplit(":", 1)[1])
@@ -1426,6 +1442,19 @@ def open_first_atlas(session: AtlasSession, given: str | None, gen: int | None =
         )
 
 
+def shown_version() -> str:
+    """The version as the players know it: the release (1.3.1) in a player release, else the program's own version
+    (v1.xx: develop's, one up per merge; user: players only ever see release numbers).
+
+    Returns:
+        "release 1.3.1" or "v1.29".
+    """
+    from grand_project import release_manifest as rm
+
+    m = rm.read(rc_paths.ROOT) if rc_paths.CHANNEL == "release" else None
+    return f"release {m['release']}" if m and m.get("release") else f"v{VERSION}"
+
+
 def main(argv: list[str] | None = None) -> int:
     """Start the app: open the atlas (the one given, else the last one), serve the page and open the browser.
 
@@ -1475,7 +1504,7 @@ def main(argv: list[str] | None = None) -> int:
     # a copy started on another port was not found, and that launch gave up (CodeRabbit)
     with contextlib.suppress(OSError):
         (rc_paths.USER_DATA / APP_URL_FILE).write_text(server.url, encoding="utf-8")
-    _say(f"The Grand Project {VERSION}: {server.url}  (Ctrl+C to quit)")
+    _say(f"The Grand Project {shown_version()}: {server.url}  (Ctrl+C to quit)")
     LOG.info(f"serving on {server.url}")
     if not args.no_browser:
         threading.Timer(0.4, lambda: webbrowser.open(server.url)).start()
