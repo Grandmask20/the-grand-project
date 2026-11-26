@@ -82,7 +82,8 @@ function start() {
 		resourcesPath: process.resourcesPath,
 		platform: process.platform,
 		repo: path.join(__dirname, ".."),
-		python: process.env.GP_PYTHON,
+		// (a path given relative to where npm start ran: the program starts in the repo's top)
+		python: process.env.GP_PYTHON?.includes(path.sep) ? path.resolve(process.env.GP_PYTHON) : process.env.GP_PYTHON,
 	});
 	let said = "";
 	try {
