@@ -19,3 +19,16 @@ def test_one_point_and_a_line():
     line = np.array([[x * 200.0, 0.0] for x in range(5)])
     walk = line[np.argsort(_curve_keys(line, 200.0), kind="stable")]
     assert np.all(np.abs(np.diff(walk[:, 0])) <= 3 * 200)  # (close along the curve stays close on the atlas)
+
+
+def test_the_check_keeps_fewer_decoded_screenshots_while_it_runs(monkeypatch):
+    # (its own caches keep what it works out; placing's 90 only held ~540 MB more at its peak - roa: the same result)
+    from grand_project import core
+    from grand_project.finalize import check
+
+    seen = []
+    monkeypatch.setattr(check, "_finalize", lambda atlas, log=None: seen.append(atlas.IMAGE_CACHE) or {})
+    at = core.Atlas()
+    check.finalize(at)
+    assert seen == [check.FINAL_IMAGE_CACHE] and at.IMAGE_CACHE == core.Atlas.IMAGE_CACHE  # (placing's again after)
+    assert "IMAGE_CACHE" not in vars(at)

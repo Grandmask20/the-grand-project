@@ -30,6 +30,7 @@ from .constants import (
     END_DASHES,
     END_REACH,
     END_VIEWS,
+    FINAL_IMAGE_CACHE,
     GAP_FOUND,
     GAP_MIN,
     GAP_ON,
@@ -145,6 +146,28 @@ def _curve_keys(points: np.ndarray, cell: float) -> np.ndarray:
 
 
 def finalize(atlas, log=_log) -> dict:
+    """Run the atlas-wide check (_finalize) with fewer decoded screenshots kept: FINAL_IMAGE_CACHE while it runs,
+    the atlas's own (placing's) again after.
+
+    Args:
+        atlas: The Atlas; its final is set.
+        log: Callable taking one message string.
+
+    Returns:
+        The final dict (also stored in atlas.final).
+    """
+    own = atlas.__dict__.get("IMAGE_CACHE")  # (an atlas of its own: else the class's)
+    atlas.IMAGE_CACHE = min(atlas.IMAGE_CACHE, FINAL_IMAGE_CACHE)
+    try:
+        return _finalize(atlas, log)
+    finally:
+        if own is None:
+            del atlas.IMAGE_CACHE
+        else:
+            atlas.IMAGE_CACHE = own
+
+
+def _finalize(atlas, log=_log) -> dict:
     """Run the atlas-wide check over every screenshot and store what to believe in atlas.final.
 
     Nothing detected is changed; the steps decide which map nodes, paths, icons and landmarks are kept:
