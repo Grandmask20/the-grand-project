@@ -335,6 +335,8 @@ class AtlasSession(
         self.set_setting("last_atlas", str(p), save=False)
         self._after_load()
         self.events.log(f"new atlas: {p}", now.scope)
+        # (an update just put in place: a new atlas made before the start-up one opened never got its line, CodeRabbit)
+        self.say_update(now.scope)
         if self.settings.get("watch_on"):
             self.start_watch()  # auto-add follows the new atlas too (it was stopped above and left off)
 

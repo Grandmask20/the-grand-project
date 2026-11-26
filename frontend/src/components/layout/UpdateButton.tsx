@@ -9,7 +9,7 @@ import { Switch } from "@/components/ui/switch";
 import type { UpdateStatus } from "@/domain/app/Update";
 import { useAppClient } from "@/hooks/app/UseAppClient";
 import { useAppState } from "@/hooks/app/UseAppState";
-import { type NotesSpan, notesBlocks } from "@/logic/ReleaseNotes";
+import { type NotesSpan, notesBlocks, notesWithSkipped } from "@/logic/ReleaseNotes";
 import { useAppStore } from "@/store/AppStore";
 import { cn } from "@/utils/Cn";
 
@@ -110,7 +110,7 @@ function UpdateBox({
 					{u.available && u.latest && (
 						<>
 							<p className="font-medium text-gold">{u.latest.name} is out.</p>
-							{u.latest.notes && <Notes notes={u.latest.notes} />}
+							{notesWithSkipped(u.latest) && <Notes notes={notesWithSkipped(u.latest)} />}
 							{u.latest.url && (
 								<a className="text-xs text-gold hover:underline" href={u.latest.url} target="_blank" rel="noreferrer">
 									The release on GitHub

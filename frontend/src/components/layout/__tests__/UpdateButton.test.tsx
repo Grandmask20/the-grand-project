@@ -140,4 +140,14 @@ describe("UpdateButton", () => {
 		await user.click(await screen.findByRole("button", { name: /Update to 1\.3\.2/i }));
 		expect(screen.getByText(/The update to 1\.3\.2 failed, nothing changed: a file didn't match/)).toBeInTheDocument();
 	});
+
+	it("shows the notes of releases an update skips too (user)", async () => {
+		const since = [{ release: "1.3.1", name: "The Grand Project 1.3.1", notes: "## 1.3.1 Hotfix\n\n- safe deletion" }];
+		const found = { ...base, latest: { ...latest("1.3.2"), notes: "## 1.3.2\n\n- newest", since }, available: true };
+		const { user } = renderWithApp(<UpdateButton />, { "GET /api/update": found });
+		await user.click(await screen.findByRole("button", { name: /Update to 1\.3\.2/i }));
+		expect(screen.getByRole("heading", { name: "1.3.2" })).toBeInTheDocument();
+		expect(screen.getByRole("heading", { name: "1.3.1 Hotfix" })).toBeInTheDocument();
+		expect(screen.getByText("safe deletion")).toBeInTheDocument();
+	});
 });

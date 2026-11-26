@@ -18,7 +18,8 @@ const DIVIDER = /^\s*([-*_])(\s*\1){2,}\s*$/;
 /** Split a line into spans: **bold**, `code` and [text](link); a link's address is kept only when http(s). */
 export function notesSpans(line: string): NotesSpan[] {
 	const out: NotesSpan[] = [];
-	const re = /\*\*(.+?)\*\*|`([^`]+)`|\[([^\]]+)\]\(([^)\s]+)\)/g;
+	// (a link's address may hold one level of brackets: [docs](https://x.y/a(b)) was cut at the first ")")
+	const re = /\*\*(.+?)\*\*|`([^`]+)`|\[([^\]]+)\]\(((?:[^()\s]|\([^()\s]*\))+)\)/g;
 	let at = 0;
 	for (let m = re.exec(line); m; m = re.exec(line)) {
 		if (m.index > at) out.push({ text: line.slice(at, m.index) });
@@ -48,7 +49,7 @@ export function notesBlocks(notes: string): NotesBlock[] {
 			if (last?.kind === "list") last.items.push(notesSpans(p[1]));
 			else blocks.push({ kind: "list", items: [notesSpans(p[1])] });
 		} else if (last?.kind === "list" && /^\s+\S/.test(raw)) {
-			last.items[last.items.length - 1].push({ text: ` ${line.trim()}` }); // (a point going on, indented)
+			last.items[last.items.length - 1].push(...notesSpans(` ${line.trim()}`)); // (a point going on, indented)
 		} else if (last?.kind === "paragraph") {
 			last.lines.push(notesSpans(line.trim()));
 		} else {
@@ -56,4 +57,13 @@ export function notesBlocks(notes: string): NotesBlock[] {
 		}
 	}
 	return blocks.filter((b) => b.kind !== "paragraph" || b.lines.length > 0);
+}
+
+/** The notes the update box shows: the newest release's, then each release skipped since this copy's, newest first,
+ * each under its own header (its notes' own, else its name): whoever skips one still learns what it brought (user). */
+export function notesWithSkipped(latest: { notes: string; since?: { name: string; notes: string }[] }): string {
+	const skipped = (latest.since ?? [])
+		.filter((r) => r.notes.trim())
+		.map((r) => (/^\s*#/.test(r.notes) ? r.notes : `## ${r.name}\n\n${r.notes}`));
+	return [latest.notes, ...skipped].filter((n) => n.trim()).join("\n\n");
 }

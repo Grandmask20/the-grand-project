@@ -293,3 +293,37 @@ def test_the_last_updates_line_reaches_the_first_atlas_log(installed):
     assert any(line.endswith("Updated from release 1.3 to 1.3.1") for line in s.events.log_lines)
     s.say_update(s.opened.scope)  # (once: not again in the next atlas)
     assert sum(line.endswith("Updated from release 1.3 to 1.3.1") for line in s.events.log_lines) == 1
+
+
+def test_the_newest_release_comes_with_the_notes_of_those_an_update_skips():
+    # (user: someone going from 1.3 to 1.3.2 still learns what 1.3.1 brought)
+    def rel(release, body, **kw):
+        return dict(github(release)("x"), body=body, **kw)
+
+    listed = [
+        rel("1.5", "beta", prerelease=True),
+        rel("1.3.1", "## 1.3.1 Hotfix\n\n- safe deletion\n\n---\n\n## How to install and start\n\nsteps"),
+        rel("1.4", "draft", draft=True),
+        rel("1.3.2", "## 1.3.2\n\n- newest"),
+        rel("1.3", "## What's new\n\n- the old one"),
+    ]
+    got = updater.latest_release(lambda url: listed, "1.3")
+    assert got["release"] == "1.3.2" and got["notes"] == "## 1.3.2\n\n- newest"  # (drafts and betas left out)
+    assert got["since"] == [
+        {"release": "1.3.1", "name": "The Grand Project 1.3.1", "notes": "## 1.3.1 Hotfix\n\n- safe deletion"}
+    ]
+    assert updater.latest_release(lambda url: listed, "1.3.1")["since"] == []
+    assert updater.latest_release(lambda url: listed)["since"] == []  # (a development copy: none)
+    assert updater.latest_release(github("1.4"), "1.3")["since"] == []  # (an address answering one release)
+    with pytest.raises(ValueError):
+        updater.latest_release(lambda url: [rel("1.4", "x", draft=True)], "1.3")
+
+
+def test_a_new_atlas_made_first_still_gets_the_last_updates_line(installed):
+    # (made before the start-up atlas opened, it never got the line - CodeRabbit)
+    s, _root, tmp = installed
+    (rc_paths.USER_DATA).mkdir(parents=True, exist_ok=True)
+    (rc_paths.USER_DATA / K.UPDATE_RESULT).write_text(json.dumps({"ok": True, "from": "1.3", "to": "1.3.1"}))
+    s.after_update()
+    s.new_atlas(tmp / "fresh" / "atlas.json")
+    assert any(line.endswith("Updated from release 1.3 to 1.3.1") for line in s.events.log_lines)
