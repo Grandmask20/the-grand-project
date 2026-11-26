@@ -14,6 +14,9 @@ def _opened(tmp_path):
     s = AtlasSession(settings={}, worker=False)
     path, _pts, _img = make_atlas(tmp_path)
     s.open_atlas(path)
+    t = getattr(s, "_lock_thread", None)  # (the stronghold search opening starts holds the session lock: not idle
+    if t:  # time while it runs, and on a slow machine it still ran - CI on Linux / macOS)
+        t.join(60)
     s.atlas._images["a.png"] = np.zeros((1080, 1920, 3), np.uint8)  # (as a placement leaves it)
     assert s.atlas.image("a.png") is not None  # (a screenshot read, from the cache: the time it was used)
     return s
