@@ -1,4 +1,4 @@
-# The Grand Project — v1.28
+# The Grand Project — v1.29
 <img width="232" height="34" alt="Screenshot 2026-11-25 at 04-49-29 The Grand Project" src="https://github.com/user-attachments/assets/d971e5c5-42ec-426d-a95b-db8a7444b58d" />
 
 Builds one big map of your Path of Exile 2 atlas from your screenshots. It will also find any icons, maps, cities, city biomes, breach strongholds, deadly bosses for you to search through later.

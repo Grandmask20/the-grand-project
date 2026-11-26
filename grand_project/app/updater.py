@@ -16,6 +16,7 @@ from __future__ import annotations
 import http.client
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -35,29 +36,53 @@ from . import constants as K
 LOG = atlas_log.get("app")
 
 
-def latest_release(fetch=None) -> dict:
-    """Ask GitHub for the latest release.
+def latest_release(fetch=None, mine: str | None = None) -> dict:
+    """Ask GitHub for its releases: the newest (by release number; drafts and pre-releases left out), with the notes of
+    the ones between this copy's and it, so whoever skips a release still learns what it brought (user).
 
     Args:
         fetch: url -> parsed JSON (default: an HTTPS GET with the app's name as User-Agent; tests pass their own).
+        mine: This copy's release ("1.3"), or None.
 
     Returns:
-        {"release", "name", "notes", "url", "zip", "published"}.
+        {"release", "name", "notes", "url", "zip", "published", "since"}: since = [{"release", "name", "notes"}] of
+        the skipped ones, newest first.
 
     Raises:
         OSError / ValueError: When GitHub can't be reached or answers something else.
     """
     data = (fetch or _get_json)(K.UPDATE_RELEASES_URL)
-    tag = str(data.get("tag_name", ""))
-    if not rm.release_key(tag) or not data.get("zipball_url"):
-        raise ValueError(f"GitHub's latest release has no release number ({tag!r})")
+    listed = data if isinstance(data, list) else [data]  # (one release: an address answering only the latest)
+    found = [
+        r
+        for r in listed
+        if isinstance(r, dict)
+        and not r.get("draft")
+        and not r.get("prerelease")
+        and rm.release_key(str(r.get("tag_name", "")))
+        and r.get("zipball_url")
+    ]
+    if not found:
+        raise ValueError("GitHub has no release with a release number")
+    found.sort(key=lambda r: rm.release_key(str(r["tag_name"])), reverse=True)
+    top, tag = found[0], str(found[0]["tag_name"])
+    floor = rm.release_key(mine or "")
     return {
         "release": tag.lstrip("vV"),
-        "name": data.get("name") or tag,
-        "notes": whats_new(data.get("body") or ""),
-        "url": data.get("html_url") or "",
-        "zip": data["zipball_url"],
-        "published": data.get("published_at") or "",
+        "name": top.get("name") or tag,
+        "notes": whats_new(top.get("body") or ""),
+        "url": top.get("html_url") or "",
+        "zip": top["zipball_url"],
+        "published": top.get("published_at") or "",
+        "since": [
+            {
+                "release": str(r["tag_name"]).lstrip("vV"),
+                "name": r.get("name") or str(r["tag_name"]),
+                "notes": whats_new(r.get("body") or ""),
+            }
+            for r in found[1:]
+            if floor and rm.release_key(str(r["tag_name"])) > floor
+        ],
     }
 
 
@@ -82,7 +107,7 @@ def whats_new(notes: str) -> str:
     for line in lines:
         if line.startswith("## "):
             install = line[3:].strip().lower() in K.UPDATE_NOTES_INSTALL
-        if not install and not (line.startswith("Program version v") and "Download" in line):
+        if not install and not re.match(r"(program )?version v\S+\s+download", line.lower()):
             out.append(line)
     return "\n".join(out).strip()
 
@@ -288,7 +313,8 @@ class UpdatesMixin:
 
         def run() -> None:
             try:
-                latest = latest_release(fetch)
+                installed = rm.read(rc_paths.ROOT)
+                latest = latest_release(fetch, installed["release"] if installed else None)
                 u.update(state="idle", latest=latest)
                 self.set_setting("update_checked", time.time())
                 st = self.update_status()
@@ -413,14 +439,32 @@ class UpdatesMixin:
             r = json.loads(f.read_text(encoding="utf-8"))
         except (OSError, ValueError):
             return None
-        f.unlink(missing_ok=True)
         if r.get("ok"):
-            self.events.log(f"Updated from release {r.get('from')} to {r.get('to')}")
             shutil.rmtree(rc_paths.USER_DATA / "update", ignore_errors=True)
-        else:
-            self.events.log(f"The update to release {r.get('to')} failed, nothing changed: {r.get('error')}")
+        self.events.log(_update_line(r))
         self._update_state()["just"] = r
+        f.unlink(missing_ok=True)  # (once said and kept: a failure on the way told it again at the next start)
         return r
+
+    def say_update(self, scope: str) -> None:
+        """Say the last update's result in the first atlas opened after it too: at start it went to the app's own log,
+        before any atlas was open, and the Log tab shows the atlas's (checked in the app: it was never seen there).
+
+        Args:
+            scope: That atlas's log.
+        """
+        u = self._update_state()
+        r = u.get("just")
+        if r and not u.get("just_said"):  # (beside the result, not in it: the result goes to the page as it is)
+            u["just_said"] = True
+            self.events.log(_update_line(r), scope)
+
+
+def _update_line(r: dict) -> str:
+    """The log line for an update's result (update_apply.py's)."""
+    if r.get("ok"):
+        return f"Updated from release {r.get('from')} to {r.get('to')}"
+    return f"The update to release {r.get('to')} failed, nothing changed: {r.get('error')}"
 
 
 def _download(url: str, dest: Path, progress) -> None:

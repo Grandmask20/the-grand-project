@@ -142,8 +142,12 @@ LOOK_ICON_MAX = 80  # the longest icon name a bookmark's or group's look takes (
 ROUTE_LEGS_MAX = 200  # a saved route: its main leg and at most this many less one branches
 
 # the in-app update (app/updater.py): GitHub's latest release of the player build
-UPDATE_RELEASES_URL = os.environ.get(  # (another address only for trying an update without GitHub: tests)
-    "GRAND_PROJECT_UPDATE_URL", "https://api.github.com/repos/Grandmask20/the-grand-project/releases/latest"
+# GitHub's list of releases (one request: the newest, and the notes of those an update skips, user), newest first.
+# One page of GitHub's most, 100: a copy further behind than that (drafts and pre-releases count) gets the notes of the
+# newest 100 only, on purpose; following GitHub's next pages cost more of its 60 requests an hour (CodeRabbit). Another
+# address only for trying an update without GitHub (tests), which may also answer one release
+UPDATE_RELEASES_URL = os.environ.get(
+    "GRAND_PROJECT_UPDATE_URL", "https://api.github.com/repos/Grandmask20/the-grand-project/releases?per_page=100"
 )
 # the divider in a release's notes the update box stops at: what's new above it, the install steps below are for
 # downloading by hand. A line of dashes only, markdown's own divider (user, 2026-11-26: a set of dashes, not a

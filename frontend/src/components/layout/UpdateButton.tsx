@@ -9,6 +9,7 @@ import { Switch } from "@/components/ui/switch";
 import type { UpdateStatus } from "@/domain/app/Update";
 import { useAppClient } from "@/hooks/app/UseAppClient";
 import { useAppState } from "@/hooks/app/UseAppState";
+import { type NotesSpan, notesBlocks, notesWithSkipped } from "@/logic/ReleaseNotes";
 import { useAppStore } from "@/store/AppStore";
 import { cn } from "@/utils/Cn";
 
@@ -89,6 +90,7 @@ function UpdateBox({
 }) {
 	const app = useAppClient();
 	const busy = u.state === "checking" || u.state === "downloading" || u.state === "restarting";
+	const notes = u.latest ? notesWithSkipped(u.latest) : "";
 	const left = useCountdown(u.next);
 	const mb = (n: number) => `${(n / 1e6).toFixed(1)} MB`;
 	return (
@@ -98,9 +100,8 @@ function UpdateBox({
 					<DialogTitle>Update</DialogTitle>
 				</DialogHeader>
 				<div className="flex flex-col gap-2 text-sm">
-					<p>
-						This copy: {u.release ? `release ${u.release}` : "a development copy"} (program v{u.program})
-					</p>
+					{/* the release number only (1.3, 1.3.1): the program's own version isn't the players' (user) */}
+					<p>This copy: {u.release ? `release ${u.release}` : `a development copy (program v${u.program})`}</p>
 					{!u.can && <p className="text-muted-foreground">{u.why}</p>}
 					{u.state === "checking" && <p className="text-muted-foreground">Asking GitHub for the latest release…</p>}
 					{u.state === "error" && u.error && <p className="text-destructive">{u.error}</p>}
@@ -110,11 +111,7 @@ function UpdateBox({
 					{u.available && u.latest && (
 						<>
 							<p className="font-medium text-gold">{u.latest.name} is out.</p>
-							{u.latest.notes && (
-								<pre className="max-h-64 overflow-y-auto rounded border bg-muted/40 p-2 font-sans text-xs whitespace-pre-wrap">
-									{u.latest.notes}
-								</pre>
-							)}
+							{notes && <Notes notes={notes} />}
 							{u.latest.url && (
 								<a className="text-xs text-gold hover:underline" href={u.latest.url} target="_blank" rel="noreferrer">
 									The release on GitHub
@@ -131,7 +128,9 @@ function UpdateBox({
 					{u.state === "restarting" && (
 						<p className="text-gold">Putting the update in place: the app restarts, and this page reloads by itself.</p>
 					)}
-					{u.just && (
+					{/* (a done update not under a newer release's notes: "Updated from 1.3 to 1.3.1" beside "1.3.2 is out"
+					read oddly; a failed one says why beside the offer it failed on) */}
+					{u.just && (!u.just.ok || !u.available) && (
 						<p className={u.just.ok ? "text-lime-400" : "text-destructive"}>
 							{u.just.ok
 								? `Updated from release ${u.just.from} to ${u.just.to}.`
@@ -169,6 +168,71 @@ function UpdateBox({
 				</DialogFooter>
 			</DialogContent>
 		</Dialog>
+	);
+}
+
+/** A release's notes as the box shows them: headings, points and paragraphs (logic/ReleaseNotes; they showed as
+ * typed, "##" and all: user). */
+function Notes({ notes }: { notes: string }) {
+	return (
+		<div className="flex max-h-64 flex-col gap-1.5 overflow-y-auto rounded border bg-muted/40 p-2 text-xs">
+			{notesBlocks(notes).map((b, i) =>
+				b.kind === "heading" ? (
+					// biome-ignore lint/suspicious/noArrayIndexKey: the notes' blocks, in order (fixed for one release)
+					<h3 key={i} className="text-sm font-semibold text-gold">
+						<Spans spans={b.spans} />
+					</h3>
+				) : b.kind === "list" ? (
+					// biome-ignore lint/suspicious/noArrayIndexKey: the notes' blocks, in order (fixed for one release)
+					<ul key={i} className="list-disc pl-4">
+						{b.items.map((item, j) => (
+							// biome-ignore lint/suspicious/noArrayIndexKey: a list's points, in order
+							<li key={j}>
+								<Spans spans={item} />
+							</li>
+						))}
+					</ul>
+				) : (
+					// biome-ignore lint/suspicious/noArrayIndexKey: the notes' blocks, in order (fixed for one release)
+					<p key={i}>
+						{b.lines.map((line, j) => (
+							// biome-ignore lint/suspicious/noArrayIndexKey: a paragraph's lines, in order
+							<span key={j}>
+								{j > 0 && <br />}
+								<Spans spans={line} />
+							</span>
+						))}
+					</p>
+				),
+			)}
+		</div>
+	);
+}
+
+/** A line of the notes: plain, bold, code, and links (opened in a new tab). */
+function Spans({ spans }: { spans: NotesSpan[] }) {
+	return (
+		<>
+			{spans.map((s, i) =>
+				s.href ? (
+					// biome-ignore lint/suspicious/noArrayIndexKey: a line's parts, in order
+					<a key={i} className="text-gold hover:underline" href={s.href} target="_blank" rel="noreferrer">
+						{s.text}
+					</a>
+				) : s.bold ? (
+					// biome-ignore lint/suspicious/noArrayIndexKey: a line's parts, in order
+					<strong key={i}>{s.text}</strong>
+				) : s.code ? (
+					// biome-ignore lint/suspicious/noArrayIndexKey: a line's parts, in order
+					<code key={i} className="rounded bg-muted px-1">
+						{s.text}
+					</code>
+				) : (
+					// biome-ignore lint/suspicious/noArrayIndexKey: a line's parts, in order
+					<span key={i}>{s.text}</span>
+				),
+			)}
+		</>
 	);
 }
 
