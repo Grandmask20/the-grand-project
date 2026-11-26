@@ -6,19 +6,30 @@
 import sys
 from pathlib import Path
 
+import skops
 from PyInstaller.utils.hooks import collect_submodules
 
 ROOT = Path(SPECPATH).parent  # noqa: F821 (PyInstaller's)
+SKOPS = Path(skops.__file__).parent
 
 datas = [(str(ROOT / "references"), "references"), (str(ROOT / "frontend" / "dist"), "frontend/dist")]
 datas += [(str(ROOT / f), ".") for f in ("channel.txt", "manifest.json", "LICENSE") if (ROOT / f).is_file()]
+# skops.io.old has no __init__.py (a namespace package): PyInstaller's own importer doesn't find it (every detection
+# failed: No module named 'skops.io.old'). So skops is kept as plain .py files (module_collection_mode below), old/'s
+# files beside them, and Python's own import finds them
+datas += [(str(f), "skops/io/old") for f in sorted((SKOPS / "io" / "old").glob("*.py"))]
 
-# every module of the program (some are started by name: python -m grand_project.core.seams), skops's own (it imports
+
+def no_tests(name: str) -> bool:
+    return ".tests" not in name and not name.endswith("conftest")
+
+
+# every module of the program (some are started by name: python -m grand_project.core.seams), skops.io's (it imports
 # its parts by name: skops.io._sklearn, ...), and what the stored detector models are made of (skops builds them by
 # name: grand_project/detect/models.py). desktop/backend.py --self-check loads them all (CI: desktop.yml)
-hidden = collect_submodules("grand_project") + collect_submodules("skops")
-hidden += collect_submodules("sklearn.ensemble._hist_gradient_boosting")
-hidden += ["sklearn._loss._loss", "sklearn._loss.link", "sklearn._loss.loss", "sklearn.preprocessing._label", "skops.io"]
+hidden = collect_submodules("grand_project") + collect_submodules("skops.io", filter=no_tests)
+hidden += collect_submodules("sklearn.ensemble._hist_gradient_boosting", filter=no_tests)
+hidden += ["sklearn._loss._loss", "sklearn._loss.link", "sklearn._loss.loss", "sklearn.preprocessing._label"]
 
 a = Analysis(  # noqa: F821
     [str(ROOT / "desktop" / "backend.py")],
@@ -27,6 +38,7 @@ a = Analysis(  # noqa: F821
     hiddenimports=hidden,
     # no Tk (grand_project/builder.py stands in for it when missing), no test tools
     excludes=["tkinter", "pytest", "matplotlib", "IPython"],
+    module_collection_mode={"skops": "py"},
 )
 pyz = PYZ(a.pure)  # noqa: F821
 exe = EXE(  # noqa: F821
