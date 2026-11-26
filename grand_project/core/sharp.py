@@ -10,7 +10,6 @@ from __future__ import annotations
 
 import math
 from collections.abc import Callable
-from pathlib import Path
 
 import cv2
 import numpy as np
@@ -61,6 +60,7 @@ def build_sharp_tile(
     max_frames: int,
     labels: tuple | None = None,
     origin: tuple[float, float, float] | None = None,
+    skipped: list | None = None,
 ) -> tuple[np.ndarray, np.ndarray]:
     """Build one square of sharp ground from the screenshots.
 
@@ -77,6 +77,7 @@ def build_sharp_tile(
         weight_of: ground_weight of a screenshot (the caller caches them).
         max_frames: Most screenshots warped when there is no clean map.
         labels: (ownership map, screenshot names) of the clean map (Fix seams), or None.
+        skipped: A list the names of screenshots left out are added to (their picture gone since the check), or None.
         origin: (x0, y0, scale) of the map image the ownership map belongs to (needed with labels).
 
     Returns:
@@ -92,7 +93,7 @@ def build_sharp_tile(
     for f, (poly, bb) in zip(list(atlas.frames), list(footprints), strict=False):
         if bb[2] < ax0 or bb[0] > ax0 + unit or bb[3] < ay0 or bb[1] > ay0 + unit:
             continue
-        if not Path(f["path"]).exists():
+        if not atlas.has_picture(f["path"]):  # (the screenshot, else its copy)
             continue
         sp = (np.asarray(poly, float) - [ax0, ay0]) * s
         x0, y0 = np.floor(sp.min(axis=0)).astype(int)
@@ -120,8 +121,13 @@ def build_sharp_tile(
         Hf = screen_to_atlas(np.array(f["M"], float), atlas.frame_R(f))
         M = np.array([[1, 0, -x0], [0, 1, -y0], [0, 0, 1]]) @ V @ Hf
         sz = (x1 - x0, y1 - y0)
-        pix = cv2.warpPerspective(atlas.image(f["path"]), M, sz, flags=cv2.INTER_LINEAR, borderMode=cv2.BORDER_CONSTANT)
-        wt = cv2.warpPerspective(weight_of(f), M @ S4, sz, flags=cv2.INTER_LINEAR, borderMode=cv2.BORDER_CONSTANT)
+        img, weight = atlas.image(f["path"]), weight_of(f)
+        if img is None or weight is None:  # deleted since the check above, with no copy: a hole (map image there)
+            if skipped is not None:
+                skipped.append(f["name"])
+            continue
+        pix = cv2.warpPerspective(img, M, sz, flags=cv2.INTER_LINEAR, borderMode=cv2.BORDER_CONSTANT)
+        wt = cv2.warpPerspective(weight, M @ S4, sz, flags=cv2.INTER_LINEAR, borderMode=cv2.BORDER_CONSTANT)
         sub_b = best[y0:y1, x0:x1]
         take = wt > sub_b
         if owner is not None:  # the clean map's owner, wherever this screenshot shows it

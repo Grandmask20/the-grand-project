@@ -78,14 +78,17 @@ class SharpTiles:
             f: The screenshot's entry from atlas.frames.
 
         Returns:
-            Its weight array.
+            Its weight array, or None when its picture is gone.
         """
         key = f["name"]
         with self._lock:
             if key in self._weights:
                 self._weights.move_to_end(key)
                 return self._weights[key]
-        w = core.ground_weight(self.atlas.image(f["path"]))
+        img = self.atlas.image(f["path"])
+        if img is None:  # (deleted, with no copy: the tile leaves it out, core.build_sharp_tile)
+            return None
+        w = core.ground_weight(img)
         with self._lock:
             self._weights[key] = w
             while len(self._weights) > WEBMAP_SHARP_WEIGHTS:
@@ -113,13 +116,14 @@ class SharpTiles:
         A = np.array([[f, 0, -px * f], [0, f, -py * f]], float)
         return cv2.warpAffine(img, A, (T, T), flags=cv2.INTER_LINEAR, borderMode=cv2.BORDER_REPLICATE)
 
-    def build(self, z: int, x: int, y: int) -> np.ndarray:
+    def build(self, z: int, x: int, y: int, skipped: list | None = None) -> np.ndarray:
         """Build one sharp tile.
 
         Args:
             z: Tile level (> zmax).
             x: Tile column.
             y: Tile row.
+            skipped: A list the screenshots left out are added to (core.build_sharp_tile), or None.
 
         Returns:
             BGR (WEBMAP_TILE, WEBMAP_TILE, 3).
@@ -136,13 +140,14 @@ class SharpTiles:
             WEBMAP_SHARP_MAX_FRAMES,
             labels=self.labels,
             origin=self.origin,
+            skipped=skipped,
         )
         holes = best <= 0
         if holes.any():
             out[holes] = self._fallback(z, x, y)[holes]
         return out
 
-    def jpeg(self, z: int, x: int, y: int, wanted=None) -> bytes | None:
+    def jpeg(self, z: int, x: int, y: int, wanted=None, skipped: list | None = None) -> bytes | None:
         """Return a sharp tile as JPEG: from the folder when kept there, else built (once, even when asked for
         twice at the same time; at most WEBMAP_SHARP_BUILDERS at a time).
 
@@ -153,6 +158,8 @@ class SharpTiles:
             wanted: Callable telling whether the tile is still wanted (its browser request not given up), asked
                 once a builder is free: zooming in from far, the browser drops most tiles it asked for on the way,
                 and building them all kept the ones finally shown waiting (user: the sharp ground came late).
+            skipped: A list the screenshots left out of the tile built here are added to (their picture gone mid-way),
+                or None: such a tile is never kept, in the folder or by the caller (CodeRabbit).
 
         Returns:
             The JPEG bytes, or None when no longer wanted.
@@ -177,12 +184,14 @@ class SharpTiles:
                 with self._builders:
                     if wanted is not None and not wanted():
                         return None
-                    pix = self.build(z, x, y)
+                    left: list[str] = skipped if skipped is not None else []
+                    pix = self.build(z, x, y, left)
                 ok, buf = cv2.imencode(".jpg", pix, [cv2.IMWRITE_JPEG_QUALITY, WEBMAP_JPEG_QUALITY])
                 if not ok:
                     raise OSError(f"sharp tile {z}/{x}/{y} could not be encoded")
                 data = buf.tobytes()
-                if path is not None:
+                # (one with a screenshot left out, gone mid-build, isn't kept: built again next time - CodeRabbit)
+                if path is not None and not left:
                     path.parent.mkdir(parents=True, exist_ok=True)
                     tmp = path.with_name(path.name + ".tmp")
                     tmp.write_bytes(data)

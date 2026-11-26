@@ -142,9 +142,20 @@ LOOK_ICON_MAX = 80  # the longest icon name a bookmark's or group's look takes (
 ROUTE_LEGS_MAX = 200  # a saved route: its main leg and at most this many less one branches
 
 # the in-app update (app/updater.py): GitHub's latest release of the player build
-UPDATE_RELEASES_URL = os.environ.get(  # (another address only for trying an update without GitHub: tests)
-    "GRAND_PROJECT_UPDATE_URL", "https://api.github.com/repos/Grandmask20/the-grand-project/releases/latest"
+# GitHub's list of releases (one request: the newest, and the notes of those an update skips, user), newest first.
+# One page of GitHub's most, 100: a copy further behind than that (drafts and pre-releases count) gets the notes of the
+# newest 100 only, on purpose; following GitHub's next pages cost more of its 60 requests an hour (CodeRabbit). Another
+# address only for trying an update without GitHub (tests), which may also answer one release
+UPDATE_RELEASES_URL = os.environ.get(
+    "GRAND_PROJECT_UPDATE_URL", "https://api.github.com/repos/Grandmask20/the-grand-project/releases?per_page=100"
 )
+# the divider in a release's notes the update box stops at: what's new above it, the install steps below are for
+# downloading by hand. A line of dashes only, markdown's own divider (user, 2026-11-26: a set of dashes, not a
+# sentence saying so); tools/make_release writes this one, any line of UPDATE_NOTES_CUT_MIN dashes or more counts
+UPDATE_NOTES_CUT = "---"
+UPDATE_NOTES_CUT_MIN = 3
+# a release's notes without the line (before 1.3.1): these sections are left out of the box instead
+UPDATE_NOTES_INSTALL = ("how to install and start", "run it")
 UPDATE_AGENT = f"TheGrandProject/{VERSION}"  # the User-Agent GitHub asks for (the app's name only, nothing of yours)
 UPDATE_CHECK_EVERY = 24 * 3600.0  # s: the check at start runs at most once a day (user, as Path of Building)
 # s: GitHub is asked at most this often; in between the last answer stands. GitHub answers 60 checks an hour per
@@ -427,3 +438,9 @@ RECHECK_CLEAN_S = 0.4
 RECHECK_TIMING_MIN = 5  # screenshots: a Re-check's timing is kept only when it detected / cleaned up at least this many
 RECHECK_LINE_POINTS = 16  # points along a path's drawn line when two results' lines are compared
 RECHECK_LINE_MOVED = 12.0  # atlas units: a drawn line that moved further than this (its maps' moves aside) changed
+
+# ------------------------------------------------------------------ screenshots kept safe to delete (app.keeping)
+# the "Keep copies" prompt's estimates: a screenshot's WebP copy (core SCREENSHOT_COPY_QUALITY) and the time to read
+# it and write its copy (measured on the crawl atlas's 1080p screenshots, 2026-11-25)
+KEEP_COPY_MB = 0.8
+KEEP_SECONDS_PER_SHOT = 0.35

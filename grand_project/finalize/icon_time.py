@@ -24,7 +24,6 @@ icon whose copies lay ICON_TOWER_SPREAD apart is one, even over a map not known 
 from __future__ import annotations
 
 import math
-from pathlib import Path
 
 import cv2
 import numpy as np
@@ -257,7 +256,7 @@ def icons_over_time(
     seen: dict[tuple, bool | None] = {}
     for v, todo in asks.items():  # (each screenshot read once)
         f = by_name[v][0]
-        img = core.read_screenshot(f["path"]) if Path(f["path"]).exists() else None
+        img = atlas.image(f["path"])  # (the screenshot, else its copy)
         for key, x, y, name, anchored, rest in todo:
             seen[key] = None if img is None else icon_check(img, x, y, name, anchored, rest)
     gone: set[int] = set()

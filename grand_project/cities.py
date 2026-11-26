@@ -18,8 +18,6 @@ Potential maps
 
 from __future__ import annotations
 
-from pathlib import Path
-
 import cv2
 import numpy as np
 
@@ -95,9 +93,7 @@ def city_features(atlas, x: float, y: float, n: int = 3) -> list[np.ndarray]:
     """
     out = []
     for _c, f, p in atlas.central_views(x, y, n, limit=0.4):
-        if not Path(f["path"]).exists():
-            continue
-        im = atlas.image(f["path"])
+        im = atlas.image(f["path"])  # (the screenshot, else its copy)
         if im is None:
             continue
         X, Y = int(p[0]), int(p[1])
@@ -500,9 +496,7 @@ def find_locks(atlas, frames) -> list[tuple[float, float]]:
     """
     out = []
     for f in frames:
-        if not Path(f["path"]).exists():
-            continue
-        im = atlas.image(f["path"])
+        im = atlas.image(f["path"])  # (the screenshot, else its copy)
         if im is None:
             continue
         found = locks_in(im)
