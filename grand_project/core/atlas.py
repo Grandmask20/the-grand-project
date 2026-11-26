@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import math
 import threading
+import time
 from pathlib import Path
 
 import cv2
@@ -138,6 +139,7 @@ class Atlas:
         # screenshot is gone (user: screenshots safe to delete once detected); set by load and save
         self.copies_dir: Path | None = None
         self._images: dict[str, np.ndarray] = {}  # (not pickled: __getstate__)
+        self.images_used = 0.0  # time.monotonic() of the last screenshot read (the app lets them go when idle)
 
     def __getstate__(self) -> dict:
         """Pickle without the decoded screenshot cache (up to IMAGE_CACHE pictures, ~6 MB each).
@@ -153,6 +155,7 @@ class Atlas:
         """Restore a pickled atlas (its screenshot cache empty)."""
         self.__dict__.update(state)
         self.__dict__.setdefault("_images", {})
+        self.__dict__.setdefault("images_used", 0.0)
 
     # -------- image access
     IMAGE_CACHE = 90  # decoded screenshots kept in memory (~6 MB each; a terrain
@@ -256,6 +259,7 @@ class Atlas:
             BGR image as read by read_screenshot, or None while it can't be read (not kept: a file put back is
             read again, CodeRabbit).
         """
+        self.images_used = time.monotonic()
         with Atlas._image_lock:
             if path in self._images:
                 img = self._images.pop(path)
@@ -273,6 +277,17 @@ class Atlas:
             while len(self._images) > self.IMAGE_CACHE:
                 self._images.pop(next(iter(self._images)))
         return img
+
+    def release_images(self) -> int:
+        """Let the decoded screenshots go (they are read again when next asked for).
+
+        Returns:
+            How many were let go.
+        """
+        with Atlas._image_lock:
+            n = len(self._images)
+            self._images.clear()
+        return n
 
     def points(self) -> np.ndarray:
         """Return the atlas's map node positions.

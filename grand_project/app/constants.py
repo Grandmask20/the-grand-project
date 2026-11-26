@@ -133,6 +133,11 @@ TERRAIN_PIXELS = 40_000_000  # stitched map size limit
 SAME_SPOT = 28.0  # atlas units: a bookmark this close to a thing IS that thing's bookmark
 BOOKMARK_GROUP_SETS = ("hidden_groups", "folded_groups")  # per-atlas sets of bookmark groups kept in the settings
 STATE_TRIES = 3  # the page's state is put together again at most this often when another atlas opens meanwhile
+# the decoded screenshots (~6 MB each, up to core.Atlas.IMAGE_CACHE) and what is kept per screenshot (terrain masks,
+# ground classes, gold paths) are let go after this long with no job and no screenshot read: the app stays open
+# while you play, and they were ~650 MB of a big atlas for nothing (user). The next add reads them again (~1-2 s)
+IMAGE_IDLE_RELEASE_S = 120.0
+IDLE_LOOK_EVERY_S = 30.0  # how often the app looks whether it went idle
 SHUTDOWN_WAIT = 30.0  # s: how long closing waits for the job running (then it is cut off, and the log says so)
 FOLDER_FRONT_WAIT = 3.0  # s: how long an atlas folder's newly opened Explorer window is looked for
 FOLDER_PATHS_WAIT = 5.0  # s: at most this long for the Windows shell to say which folders Explorer shows

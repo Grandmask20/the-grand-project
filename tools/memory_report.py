@@ -1,10 +1,11 @@
 """Where the app's memory goes, measured: open an atlas as the app does, use it, and after each step print the
 process's memory and the size of every cache that holds pictures or arrays.
 
-    python tools/memory_report.py atlases/default/atlas.json [--check]
+    python tools/memory_report.py atlases/default/atlas.json [--check] [--final out.json]
 
 Steps: the libraries loaded; the atlas opened (map image, model); the map browsed (every tile of a few zoom levels,
-as panning the map would); with --check, the atlas-wide path check (minutes on a big atlas). Nothing is saved: the
+as panning the map would); with --check, the atlas-wide path check (minutes on a big atlas); then idle a while (the
+decoded screenshots let go, app.idle). Nothing is saved: the
 atlas file is never written, and the app's settings are a throwaway copy (user_data is not touched).
 """
 
@@ -147,6 +148,7 @@ def main() -> int:
     ap.add_argument("atlas", help="the atlas .json file")
     ap.add_argument("--check", action="store_true", help="also run the atlas-wide path check (slow on a big atlas)")
     ap.add_argument("--no-trace", action="store_true", help="skip tracemalloc (faster; no 'where it was made')")
+    ap.add_argument("--final", help="with --check: write the checked atlas's maps and paths here (compare two runs)")
     a = ap.parse_args()
     if not a.no_trace:
         tracemalloc.start()
@@ -168,8 +170,22 @@ def main() -> int:
     if a.check:
         from grand_project import finalize as atlas_finalize
 
-        atlas_finalize.finalize(S.atlas, log=lambda *_: None)
-        report("path check run", S, t0)
+        t1 = time.time()
+
+        def said(m, *_):
+            if str(m).startswith("path check"):
+                print(f"   ({m})")
+
+        atlas_finalize.finalize(S.atlas, log=said)
+        report(f"path check run (the check itself: {time.time() - t1:.0f} s)", S, t0)
+        if a.final:
+            import json
+
+            Path(a.final).write_text(json.dumps(S.atlas.final, sort_keys=True, default=str), encoding="utf-8")
+            print(f"\n   the checked atlas written to {a.final}")
+    if hasattr(S, "release_idle"):  # (app.idle: as if the app sat idle for IMAGE_IDLE_RELEASE_S)
+        n = S.release_idle(now=time.monotonic() + 1e6)
+        report(f"idle a while (as if: {n} decoded screenshots let go)", S, t0)
     return 0
 
 
