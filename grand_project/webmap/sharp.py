@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import collections
 import threading
+import time
 from pathlib import Path
 
 import cv2
@@ -20,6 +21,7 @@ from grand_project import core
 from .constants import (
     WEBMAP_JPEG_QUALITY,
     WEBMAP_SHARP_BUILDERS,
+    WEBMAP_SHARP_IMAGES,
     WEBMAP_SHARP_MAX_FRAMES,
     WEBMAP_SHARP_WEIGHTS,
     WEBMAP_TILE,
@@ -56,6 +58,7 @@ class SharpTiles:
         self.atlas, self.footprints, self.grid, self.raster, self.zdeep = atlas, footprints, grid, raster, zdeep
         self.labels, self.origin, self.folder = labels, origin, folder
         self._weights: collections.OrderedDict = collections.OrderedDict()
+        self._images: collections.OrderedDict = collections.OrderedDict()  # (its own few: _image)
         self._lock = threading.Lock()
         self._builders = threading.Semaphore(WEBMAP_SHARP_BUILDERS)
         self._building: dict[tuple, threading.Event] = {}
@@ -84,16 +87,60 @@ class SharpTiles:
         with self._lock:
             if key in self._weights:
                 self._weights.move_to_end(key)
-                return self._weights[key]
-        img = self.atlas.image(f["path"])
+                return self._weights[key].astype(np.float32)
+        img = self._image(f["path"])
         if img is None:  # (deleted, with no copy: the tile leaves it out, core.build_sharp_tile)
             return None
-        w = core.ground_weight(img)
+        # (kept float16: it only picks which screenshot shows a spot, half the memory; warped as float32). Given as
+        # kept also when just worked out: full precision then, rounded once kept, one tile picked another screenshot on
+        # a near tie by what was cached (CodeRabbit)
+        w = core.ground_weight(img).astype(np.float16)
         with self._lock:
             self._weights[key] = w
             while len(self._weights) > WEBMAP_SHARP_WEIGHTS:
                 self._weights.popitem(last=False)
-        return w
+        return w.astype(np.float32)
+
+    def _image(self, path: str) -> np.ndarray | None:
+        """Return a screenshot for the zoomed-in ground: from its own WEBMAP_SHARP_IMAGES, else the atlas's (one a
+        placement keeps is given, a new one isn't kept there: Atlas.image keep=False).
+
+        Args:
+            path: The screenshot's path.
+
+        Returns:
+            The decoded screenshot, or None when its picture is gone.
+        """
+        with self._lock:
+            if path in self._images:
+                self._images.move_to_end(path)
+                # (a screenshot used, as Atlas.image says it: panning over the same spots isn't idle time - CodeRabbit)
+                self.atlas.images_used = time.monotonic()
+                return self._images[path]
+        img = self.atlas.image(path, keep=False)
+        if img is None:
+            return None
+        with self._lock:
+            self._images[path] = img
+            while len(self._images) > WEBMAP_SHARP_IMAGES:
+                self._images.popitem(last=False)
+        return img
+
+    def release(self) -> int:
+        """Let go of what it keeps (its screenshots and weights: made again when next asked for; app.idle).
+
+        Returns:
+            How many decoded screenshots were let go.
+        """
+        with self._lock:
+            n = len(self._images)
+            self._images.clear()
+            self._weights.clear()
+        return n
+
+    def holding(self) -> bool:
+        """Tell whether it keeps anything release would let go."""
+        return bool(self._images or self._weights)
 
     def _fallback(self, z: int, x: int, y: int) -> np.ndarray:
         """Return the tile cut from the map image tile above it (zmax), scaled up: for holes.
@@ -141,6 +188,7 @@ class SharpTiles:
             labels=self.labels,
             origin=self.origin,
             skipped=skipped,
+            image_of=self._image,
         )
         holes = best <= 0
         if holes.any():

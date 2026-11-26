@@ -34,7 +34,11 @@ WEBMAP_NO_ICON_FILL = "#1b1e24"  # map node without an icon
 WEBMAP_SHARP_LEVEL = 2.0  # deepest level, px per atlas unit (zoomed in further, MapLibre stretches it)
 WEBMAP_SHARP_MAX_FRAMES = 30  # screenshots warped at most per tile without a clean map
 WEBMAP_SHARP_BUILDERS = 4  # tiles built at the same time (the browser asks for many at once)
-WEBMAP_SHARP_WEIGHTS = 300  # screenshot weights kept in memory (~0.5 MB each)
+# screenshot weights kept in memory (float16, ~0.25 MB each): 300 float32 ones held ~150 MB while panning
+WEBMAP_SHARP_WEIGHTS = 128
+# decoded screenshots the zoomed-in ground keeps for itself (~6 MB each): a tile's few, and its neighbours'. Reading
+# through the placements' cache filled all 90 of it (~540 MB) when panning or opening Find's pictures
+WEBMAP_SHARP_IMAGES = 12
 
 # Map content icons: the in-game pictures (references/poe2db_icons: "full__" = whole badge, "inner__" = the art
 # inside the ring), drawn on the map where each icon was seen.

@@ -200,8 +200,6 @@ class MapImageMixin:
         # is in, even offscreen), and answered from the new one, a map image built again elsewhere put it off its
         # place (CodeRabbit). It holds the old map image's memory meanwhile.
         self._tile_before: tuple | None = None
-        self._ground = None
-        self._ground_for = None
         self._tiles.clear()
         if hasattr(self, "_source"):  # (not yet while the session is being set up: _init_mapimage)
             self._source_sync(*MAP_IMAGE_PARTS)
@@ -352,7 +350,6 @@ class MapImageMixin:
                 origin=origin if labels is not None else None,
                 folder=self._sharp_folder(),
             )
-            self._ground = None
             self.terrain_version += 1
             self._terrain_snap = (self.terrain, self.terrain_version)
             self._tile_state = (self.grid, self._raster, self._sharp, self.terrain_version)  # (all of it at once)
@@ -485,18 +482,18 @@ class MapImageMixin:
         return True
 
     def ground(self):
-        """Return the ground sampler of the map image (the biomes compare ground looks), made once per map image.
+        """Return a ground sampler of the map image (the biomes compare ground looks), made for each use: kept, its Lab
+        copy of the whole map image (~115 MB on a big atlas) stayed all session for the biomes' few seconds after a
+        change; made again it costs a fraction of a second.
 
         Returns:
             A cities.ground_sampler, or None without a map image.
         """
-        if self.terrain is None:
+        terrain = self.terrain
+        if terrain is None:
             return None
-        if self._ground_for != self.terrain_version:
-            canvas, weight, origin = self.terrain
-            self._ground = atlas_cities.ground_sampler(canvas, weight, origin)
-            self._ground_for = self.terrain_version
-        return self._ground
+        canvas, weight, origin = terrain
+        return atlas_cities.ground_sampler(canvas, weight, origin)
 
     @staticmethod
     def _model_tops(shapes: list[dict]) -> dict[int, float]:
@@ -545,7 +542,8 @@ class MapImageMixin:
         canvas, weight, (ox, oy, sc) = terrain
         # grid cell (c, r) -> map image px ((x0 + c * cell - ox) * sc, ...)
         A = np.array([[cell * sc, 0, (x0 - ox) * sc], [0, cell * sc, (y0 - oy) * sc]], np.float32)
-        grey = canvas.mean(axis=2).astype(np.float32) if canvas.ndim == 3 else canvas.astype(np.float32)
+        # (averaged in float32 directly: the same values, without a float64 copy of a map image of up to 40 Mpx)
+        grey = canvas.mean(axis=2, dtype=np.float32) if canvas.ndim == 3 else canvas.astype(np.float32)
         wt = (weight > 0).astype(np.float32)
         flags = cv2.INTER_AREA | cv2.WARP_INVERSE_MAP
         g = cv2.warpAffine(grey, A, (w, h), flags=flags, borderValue=0.0)

@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import math
 import threading
+import time
 from pathlib import Path
 
 import cv2
@@ -66,6 +67,22 @@ def find_screenshot(p: str, atlas_dir: Path) -> str:
 
 
 # ------------------------------------------------------------------ the atlas
+def _compact_descriptors(d: np.ndarray) -> np.ndarray:
+    """Return SIFT descriptors in the smallest type that keeps them exactly, for Atlas._feat_cache.
+
+    OpenCV's SIFT gives float32 descriptors holding whole numbers 0..255, so uint8 keeps them exactly at a quarter
+    of the size; other values (another OpenCV) are kept as float16, as before.
+
+    Args:
+        d: (n, 128) float32 descriptors.
+
+    Returns:
+        (n, 128) uint8 or float16 array.
+    """
+    d8 = d.astype(np.uint8)
+    return d8 if np.array_equal(d8, d) else d.astype(np.float16)
+
+
 class Atlas:
     """The stitched atlas: placed screenshots and the map nodes, paths, landmarks and icons merged from them.
 
@@ -122,6 +139,7 @@ class Atlas:
         # screenshot is gone (user: screenshots safe to delete once detected); set by load and save
         self.copies_dir: Path | None = None
         self._images: dict[str, np.ndarray] = {}  # (not pickled: __getstate__)
+        self.images_used = 0.0  # time.monotonic() of the last screenshot read (the app lets them go when idle)
 
     def __getstate__(self) -> dict:
         """Pickle without the decoded screenshot cache (up to IMAGE_CACHE pictures, ~6 MB each).
@@ -137,6 +155,7 @@ class Atlas:
         """Restore a pickled atlas (its screenshot cache empty)."""
         self.__dict__.update(state)
         self.__dict__.setdefault("_images", {})
+        self.__dict__.setdefault("images_used", 0.0)
 
     # -------- image access
     IMAGE_CACHE = 90  # decoded screenshots kept in memory (~6 MB each; a terrain
@@ -226,7 +245,7 @@ class Atlas:
         atlas_io.write_bytes_atomic(c, buf.tobytes())
         return True
 
-    def image(self, path: str) -> np.ndarray | None:
+    def image(self, path: str, keep: bool = True) -> np.ndarray | None:
         """Return a screenshot image, read through a small most-recently-used cache: the screenshot, else its copy
         (picture).
 
@@ -235,11 +254,14 @@ class Atlas:
 
         Args:
             path: Screenshot file path (the cache key, also when read from its copy).
+            keep: Keep a screenshot read here in the cache; False (the zoomed-in ground, which keeps a few of its
+                own): one already kept is still given, a new one isn't kept (panning filled the placements' 90).
 
         Returns:
             BGR image as read by read_screenshot, or None while it can't be read (not kept: a file put back is
             read again, CodeRabbit).
         """
+        self.images_used = time.monotonic()
         with Atlas._image_lock:
             if path in self._images:
                 img = self._images.pop(path)
@@ -250,13 +272,31 @@ class Atlas:
         if img is None and src == str(path):  # gone between the check and the read (moved to dump/, deleted): its copy
             c = self.copy_path(path)
             img = _frame.read_screenshot(c) if c is not None and c.exists() else None
-        if img is None:
-            return None
+        if img is None or not keep:
+            return img
         with Atlas._image_lock:
             self._images[path] = img
             while len(self._images) > self.IMAGE_CACHE:
                 self._images.pop(next(iter(self._images)))
         return img
+
+    def trim_images(self) -> None:
+        """Let the oldest decoded screenshots go down to IMAGE_CACHE (after lowering it: a cache already full is
+        otherwise only trimmed at the next screenshot read anew)."""
+        with Atlas._image_lock:
+            while len(self._images) > self.IMAGE_CACHE:
+                self._images.pop(next(iter(self._images)))
+
+    def release_images(self) -> int:
+        """Let the decoded screenshots go (they are read again when next asked for).
+
+        Returns:
+            How many were let go.
+        """
+        with Atlas._image_lock:
+            n = len(self._images)
+            self._images.clear()
+        return n
 
     def points(self) -> np.ndarray:
         """Return the atlas's map node positions.
@@ -641,7 +681,8 @@ class Atlas:
         """Return SIFT terrain features of a screenshot in flattened coordinates (cached).
 
         6000 features: dark / foggy screenshots need many to find enough matches. Up to 300 screenshots are cached
-        with float16 descriptors (~1 MB each).
+        with uint8 descriptors (~0.8 MB each): OpenCV's SIFT values are whole numbers 0..255, so nothing is lost
+        (float16 took twice that, ~450 MB with the cache full).
 
         Args:
             path: Screenshot file path (the cache key).
@@ -653,16 +694,16 @@ class Atlas:
         """
         key = path
         if key in Atlas._feat_cache:
-            pts, d16 = Atlas._feat_cache[key]
-            return pts, (None if d16 is None else d16.astype(np.float32))
+            pts, dk = Atlas._feat_cache[key]
+            return pts, (None if dk is None else dk.astype(np.float32))
         img = self.image(path)
         if img is None:  # (gone, its copy too)
             return np.zeros((0, 2)), None
         sift = cv2.SIFT_create(6000)  # dark / foggy screenshots need many to find enough matches
         k, d = sift.detectAndCompute(cv2.cvtColor(img, cv2.COLOR_BGR2GRAY), _valid_mask(img))
         pts = persp(R, np.float32([p.pt for p in k])) if k else np.zeros((0, 2))
-        Atlas._feat_cache[key] = (pts, None if d is None else d.astype(np.float16))  # ~1.5 MB each
-        while len(Atlas._feat_cache) > 300:  # ~1 MB each
+        Atlas._feat_cache[key] = (pts, None if d is None else _compact_descriptors(d))  # ~0.8 MB each
+        while len(Atlas._feat_cache) > 300:
             Atlas._feat_cache.pop(next(iter(Atlas._feat_cache)))
         return pts, d
 

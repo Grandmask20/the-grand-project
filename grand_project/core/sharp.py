@@ -61,6 +61,7 @@ def build_sharp_tile(
     labels: tuple | None = None,
     origin: tuple[float, float, float] | None = None,
     skipped: list | None = None,
+    image_of: Callable[[str], np.ndarray | None] | None = None,
 ) -> tuple[np.ndarray, np.ndarray]:
     """Build one square of sharp ground from the screenshots.
 
@@ -78,6 +79,7 @@ def build_sharp_tile(
         max_frames: Most screenshots warped when there is no clean map.
         labels: (ownership map, screenshot names) of the clean map (Fix seams), or None.
         skipped: A list the names of screenshots left out are added to (their picture gone since the check), or None.
+        image_of: path -> its decoded screenshot (a cache of the caller's), or None: atlas.image.
         origin: (x0, y0, scale) of the map image the ownership map belongs to (needed with labels).
 
     Returns:
@@ -121,7 +123,7 @@ def build_sharp_tile(
         Hf = screen_to_atlas(np.array(f["M"], float), atlas.frame_R(f))
         M = np.array([[1, 0, -x0], [0, 1, -y0], [0, 0, 1]]) @ V @ Hf
         sz = (x1 - x0, y1 - y0)
-        img, weight = atlas.image(f["path"]), weight_of(f)
+        img, weight = (image_of or atlas.image)(f["path"]), weight_of(f)
         if img is None or weight is None:  # deleted since the check above, with no copy: a hole (map image there)
             if skipped is not None:
                 skipped.append(f["name"])

@@ -41,6 +41,7 @@ from .debug import DebugMixin
 from .edits import EditsMixin
 from .events import Events
 from .icons import icon_label, icon_rows
+from .idle import IdleMixin
 from .keeping import KeepingMixin
 from .library import LibraryMixin
 from .mapimage import MapImageMixin, files_key
@@ -95,6 +96,7 @@ class AtlasSession(
     DebugMixin,
     ReplayMixin,
     UpdatesMixin,
+    IdleMixin,
 ):
     """The open atlas and its background work (see the module docstring)."""
 
@@ -129,6 +131,7 @@ class AtlasSession(
         self._init_mapimage()
         self._init_adding(start=worker)
         self._init_watch()
+        self._init_idle(start=worker)
 
     # ------------------------------------------------------------------ settings shared with the page
     def save_settings(self) -> None:

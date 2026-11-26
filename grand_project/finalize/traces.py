@@ -88,13 +88,30 @@ class _Grid:
         return out
 
 
-_GOLD: dict = {}  # screenshot path -> (dash centres, distance-to-gold field, float16)
+_GOLD: dict = {}  # screenshot path -> (dash centres, gold mask packed one bit per pixel, its (h, w))
 
 
-GOLD_CACHE = 160  # ~4 MB each; kept between checks so local updates re-use them (a local
+GOLD_CACHE = 160  # ~0.3 MB each; kept between checks so local updates re-use them (a local
 
 
 # re-check reads ~110: at 80 every one was decoded again each time)
+
+
+def _evict_oldest(cache: dict, keep: int) -> None:
+    """Let the oldest entries of a cache (most recently used last) go, down to keep.
+
+    The idle release (app.idle) clears these caches from its own thread, without the job's lock: the keys are taken
+    in one go (list() of a dict is one step under the GIL) and each is let go only if still there, so a clear
+    meanwhile is harmless (iter() then next() raised RuntimeError: the dict changed size during iteration).
+
+    Args:
+        cache: the cache (insertion order: oldest first).
+        keep: how many entries to keep.
+    """
+    extra = len(cache) - keep
+    if extra > 0:
+        for key in list(cache.keys())[:extra]:
+            cache.pop(key, None)
 
 
 _DASHES: dict = {}
@@ -312,7 +329,11 @@ def _on_wall(rec, line_screen) -> float:
 
 
 def _gold(atlas, f):
-    """Return the gold path dashes of a screenshot; they depend only on the image, so they are computed once.
+    """Return the gold path dashes of a screenshot and their distance field.
+
+    The gold mask depends only on the image, so it is found once and kept packed one bit per pixel (~0.3 MB); the
+    distance field is worked out from it on each call (~12 ms). Kept whole, the float16 fields were ~4 MB each and
+    the GOLD_CACHE of them stayed in memory after every check (user: 2.6 GB idle with a big atlas).
 
     Args:
         atlas: the core.Atlas (used to load the image).
@@ -323,19 +344,20 @@ def _gold(atlas, f):
         capped at 255), or None when its picture is gone (CodeRabbit: the check stopped on it).
     """
     key = f["path"]
-    if key in _GOLD:
-        _GOLD[key] = _GOLD.pop(key)
-        return _GOLD[key]
-    img = atlas.image(f["path"])
-    if img is None:
-        return None
-    gold = gp.gold_stroke_mask(img)
-    _, _, _, cen = cv2.connectedComponentsWithStats(gold, 8)
+    hit = _GOLD.pop(key, None)
+    if hit is None:
+        img = atlas.image(f["path"])
+        if img is None:
+            return None
+        gold = gp.gold_stroke_mask(img)
+        _, _, _, cen = cv2.connectedComponentsWithStats(gold, 8)
+        hit = (cen[1:].astype(float), np.packbits(gold > 0), gold.shape)
+    _GOLD[key] = hit  # most recently used last
+    _evict_oldest(_GOLD, GOLD_CACHE)
+    cen, packed, shape = hit
+    gold = np.unpackbits(packed, count=shape[0] * shape[1]).reshape(shape) * np.uint8(255)
     dist = cv2.distanceTransform(255 - gold, cv2.DIST_L2, 3)
-    _GOLD[key] = (cen[1:].astype(float), np.minimum(dist, 255).astype(np.float16))  # fractions matter (3.5 px)
-    while len(_GOLD) > GOLD_CACHE:
-        _GOLD.pop(next(iter(_GOLD)))
-    return _GOLD[key]
+    return cen, np.minimum(dist, 255).astype(np.float16)  # fractions matter (3.5 px)
 
 
 def _maps(atlas):
