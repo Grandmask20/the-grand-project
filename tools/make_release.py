@@ -12,8 +12,9 @@
 
 The player build has the program, the reference files, the launchers, LICENSE and README, the app's page built
 (frontend/dist: players need no Node.js) and only the model safety test: no dev tests, tools, test data, Makefile,
-page sources or debug tools (channel.txt = "release"), and manifest.json: the release number and a hash of each of
-its files, which the in-app update reads (grand_project/release_manifest.py).
+page sources or debug tools (channel.txt = "release"), the desktop app's sources and the workflow that builds its
+installers onto the release (desktop/, .github/workflows/desktop.yml), and manifest.json: the release number and a
+hash of each of its files, which the in-app update reads (grand_project/release_manifest.py).
 """
 
 from __future__ import annotations
@@ -31,7 +32,7 @@ TARGET = HERE.parent / "1.0"
 REPO = "https://github.com/Grandmask20/the-grand-project"
 
 # what the player build contains (paths relative to this folder)
-TREES = ("grand_project", "references")
+TREES = ("grand_project", "references", "desktop")  # (desktop/: the desktop app, built from the release: desktop.yml)
 FILES = (
     "LICENSE",
     "requirements.txt",
@@ -44,6 +45,7 @@ FILES = (
 TESTS = ("tests/__init__.py", "tests/test_model_safety.py")
 PAGE = HERE / "frontend"  # the app's page (React); built into frontend/dist, which the release ships
 KEEP_TABLES = ("badge_refs", "detector_models")
+DESKTOP_CI = ".github/workflows/desktop.yml"
 
 GITIGNORE = """__pycache__/
 *.pyc
@@ -267,6 +269,8 @@ def main() -> int:
     write_manifest(release, files)
     (TARGET / ".github" / "workflows").mkdir(parents=True, exist_ok=True)
     (TARGET / ".github" / "workflows" / "safety.yml").write_text(CI, encoding="utf-8")
+    # the desktop app's installers, built when the release is published (GitHub runs the tag's own workflows: main's)
+    shutil.copy2(HERE / DESKTOP_CI, TARGET / DESKTOP_CI)
     for leftover in (TARGET / "atlas_test_data", TARGET / "tools", TARGET / ".lfsconfig"):
         if leftover.is_dir():
             shutil.rmtree(leftover, ignore_errors=True)

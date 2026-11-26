@@ -1,0 +1,110 @@
+name: desktop
+
+# The desktop app (desktop/): the program frozen with PyInstaller inside an Electron window, one installer per
+# system, so players need no Python. A published release (its tag, on main) gets the installers among its assets:
+# Windows The-Grand-Project-Setup-<version>.exe (+ latest.yml and .blockmap: installed copies update themselves
+# from them, electron-updater) and macOS The-Grand-Project-<version>-arm64.dmg (not signed: no updating itself).
+# A push or pull request that changes desktop/ (or this file) builds them too, and run by hand (Actions > desktop > Run
+# workflow): then the installers are only kept as the run's artifacts, to try.
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+  push:
+    paths: ["desktop/**", ".github/workflows/desktop.yml"]
+  pull_request:
+    paths: ["desktop/**", ".github/workflows/desktop.yml"]
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    defaults:
+      run:
+        working-directory: desktop
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: npm test
+
+  build:
+    needs: test
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            target: --win
+            files: desktop/dist/*.exe desktop/dist/*.blockmap desktop/dist/latest.yml
+          - os: macos-latest # (Apple silicon)
+            target: --mac
+            files: desktop/dist/*.dmg
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 45
+    permissions:
+      contents: write # the installers go to the release's assets
+    env:
+      # the release's tag; run by hand: 0.0.0 (a test build, never offered as an update)
+      TAG: ${{ github.event.release.tag_name || 'v0.0' }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+          cache: pip
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: the version
+        run: echo "VERSION=$(node desktop/scripts/version.js "$TAG")" >> "$GITHUB_ENV"
+      # main (a release) ships the page built; develop has its sources
+      - name: the page
+        if: ${{ hashFiles('frontend/package.json') != '' }}
+        working-directory: frontend
+        run: |
+          npm ci --no-audit --no-fund
+          npm run build
+      - name: the program, frozen
+        run: |
+          python -m pip install -r requirements.txt pyinstaller
+          pyinstaller desktop/grand-project.spec --noconfirm --distpath desktop/build --workpath desktop/build/pyinstaller
+          python desktop/icons.py
+      - name: the frozen program starts
+        run: |
+          exe=desktop/build/backend/grand-project; [ -f "$exe.exe" ] && exe="$exe.exe"
+          GRAND_PROJECT_HOME="$RUNNER_TEMP/gp-home" GRAND_PROJECT_DESKTOP=1 "$exe" --no-browser > out.txt 2>&1 &
+          for _ in $(seq 60); do grep -q "http://127.0.0.1:" out.txt && break; sleep 1; done
+          cat out.txt
+          url=$(grep -o "http://127.0.0.1:[0-9]*/" out.txt | head -1)
+          [ -n "$url" ] || { echo "the frozen program didn't serve"; exit 1; }
+          curl -sf "${url}api/hello"; echo
+          curl -sf -o /dev/null "$url" || { echo "the page isn't served"; exit 1; }
+          curl -sf -X POST -H "X-Grand: 1" -H "Content-Type: application/json" -d "{}" "${url}api/quit"; echo
+      - name: the installer
+        working-directory: desktop
+        env:
+          CSC_IDENTITY_AUTO_DISCOVERY: "false" # (not signed)
+        run: |
+          npm install --no-audit --no-fund
+          npx electron-builder ${{ matrix.target }} --publish never -c.extraMetadata.version="$VERSION"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: desktop-${{ matrix.os }}
+          path: |
+            desktop/dist/*.exe
+            desktop/dist/*.blockmap
+            desktop/dist/latest.yml
+            desktop/dist/*.dmg
+          if-no-files-found: error
+      - name: onto the release
+        if: ${{ github.event_name == 'release' }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release upload "$TAG" ${{ matrix.files }} --clobber

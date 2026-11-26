@@ -14,13 +14,16 @@ import { useAppStore } from "@/store/AppStore";
 import { cn } from "@/utils/Cn";
 
 /** The pill's words and look (user's mockup: "UP TO DATE" with the version on green, "CHECK UPDATE" on red). */
+/** The box checks GitHub: a copy that updates in the app, or the desktop app (which puts the update in place itself). */
+const checks = (u: UpdateStatus) => u.can || u.desktop === true;
+
 export function pillOf(u: UpdateStatus | undefined): { label: string; ok: boolean } {
 	if (!u) return { label: "Check update", ok: false };
 	if (u.state === "checking") return { label: "Checking…", ok: false };
 	if (u.state === "downloading") return { label: "Downloading…", ok: false };
 	if (u.state === "restarting") return { label: "Restarting…", ok: false };
 	if (u.available && u.latest) return { label: `Update to ${u.latest.release}`, ok: false };
-	if (u.can && u.latest && u.state !== "error") return { label: "Up to date", ok: true };
+	if (checks(u) && u.latest && u.state !== "error") return { label: "Up to date", ok: true };
 	return { label: "Check update", ok: false };
 }
 
@@ -105,7 +108,7 @@ function UpdateBox({
 					{!u.can && <p className="text-muted-foreground">{u.why}</p>}
 					{u.state === "checking" && <p className="text-muted-foreground">Asking GitHub for the latest release…</p>}
 					{u.state === "error" && u.error && <p className="text-destructive">{u.error}</p>}
-					{u.can && u.latest && !u.available && u.state === "idle" && (
+					{checks(u) && u.latest && !u.available && u.state === "idle" && (
 						<p className="text-lime-400">You have the latest release ({u.latest.name}).</p>
 					)}
 					{u.available && u.latest && (
@@ -137,7 +140,7 @@ function UpdateBox({
 								: `The update to ${u.just.to} failed, nothing changed: ${u.just.error}`}
 						</p>
 					)}
-					{u.can && (
+					{checks(u) && (
 						<div className="mt-1 flex items-center gap-2">
 							<Switch
 								id="update-auto"
@@ -151,13 +154,13 @@ function UpdateBox({
 					)}
 				</div>
 				<DialogFooter>
-					{u.can && (
+					{checks(u) && (
 						// once a minute at most (GitHub answers 60 checks an hour per address: user, quick clicks)
 						<Button variant={u.latest ? "outline" : "default"} disabled={busy || left > 0} onClick={onCheck}>
 							{left > 0 ? `Check again in ${left} s` : u.latest ? "Check again" : "Check now"}
 						</Button>
 					)}
-					{u.available && (
+					{u.can && u.available && (
 						<Button disabled={busy} onClick={() => run(() => app.installUpdate())}>
 							Update now
 						</Button>

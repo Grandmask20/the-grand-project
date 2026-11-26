@@ -236,7 +236,7 @@ class UpdatesMixin:
         """What the page shows for the update (the status bar's version and its box).
 
         Returns:
-            {"channel", "release", "program", "can", "why", "auto", "checked", "next", "state", "latest",
+            {"channel", "desktop", "release", "program", "can", "why", "auto", "checked", "next", "state", "latest",
             "available", "error", "got", "size", "just", "seq", "run"}; state is idle / checking / downloading /
             restarting /
             error; next: when GitHub may be asked again (s since 1970; 0: now), a time and not a count of seconds,
@@ -251,6 +251,7 @@ class UpdatesMixin:
         can, why = self._can_update(installed)
         return {
             "channel": rc_paths.CHANNEL,
+            "desktop": rc_paths.DESKTOP,  # (checked and shown, updated by the desktop app: the box's button is a check)
             "release": mine,
             "program": K.VERSION,
             "can": can,
@@ -276,6 +277,8 @@ class UpdatesMixin:
         return round(time.time() + left, 1) if left > 0 else 0
 
     def _can_update(self, installed: dict | None) -> tuple[bool, str]:
+        if rc_paths.DESKTOP:  # (frozen inside the desktop app: its files aren't the release's, the app updates itself)
+            return False, K.UPDATE_DESKTOP_WHY_MAC if sys.platform == "darwin" else K.UPDATE_DESKTOP_WHY
         if rc_paths.CHANNEL != "release" or installed is None:
             return False, "This is a development copy: update it with git (git pull)."
         if (rc_paths.ROOT / ".git").exists():
@@ -341,7 +344,7 @@ class UpdatesMixin:
         """
         st = self.update_status()
         last = st["checked"] or 0
-        if not st["can"] or not st["auto"] or time.time() - float(last) < K.UPDATE_CHECK_EVERY:
+        if not (st["can"] or st["desktop"]) or not st["auto"] or time.time() - float(last) < K.UPDATE_CHECK_EVERY:
             return False
         self.check_update(fetch=fetch)
         return True

@@ -329,3 +329,24 @@ def test_a_new_atlas_made_first_still_gets_the_last_updates_line(installed):
     s.after_update()
     s.new_atlas(tmp / "fresh" / "atlas.json")
     assert any(line.endswith("Updated from release 1.3 to 1.3.1") for line in s.events.log_lines)
+
+
+@pytest.mark.parametrize(("platform", "said"), [("win32", K.UPDATE_DESKTOP_WHY), ("darwin", K.UPDATE_DESKTOP_WHY_MAC)])
+def test_the_desktop_app_checks_and_shows_but_updates_itself(installed, monkeypatch, platform, said):
+    s, _, _ = installed
+    monkeypatch.setattr(rc_paths, "DESKTOP", True)
+    monkeypatch.setattr(updater.sys, "platform", platform)
+    st = s.update_status()
+    assert st["desktop"] and not st["can"] and st["why"] == said
+    s.check_update(background=False, fetch=github("1.4"))  # (still checked: the box says what's new)
+    assert s.update_status()["available"]
+    with pytest.raises(ValueError):  # (its files are the desktop app's: never replaced from here)
+        s.install_update(quit_app=lambda: None, background=False)
+
+
+def test_the_desktop_app_still_checks_at_start(installed, monkeypatch):
+    s, _, _ = installed
+    monkeypatch.setattr(rc_paths, "DESKTOP", True)
+    asked = []
+    assert s.check_update_at_start(fetch=lambda url: asked.append(url) or github("1.4")(url))
+    _wait(lambda: s.update_status()["state"] == "idle" and asked)

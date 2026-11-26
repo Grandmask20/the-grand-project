@@ -1,0 +1,64 @@
+{
+	"name": "the-grand-project-desktop",
+	"productName": "The Grand Project",
+	"version": "0.0.0",
+	"description": "The Grand Project as a desktop app: the program and its page in one install, updated by itself.",
+	"author": "The Grand Project contributors",
+	"license": "MIT",
+	"private": true,
+	"main": "main.js",
+	"scripts": {
+		"start": "electron .",
+		"test": "node --test",
+		"dist": "electron-builder --publish never"
+	},
+	"dependencies": {
+		"electron-updater": "^6.6.2"
+	},
+	"devDependencies": {
+		"electron": "^38.2.0",
+		"electron-builder": "^26.0.12"
+	},
+	"build": {
+		"appId": "io.github.grandmask20.thegrandproject",
+		"productName": "The Grand Project",
+		"directories": {
+			"output": "dist",
+			"buildResources": "build"
+		},
+		"files": ["main.js", "lib/**", "package.json"],
+		"extraResources": [
+			{
+				"from": "build/backend",
+				"to": "backend"
+			}
+		],
+		"publish": [
+			{
+				"provider": "github",
+				"owner": "Grandmask20",
+				"repo": "the-grand-project"
+			}
+		],
+		"win": {
+			"target": "nsis",
+			"icon": "build/icon.ico"
+		},
+		"nsis": {
+			"oneClick": true,
+			"perMachine": false,
+			"deleteAppDataOnUninstall": false,
+			"artifactName": "The-Grand-Project-Setup-${version}.${ext}"
+		},
+		"mac": {
+			"target": "dmg",
+			"icon": "build/icon.png",
+			"category": "public.app-category.games",
+			"identity": "-",
+			"hardenedRuntime": false
+		},
+		"dmg": {
+			"artifactName": "The-Grand-Project-${version}-${arch}.${ext}"
+		}
+	}
+}

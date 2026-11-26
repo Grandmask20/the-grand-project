@@ -1,4 +1,4 @@
-# The Grand Project — v1.29
+# The Grand Project — v1.31
 <img width="232" height="34" alt="Screenshot 2026-11-25 at 04-49-29 The Grand Project" src="https://github.com/user-attachments/assets/d971e5c5-42ec-426d-a95b-db8a7444b58d" />
 
 Builds one big map of your Path of Exile 2 atlas from your screenshots. It will also find any icons, maps, cities, city biomes, breach strongholds, deadly bosses for you to search through later.
@@ -8,7 +8,14 @@ The app runs in your web browser: starting it opens a page served by the program
 
 ## How to install and start
 
-**Which files to run:**
+**Easiest: the desktop app** (nothing else to install). On the [latest release](https://github.com/Grandmask20/the-grand-project/releases/latest), under **Assets**:
+
+- **Windows:** download **`The-Grand-Project-Setup-<version>.exe`** and run it. Windows may say it doesn't know the app (it isn't signed): **More info → Run anyway**. It installs for you only and starts from the Start menu. It updates itself: a new release downloads in the background and is put in place when you close the app.
+- **macOS (Apple silicon):** download **`The-Grand-Project-<version>-arm64.dmg`**, open it and drag the app to **Applications**. It isn't signed, so macOS says it is damaged or can't be checked: once, in Terminal, run `xattr -cr "/Applications/The Grand Project.app"`, then open it. It doesn't update itself: the update box says when a new release is out, download its `.dmg` the same way.
+
+The desktop app keeps your atlases and settings in a folder of its own (Windows: `%APPDATA%\The Grand Project`, macOS: `~/Library/Application Support/The Grand Project`). Closing its window saves and stops it.
+
+**Or run it with Python** (every system, Linux too). Which files to run:
 
 | | Once, to install | Every time, to start |
 |---|---|---|
@@ -192,6 +199,7 @@ Run these from this folder:
 - Tests: `pytest` (or `make test`, `tests/Run all tests.bat`, `tests/run_all_tests.sh`); one file with `pytest tests/test_atlas_builder.py`. `pytest -m slow` adds the long one; see `tests/conftest.py`. The app's tests (`test_app_session.py`, `test_app_server.py`, the tile tests) use hand-made atlases and need no test data.
 - Coverage: `make coverage` (Python: a table, and the report in `htmlcov/index.html`) and `make page_coverage` (the page: `frontend/coverage/index.html`). CI runs the tests on Windows, macOS and Linux and measures coverage on the Ubuntu jobs (offline, test data, browser tests, the page); the `tests` run's page shows the Python and page tables, and pull requests get a Python coverage comment. The run's last job, **tests passed**, is the one check merging needs: every test passed on at least one system and none failed anywhere, so a macOS job cancelled while waiting for a runner doesn't block.
 - Lint: `make lint` (ruff check + format); CI runs the same on every push and pull request.
+- The desktop app (`desktop/`): Electron around the page, with the program frozen by PyInstaller beside it (`desktop/backend.py`, `desktop/grand-project.spec`). `cd desktop && npm install && npm start` opens it on this folder's Python (`GP_PYTHON` to pick another); `npm test` runs its tests. The **desktop** workflow builds the Windows installer and the macOS `.dmg`: run it by hand (Actions → desktop → Run workflow) to get them as the run's artifacts; on a published release it adds them to the release's assets, and installed Windows copies update from there. `tools/make_release.py` ships `desktop/` and the workflow to main, where releases are tagged.
 
 **Code layout** (`grand_project/`):
 

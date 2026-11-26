@@ -32,3 +32,9 @@ def test_the_player_readme_names_the_release_not_the_program_version():
     # (v1.xx counts develop's merges; players only ever see release numbers: user)
     assert make_release.player_readme("1.3.1").splitlines()[0].endswith("— v1.3.1")
     assert make_release.player_readme().splitlines()[0].endswith(f"— v{make_release.version()}")  # (as it is)
+
+
+def test_the_release_carries_the_desktop_app_and_the_workflow_that_builds_it():
+    # (GitHub runs a published release's workflows from its tag: main's, so main must have desktop.yml)
+    assert "desktop" in make_release.TREES
+    assert (make_release.HERE / make_release.DESKTOP_CI).is_file()

@@ -53,3 +53,19 @@ def test_user_data_can_be_moved_for_tests(tmp_path):
         capture_output=True, text=True, env=env, check=True, cwd=paths.ROOT,
     ).stdout.strip()  # fmt: skip
     assert out == str((tmp_path / "ud").resolve())
+
+
+def test_the_desktop_app_keeps_atlases_and_settings_in_its_own_folder(tmp_path):
+    import os
+    import subprocess
+    import sys
+
+    env = {k: v for k, v in os.environ.items() if k != "GRAND_PROJECT_USER_DATA"}
+    env.update(GRAND_PROJECT_HOME=str(tmp_path / "home"), GRAND_PROJECT_DESKTOP="1")
+    said = "from grand_project import paths as p; print(p.DESKTOP, p.ATLASES, p.DEFAULT_ATLAS, p.USER_DATA, sep='|')"
+    out = subprocess.run(
+        [sys.executable, "-c", said], capture_output=True, text=True, env=env, check=True, cwd=paths.ROOT
+    ).stdout.strip()
+    home = (tmp_path / "home").resolve()
+    atlases = home / "atlases"
+    assert out.split("|") == ["True", str(atlases), str(atlases / "default" / "atlas.json"), str(home / "user_data")]
