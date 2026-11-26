@@ -70,11 +70,17 @@ def test_gold_of_a_gone_picture_is_none_and_not_kept():
 
 
 class _EmptiedMeanwhile(dict):
-    """A cache the idle release (app.idle) empties between the eviction's size check and its pick."""
+    """A cache the idle release (app.idle) empties while the eviction is at it: once it walks the cache (iter() then
+    next(): the dict changes size during iteration) or once it has the keys (before it lets them go)."""
 
     def __iter__(self):
+        it = super().__iter__()
         self.clear()
-        return super().__iter__()
+        return it
+
+    def pop(self, *a):
+        self.clear()
+        return super().pop(*a)
 
 
 def test_gold_eviction_tolerates_an_emptied_cache(monkeypatch):
@@ -82,3 +88,11 @@ def test_gold_eviction_tolerates_an_emptied_cache(monkeypatch):
     monkeypatch.setattr(traces, "_GOLD", _EmptiedMeanwhile())
     got = traces._gold(_atlas({"a.png": _screenshot(3)}), {"path": "a.png"})
     assert got is not None  # (no StopIteration: the add goes on)
+
+
+def test_evict_oldest_keeps_the_most_recent():
+    cache = {k: k for k in "abcde"}
+    traces._evict_oldest(cache, 2)
+    assert list(cache) == ["d", "e"]
+    traces._evict_oldest(cache, 5)  # (nothing over: nothing let go)
+    assert list(cache) == ["d", "e"]

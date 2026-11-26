@@ -646,6 +646,7 @@ def finalize(atlas, log=_log) -> dict:
             views.append((f, sp, ok))
     fields: dict[str, np.ndarray | None] = {}  # (most recently used last: CHECK_FIELDS_KEEP of them)
     built = [0]
+    link_views = [0]  # the screenshots the link being scored needs: never fewer kept (else every link rebuilt them all)
 
     def field(f):
         """Return a screenshot's distance-to-gold field; the CHECK_FIELDS_KEEP most recently used are kept.
@@ -654,7 +655,9 @@ def finalize(atlas, log=_log) -> dict:
         check's memory (~8 MB per screenshot seen). And only CHECK_FIELDS_KEEP of them (~4 MB each): kept for every
         screenshot the check touched, they were the check's peak (2.8 GB on a 384-screenshot atlas). The links are
         scored along the atlas (score_all), so the ones in use are the few around; one let go is worked out again
-        (~12-25 ms).
+        (~12-25 ms). Never fewer than the link being scored needs (link_views): with more screenshots over one link than
+        CHECK_FIELDS_KEEP, each link would let go the ones the next link reads first (the same sorted order), and
+        rebuild them all (CodeRabbit). Kept for that link, the next links over the same spot find them.
 
         Args:
             f: the screenshot (frame) dict.
@@ -670,7 +673,7 @@ def finalize(atlas, log=_log) -> dict:
             g = _gold(atlas, f)
             fields[name] = None if g is None else g[1]
             built[0] += 1
-            while len(fields) > CHECK_FIELDS_KEEP:
+            while len(fields) > max(CHECK_FIELDS_KEEP, link_views[0]):
                 fields.pop(next(iter(fields)))
         return fields[name]
 
@@ -695,9 +698,11 @@ def finalize(atlas, log=_log) -> dict:
         """
         key = (min(i, j), max(i, j))
         if key not in cache:
+            shared = sorted(node_views[i] & node_views[j])
+            link_views[0] = len(shared)
             vals = [
                 gp.route_score(fd, views[vi][1][i], views[vi][1][j])
-                for vi in sorted(node_views[i] & node_views[j])
+                for vi in shared
                 if (fd := field(views[vi][0])) is not None  # (no picture left: not scored there, CodeRabbit)
             ]
             cache[key] = ((float(np.mean(vals)) if vals else 0.0), len(vals), sum(v >= PATH_THRESHOLD for v in vals))

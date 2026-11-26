@@ -97,6 +97,23 @@ GOLD_CACHE = 160  # ~0.3 MB each; kept between checks so local updates re-use th
 # re-check reads ~110: at 80 every one was decoded again each time)
 
 
+def _evict_oldest(cache: dict, keep: int) -> None:
+    """Let the oldest entries of a cache (most recently used last) go, down to keep.
+
+    The idle release (app.idle) clears these caches from its own thread, without the job's lock: the keys are taken
+    in one go (list() of a dict is one step under the GIL) and each is let go only if still there, so a clear
+    meanwhile is harmless (iter() then next() raised RuntimeError: the dict changed size during iteration).
+
+    Args:
+        cache: the cache (insertion order: oldest first).
+        keep: how many entries to keep.
+    """
+    extra = len(cache) - keep
+    if extra > 0:
+        for key in list(cache.keys())[:extra]:
+            cache.pop(key, None)
+
+
 _DASHES: dict = {}
 
 
@@ -336,8 +353,7 @@ def _gold(atlas, f):
         _, _, _, cen = cv2.connectedComponentsWithStats(gold, 8)
         hit = (cen[1:].astype(float), np.packbits(gold > 0), gold.shape)
     _GOLD[key] = hit  # most recently used last
-    while len(_GOLD) > GOLD_CACHE:
-        _GOLD.pop(next(iter(_GOLD), None), None)  # (the idle release may empty it meanwhile: app.idle)
+    _evict_oldest(_GOLD, GOLD_CACHE)
     cen, packed, shape = hit
     gold = np.unpackbits(packed, count=shape[0] * shape[1]).reshape(shape) * np.uint8(255)
     dist = cv2.distanceTransform(255 - gold, cv2.DIST_L2, 3)

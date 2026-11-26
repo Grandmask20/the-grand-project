@@ -22,7 +22,7 @@ from .constants import (
     SETTLE_BADGE,
     SETTLE_MERGE,
 )
-from .traces import _Grid, _visible
+from .traces import _evict_oldest, _Grid, _visible
 
 
 def _barrel(img, x, y, nodes=None) -> bool:
@@ -124,8 +124,7 @@ def ground_of(img) -> tuple[np.ndarray, np.ndarray]:
         got = (weakref.ref(img), cls, bad)
         _OCEAN.pop(id(img), None)
         _OCEAN[id(img)] = got
-        while len(_OCEAN) > _OCEAN_KEEP:
-            _OCEAN.pop(next(iter(_OCEAN), None), None)  # (the idle release may empty it meanwhile: app.idle)
+        _evict_oldest(_OCEAN, _OCEAN_KEEP)  # (the idle release may clear it meanwhile)
     return got[1], got[2]
 
 

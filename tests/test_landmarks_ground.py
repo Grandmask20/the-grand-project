@@ -47,11 +47,17 @@ def test_ground_of_is_kept_without_keeping_the_screenshot():
 
 
 class _EmptiedMeanwhile(dict):
-    """A cache the idle release (app.idle) empties between the eviction's size check and its pick."""
+    """A cache the idle release (app.idle) empties while the eviction is at it: once it walks the cache (iter() then
+    next(): the dict changes size during iteration) or once it has the keys (before it lets them go)."""
 
     def __iter__(self):
+        it = super().__iter__()
         self.clear()
-        return super().__iter__()
+        return it
+
+    def pop(self, *a):
+        self.clear()
+        return super().pop(*a)
 
 
 def test_ground_of_eviction_tolerates_an_emptied_cache(monkeypatch):
