@@ -126,7 +126,7 @@ describe("UpdateButton", () => {
 		const found = { ...base, release: "1.3.1", latest: { ...latest("1.3.2"), notes }, available: true, just };
 		const { user } = renderWithApp(<UpdateButton />, { "GET /api/update": found });
 		await user.click(await screen.findByRole("button", { name: /Update to 1\.3\.2/i }));
-		expect(screen.getByText("1.3.2 Test")).toBeInTheDocument(); // (a heading, not "## 1.3.2 Test": user)
+		expect(screen.getByRole("heading", { name: "1.3.2 Test" })).toBeInTheDocument(); // (not "## 1.3.2 Test": user)
 		expect(screen.queryByText(/##/)).not.toBeInTheDocument();
 		expect(screen.getAllByRole("listitem")).toHaveLength(2);
 		expect(screen.getByText("bold").tagName).toBe("STRONG");

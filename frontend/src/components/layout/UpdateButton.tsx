@@ -178,9 +178,9 @@ function Notes({ notes }: { notes: string }) {
 			{notesBlocks(notes).map((b, i) =>
 				b.kind === "heading" ? (
 					// biome-ignore lint/suspicious/noArrayIndexKey: the notes' blocks, in order (fixed for one release)
-					<p key={i} className="text-sm font-semibold text-gold">
+					<h3 key={i} className="text-sm font-semibold text-gold">
 						<Spans spans={b.spans} />
-					</p>
+					</h3>
 				) : b.kind === "list" ? (
 					// biome-ignore lint/suspicious/noArrayIndexKey: the notes' blocks, in order (fixed for one release)
 					<ul key={i} className="list-disc pl-4">
