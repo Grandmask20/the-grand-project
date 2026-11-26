@@ -439,11 +439,11 @@ class UpdatesMixin:
             r = json.loads(f.read_text(encoding="utf-8"))
         except (OSError, ValueError):
             return None
-        f.unlink(missing_ok=True)
         if r.get("ok"):
             shutil.rmtree(rc_paths.USER_DATA / "update", ignore_errors=True)
         self.events.log(_update_line(r))
         self._update_state()["just"] = r
+        f.unlink(missing_ok=True)  # (once said and kept: a failure on the way told it again at the next start)
         return r
 
     def say_update(self, scope: str) -> None:
@@ -453,9 +453,10 @@ class UpdatesMixin:
         Args:
             scope: That atlas's log.
         """
-        r = self._update_state().get("just")
-        if r and not r.get("said"):
-            r["said"] = True
+        u = self._update_state()
+        r = u.get("just")
+        if r and not u.get("just_said"):  # (beside the result, not in it: the result goes to the page as it is)
+            u["just_said"] = True
             self.events.log(_update_line(r), scope)
 
 

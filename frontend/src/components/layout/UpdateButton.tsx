@@ -90,6 +90,7 @@ function UpdateBox({
 }) {
 	const app = useAppClient();
 	const busy = u.state === "checking" || u.state === "downloading" || u.state === "restarting";
+	const notes = u.latest ? notesWithSkipped(u.latest) : "";
 	const left = useCountdown(u.next);
 	const mb = (n: number) => `${(n / 1e6).toFixed(1)} MB`;
 	return (
@@ -110,7 +111,7 @@ function UpdateBox({
 					{u.available && u.latest && (
 						<>
 							<p className="font-medium text-gold">{u.latest.name} is out.</p>
-							{notesWithSkipped(u.latest) && <Notes notes={notesWithSkipped(u.latest)} />}
+							{notes && <Notes notes={notes} />}
 							{u.latest.url && (
 								<a className="text-xs text-gold hover:underline" href={u.latest.url} target="_blank" rel="noreferrer">
 									The release on GitHub

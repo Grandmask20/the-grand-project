@@ -293,6 +293,8 @@ def test_the_last_updates_line_reaches_the_first_atlas_log(installed):
     assert any(line.endswith("Updated from release 1.3 to 1.3.1") for line in s.events.log_lines)
     s.say_update(s.opened.scope)  # (once: not again in the next atlas)
     assert sum(line.endswith("Updated from release 1.3 to 1.3.1") for line in s.events.log_lines) == 1
+    assert s.update_status()["just"] == {"ok": True, "from": "1.3", "to": "1.3.1"}  # (no mark of ours in it)
+    assert not (rc_paths.USER_DATA / K.UPDATE_RESULT).exists()  # (taken once said)
 
 
 def test_the_newest_release_comes_with_the_notes_of_those_an_update_skips():
