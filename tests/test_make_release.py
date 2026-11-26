@@ -20,8 +20,9 @@ def test_the_release_notes_say_which_files_to_run_on_each_system():
     assert "| **Windows** |" in notes and "| **macOS / Linux** |" in notes  # the table of files to run
     assert "Install (run once).bat" in notes and "./install.sh" in notes and "./start.sh" in notes
     assert "### Get it" not in notes  # (the download page is where the notes are read)
-    # what's new first, under the release's header, then the line the in-app update stops at (user's layout)
-    assert notes.startswith("## 1.3.1\n\n- ") and notes.index(K.UPDATE_NOTES_CUT) < notes.index("## How to install")
+    # what's new first, under the release's header, then the divider the in-app update stops at (user's layout)
+    cut = f"\n\n{K.UPDATE_NOTES_CUT}\n\n"
+    assert notes.startswith("## 1.3.1\n\n- ") and notes.index(cut) < notes.index("## How to install")
     assert updater.whats_new(notes) == "## 1.3.1\n\n- (write the highlights here)"  # (the update box: no install)
     readme = (make_release.HERE / "README.md").read_text(encoding="utf-8")
     assert "#### First time" in notes and "### First time" in readme  # the same section, a level down

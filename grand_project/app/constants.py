@@ -145,9 +145,11 @@ ROUTE_LEGS_MAX = 200  # a saved route: its main leg and at most this many less o
 UPDATE_RELEASES_URL = os.environ.get(  # (another address only for trying an update without GitHub: tests)
     "GRAND_PROJECT_UPDATE_URL", "https://api.github.com/repos/Grandmask20/the-grand-project/releases/latest"
 )
-# the line in a release's notes the update box stops at (user, 2026-11-25): what's new above it, the install steps
-# below are for downloading by hand (tools/make_release writes it; matched ignoring case and markdown marks)
-UPDATE_NOTES_CUT = "Notes below will not be visible in future updates in the app"
+# the divider in a release's notes the update box stops at: what's new above it, the install steps below are for
+# downloading by hand. A line of dashes only, markdown's own divider (user, 2026-11-26: a set of dashes, not a
+# sentence saying so); tools/make_release writes this one, any line of UPDATE_NOTES_CUT_MIN dashes or more counts
+UPDATE_NOTES_CUT = "---"
+UPDATE_NOTES_CUT_MIN = 3
 # a release's notes without the line (before 1.3.1): these sections are left out of the box instead
 UPDATE_NOTES_INSTALL = ("how to install and start", "run it")
 UPDATE_AGENT = f"TheGrandProject/{VERSION}"  # the User-Agent GitHub asks for (the app's name only, nothing of yours)
