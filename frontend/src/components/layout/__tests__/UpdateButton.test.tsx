@@ -132,4 +132,12 @@ describe("UpdateButton", () => {
 		expect(screen.getByText("bold").tagName).toBe("STRONG");
 		expect(screen.queryByText(/Updated from release/)).not.toBeInTheDocument(); // (not beside "1.3.2 is out")
 	});
+
+	it("still says why an update failed beside the release it failed on", async () => {
+		const just = { ok: false, from: "1.3.1", to: "1.3.2", error: "a file didn't match" };
+		const found = { ...base, release: "1.3.1", latest: latest("1.3.2"), available: true, just };
+		const { user } = renderWithApp(<UpdateButton />, { "GET /api/update": found });
+		await user.click(await screen.findByRole("button", { name: /Update to 1\.3\.2/i }));
+		expect(screen.getByText(/The update to 1\.3\.2 failed, nothing changed: a file didn't match/)).toBeInTheDocument();
+	});
 });

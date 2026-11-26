@@ -127,8 +127,9 @@ function UpdateBox({
 					{u.state === "restarting" && (
 						<p className="text-gold">Putting the update in place: the app restarts, and this page reloads by itself.</p>
 					)}
-					{/* (not under a newer release's notes: "Updated from 1.3 to 1.3.1" beside "1.3.2 is out" read oddly) */}
-					{u.just && !u.available && (
+					{/* (a done update not under a newer release's notes: "Updated from 1.3 to 1.3.1" beside "1.3.2 is out"
+					read oddly; a failed one says why beside the offer it failed on) */}
+					{u.just && (!u.just.ok || !u.available) && (
 						<p className={u.just.ok ? "text-lime-400" : "text-destructive"}>
 							{u.just.ok
 								? `Updated from release ${u.just.from} to ${u.just.to}.`
