@@ -31,14 +31,47 @@ MB = 1024 * 1024
 
 
 def rss() -> float:
-    """This process's resident memory (MB), as the OS's process list shows it."""
+    """This process's resident memory (MB), as the OS's process list shows it: psutil when installed, else the OS's
+    own figure (Windows has no `ps`: the tool stopped there without psutil, which the app doesn't need)."""
     try:
         import psutil
 
         return psutil.Process().memory_info().rss / MB
     except ImportError:
-        out = subprocess.run(["ps", "-o", "rss=", "-p", str(os.getpid())], capture_output=True, text=True).stdout
-        return int(out.strip() or 0) / 1024
+        pass
+    if os.name == "nt":
+        return _windows_working_set() / MB
+    out = subprocess.run(["ps", "-o", "rss=", "-p", str(os.getpid())], capture_output=True, text=True).stdout
+    return int(out.strip() or 0) / 1024
+
+
+def _windows_working_set() -> int:
+    """This process's working set in bytes (what Windows' process list shows), from GetProcessMemoryInfo."""
+    import ctypes
+    from ctypes import wintypes
+
+    class Counters(ctypes.Structure):  # PROCESS_MEMORY_COUNTERS
+        _fields_ = [
+            ("cb", wintypes.DWORD),
+            ("PageFaultCount", wintypes.DWORD),
+            ("PeakWorkingSetSize", ctypes.c_size_t),
+            ("WorkingSetSize", ctypes.c_size_t),
+            ("QuotaPeakPagedPoolUsage", ctypes.c_size_t),
+            ("QuotaPagedPoolUsage", ctypes.c_size_t),
+            ("QuotaPeakNonPagedPoolUsage", ctypes.c_size_t),
+            ("QuotaNonPagedPoolUsage", ctypes.c_size_t),
+            ("PagefileUsage", ctypes.c_size_t),
+            ("PeakPagefileUsage", ctypes.c_size_t),
+        ]
+
+    c = Counters()
+    c.cb = ctypes.sizeof(Counters)
+    kernel32 = ctypes.WinDLL("kernel32")
+    kernel32.GetCurrentProcess.restype = wintypes.HANDLE
+    psapi = ctypes.WinDLL("psapi")
+    psapi.GetProcessMemoryInfo.argtypes = [wintypes.HANDLE, ctypes.c_void_p, wintypes.DWORD]
+    psapi.GetProcessMemoryInfo(kernel32.GetCurrentProcess(), ctypes.byref(c), c.cb)
+    return c.WorkingSetSize
 
 
 def size(obj, seen: set | None = None, depth: int = 0) -> int:
