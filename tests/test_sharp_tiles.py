@@ -50,7 +50,50 @@ def test_a_sharp_tile_missing_a_screenshot_lost_mid_build_is_not_kept_in_its_fol
     k = 2 ** (z - grid.zmax)
     wx, wy = grid.world_px(960.0, 540.0)
     tx, ty = int(wx * k // 256), int(wy * k // 256)
-    monkeypatch.setattr(at, "image", lambda path: None)  # (deleted after the "picture there?" check, no copy)
+    monkeypatch.setattr(at, "image", lambda path, **kw: None)  # (deleted after the "picture there?" check, no copy)
     left = []
     assert sharp.jpeg(z, tx, ty, skipped=left) is not None and left == ["a"]
     assert not (tmp_path / "sharp" / str(z) / str(tx) / f"{ty}.jpg").exists()  # (made again next time)
+
+
+def test_the_zoomed_in_ground_keeps_its_own_few_screenshots_not_the_placements(tmp_path):
+    # (reading through the placements' cache filled all 90 of it, ~540 MB, when panning or opening Find's pictures)
+    from grand_project.webmap.constants import WEBMAP_SHARP_IMAGES
+
+    yy, xx = np.mgrid[0:1080, 0:1920]
+    at = core.Atlas()
+    for k in range(WEBMAP_SHARP_IMAGES + 3):
+        img = np.dstack([60 + xx * 150 // 1920, 60 + yy * 150 // 1080, np.full_like(xx, 40 + k)]).astype(np.uint8)
+        cv2.imwrite(str(tmp_path / f"s{k}.png"), img)
+        at.frames.append({"name": f"s{k}", "path": str(tmp_path / f"s{k}.png"), "sha": f"s{k}", "w": 1920, "h": 1080,
+                          "M": [[1.0, 0, 50.0 * k], [0, 1.0, 0]], "stats": {}})  # fmt: skip
+    canvas, origin, _w = at.composite(max_pixels=2_000_000, with_weight=True)
+    at.release_images()
+    grid = Grid(origin, canvas.shape[1], canvas.shape[0])
+    footprints = [core.footprint(at, f) for f in at.frames]
+    sharp = SharpTiles(at, footprints, grid, RasterTiler(canvas, grid), grid.deepest(2.0))
+    for f in at.frames:
+        assert sharp._weight(f).dtype == np.float32  # (warped as float32)
+    assert at._images == {}  # (none put in the placements' cache)
+    assert len(sharp._images) == WEBMAP_SHARP_IMAGES and sharp.holding()
+    assert next(iter(sharp._weights.values())).dtype == np.float16  # (kept at half the size)
+    z = sharp.zdeep
+    k = 2 ** (z - grid.zmax)
+    wx, wy = grid.world_px(960.0, 540.0)
+    assert sharp.jpeg(z, int(wx * k // 256), int(wy * k // 256)) is not None
+    assert sharp.release() == WEBMAP_SHARP_IMAGES and not sharp.holding()
+
+
+def test_a_screenshots_terrain_mask_goes_with_it():
+    # (masks of screenshots let go stayed up to the cache's 64, ~2 MB each)
+    import gc
+
+    from grand_project.core import terrain
+
+    img = np.full((1080, 1920, 3), 90, np.uint8)
+    terrain._valid_mask(img)
+    key = id(img)
+    assert key in terrain._MASKS
+    del img
+    gc.collect()
+    assert key not in terrain._MASKS

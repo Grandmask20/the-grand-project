@@ -245,7 +245,7 @@ class Atlas:
         atlas_io.write_bytes_atomic(c, buf.tobytes())
         return True
 
-    def image(self, path: str) -> np.ndarray | None:
+    def image(self, path: str, keep: bool = True) -> np.ndarray | None:
         """Return a screenshot image, read through a small most-recently-used cache: the screenshot, else its copy
         (picture).
 
@@ -254,6 +254,8 @@ class Atlas:
 
         Args:
             path: Screenshot file path (the cache key, also when read from its copy).
+            keep: Keep a screenshot read here in the cache; False (the zoomed-in ground, which keeps a few of its
+                own): one already kept is still given, a new one isn't kept (panning filled the placements' 90).
 
         Returns:
             BGR image as read by read_screenshot, or None while it can't be read (not kept: a file put back is
@@ -270,8 +272,8 @@ class Atlas:
         if img is None and src == str(path):  # gone between the check and the read (moved to dump/, deleted): its copy
             c = self.copy_path(path)
             img = _frame.read_screenshot(c) if c is not None and c.exists() else None
-        if img is None:
-            return None
+        if img is None or not keep:
+            return img
         with Atlas._image_lock:
             self._images[path] = img
             while len(self._images) > self.IMAGE_CACHE:

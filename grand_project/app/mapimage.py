@@ -200,8 +200,6 @@ class MapImageMixin:
         # is in, even offscreen), and answered from the new one, a map image built again elsewhere put it off its
         # place (CodeRabbit). It holds the old map image's memory meanwhile.
         self._tile_before: tuple | None = None
-        self._ground = None
-        self._ground_for = None
         self._tiles.clear()
         if hasattr(self, "_source"):  # (not yet while the session is being set up: _init_mapimage)
             self._source_sync(*MAP_IMAGE_PARTS)
@@ -352,7 +350,6 @@ class MapImageMixin:
                 origin=origin if labels is not None else None,
                 folder=self._sharp_folder(),
             )
-            self._ground = None
             self.terrain_version += 1
             self._terrain_snap = (self.terrain, self.terrain_version)
             self._tile_state = (self.grid, self._raster, self._sharp, self.terrain_version)  # (all of it at once)
@@ -485,18 +482,18 @@ class MapImageMixin:
         return True
 
     def ground(self):
-        """Return the ground sampler of the map image (the biomes compare ground looks), made once per map image.
+        """Return a ground sampler of the map image (the biomes compare ground looks), made for each use: kept, its Lab
+        copy of the whole map image (~115 MB on a big atlas) stayed all session for the biomes' few seconds after a
+        change; made again it costs a fraction of a second.
 
         Returns:
             A cities.ground_sampler, or None without a map image.
         """
-        if self.terrain is None:
+        terrain = self.terrain
+        if terrain is None:
             return None
-        if self._ground_for != self.terrain_version:
-            canvas, weight, origin = self.terrain
-            self._ground = atlas_cities.ground_sampler(canvas, weight, origin)
-            self._ground_for = self.terrain_version
-        return self._ground
+        canvas, weight, origin = terrain
+        return atlas_cities.ground_sampler(canvas, weight, origin)
 
     @staticmethod
     def _model_tops(shapes: list[dict]) -> dict[int, float]:

@@ -40,22 +40,41 @@ class IdleMixin:
                 self.release_idle()
 
     def release_idle(self, now: float | None = None) -> int:
-        """Let the screenshots' memory go when no job runs and none was read for IMAGE_IDLE_RELEASE_S.
+        """Let the screenshots' memory go when no job runs and none was read for IMAGE_IDLE_RELEASE_S: the decoded
+        screenshots and what is worked out from them, the zoomed-in ground's own (sharp tiles: screenshots, weights)
+        and the 3D scene (the page keeps the scene it has). All made again when next needed.
+
+        Whether a job runs is asked under the session lock, and everything let go in that same locked step: a job
+        starting in between used a cache as it was cleared. A job holding the lock is not idle time.
 
         Args:
             now: time.monotonic() (tests give their own).
 
         Returns:
-            How many decoded screenshots were let go (0: not idle, or nothing kept).
+            How many decoded screenshots were let go (0: not idle, or none kept).
         """
         atlas = self.atlas
         now = time.monotonic() if now is None else now
-        if atlas is None or self.working() or not atlas._images or now - atlas.images_used < IMAGE_IDLE_RELEASE_S:
+        if atlas is None or now - atlas.images_used < IMAGE_IDLE_RELEASE_S:
             return 0
-        n = atlas.release_images()
-        core_terrain._MASKS.clear()
-        fin_landmarks._OCEAN.clear()
-        fin_traces._GOLD.clear()
+        if not self._lock.acquire(blocking=False):  # (a job holds it: not idle)
+            return 0
+        try:
+            sharp = getattr(self, "_sharp", None)
+            held = (
+                bool(atlas._images)
+                or (sharp is not None and sharp.holding())
+                or getattr(self, "_scene", None) is not None
+            )
+            if self.working() or atlas is not self.atlas or not held:
+                return 0
+            n = atlas.release_images() + (sharp.release() if sharp is not None else 0)
+            core_terrain._MASKS.clear()
+            fin_landmarks._OCEAN.clear()
+            fin_traces._GOLD.clear()
+            self._scene = self._scene3d = self._scene3d_steps = None
+        finally:
+            self._lock.release()
         gc.collect()
-        self.events.log(f"idle: {n} decoded screenshots let go (read again when needed)")
+        self.events.log(f"idle: {n} decoded screenshots and the map's caches let go (made again when needed)")
         return n

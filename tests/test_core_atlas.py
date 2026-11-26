@@ -21,3 +21,17 @@ def test_descriptors_that_are_not_whole_numbers_stay_float16():
     kept = _compact_descriptors(d)
     assert kept.dtype == np.float16
     assert np.array_equal(kept, d.astype(np.float16))
+
+
+def test_a_screenshot_read_without_keeping_it_is_not_kept(tmp_path):
+    # (the zoomed-in ground keeps its own few: Atlas.image keep=False)
+    import cv2 as _cv2
+    import numpy as _np
+
+    from grand_project import core as _core
+
+    _cv2.imwrite(str(tmp_path / "a.png"), _np.full((1080, 1920, 3), 90, _np.uint8))
+    at = _core.Atlas()
+    assert at.image(str(tmp_path / "a.png"), keep=False) is not None and at._images == {}
+    kept = at.image(str(tmp_path / "a.png"))
+    assert at.image(str(tmp_path / "a.png"), keep=False) is kept  # (one kept is still given)

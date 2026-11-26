@@ -42,3 +42,46 @@ def test_never_while_a_job_runs_or_with_nothing_kept(tmp_path, monkeypatch):
 
 def test_no_atlas_open_is_not_idle_work():
     assert AtlasSession(settings={}, worker=False).release_idle(now=1e9) == 0
+
+
+def test_idle_also_lets_go_of_the_map_s_caches(tmp_path):
+    # (the zoomed-in ground's screenshots and weights, the 3D scene: made again when needed)
+    s = _opened(tmp_path)
+
+    class Sharp:
+        held = True
+
+        def holding(self):
+            return self.held
+
+        def release(self):
+            self.held = False
+            return 3
+
+    s._sharp, s._scene = Sharp(), (("k", False), b"scene")
+    s._scene3d = s._scene3d_steps = object()
+    assert s.release_idle(now=s.atlas.images_used + IMAGE_IDLE_RELEASE_S + 1) == 4  # (1 kept by the atlas, 3 by tiles)
+    assert not s._sharp.held
+    assert s._scene is None and s._scene3d is None and s._scene3d_steps is None
+
+
+def test_a_job_holding_the_session_lock_is_not_idle_time(tmp_path):
+    # (asked and let go in one locked step: a job starting in between used a cache as it was cleared - self review)
+    import threading
+
+    s = _opened(tmp_path)
+    holding, go = threading.Event(), threading.Event()
+
+    def job():
+        with s._lock:
+            holding.set()
+            go.wait(10)
+
+    t = threading.Thread(target=job, daemon=True)
+    t.start()
+    assert holding.wait(10)
+    try:
+        assert s.release_idle(now=s.atlas.images_used + IMAGE_IDLE_RELEASE_S + 1) == 0 and s.atlas._images
+    finally:
+        go.set()
+        t.join(10)
