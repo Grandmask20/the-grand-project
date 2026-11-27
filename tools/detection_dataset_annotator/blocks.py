@@ -1,9 +1,10 @@
 """Spatial blocks of the screenshots, which the splits draw whole (``splits.assign_splits``).
 
 Screenshots of one atlas overlap: drawn one by one, a held-out screenshot shares most of its map nodes with training
-screenshots (``ANNOTATOR_SPLIT_BLOCK_SHOTS`` has the numbers). So an atlas's screenshots (those next to its
-``atlas.json``, where the app finds them) are grouped by where they lie: k-means of their middles in atlas units, about
-``ANNOTATOR_SPLIT_BLOCK_SHOTS`` to a block. A screenshot no atlas places (``placed_by``) is a block of its own.
+screenshots (``ANNOTATOR_SPLIT_BLOCK_SHOTS`` has the numbers). So an atlas's screenshots (those below the folder of
+its ``atlas.json``: next to it, where the app finds them, or in folders below it) are grouped by where they lie: k-means
+of their middles in atlas units, about ``ANNOTATOR_SPLIT_BLOCK_SHOTS`` to a block. A screenshot no atlas places
+(``placed_by``) is a block of its own.
 """
 
 from __future__ import annotations
@@ -30,6 +31,16 @@ class Block:
     """The atlas folder (project-relative), or the screenshot itself when no atlas places it."""
     index: int = 0
     """The block's number within its atlas."""
+
+
+def atlas_of(folder: Path) -> Path | None:
+    """The atlas file of a folder's screenshots: the nearest one in the folder or above it (``map_state_change`` keeps
+    its screenshots in folders below its atlas), None without one. Whether it places a screenshot is ``placed_by``'s:
+    one it saved no path for stays a block of its own."""
+    for place in (folder, *folder.parents):
+        if (place / K.ANNOTATOR_ATLAS_FILE).is_file():
+            return place / K.ANNOTATOR_ATLAS_FILE
+    return None
 
 
 def frame_middles(atlas_file: Path) -> dict[tuple[str, ...], tuple[float, float]]:
@@ -80,14 +91,13 @@ def screenshot_blocks(
     """
     from sklearn.cluster import KMeans  # imported here: only an export needs it
 
-    by_folder: dict[Path, list[str]] = {}
+    by_atlas: dict[Path | None, list[str]] = {}
     for key in sorted(paths):
-        by_folder.setdefault(Path(paths[key]).parent, []).append(key)
+        by_atlas.setdefault(atlas_of(Path(paths[key]).resolve().parent), []).append(key)
     out: dict[str, Block] = {}
-    for folder, keys in by_folder.items():
-        atlas_file = folder / K.ANNOTATOR_ATLAS_FILE
-        middles = frame_middles(atlas_file) if atlas_file.is_file() else {}
-        where = {key: placed_by(middles, folder, Path(paths[key])) for key in keys}
+    for atlas_file, keys in by_atlas.items():
+        middles = frame_middles(atlas_file) if atlas_file is not None else {}
+        where = {key: placed_by(middles, atlas_file.parent, Path(paths[key])) if middles else None for key in keys}
         placed = [key for key in keys if where[key] is not None]
         for key in set(keys) - set(placed):
             out[key] = Block(relative_source(Path(paths[key])))
@@ -99,10 +109,10 @@ def screenshot_blocks(
             labels = np.zeros(len(placed), int)
         else:
             labels = KMeans(n_clusters=count, n_init=10, random_state=seed).fit_predict(points)
-        atlas = relative_source(folder)
+        atlas = relative_source(atlas_file.parent)
         for key, label in zip(placed, labels, strict=True):
             out[key] = Block(atlas, int(label))
     return out
 
 
-__all__ = ["Block", "frame_middles", "placed_by", "screenshot_blocks"]
+__all__ = ["Block", "atlas_of", "frame_middles", "placed_by", "screenshot_blocks"]

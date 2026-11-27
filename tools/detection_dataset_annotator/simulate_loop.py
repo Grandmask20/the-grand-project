@@ -31,6 +31,7 @@ per screenshot of every policy after every round: the learning curve of the loop
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import sqlite3
 import subprocess
@@ -233,9 +234,15 @@ def held_out(
 
 
 def train_round(
-    args: argparse.Namespace, round_dir: Path, subset: list[str], previous: Path | None, dataset_dir: Path
+    args: argparse.Namespace,
+    round_dir: Path,
+    subset: list[str],
+    previous: Path | None,
+    dataset_dir: Path,
+    manifest_sha: str,
 ) -> None:
-    """Train one round's model in its own process (the GPU is free again after it)."""
+    """Train one round's model in its own process (the GPU is free again after it). ``manifest_sha``: the SHA-256 of
+    the manifest bytes the simulation read (a saved dataset is reused only when built from those)."""
     round_dir.mkdir(parents=True, exist_ok=True)
     subset_file = round_dir / "train_subset.txt"
     subset_file.write_text("".join(f"{name}\n" for name in subset), encoding="utf-8")
@@ -253,7 +260,7 @@ def train_round(
         "--epochs",
         str(args.epochs),
     ]
-    if dataset_matches(dataset_dir, args.manifest):
+    if dataset_matches(dataset_dir, manifest_sha):
         command += ["--reuse-dataset"]
     else:  # none yet, or one built from other inputs (an earlier simulation's): built anew
         command += ["--annotator-manifest", str(args.manifest)]
@@ -284,9 +291,9 @@ def check_round(best: Path, subset: Sequence[str], number: int) -> None:
         )
 
 
-def dataset_matches(dataset_dir: Path, manifest: Path) -> bool:
-    """Whether a saved dataset was built from this manifest and the split ledger as it is now, truth-seeded (its
-    ``metadata.json`` provenance, ``train_rf_detr``), so a round may reuse it."""
+def dataset_matches(dataset_dir: Path, manifest_sha: str) -> bool:
+    """Whether a saved dataset was built from the manifest of SHA-256 ``manifest_sha`` and the split ledger as it is
+    now, truth-seeded (its ``metadata.json`` provenance, ``train_rf_detr``), so a round may reuse it."""
     meta_file = dataset_dir / "metadata.json"
     if not (dataset_dir / "labels.json").is_file() or not meta_file.is_file():
         return False
@@ -299,10 +306,30 @@ def dataset_matches(dataset_dir: Path, manifest: Path) -> bool:
     ledger = K.ANNOTATOR_SPLIT_LEDGER
     return (
         meta.get("truth_seeded") is True
-        and meta.get("manifest_sha256") == file_hash(manifest)
+        and meta.get("manifest_sha256") == manifest_sha
         and ledger.is_file()
         and meta.get("ledger_sha256") == file_hash(ledger)
     )
+
+
+def check_manifest(summary_file: Path, manifest_sha: str, number: int) -> dict[str, Any]:
+    """A round's training summary, when its model was trained on the manifest the simulation scores with (the SHA-256
+    its dataset records): the manifest file can change while a round trains, and its held-out rows would then not be
+    the ones the model was kept against.
+
+    Raises:
+        SystemExit: no summary, or a model trained on another manifest.
+    """
+    if not summary_file.is_file():
+        raise SystemExit(f"round {number}: no {summary_file.name} in {summary_file.parent}: train it again")
+    summary = json.loads(summary_file.read_text(encoding="utf-8"))
+    trained = (summary.get("dataset") or {}).get("manifest_sha256")
+    if trained != manifest_sha:
+        raise SystemExit(
+            f"round {number}: its model was trained on another manifest ({trained}) than the one scored "
+            f"({manifest_sha}): the manifest changed meanwhile; run the simulation again"
+        )
+    return summary
 
 
 def truth_known(truth: Truth | None, row: Mapping[str, Any]) -> Callable[[Mapping[str, Any]], bool]:
@@ -429,7 +456,11 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--skip-train", action="store_true", help="score the rounds' existing models only")
     args = parser.parse_args(argv)
     args.manifest = resolve_path(args.manifest)
-    manifest = json.loads(args.manifest.read_text(encoding="utf-8"))
+    # one snapshot of the manifest: the training screenshots, the held-out rows and the rounds' checks all come from
+    # these bytes (the file read again later could be another export)
+    manifest_bytes = args.manifest.read_bytes()
+    manifest_sha = hashlib.sha256(manifest_bytes).hexdigest()
+    manifest = json.loads(manifest_bytes)
     truth = Truth.load(resolve_path(args.truth))
     shots = held_out(manifest, args.atlas, args.manifest.parent, truth.source)
     others = [
@@ -461,12 +492,11 @@ def main(argv: list[str] | None = None) -> int:
     for number, subset in enumerate(rounds, 1):
         round_dir = output / f"round-{number}"
         if not args.skip_train:
-            train_round(args, round_dir, subset, previous, dataset_dir)
+            train_round(args, round_dir, subset, previous, dataset_dir, manifest_sha)
         best = round_dir / "best"
         if args.skip_train:
             check_round(best, subset, number)
-        summary_file = round_dir / "training_summary.json"
-        summary = json.loads(summary_file.read_text(encoding="utf-8")) if summary_file.is_file() else {}
+        summary = check_manifest(round_dir / "training_summary.json", manifest_sha, number)
         result = {
             "round": number,
             "train_screenshots": len(subset),
@@ -482,6 +512,7 @@ def main(argv: list[str] | None = None) -> int:
 
 
 __all__ = [
+    "check_manifest",
     "check_round",
     "city_area",
     "classical_boxes",

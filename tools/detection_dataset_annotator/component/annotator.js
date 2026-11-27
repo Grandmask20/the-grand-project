@@ -53,7 +53,7 @@ const SHORTCUTS = [
   ["Drag box / handle", "move / resize"],
   ["Ctrl+drag", "move the selected boxes, even from a handle (small boxes)"],
   ["1 … 9, 0, Shift+1 … 0", "label the selected boxes, or pick the label for new boxes (keys in the label list)"],
-  ["/", "find a label by its name, icon name or other names (Enter: use the first one, Esc: clear)"],
+  ["/", "find a label by its name, icon name or other names (Enter: use the first match, Esc: clear)"],
   ["Del, Backspace", "delete selected"],
   ["Ctrl+D", "duplicate selected"],
   ["Ctrl+A", "select all"],
@@ -69,7 +69,7 @@ const SHORTCUTS = [
   ["F", "fit the screenshot"],
   ["C", "centre the screenshot (keeps the zoom)"],
   ["H / L", "hide boxes / show every label"],
-  ["Enter", "mark reviewed and go to the next screenshot"],
+  ["Enter", "mark reviewed and go to the next screenshot (held down, once only)"],
   ["Shift+Enter", "toggle reviewed"],
   ["N or ] / P or [", "next / previous screenshot (edits are saved first)"],
   ["?", "this help"],
@@ -110,6 +110,20 @@ export function plainKeyTarget(labels, { key, code, shiftKey }) {
   const label = labelForKey(labels, code, shiftKey);
   if (label) return { label };
   return { shortcut: key.length === 1 ? key.toLowerCase() : key };
+}
+
+// Shortcuts a held key does once: a repeat of Enter or N would mark and skip one screenshot after another unseen.
+// Exported for tests/detection_dataset_annotator.
+const ONCE_SHORTCUTS = new Set(["Enter", "n", "p", "[", "]"]);
+export function repeatIgnored(shortcut) {
+  return ONCE_SHORTCUTS.has(shortcut);
+}
+
+// The label the finder's Enter uses: the first it shows for the words typed, none for an empty finder (it shows every
+// label then, and Enter would relabel the selected boxes with whichever comes first). Exported for
+// tests/detection_dataset_annotator.
+export function finderPick(shown, filter) {
+  return filter ? (shown[0] ?? null) : null;
 }
 
 // Whether a box is a guess to check first (an unsure city type, biome or city area: constants.ANNOTATOR_GUESS_SOURCES).
@@ -937,6 +951,7 @@ class Annotator {
       return true;
     }
     const target = plainKeyTarget(this.labels, event);
+    if (event.repeat && repeatIgnored(target.shortcut)) return true; // held down: once only (still no browser default)
     if (target.label) {
       this.useLabel(target.label.name);
       return true;
@@ -1015,7 +1030,7 @@ class Annotator {
   filterKey(event) {
     // In the label finder: Enter uses the first label it shows and gives the keys back to the editor; Esc clears it.
     if (event.key === "Enter") {
-      const [first] = this.filteredLabels();
+      const first = finderPick(this.filteredLabels(), this.labelFilter);
       if (first) this.useLabel(first.name);
       this.viewport.focus();
     } else if (event.key === "Escape") {

@@ -7,9 +7,11 @@ import { test } from "node:test";
 import {
   closestHandle,
   coordinateValue,
+  finderPick,
   isGuess,
   labelForKey,
   plainKeyTarget,
+  repeatIgnored,
   wheelPixels,
 } from "../../tools/detection_dataset_annotator/component/annotator.js";
 
@@ -83,4 +85,18 @@ test("an emptied coordinate is no 0", () => {
   assert.equal(coordinateValue("abc"), null);
   assert.equal(coordinateValue("0"), 0);
   assert.equal(coordinateValue(" 12.5 "), 12.5);
+});
+
+test("a held key reviews or moves to another screenshot once; arrows, undo and zoom repeat", () => {
+  for (const shortcut of ["Enter", "n", "p", "[", "]"]) assert.equal(repeatIgnored(shortcut), true, shortcut);
+  for (const shortcut of ["ArrowLeft", "z", "+", "-", ",", ".", "j"]) assert.equal(repeatIgnored(shortcut), false);
+  // N and P with Shift: the shortcut is the lower-case letter
+  assert.equal(repeatIgnored(plainKeyTarget(palette, { key: "N", code: "KeyN", shiftKey: true }).shortcut), true);
+});
+
+test("the finder's Enter uses its first match, nothing while it is empty", () => {
+  const shown = [{ name: "tower" }, { name: "hall" }];
+  assert.equal(finderPick(shown, "to").name, "tower");
+  assert.equal(finderPick(shown, ""), null);
+  assert.equal(finderPick([], "zzz"), null);
 });

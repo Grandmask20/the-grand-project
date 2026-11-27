@@ -17,12 +17,13 @@ each box's middle is taken to atlas units (``core.geometry``, as the truth file 
   the fortress); the others take the city type of the area they stand in.
 
 The boxes it sets get the source ``ANNOTATOR_TRUTH_SOURCE`` (no guess: drawn solid; the screenshot is still
-reviewed). Reviewed or edited screenshots are never changed (checked again in the write), a screenshot whose
-ground ring could not be read is left unmarked (seeded on the next run), one whose file name another screenshot in
-the store has too is left alone (the truth names screenshots by file name only; byte copies are one), and a second
-run changes nothing. It reports what it changed, the truth Cities a screenshot shows without a citadel box (to draw
-while reviewing) and the stronghold boxes far from every truth stronghold area (to check: the truth labels roughly
-every stronghold area).
+reviewed). Reviewed or edited screenshots are never changed (checked again in the write); a screenshot that cannot be
+read, or whose file is no longer the size its boxes were detected in (replaced since: rerun its detection), is left
+unmarked (seeded on a later run); one a model pre-labelled is left (its boxes are the model's); one whose file name
+another screenshot in the store has too is left alone (the truth names screenshots by file name only; byte copies
+are one); and a second run changes nothing. It reports what it changed, the truth Cities a screenshot shows without
+a citadel box (to draw while reviewing) and the stronghold boxes far from every truth stronghold area (to check: the
+truth labels roughly every stronghold area).
 """
 
 from __future__ import annotations
@@ -315,10 +316,9 @@ def _cities_missed(citadels: list[np.ndarray], found: np.ndarray, homography: np
     return missed
 
 
-def _detector_image(path: Path) -> np.ndarray | None:
-    """The screenshot as the detector reads it (1080p BGR), or None when it cannot be read."""
-    raw = decode_image(path)
-    return None if raw is None else core.scale_screenshot(raw)
+def _raw_image(path: Path) -> np.ndarray | None:
+    """The screenshot file as it is now (BGR, its own size), or None when it cannot be read."""
+    return decode_image(path)
 
 
 def _ambiguous(paths: Sequence[Path]) -> bool:
@@ -371,8 +371,23 @@ def seed_store(store: ReviewStore, truth: Truth, *, dry_run: bool = False) -> tu
             # boxes first, e.g. Rerun detection, then seed with this truth)
             done[f"skipped: seeded by another truth ({other}): rerun its detection first"] += 1
             continue
+        if (item.get(K.ANNOTATOR_PRELABEL_FIELD) or {}).get("source") == DK.RF_DETR_SOURCE_MODEL:
+            # its boxes are a model's pre-labels: a truth-seeded training round would learn the model's own answers.
+            # (A classical arm's screenshot keeps the classical boxes: seeded. A model pass saving after the read
+            # changes the boxes' sources, so the save's expect_boxes refuses it.)
+            done["skipped: pre-labelled by a model"] += 1
+            continue
+        raw = _raw_image(Path(item["path"]))
+        if raw is None:
+            done["skipped: unreadable screenshot (not marked)"] += 1  # seeded on a later run, once it can be read
+            continue
+        if (raw.shape[1], raw.shape[0]) != (item.get("width"), item.get("height")):
+            # not the file its boxes were detected on (replaced since): rerun its detection first
+            done["skipped: changed since its detection: rerun its detection"] += 1
+            continue
+        detector_image = core.scale_screenshot(raw)  # (the ground rings read it: the file read once)
         boxes, counts, complete = seed_screenshot(
-            item, truth.screenshots[Path(item["path"]).name], truth, _detector_image
+            item, truth.screenshots[Path(item["path"]).name], truth, lambda _path, image=detector_image: image
         )
         done.update({what: count for what, count in counts.items() if what in DIAGNOSTICS})
         corrections = Counter({what: count for what, count in counts.items() if what not in DIAGNOSTICS})

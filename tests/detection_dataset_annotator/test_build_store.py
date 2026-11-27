@@ -7,10 +7,18 @@ import json
 from collections import Counter
 from pathlib import Path
 
+import numpy as np
 import pytest
 
-from tools.detection_dataset_annotator import ReviewStore, build_store, image_key, relative_source
+from tools.detection_dataset_annotator import ReviewStore, build_store, image_key, relative_source, truth_seed
 from tools.detection_dataset_annotator import constants as K
+
+
+@pytest.fixture(autouse=True)
+def readable(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The screenshot files here are a few bytes (their bytes tell copies apart): seeding reads each as a blank
+    1920x1080 picture, the size it was detected in."""
+    monkeypatch.setattr(truth_seed, "_raw_image", lambda path: np.zeros((1080, 1920, 3), np.uint8))
 
 
 def _truth(tmp_path: Path, files: list[str]) -> Path:

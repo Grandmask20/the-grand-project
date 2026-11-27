@@ -77,11 +77,13 @@ def detector_stamp() -> str:
             h.update(b"no database")
         for f in (BADGE_FINDER_FILE, CITY_BARREL_FILE):
             h.update(f.read_bytes() if f.exists() else b"-")
-        use_rf_detr = rf_detr_enabled()
-        rf_model = rf_detr_model_path()
-        if use_rf_detr:
+        if rf_detr_enabled():
             h.update(b"rf-detr")
-        if use_rf_detr and rf_model.is_dir():
+            rf_model = rf_detr_model_path()
+            if not rf_model.is_dir():
+                # not kept: the checkpoint may appear later in this process (a training run finishing), and the
+                # detections made with it must carry its digest, not this stamp
+                return h.hexdigest()[:12]
             # the checkpoint's contents, as the model loaded in this process is checked against (load_detector)
             h.update(checkpoint_digest(rf_model).encode())
         _STAMP.append(h.hexdigest()[:12])

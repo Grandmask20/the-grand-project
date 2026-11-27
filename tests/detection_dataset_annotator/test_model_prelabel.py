@@ -337,3 +337,46 @@ def test_a_named_classical_icon_keeps_its_name_where_the_model_finds_its_icon() 
             ("icon_mapboss", DK.RF_DETR_SOURCE_MODEL),
             ("map_node_desert", DK.RF_DETR_SOURCE_MODEL_GUESS),
         ]
+
+
+def test_a_dry_run_opens_the_store_read_only(tmp_path: Path, review_store: ReviewStore) -> None:
+    """A dry run changes nothing, not even the store's journal mode (a writable open sets WAL: CodeRabbit)."""
+    import sqlite3
+
+    path = tmp_path / "a.png"
+    path.write_bytes(b"a")
+    review_store.add_images([path])
+    review_store.record_detection(image_key(path), {"width": 1920, "height": 1080, "annotations": []}, force=False)
+    review_store.claim_splits({image_key(path): "train"})
+    review_store.close()
+    with sqlite3.connect(review_store.path) as db:
+        db.execute("PRAGMA journal_mode = DELETE")
+    out = review_store.path.parent
+    assert model_prelabel.main(["--dry-run", "--output-dir", str(out), "--model", str(tmp_path / "model")]) == 0
+    with sqlite3.connect(review_store.path) as db:
+        assert db.execute("PRAGMA journal_mode").fetchone()[0] == "delete"
+
+
+def test_a_screenshot_changed_since_its_detection_gets_no_model_boxes(
+    tmp_path: Path, review_store: ReviewStore, monkeypatch: pytest.MonkeyPatch, capsys
+) -> None:
+    """A file now another size than the one detected: its boxes and the model's would be in two pixel frames, so it is
+    left as it is (CodeRabbit)."""
+    path = tmp_path / "a.png"
+    path.write_bytes(b"a")
+    review_store.add_images([path])
+    key = image_key(path)
+    result = {"width": 1920, "height": 1080, "annotations": [_box("map_node_grass", 300, 300)]}
+    review_store.record_detection(key, result, force=False)
+    review_store.claim_splits({key: "train"})
+    found = [{"label": "map_node_vaal", "family": "node", "score": 0.9, "box": [281.0, 281.0, 319.0, 319.0]}]
+    monkeypatch.setattr(model_prelabel, "predict", lambda detector, path: (found, (1920, 1080), (3840, 2160)))
+    monkeypatch.setattr("grand_project.detect.rf_detr_model.load_detector", lambda model_dir: {})
+    model_dir = tmp_path / "model"
+    model_dir.mkdir()
+    out = review_store.path.parent
+    assert model_prelabel.main(["--model", str(model_dir), "--output-dir", str(out), "--share", "1"]) == 0
+    assert "changed since its detection" in capsys.readouterr().out
+    item = review_store.item(key)
+    assert [b["label"] for b in item["annotations"]] == ["map_node_grass"]
+    assert K.ANNOTATOR_PRELABEL_FIELD not in item

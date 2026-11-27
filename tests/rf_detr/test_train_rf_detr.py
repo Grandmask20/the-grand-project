@@ -173,6 +173,7 @@ def test_a_whole_run_trains_picks_the_best_checkpoint_and_scores_the_test_split(
     assert json.loads((best / "config.json").read_text())["num_labels"] == len(LABELS)  # the EMA model's
     assert (best / K.RF_DETR_TRAINED_ON).read_text().split() == ["shot0.png", "shot1.png", "shot2.png"]
     checkpoint = out / "checkpoints" / summary["best_checkpoint"]
+    T.check_resume_sources(checkpoint, ["shot0.png", "shot1.png", "shot2.png"])  # each checkpoint lists its run's
     assert json.loads((checkpoint / T.EMA_DIR / T.EMA_STATE).read_text())["updates"] >= 1
     # what is kept is the selected checkpoint's EMA: not the last checkpoint's EMA, not the live weights
     last = max((out / "checkpoints").glob("checkpoint-*"), key=lambda path: int(path.name.split("-")[1]))
@@ -404,7 +405,7 @@ def test_a_resumed_run_goes_on_with_its_ema(tmp_path: Path) -> None:
             for param in model.parameters():
                 param.add_(0.5)  # an optimizer step
         first.on_step_end(args, None, None, model=model)
-    first.on_save(args, SimpleNamespace(global_step=3), None)
+    first.on_save(args, SimpleNamespace(global_step=3, is_world_process_zero=True), None)
 
     live = _tiny(LABELS)
     resumed = T.EmaCallback(0.9, 10.0, resume_from=tmp_path / "checkpoint-3")
@@ -587,3 +588,50 @@ def test_resume_refuses_a_checkpoint_of_other_classes(tmp_path: Path) -> None:
     reordered = {str(i): name for i, name in enumerate(reversed(list(LABELS.values())))}
     with pytest.raises(SystemExit, match="--init-from"):
         T.check_resume_labels(tmp_path / "checkpoint-3", reordered)
+
+
+def test_only_the_global_main_process_writes_a_checkpoints_extras(tmp_path: Path) -> None:
+    """Under torchrun every process gets on_save: the EMA's files and the screenshot list are written by the global
+    main one alone (CodeRabbit); every process still updates its EMA."""
+    args = SimpleNamespace(output_dir=str(tmp_path))
+    model = _tiny(LABELS)
+    ema = T.EmaCallback(0.9, 10.0)
+    ema.on_train_begin(args, None, None, model=model)
+    ema.on_step_end(args, None, None, model=model)
+    assert int(ema.ema.n_averaged) == 1
+    members = T.MembershipCallback(["b.png", "a.png"])
+    for callback in (members, ema):
+        callback.on_save(args, SimpleNamespace(global_step=1, is_world_process_zero=False), None)
+    assert not (tmp_path / "checkpoint-1").exists()
+    for callback in (members, ema):
+        callback.on_save(args, SimpleNamespace(global_step=1, is_world_process_zero=True), None)
+    assert (tmp_path / "checkpoint-1" / K.RF_DETR_TRAINED_ON).read_text() == "a.png\nb.png\n"
+    assert T.ema_complete(tmp_path / "checkpoint-1")
+
+
+def test_resume_refuses_a_checkpoint_of_other_screenshots(tmp_path: Path) -> None:
+    """Another --train-subset or a rebuilt dataset: the checkpoint's weights, optimizer and EMA are another run's, so
+    --init-from in a new output folder is the way on (CodeRabbit)."""
+    checkpoint = tmp_path / "checkpoint-3"
+    checkpoint.mkdir()
+    with pytest.raises(SystemExit, match="it lists none"):
+        T.check_resume_sources(checkpoint, ["a.png"])
+    (checkpoint / K.RF_DETR_TRAINED_ON).write_text("a.png\nb.png\n")
+    T.check_resume_sources(checkpoint, ["b.png", "a.png"])
+    with pytest.raises(SystemExit, match="--init-from"):
+        T.check_resume_sources(checkpoint, ["a.png"])
+
+
+def test_other_processes_load_the_dataset_the_main_one_built(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Under torchrun the global main process builds the dataset first; the others then load its folder (each
+    building into it would collide: CodeRabbit). One process builds as before."""
+    from contextlib import nullcontext
+
+    reused = []
+    monkeypatch.setattr(T, "_load_or_build_dataset", lambda args: reused.append(args.reuse_dataset))
+    args = T.parse_args(["--output-dir", str(tmp_path)])
+    for rank in (0, 1):
+        training = SimpleNamespace(process_index=rank, main_process_first=lambda **kwargs: nullcontext())
+        T.dataset_main_first(args, training)
+    T.dataset_main_first(args, None)
+    assert reused == [False, True, False] and args.reuse_dataset is False

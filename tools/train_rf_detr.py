@@ -22,7 +22,7 @@ Go on from an earlier model into a new output folder, on a new export or on the 
         --output-dir runs/rf-detr-small-2 --init-from runs/rf-detr-small/best
 
 Resume an interrupted run from its last checkpoint (the newest with its EMA): the same command with ``--resume``
-(the run's saved dataset is used again).
+(the run's saved dataset is used again; a checkpoint trained on other screenshots is refused).
 
 What the model sees: native-scale tiles of the 1080p screenshots with the game HUD painted over
 (``grand_project.detect.rf_detr_tiles``): random tiles in training (scale jitter, tiles centred on rare classes,
@@ -351,8 +351,8 @@ class EmaCallback(TrainerCallback):
             self.ema.update_parameters(model)
 
     def on_save(self, args, state, control, **kwargs):
-        if self.ema is None:
-            return
+        if self.ema is None or not state.is_world_process_zero:
+            return  # (several processes, torchrun: the global main one writes the checkpoint's EMA, once)
         folder = Path(args.output_dir) / f"checkpoint-{state.global_step}" / EMA_DIR
         if isinstance(self.ema.module, PreTrainedModel):
             save_native(self.ema.module, folder)
@@ -363,6 +363,24 @@ class EmaCallback(TrainerCallback):
     def model(self, fallback):
         """The EMA model (eval mode), or ``fallback`` before training began."""
         return fallback if self.ema is None else self.ema.module
+
+
+class MembershipCallback(TrainerCallback):
+    """Writes the run's training screenshots into every checkpoint (``RF_DETR_TRAINED_ON``, from the global main
+    process only), so --resume can refuse a checkpoint trained on other screenshots (``check_resume_sources``).
+
+    Listed before the EMA's callback: a checkpoint with its whole EMA (``ema_complete``, written last) has its list.
+    """
+
+    def __init__(self, sources: list[str]) -> None:
+        self.sources = sorted(sources)
+
+    def on_save(self, args, state, control, **kwargs):
+        if not state.is_world_process_zero:
+            return
+        folder = Path(args.output_dir) / f"checkpoint-{state.global_step}"
+        folder.mkdir(parents=True, exist_ok=True)
+        (folder / K.RF_DETR_TRAINED_ON).write_text("".join(f"{source}\n" for source in self.sources), encoding="utf-8")
 
 
 class RepeatFactorSampler(torch.utils.data.Sampler):
@@ -620,6 +638,17 @@ def _load_or_build_dataset(args: argparse.Namespace):
     return dataset, label_map, dataset_dir
 
 
+def dataset_main_first(args: argparse.Namespace, training_args: TrainingArguments | None):
+    """``_load_or_build_dataset``; with several processes (torchrun) the global main one builds it while the others
+    wait, and they then load the folder it saved (each building into the same folder would collide)."""
+    if training_args is None:  # --dataset-only: one process, no training
+        return _load_or_build_dataset(args)
+    with training_args.main_process_first(local=False, desc="the dataset"):
+        if training_args.process_index != 0:
+            args = argparse.Namespace(**{**vars(args), "reuse_dataset": True})
+        return _load_or_build_dataset(args)
+
+
 def train_subset(dataset, subset_file: Path):
     """Keep only the training screenshots ``subset_file`` lists (one project-relative path, the dataset's
     ``source``, a line): a simulated review round's revealed blocks. Validation and test stay whole."""
@@ -730,6 +759,22 @@ def check_resume_labels(checkpoint: Path, label_map: dict[str, str]) -> None:
         )
 
 
+def check_resume_sources(checkpoint: Path, sources: list[str]) -> None:
+    """Stop when a checkpoint to resume from was trained on other screenshots than this run trains on (another
+    --train-subset, a rebuilt dataset): its weights, optimizer and EMA would go on as if they were the same run.
+
+    Raises:
+        SystemExit: the screenshots differ, or the checkpoint lists none (``MembershipCallback``).
+    """
+    recorded, wanted = trained_on(checkpoint), set(sources)
+    if recorded != wanted:
+        listed = f"{len(wanted - recorded)} new, {len(recorded - wanted)} left out" if recorded else "it lists none"
+        raise SystemExit(
+            f"--resume: {checkpoint.name} was trained on other screenshots than this run ({listed}); go on from it "
+            "with --init-from and a new --output-dir instead"
+        )
+
+
 def training_arguments(args: argparse.Namespace, checkpoints: Path) -> TrainingArguments:
     """The Trainer's settings: the recipe (``RF_DETR_*``) and the run's options."""
     cuda = args.device in ("auto", "cuda") and torch.cuda.is_available()
@@ -772,9 +817,13 @@ def training_arguments(args: argparse.Namespace, checkpoints: Path) -> TrainingA
 def main(argv: list[str] | None = None) -> int:
     """Prepare the dataset, then fine-tune and save the best RF-DETR checkpoint."""
     args = parse_args(argv)
+    checkpoints = args.output_dir / "checkpoints"
+    training_args = None
     if not args.dataset_only:
         check_device(args.device)  # before a dataset is built or a model loaded
-    dataset, label_map, dataset_dir = _load_or_build_dataset(args)
+        # before the dataset: under torchrun it starts the processes' group, which the dataset's build waits on
+        training_args = training_arguments(args, checkpoints)
+    dataset, label_map, dataset_dir = dataset_main_first(args, training_args)
     if args.train_subset is not None:
         dataset = train_subset(dataset, args.train_subset)
     sizes = {split: len(rows) for split, rows in dataset.items()}
@@ -786,12 +835,13 @@ def main(argv: list[str] | None = None) -> int:
     from transformers import set_seed
 
     set_seed(args.seed)
-    checkpoints = args.output_dir / "checkpoints"
     resume_from = last_complete_checkpoint(checkpoints) if args.resume else None
     if args.resume and resume_from is None:  # before a model is downloaded or loaded
         raise SystemExit(f"--resume: no checkpoint (with its EMA) in {checkpoints}")
+    run_sources = sorted(set(dataset["train"]["source"]))  # this run's training screenshots (after --train-subset)
     if resume_from is not None:
         check_resume_labels(resume_from, label_map)
+        check_resume_sources(resume_from, run_sources)
     base = args.init_from or K.RF_DETR_MODEL_NAME
     processor = load_processor(base)
     model = load_model(base, label_map)
@@ -802,12 +852,17 @@ def main(argv: list[str] | None = None) -> int:
     ema = EmaCallback(args.ema_decay, K.RF_DETR_EMA_TAU, resume_from=resume_from)
     trainer = RfDetrTrainer(
         model=model,
-        args=training_arguments(args, checkpoints),
+        args=training_args,
         train_dataset=dataset["train"].with_transform(tile_transform(processor, train=True, seed=args.seed, rare=rare)),
         eval_dataset=dataset["validation"],
         data_collator=collate_fn,
         processing_class=processor,
-        callbacks=[ema, EarlyStoppingCallback(args.patience, K.RF_DETR_EARLY_STOP_DELTA)],
+        # the membership first: the EMA's files, written last, mark a checkpoint whole (ema_complete)
+        callbacks=[
+            MembershipCallback(run_sources),
+            ema,
+            EarlyStoppingCallback(args.patience, K.RF_DETR_EARLY_STOP_DELTA),
+        ],
         ema=ema,
         sampler=sampler,
         recipe={
@@ -830,12 +885,19 @@ def main(argv: list[str] | None = None) -> int:
     if best is None:
         raise SystemExit("no checkpoint was evaluated: nothing to keep")
     best_dir = args.output_dir / "best"
-    # a model gone on from another (--init-from) has also learned what that one trained on
-    sources = set(dataset["train"]["source"]) | (trained_on(args.init_from) if args.init_from else set())
-    export_best(Path(best), processor, best_dir, label_map, sorted(sources))
-    print(
-        f"saved {best_dir} (the EMA weights of {Path(best).name}, validation mean AP {trainer.state.best_metric:.4f})"
-    )
+    if trainer.is_world_process_zero():  # (several processes, torchrun: the global main one publishes, once)
+        # a model gone on from another (--init-from) has also learned what that one trained on
+        sources = set(run_sources) | (trained_on(args.init_from) if args.init_from else set())
+        export_best(Path(best), processor, best_dir, label_map, sorted(sources))
+        print(
+            f"saved {best_dir} (the EMA weights of {Path(best).name}, validation mean AP "
+            f"{trainer.state.best_metric:.4f})"
+        )
+    # every process waits until best/ is whole; then the global main one alone scores the test split from it and
+    # writes the summary
+    trainer.accelerator.wait_for_everyone()
+    if not trainer.is_world_process_zero():
+        return 0
 
     test_metrics = None
     if len(dataset["test"]):

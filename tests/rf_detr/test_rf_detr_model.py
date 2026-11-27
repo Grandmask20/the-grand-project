@@ -393,3 +393,24 @@ def test_the_loaded_checkpoint_is_the_one_the_detector_stamp_names(
         assert rf_detr_model.checkpoint_digest(tmp_path) == stamp
     finally:
         rf_detr_model.reset_rf_detr_runtime()
+
+
+def test_labels_changed_after_they_were_read_are_refused(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """labels.json is read before the checkpoint's digest is checked again: a label map swapped in after it was read
+    is caught (CodeRabbit)."""
+    pytest.importorskip("torch")
+    transformers = pytest.importorskip("transformers")
+    _stub_loaders(monkeypatch, transformers, tmp_path, {"0": "map_node", "1": "icon"})
+    real = rf_detr_model._labels
+
+    def read_then_swapped(model_dir, model):
+        labels = real(model_dir, model)
+        (tmp_path / "labels.json").write_text('{"0": "map_node", "1": "tower"}', encoding="utf-8")
+        return labels
+
+    monkeypatch.setattr(rf_detr_model, "_labels", read_then_swapped)
+    try:
+        with pytest.raises(RuntimeError, match="changed since this process first read it"):
+            rf_detr_model._load_runtime()
+    finally:
+        rf_detr_model.reset_rf_detr_runtime()

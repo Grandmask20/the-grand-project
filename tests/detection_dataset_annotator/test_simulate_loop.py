@@ -12,6 +12,7 @@ from grand_project.detect import constants as DK
 from tools.detection_dataset_annotator import ReviewStore, image_key, relative_source, simulate_loop
 from tools.detection_dataset_annotator import constants as K
 from tools.detection_dataset_annotator.simulate_loop import (
+    check_manifest,
     check_round,
     city_area,
     classical_boxes,
@@ -226,12 +227,15 @@ def test_a_simulation_trains_each_round_on_from_the_last_and_scores_every_policy
     def train(command, check):
         commands.append(command)
         round_dir = Path(command[command.index("--output-dir") + 1])
-        (round_dir / "training_summary.json").write_text(json.dumps({"best_validation_mean_ap": 0.5}))
         dataset = Path(command[command.index("--dataset-dir") + 1])
         dataset.mkdir(parents=True, exist_ok=True)
         (dataset / "labels.json").write_text("{}")  # the first round built the dataset, from these inputs
         provenance = {"manifest_sha256": file_hash(manifest), "ledger_sha256": file_hash(K.ANNOTATOR_SPLIT_LEDGER)}
-        (dataset / "metadata.json").write_text(json.dumps({**provenance, "truth_seeded": True}))
+        metadata = {**provenance, "truth_seeded": True}
+        (dataset / "metadata.json").write_text(json.dumps(metadata))
+        (round_dir / "training_summary.json").write_text(
+            json.dumps({"best_validation_mean_ap": 0.5, "dataset": metadata})
+        )
 
     found = [{"label": "map_node_vaal", "family": "node", "score": 0.9, "box": [281.0, 281.0, 319.0, 319.0]}]
     monkeypatch.setattr(simulate_loop.subprocess, "run", train)
@@ -277,24 +281,35 @@ def test_gold_counts_only_nodes_the_truth_has_a_map_for_and_silver_is_against_cl
 
 
 def test_a_dataset_is_reused_only_when_built_from_the_same_inputs(tmp_path: Path) -> None:
-    manifest = tmp_path / "manifest.json"
-    manifest.write_text("{}")
+    manifest = "a" * 64  # the SHA-256 of the manifest bytes the simulation read
     write_ledger([Entry("sha", "train", "", "a.png")])
     dataset = tmp_path / "dataset"
     assert not dataset_matches(dataset, manifest)  # none yet
     dataset.mkdir()
     (dataset / "labels.json").write_text("{}")
-    meta = {"manifest_sha256": file_hash(manifest), "ledger_sha256": file_hash(K.ANNOTATOR_SPLIT_LEDGER)}
+    meta = {"manifest_sha256": manifest, "ledger_sha256": file_hash(K.ANNOTATOR_SPLIT_LEDGER)}
     (dataset / "metadata.json").write_text(json.dumps({**meta, "truth_seeded": True}))
     assert dataset_matches(dataset, manifest)
     (dataset / "metadata.json").write_text(json.dumps({**meta, "truth_seeded": False}))
     assert not dataset_matches(dataset, manifest)  # built without the truth-seeded screenshots
     (dataset / "metadata.json").write_text(json.dumps({**meta, "truth_seeded": True}))
-    manifest.write_text('{"images": []}')
-    assert not dataset_matches(dataset, manifest)  # another export
+    assert not dataset_matches(dataset, "b" * 64)  # another export
     for broken in ("{not json", "[1, 2]"):  # an interrupted build's record: built anew, never an error
         (dataset / "metadata.json").write_text(broken)
         assert not dataset_matches(dataset, manifest)
+
+
+def test_a_round_trained_on_another_manifest_is_not_scored(tmp_path: Path) -> None:
+    """The manifest changed while a round trained (another export): its model was not trained on the snapshot the
+    held-out rows come from, so the simulation stops (CodeRabbit)."""
+    summary = tmp_path / "training_summary.json"
+    with pytest.raises(SystemExit, match="no training_summary.json"):
+        check_manifest(summary, "a" * 64, 1)
+    summary.write_text(json.dumps({"dataset": {"manifest_sha256": "b" * 64}}))
+    with pytest.raises(SystemExit, match="trained on another manifest"):
+        check_manifest(summary, "a" * 64, 1)
+    summary.write_text(json.dumps({"best_validation_mean_ap": 0.5, "dataset": {"manifest_sha256": "a" * 64}}))
+    assert check_manifest(summary, "a" * 64, 1)["best_validation_mean_ap"] == 0.5
 
 
 def test_without_held_out_screenshots_nothing_is_trained(

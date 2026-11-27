@@ -176,7 +176,7 @@ def test_a_second_start_opens_the_running_app(app, monkeypatch, tmp_path):
     monkeypatch.setattr(S, "AtlasSession", lambda: pytest.fail("a second copy was started"))
     monkeypatch.setenv("http_proxy", "http://127.0.0.1:9")  # a proxy that refuses: the probe goes direct
     monkeypatch.setenv("HTTP_PROXY", "http://127.0.0.1:9")
-    assert S.running_app(port) == (srv.url, S.VERSION)
+    assert S.running_app(port) == (srv.url, S.VERSION, False)
     assert S.main(["--port", str(port)]) == 0 and opened == [srv.url]  # its page, not a second copy
     assert S.running_app(port, root=tmp_path) is None  # a copy of the program in another folder: not this one
     # an atlas asked for on the command line is opened by the running copy (it was dropped)
@@ -189,7 +189,8 @@ def test_a_second_start_opens_the_running_app(app, monkeypatch, tmp_path):
 
 
 def test_an_older_running_copy_is_closed_for_the_update(monkeypatch):
-    monkeypatch.setattr(S, "running_app", lambda port: ("http://127.0.0.1:1/", "1.0"))  # an older copy answers
+    # an older copy answers
+    monkeypatch.setattr(S, "running_app", lambda port: ("http://127.0.0.1:1/", "1.0", False))
     monkeypatch.setattr(S, "APP_QUIT_WAIT", 0.5)
     state = {"gone": False, "quits": 0}
 
@@ -206,6 +207,20 @@ def test_an_older_running_copy_is_closed_for_the_update(monkeypatch):
     assert S.reuse_running(1, None, browser=False) == S.START and state["quits"] == 1  # it quit: the update starts
     state.update(gone=False, obeys=False)  # still closing after the wait: no second copy writing the same atlas
     assert S.reuse_running(1, None, browser=False) == S.FAILED
+
+
+def test_a_start_with_another_detector_says_the_running_copy_keeps_its_own(monkeypatch, capsys):
+    """A start with GRAND_PROJECT_USE_RF_DETR finds a copy running the classical detector: it hands over and says the
+    flag was not applied (it was reused silently: CodeRabbit)."""
+    from grand_project.detect import constants as DK
+
+    monkeypatch.setattr(S, "running_app", lambda port: ("http://127.0.0.1:1/", S.VERSION, False))
+    monkeypatch.setenv(DK.RF_DETR_USE_ENV, "1")
+    assert S.reuse_running(1, None, browser=False) == S.HANDED
+    assert "uses the classical detector" in capsys.readouterr().out
+    monkeypatch.setattr(S, "running_app", lambda port: ("http://127.0.0.1:1/", S.VERSION, True))
+    assert S.reuse_running(1, None, browser=False) == S.HANDED
+    assert "detector" not in capsys.readouterr().out  # the same detector: nothing to say
 
 
 def test_a_refused_atlas_hand_over_is_reported(app, monkeypatch, tmp_path):
@@ -287,7 +302,7 @@ def test_a_quit_copy_counts_as_gone_though_its_port_wont_bind_yet(monkeypatch):
         s.listen(1)
         assert not S._stopped("127.0.0.1", port)  # still listening: not gone
     assert S._stopped("127.0.0.1", port)  # closed: the connection is refused, so it is gone (it waited out 40 s)
-    monkeypatch.setattr(S, "running_app", lambda p: (f"http://127.0.0.1:{port}/", "1.0"))  # an older copy...
+    monkeypatch.setattr(S, "running_app", lambda p: (f"http://127.0.0.1:{port}/", "1.0", False))  # an older copy...
     monkeypatch.setattr(S, "_local", lambda url, data=None, timeout=0: {"ok": True})  # ...asked to quit
     assert S.reuse_running(port, None, browser=False) == S.START
 

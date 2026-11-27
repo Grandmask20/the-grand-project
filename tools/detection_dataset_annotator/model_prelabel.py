@@ -272,7 +272,8 @@ def main(argv: list[str] | None = None) -> int:
     if not store_path.is_file():  # opening it would create an empty store (and its folder)
         print(f"0 screenshots eligible: no annotator store at {store_path}")
         return 0
-    with ReviewStore.open(store_path) as store:
+    # a dry run reads the store only: no journal change, no plan written
+    with ReviewStore.open(store_path, read_only=args.dry_run) as store:
         every = list(store.items())
         todo = eligible(every, set(trained))
         blocks = _blocks(every)
@@ -327,6 +328,15 @@ def main(argv: list[str] | None = None) -> int:
                     )
             base = store.prelabels(key)  # what the model's boxes are joined with: unchanged until the save
             found, detector_size, raw_size = predict(detector, Path(item["path"]))
+            if raw_size != (item.get("width"), item.get("height")):
+                # the file is not the one detected (replaced since): its boxes and the model's would be in two pixel
+                # frames, so nothing is saved until it is detected again
+                print(
+                    f"  {item['source']}: {raw_size[0]}x{raw_size[1]}, detected at {item.get('width')}x"
+                    f"{item.get('height')}: changed since its detection, rerun its detection (left)"
+                )
+                skipped += 1
+                continue
             model = model_annotations(found, detector_size, raw_size)
             boxes = merge(base, model, args.policy, scale=raw_size[0] / detector_size[0])
             record.update(model=str(model_dir), model_sha=model_sha, found=len(model))

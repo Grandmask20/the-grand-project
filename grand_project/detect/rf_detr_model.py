@@ -151,13 +151,14 @@ def load_detector(model_dir: Path) -> dict[str, Any]:
         model = AutoModelForObjectDetection.from_pretrained(model_dir, use_safetensors=True)
     except Exception as exc:
         raise RuntimeError(f"could not load the RF-DETR model from {model_dir}: {exc}") from exc
-    # the files as loaded must be the ones the detector stamp names (a training run swapping a new best/ in meanwhile
-    # would give detections of other weights under the old stamp): the digest from before the load, checked after it
+    labels = _labels(model_dir, model)
+    # the files as loaded, labels.json too, must be the ones the detector stamp names (a training run swapping a new
+    # best/ in meanwhile would give detections of other weights under the old stamp): the digest from before the load,
+    # checked after everything was read
     if _hash_checkpoint(model_dir) != expected:
         raise RuntimeError(
             f"the RF-DETR model in {model_dir} changed since this process first read it: start the program again"
         )
-    labels = _labels(model_dir, model)
     unknown = sorted(name for name in labels.values() if not L.known(name))
     if unknown:
         # a checkpoint of an earlier label set: its retired classes (city, locked_stronghold, ...) would be found and

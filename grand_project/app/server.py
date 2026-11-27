@@ -420,8 +420,12 @@ class Handler(BaseHTTPRequestHandler):
 
     @route("GET", "/api/hello")
     def get_hello(self, q) -> None:
-        """Which program answers here (a second start finds the copy already running: running_app)."""
-        self._json({"app": HELLO_APP, "version": VERSION, "root": str(rc_paths.ROOT.resolve())})
+        """Which program answers here and with which detector (a second start finds the copy already running:
+        running_app)."""
+        from grand_project.detect.rf_detr_model import rf_detr_enabled
+
+        root = str(rc_paths.ROOT.resolve())
+        self._json({"app": HELLO_APP, "version": VERSION, "root": root, "rf_detr": rf_detr_enabled()})
 
     @route("GET", "/api/meta")
     def get_meta(self, q) -> None:
@@ -1257,7 +1261,7 @@ def _stopped(host: str, port: int) -> bool:
         return False
 
 
-def running_app(port: int, host: str = APP_HOST, root: Path | None = None) -> tuple[str, str] | None:
+def running_app(port: int, host: str = APP_HOST, root: Path | None = None) -> tuple[str, str, bool] | None:
     """Find this program's own copy already running on one of the ports it would take.
 
     Starting it again (a double-click on the launcher, which shows no window on Windows) started a second copy on
@@ -1269,7 +1273,7 @@ def running_app(port: int, host: str = APP_HOST, root: Path | None = None) -> tu
         root: The program folder a running copy must be in (default: this one's).
 
     Returns:
-        (the running copy's URL, its version), or None.
+        (the running copy's URL, its version, whether it runs the RF-DETR detector), or None.
     """
     want = str((root or rc_paths.ROOT).resolve())
     for p in range(port, port + APP_PORT_TRIES):
@@ -1279,7 +1283,7 @@ def running_app(port: int, host: str = APP_HOST, root: Path | None = None) -> tu
         url = f"http://{host}:{p}/"
         hello = _local(url + "api/hello")
         if hello and hello.get("app") == HELLO_APP and hello.get("root") == want:
-            return url, str(hello.get("version", ""))
+            return url, str(hello.get("version", "")), bool(hello.get("rf_detr"))
     return None
 
 
@@ -1305,7 +1309,7 @@ def reuse_running(port: int, atlas: str | None, browser: bool) -> str:
     found = running_app(port)
     if not found:
         return START
-    url, version = found
+    url, version, rf_detr = found
     if version != VERSION:
         _say(f"An older copy (v{version}) is running: closing it to start v{VERSION}")
         _local(url + "api/quit", {})
@@ -1321,6 +1325,17 @@ def reuse_running(port: int, atlas: str | None, browser: bool) -> str:
         _say(f"The older copy at {url} is still closing: start the app again in a moment.")
         return FAILED
     _say(f"The Grand Project is already running: {url}")
+    from grand_project.detect.rf_detr_model import rf_detr_enabled
+
+    if rf_detr != rf_detr_enabled():
+        # the running copy keeps its own detector: this start's GRAND_PROJECT_USE_RF_DETR is not applied (CodeRabbit)
+        detector = "RF-DETR" if rf_detr else "classical"
+        note = (
+            f"The running copy uses the {detector} detector: this start's GRAND_PROJECT_USE_RF_DETR was not applied "
+            "(quit it and start again to switch)."
+        )
+        LOG.warning(note)
+        _say(note)
     if browser:
         webbrowser.open(url)
     if atlas and _local(url + "api/atlas/open", {"path": str(Path(atlas).resolve()), "background": True}) is None:

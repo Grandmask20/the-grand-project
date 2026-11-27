@@ -166,11 +166,15 @@ def main(argv: list[str] | None = None) -> int:
         parser.error("--ring needs two finite radii, 0 <= INNER < OUTER")
     if args.limit is not None and args.limit < 0:
         parser.error("--limit must be 0 or more")
+    store_path = resolve_path(args.output_dir) / K.ANNOTATOR_STORE_FILE
+    if not store_path.is_file():  # opening it would make an empty store (and its folder)
+        print(f"no annotator store at {store_path}")
+        return 1
     ring = DK.BIOME_RING
     if args.ring:
         DK.BIOME_RING = (args.ring[0], args.ring[1])  # read live by biomes.node_biomes; put back below
     try:
-        pairs, scored = _score(resolve_path(args.output_dir) / K.ANNOTATOR_STORE_FILE, args.limit)
+        pairs, scored = _score(store_path, args.limit)
         if not pairs:
             print("No reviewed node boxes yet: review some screenshots first.")
             return 1
@@ -185,7 +189,7 @@ def _score(store_path: Path, limit: int | None) -> tuple[list[tuple[str, str, bo
     """(reviewed class, guess, sure) of every reviewed node box, and how many screenshots had node boxes."""
     pairs: list[tuple[str, str, bool]] = []
     scored = 0
-    with ReviewStore.open(store_path) as store:
+    with ReviewStore.open(store_path, read_only=True) as store:  # scoring changes nothing, its journal mode neither
         for _key, item in store.items(reviewed_only=True):
             if limit is not None and scored >= limit:
                 break  # before reading the next one: --limit 0 reads none

@@ -11,6 +11,7 @@ import numpy as np
 import pytest
 
 from grand_project.detect import biomes
+from grand_project.detect import constants as DK
 from grand_project.detect.biomes import BiomeGuess
 from tools.detection_dataset_annotator import ReviewStore, truth_seed
 from tools.detection_dataset_annotator import constants as K
@@ -57,6 +58,13 @@ def _boxes() -> list[dict[str, Any]]:
     ]
 
 
+@pytest.fixture(autouse=True)
+def readable(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Every screenshot file reads as a blank 1920x1080 picture, the size its boxes were detected in (a test that
+    reads otherwise patches ``_raw_image`` itself)."""
+    monkeypatch.setattr(truth_seed, "_raw_image", lambda path: np.zeros((1080, 1920, 3), np.uint8))
+
+
 @pytest.fixture
 def desert_ring(monkeypatch: pytest.MonkeyPatch) -> None:
     """Every ground ring sees an unsure desert (the module is read when the ring runs)."""
@@ -100,7 +108,7 @@ def test_the_store_is_seeded_but_reviewed_screenshots_are_left(
     tmp_path: Path, review_store: ReviewStore, desert_ring: None, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """Only unreviewed screenshots the truth places are changed; a second run changes nothing."""
-    monkeypatch.setattr(truth_seed, "_detector_image", lambda path: np.zeros((1080, 1920, 3), np.uint8))
+    monkeypatch.setattr(truth_seed, "_raw_image", lambda path: np.zeros((1080, 1920, 3), np.uint8))
     paths = [tmp_path / name for name in ("shot.png", "reviewed.png", "elsewhere.png")]
     truth = _truth(tmp_path, files=("shot.png", "reviewed.png"))
     review_store.add_images(paths)
@@ -128,7 +136,7 @@ def test_every_screenshot_the_truth_places_is_marked(
 ) -> None:
     """The truth vouches for a placed screenshot's city areas whether it changed a box or not, so every one carries
     its mark (a truth-seeded training round takes them); changed boxes are the screenshot's new pre-labels."""
-    monkeypatch.setattr(truth_seed, "_detector_image", lambda path: np.zeros((1080, 1920, 3), np.uint8))
+    monkeypatch.setattr(truth_seed, "_raw_image", lambda path: np.zeros((1080, 1920, 3), np.uint8))
     paths = [tmp_path / name for name in ("shot.png", "quiet.png", "elsewhere.png")]
     truth = _truth(tmp_path, files=("shot.png", "quiet.png"))
     review_store.add_images(paths)
@@ -158,7 +166,7 @@ def test_a_file_name_of_two_screenshots_is_left_alone(
 ) -> None:
     """The truth names its screenshots by file name only: of two different screenshots of one name in two folders
     neither is known to be its (byte copies are one screenshot: the build_store tests seed those)."""
-    monkeypatch.setattr(truth_seed, "_detector_image", lambda path: np.zeros((1080, 1920, 3), np.uint8))
+    monkeypatch.setattr(truth_seed, "_raw_image", lambda path: np.zeros((1080, 1920, 3), np.uint8))
     paths = [tmp_path / "a" / "shot.png", tmp_path / "b" / "shot.png"]
     for index, path in enumerate(paths):
         path.parent.mkdir()
@@ -188,22 +196,19 @@ def test_a_box_without_a_place_is_left(tmp_path: Path) -> None:
 def test_a_screenshot_that_cannot_be_read_is_left_unmarked_until_it_can(
     tmp_path: Path, review_store: ReviewStore, desert_ring: None, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """A city node outside every area needs its ground ring: without the picture the screenshot is not the truth's
-    yet, so it gets neither boxes nor mark (a truth-seeded round would take it), and the next run seeds it."""
+    """Without the picture the screenshot is not checked against its detection, nor its ground rings read: it is not
+    the truth's yet, so it gets neither boxes nor mark (a truth-seeded round would take it), and the next run seeds
+    it."""
     path = tmp_path / "shot.png"
     truth = _truth(tmp_path)
     review_store.add_images([path])
     result = {"detected": True, "width": 1920, "height": 1080, "annotations": _boxes(), "error": None}
     review_store.record_detection(image_key(path), result, force=True)
-    monkeypatch.setattr(truth_seed, "_detector_image", lambda path: None)
+    monkeypatch.setattr(truth_seed, "_raw_image", lambda path: None)
     done, changed, _placed = seed_store(review_store, truth)
     item = review_store.item(image_key(path))
-    assert (
-        changed == 0
-        and K.ANNOTATOR_TRUTH_MARK not in item
-        and done["unreadable screenshot (city nodes left, not marked)"]
-    )
-    monkeypatch.setattr(truth_seed, "_detector_image", lambda path: np.zeros((1080, 1920, 3), np.uint8))
+    assert changed == 0 and K.ANNOTATOR_TRUTH_MARK not in item and done["skipped: unreadable screenshot (not marked)"]
+    monkeypatch.setattr(truth_seed, "_raw_image", lambda path: np.zeros((1080, 1920, 3), np.uint8))
     assert seed_store(review_store, truth)[1] == 1
     assert review_store.item(image_key(path))[K.ANNOTATOR_TRUTH_MARK] == truth.source
 
@@ -224,7 +229,7 @@ def test_an_edit_made_while_seeding_ran_is_kept(
         assert review_store.save_review(key, 1, annotations=edit)
         return np.zeros((1080, 1920, 3), np.uint8)
 
-    monkeypatch.setattr(truth_seed, "_detector_image", read_while_edited)
+    monkeypatch.setattr(truth_seed, "_raw_image", read_while_edited)
     done, changed, _placed = seed_store(review_store, truth)
     item = review_store.item(key)
     assert changed == 0 and done["skipped: reviewed, edited or detected again meanwhile"] == 1
@@ -239,7 +244,7 @@ def test_a_screenshot_another_truth_seeded_is_left(
 ) -> None:
     """Its boxes are that truth's: seeding over them would mix two truths, so it is left (rerun its detection
     first); a screenshot this truth seeded before is seeded again as usual."""
-    monkeypatch.setattr(truth_seed, "_detector_image", lambda path: np.zeros((1080, 1920, 3), np.uint8))
+    monkeypatch.setattr(truth_seed, "_raw_image", lambda path: np.zeros((1080, 1920, 3), np.uint8))
     path = tmp_path / "shot.png"
     truth = _truth(tmp_path)
     review_store.add_images([path])
@@ -278,7 +283,7 @@ def test_a_name_in_another_atlas_folder_is_not_the_truths(
 ) -> None:
     """The truth names its screenshots by file name only: of two of one name, the one below the truth's own folder is
     seeded and marked, the other atlas's is left unchanged and unmarked."""
-    monkeypatch.setattr(truth_seed, "_detector_image", lambda path: np.zeros((1080, 1920, 3), np.uint8))
+    monkeypatch.setattr(truth_seed, "_raw_image", lambda path: np.zeros((1080, 1920, 3), np.uint8))
     atlas = tmp_path / "atlas"
     mine, other = atlas / "shots" / "shot.png", tmp_path / "other" / "shot.png"
     for index, path in enumerate((mine, other)):
@@ -310,7 +315,7 @@ def test_a_dry_run_counts_only_screenshots_the_save_would_take(
     tmp_path: Path, review_store: ReviewStore, desert_ring: None, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """An unreviewed screenshot a reviewer already edited keeps its boxes: a dry run does not count it as a change."""
-    monkeypatch.setattr(truth_seed, "_detector_image", lambda path: np.zeros((1080, 1920, 3), np.uint8))
+    monkeypatch.setattr(truth_seed, "_raw_image", lambda path: np.zeros((1080, 1920, 3), np.uint8))
     paths = [tmp_path / name for name in ("shot.png", "edited.png")]
     truth = _truth(tmp_path, files=("shot.png", "edited.png"))
     review_store.add_images(paths)
@@ -322,3 +327,44 @@ def test_a_dry_run_counts_only_screenshots_the_save_would_take(
     assert review_store.save_review(image_key(paths[1]), edited["edit_version"], annotations=boxes)
     assert seed_store(review_store, truth, dry_run=True)[1] == 1
     assert seed_store(review_store, truth)[1] == 1  # the real run takes the same one
+
+
+def test_a_screenshot_changed_since_its_detection_is_left(
+    tmp_path: Path, review_store: ReviewStore, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A file now another size than the one its boxes were detected on (replaced since) is left unmarked, also when
+    no ground ring is needed (CodeRabbit); detected again, it is seeded."""
+    path = tmp_path / "shot.png"
+    truth = _truth(tmp_path)
+    review_store.add_images([path])
+    key = image_key(path)
+    boxes = [_box("map_node_grass", 600, 500)]  # (a Vaal area node: no ground ring read)
+    review_store.record_detection(
+        key, {"detected": True, "width": 1920, "height": 1080, "annotations": boxes}, force=True
+    )
+    monkeypatch.setattr(truth_seed, "_raw_image", lambda path: np.zeros((1440, 2560, 3), np.uint8))
+    done, changed, _placed = seed_store(review_store, truth)
+    assert changed == 0 and done["skipped: changed since its detection: rerun its detection"] == 1
+    assert K.ANNOTATOR_TRUTH_MARK not in review_store.item(key)
+    review_store.record_detection(
+        key, {"detected": True, "width": 2560, "height": 1440, "annotations": boxes}, force=True
+    )
+    seed_store(review_store, truth)  # detected again in the file's size: checked, seeded and marked
+    assert review_store.item(key)[K.ANNOTATOR_TRUTH_MARK] == truth.source
+
+
+def test_a_screenshot_a_model_pre_labelled_is_left(tmp_path: Path, review_store: ReviewStore) -> None:
+    """Its boxes are the model's: a truth-seeded round would learn the model's own answers (CodeRabbit). One in the
+    classical arm keeps the classical boxes and is seeded."""
+    truth = _truth(tmp_path, files=("model.png", "classical.png"))
+    paths = [tmp_path / "model.png", tmp_path / "classical.png"]
+    review_store.add_images(paths)
+    for path, arm in zip(paths, (DK.RF_DETR_SOURCE_MODEL, K.ANNOTATOR_CLASSICAL_SOURCE), strict=True):
+        result = {"detected": True, "width": 1920, "height": 1080, "annotations": [_box("map_node_grass", 600, 500)]}
+        review_store.record_detection(image_key(path), result, force=True)
+        extra = {K.ANNOTATOR_PRELABEL_FIELD: {"source": arm}}
+        assert review_store.save_review(image_key(path), 1, extra=extra)
+    done, changed, _placed = seed_store(review_store, truth)
+    assert changed == 1 and done["skipped: pre-labelled by a model"] == 1
+    model, classical = (review_store.item(image_key(path)) for path in paths)
+    assert K.ANNOTATOR_TRUTH_MARK not in model and classical[K.ANNOTATOR_TRUTH_MARK] == truth.source

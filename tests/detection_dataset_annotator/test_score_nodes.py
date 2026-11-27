@@ -208,14 +208,16 @@ def test_a_screenshot_without_node_boxes_uses_none_of_the_limit(tmp_path: Path, 
 
 def test_boxes_are_read_in_the_size_they_were_saved_in(tmp_path: Path, capsys) -> None:
     """A screenshot file replaced by a larger copy of the same view has its boxes scaled to it; one replaced by
-    another view (another aspect ratio) is named and not scored."""
+    another view (another aspect ratio) is named and not scored. The node is on the snow: read in the larger file's
+    size it would be at x=750, on the grass (CodeRabbit)."""
     shot = tmp_path / "a.png"
     image = _shot(shot)
     out = tmp_path / "out"
     with ReviewStore.open(out / K.ANNOTATOR_STORE_FILE) as store:
         store.add_images([shot])
         key = image_key(shot)
-        result = {"detected": True, "width": 1920, "height": 1080, "annotations": [_node("map_node_grass", 400, 540)]}
+        node = _node("map_node_mountain", 1500, 540)
+        result = {"detected": True, "width": 1920, "height": 1080, "annotations": [node]}
         store.record_detection(key, result, force=False)
         assert store.save_review(key, 1, reviewed=True)
     cv2.imwrite(str(shot), cv2.resize(image, (3840, 2160), interpolation=cv2.INTER_NEAREST))
@@ -224,3 +226,11 @@ def test_boxes_are_read_in_the_size_they_were_saved_in(tmp_path: Path, capsys) -
     cv2.imwrite(str(shot), image[:, :1080])
     assert main(["--output-dir", str(out)]) == 1
     assert "boxes saved for 1920x1080, the file is 1080x1080 (another view): not scored" in capsys.readouterr().out
+
+
+def test_a_missing_store_is_named_and_not_made(tmp_path: Path, capsys) -> None:
+    """Scoring reads a store, never makes one (opened read-only: its journal mode stays too)."""
+    out = tmp_path / "out"
+    assert main(["--output-dir", str(out)]) == 1
+    assert "no annotator store at" in capsys.readouterr().out
+    assert not out.exists()

@@ -57,7 +57,7 @@ in the side panel says when they are saved.
 | `F` | fit the screenshot |
 | `C` | centre the screenshot, keeping the zoom |
 | `H` / `L` | hide boxes / show every label |
-| `Enter` | mark reviewed and go to the next screenshot |
+| `Enter` | mark reviewed and go to the next screenshot (held down, once only) |
 | `Shift+Enter` | toggle reviewed |
 | `N` or `]` / `P` or `[` | next / previous screenshot |
 | `?` | shortcut help |
