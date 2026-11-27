@@ -162,7 +162,7 @@ def test_a_reviewed_hall_is_at_its_map_node(tmp_path: Path, monkeypatch: pytest.
     assert [(lm["kind"], lm["x"], lm["y"]) for lm in seen["landmarks"]] == [("Hall", 1000.5, 700.5)]  # its middle
 
 
-@pytest.mark.parametrize("ring", [["38", "19"], ["-1", "10"], ["nan", "38"], ["10", "inf"]])
+@pytest.mark.parametrize("ring", [["38", "19"], ["-1", "10"], ["nan", "38"], ["10", "inf"], ["10", "1e9"]])
 def test_a_ring_that_is_no_ring_is_refused(ring: list[str], tmp_path: Path) -> None:
     with pytest.raises(SystemExit):
         main(["--ring", *ring, "--output-dir", str(tmp_path)])

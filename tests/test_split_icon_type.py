@@ -26,7 +26,8 @@ def test_a_split_into_more_types_than_a_row_holds_wraps_the_art_row(tmp_path: Pa
     S.sheet(sheet, names, matches)
     image = cv2.imread(str(sheet))
     assert image.shape[1] == _width()
-    assert image.shape[0] == 3 * (icon_refs.SIZE * S._TILE + 36)  # two rows of art, one of pictures
+    # two rows of art, one of pictures, each tall enough for every distance (two a line: CodeRabbit)
+    assert image.shape[0] == 3 * S._cell_height(len(names)) == 3 * (icon_refs.SIZE * S._TILE + 8 + 14 * 6)
 
 
 def test_up_to_a_rows_worth_of_types_keeps_one_art_row(tmp_path: Path) -> None:
@@ -88,6 +89,30 @@ def test_a_renamed_icon_call_is_saved_under_its_new_name(tmp_path: Path) -> None
     assert truth.cmd_save(SimpleNamespace(out=str(tmp_path), labels=str(labels))) == 0
     saved = json.loads((tmp_path / "truth.json").read_text(encoding="utf-8"))
     assert [b["name"] for b in saved["shot1.png"]["badges"]] == ["ArcaneHordes"]
+
+
+def test_a_split_name_survives_a_save_whose_notes_say_the_old_type(tmp_path: Path) -> None:
+    """A badge the review's notes name the old type (a single or row correction to it, whatever the detector called
+    it) keeps the name the split gave it when the truth is saved again (``renamed``: CodeRabbit)."""
+    import json
+    from types import SimpleNamespace
+
+    from grand_project import truth
+
+    badge = {"shot": "S1", "x": 100, "y": 100, "detector": "ArcaneOrProsperous"}
+    key = {
+        "shots": {"S1": {"name": "shot1.png"}},
+        "maps": {},
+        "landmarks": {},
+        "badges": {"B1": {**badge, "renamed": {"ArcaneOrProsperous": "ArcaneHordes"}}, "B2": badge},
+        "rows": {"R1": "ArcaneOrProsperous"},
+    }
+    (tmp_path / "truth_key.json").write_text(json.dumps(key), encoding="utf-8")
+    labels = tmp_path / "labels.txt"
+    labels.write_text("", encoding="utf-8")
+    assert truth.cmd_save(SimpleNamespace(out=str(tmp_path), labels=str(labels))) == 0
+    saved = json.loads((tmp_path / "truth.json").read_text(encoding="utf-8"))
+    assert [b["name"] for b in saved["shot1.png"]["badges"]] == ["ArcaneHordes", "ArcaneOrProsperous"]
 
 
 def test_a_truth_icon_changed_meanwhile_stops_before_anything_is_written(tmp_path: Path, monkeypatch) -> None:

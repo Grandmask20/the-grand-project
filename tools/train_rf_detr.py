@@ -82,7 +82,7 @@ if __name__ == "__main__":  # only a training run restarts itself; importing thi
     prefer_pip_cuda_libraries()
 
 import torch  # noqa: E402
-from datasets import DatasetDict  # noqa: E402
+from datasets import DatasetDict, load_from_disk  # noqa: E402
 from torch.optim.swa_utils import AveragedModel  # noqa: E402
 from transformers import (  # noqa: E402
     AutoImageProcessor,
@@ -281,6 +281,14 @@ def ema_update(decay: float, tau: float):
     return update
 
 
+def _checkpoint_step(path: Path) -> int | None:
+    """The step of a ``checkpoint-N`` folder, or None for anything else."""
+    prefix = "checkpoint-"
+    if path.is_dir() and path.name.startswith(prefix) and path.name[len(prefix) :].isdigit():
+        return int(path.name[len(prefix) :])
+    return None
+
+
 def ema_complete(checkpoint: Path) -> bool:
     """Whether a checkpoint holds its whole EMA: the weights and the update count (``EmaCallback.on_save`` writes them
     after the Trainer's own files, so a run stopped in between leaves a checkpoint without them)."""
@@ -294,14 +302,9 @@ def last_complete_checkpoint(checkpoints: Path) -> Path | None:
     are passed over (said so), or None when there is none."""
     if not checkpoints.is_dir():
         return None
-    prefix = "checkpoint-"
     found = sorted(
-        (
-            path
-            for path in checkpoints.iterdir()
-            if path.is_dir() and path.name.startswith(prefix) and path.name[len(prefix) :].isdigit()
-        ),
-        key=lambda path: int(path.name[len(prefix) :]),
+        (path for path in checkpoints.iterdir() if _checkpoint_step(path) is not None),
+        key=_checkpoint_step,
         reverse=True,
     )
     for path in found:
@@ -366,14 +369,16 @@ class EmaCallback(TrainerCallback):
 
 
 class MembershipCallback(TrainerCallback):
-    """Writes the run's training screenshots into every checkpoint (``RF_DETR_TRAINED_ON``, from the global main
-    process only), so --resume can refuse a checkpoint trained on other screenshots (``check_resume_sources``).
+    """Writes the run's training screenshots and its dataset's identity into every checkpoint
+    (``RF_DETR_TRAINED_ON``, ``RF_DETR_DATASET_ID``; from the global main process only), so --resume can refuse a
+    checkpoint trained on other data (``check_resume_sources``).
 
-    Listed before the EMA's callback: a checkpoint with its whole EMA (``ema_complete``, written last) has its list.
+    Listed before the EMA's callback: a checkpoint with its whole EMA (``ema_complete``, written last) has both.
     """
 
-    def __init__(self, sources: list[str]) -> None:
+    def __init__(self, sources: list[str], dataset_id: str) -> None:
         self.sources = sorted(sources)
+        self.dataset_id = dataset_id
 
     def on_save(self, args, state, control, **kwargs):
         if not state.is_world_process_zero:
@@ -381,6 +386,42 @@ class MembershipCallback(TrainerCallback):
         folder = Path(args.output_dir) / f"checkpoint-{state.global_step}"
         folder.mkdir(parents=True, exist_ok=True)
         (folder / K.RF_DETR_TRAINED_ON).write_text("".join(f"{source}\n" for source in self.sources), encoding="utf-8")
+        (folder / K.RF_DETR_DATASET_ID).write_text(self.dataset_id, encoding="utf-8")
+
+
+def checkpoints_to_keep(checkpoints: Path, best: str | None) -> set[Path]:
+    """The checkpoints a run must keep: the newest whole one (``ema_complete``: what --resume goes on from), the best
+    so far, and the best each kept one's ``trainer_state.json`` names (a resume from it loads that one at the end)."""
+    found = sorted((path for path in checkpoints.iterdir() if _checkpoint_step(path) is not None), key=_checkpoint_step)
+    keep = set(found[-1:])  # the one just saved (its EMA written by now)
+    whole = [path for path in found if ema_complete(path)]
+    keep |= set(whole[-1:])
+    if best:
+        keep.add(Path(best))
+    for path in list(keep):
+        state_file = path / "trainer_state.json"
+        if state_file.is_file():
+            named = json.loads(state_file.read_text(encoding="utf-8")).get("best_model_checkpoint")
+            if named:
+                keep.add(Path(named))
+    return {path.resolve() for path in keep}
+
+
+class PruneCallback(TrainerCallback):
+    """Deletes the checkpoints no longer needed (``checkpoints_to_keep``), after a checkpoint's EMA is written.
+
+    In place of the Trainer's ``save_total_limit``, which deletes before the callbacks write the EMA: a run stopped in
+    between kept no whole checkpoint to resume from, or one whose best was deleted. Listed after the EMA's callback.
+    """
+
+    def on_save(self, args, state, control, **kwargs):
+        if not state.is_world_process_zero:
+            return
+        folder = Path(args.output_dir)
+        keep = checkpoints_to_keep(folder, state.best_model_checkpoint)
+        for path in folder.iterdir():
+            if _checkpoint_step(path) is not None and path.resolve() not in keep:
+                shutil.rmtree(path, ignore_errors=True)
 
 
 class RepeatFactorSampler(torch.utils.data.Sampler):
@@ -562,6 +603,12 @@ def export_best(checkpoint: Path, processor, best_dir: Path, label_map: dict[str
     swap_in(staging, best_dir)
 
 
+def best_sha256(model_dir: Path) -> str | None:
+    """The SHA-256 of a kept model's weights (``model.safetensors``), or None without them."""
+    weights = model_dir / "model.safetensors"
+    return file_sha256(weights) if weights.is_file() else None
+
+
 def file_sha256(path: Path) -> str:
     """The SHA-256 of a file's bytes."""
     digest = hashlib.sha256()
@@ -583,14 +630,18 @@ def _git_commit() -> str | None:
 # ---- the dataset -------------------------------------------------------------------------------------------------
 
 
-def _check_ledger(manifest_path: Path) -> str:
+def _check_ledger(manifest: dict[str, Any], base: Path) -> str:
     """Stop when the manifest's splits disagree with the split ledger (a screenshot a model trained on must stay in
-    train); returns the ledger's SHA-256 for the run's record."""
+    train); returns the ledger's SHA-256 for the run's record.
+
+    Args:
+        manifest: the parsed manifest (the same read the dataset is built from).
+        base: its folder (its relative paths lie there, as the dataset reads them).
+    """
     from tools.detection_dataset_annotator import constants as AK
     from tools.detection_dataset_annotator.split_ledger import check_manifest
 
-    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
-    problems = check_manifest(manifest, base=manifest_path.parent)  # its relative paths, as the dataset reads them
+    problems = check_manifest(manifest, base=base)
     if problems:
         shown = "\n  ".join(problems[:20])
         more = f"\n  ... and {len(problems) - 20} more" if len(problems) > 20 else ""
@@ -603,8 +654,6 @@ def _load_or_build_dataset(args: argparse.Namespace):
     dataset_dir = args.dataset_dir or args.output_dir / "dataset"
     # a resumed run goes on with the data it began with (its folder holds it: rebuilt, the folder would be in the way)
     if args.reuse_dataset or (args.resume and (dataset_dir / "labels.json").is_file()):
-        from datasets import load_from_disk
-
         dataset = load_from_disk(str(dataset_dir))
         assert isinstance(dataset, DatasetDict)
         label_file = dataset_dir / "labels.json"
@@ -613,29 +662,38 @@ def _load_or_build_dataset(args: argparse.Namespace):
         return dataset, json.loads(label_file.read_text(encoding="utf-8")), dataset_dir
     if args.annotator_manifest is None:
         raise SystemExit("--annotator-manifest is needed (export the dataset from the annotator first)")
-    ledger_sha = _check_ledger(args.annotator_manifest)
+    # read once: the ledger check, the records and the recorded SHA-256 are of the same bytes (an export written
+    # meanwhile would otherwise be checked as one file and built as another)
+    raw = args.annotator_manifest.read_bytes()
+    manifest = json.loads(raw.decode("utf-8"))
+    ledger_sha = _check_ledger(manifest, args.annotator_manifest.parent)
     records, label_map = load_annotator_manifest(
-        args.annotator_manifest, max_images=args.max_images, truth_seeded=args.truth_seeded
+        args.annotator_manifest, max_images=args.max_images, truth_seeded=args.truth_seeded, data=manifest
     )
     provenance = {
         "manifest": str(args.annotator_manifest),
-        "manifest_sha256": file_sha256(args.annotator_manifest),
+        "manifest_sha256": hashlib.sha256(raw).hexdigest(),
         "ledger_sha256": ledger_sha,
         "truth_seeded": bool(args.truth_seeded),
+        "max_images": args.max_images,  # None: every screenshot (a smoke build's cap is no dataset to reuse)
     }
-    if args.overwrite_dataset and dataset_dir.exists():
+    previous = dataset_dir.with_name(f"{dataset_dir.name}.previous")
+    target = dataset_dir
+    # an overwrite, also of one whose switch was cut off (only <dataset>.previous left: swap_in keeps it until the
+    # new one is in place)
+    if args.overwrite_dataset and (dataset_dir.exists() or previous.exists()):
         if dataset_dir.is_file():
             raise ValueError(f"dataset path is a file, not a directory: {dataset_dir}")
         # Built beside the old one and swapped in only when complete: a failed build (no validation screenshot, a
-        # full disk) keeps the old dataset. The returned dataset is in memory, so moving its folder is safe.
-        staging = dataset_dir.with_name(f"{dataset_dir.name}.new")
-        if staging.exists():
-            shutil.rmtree(staging)
-        dataset = build_dataset(records, label_map=label_map, output_dir=staging, provenance=provenance)
-        swap_in(staging, dataset_dir)
-        return dataset, label_map, dataset_dir
-    dataset = build_dataset(records, label_map=label_map, output_dir=dataset_dir, provenance=provenance)
-    return dataset, label_map, dataset_dir
+        # full disk) keeps the old dataset.
+        target = dataset_dir.with_name(f"{dataset_dir.name}.new")
+        if target.exists():
+            shutil.rmtree(target)
+    build_dataset(records, label_map=label_map, output_dir=target, provenance=provenance)
+    if target != dataset_dir:
+        swap_in(target, dataset_dir)
+    # the folder as saved, the same on every process (the others load it: dataset_main_first)
+    return load_from_disk(str(dataset_dir)), label_map, dataset_dir
 
 
 def dataset_main_first(args: argparse.Namespace, training_args: TrainingArguments | None):
@@ -670,6 +728,16 @@ def _positive_int(text: str) -> int:
     value = int(text)
     if value < 1:
         raise argparse.ArgumentTypeError(f"must be at least 1, not {value}")
+    return value
+
+
+def _at_least_two(text: str) -> int:
+    """An argparse type for --max-images: room for one training and one validation screenshot."""
+    value = int(text)
+    if value < 2:
+        raise argparse.ArgumentTypeError(
+            f"must be at least 2 (one training and one validation screenshot), not {value}"
+        )
     return value
 
 
@@ -717,7 +785,9 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--seed", type=int, default=1337)
     parser.add_argument("--workers", type=int, default=min(4, os.cpu_count() or 1), help="data loader processes")
     parser.add_argument("--device", default="auto", choices=("auto", "cpu", "cuda", "mps"))
-    parser.add_argument("--max-images", type=int, default=None, help="limit images for a smoke test")
+    parser.add_argument(
+        "--max-images", type=_at_least_two, default=None, help="limit images for a smoke test (2 or more)"
+    )
     parser.add_argument("--val-loss", action="store_true", help="also log a validation loss (a diagnostic)")
     parser.add_argument(
         "--report-to", default="none", help="Trainer report_to: none, tensorboard, trackio, ... (installed separately)"
@@ -759,12 +829,25 @@ def check_resume_labels(checkpoint: Path, label_map: dict[str, str]) -> None:
         )
 
 
-def check_resume_sources(checkpoint: Path, sources: list[str]) -> None:
-    """Stop when a checkpoint to resume from was trained on other screenshots than this run trains on (another
-    --train-subset, a rebuilt dataset): its weights, optimizer and EMA would go on as if they were the same run.
+def dataset_id(dataset_dir: Path) -> str:
+    """The identity of a saved dataset: the SHA-256 of its ``metadata.json`` (the manifest's and the ledger's
+    SHA-256, the kinds per split, the limit), or "" when it has none."""
+    meta = dataset_dir / "metadata.json"
+    return file_sha256(meta) if meta.is_file() else ""
+
+
+def check_resume_sources(checkpoint: Path, sources: list[str], dataset: str) -> None:
+    """Stop when a checkpoint to resume from was trained on other data than this run trains on (another
+    --train-subset; a dataset built from another export, even of the same screenshots): its weights, optimizer and
+    EMA would go on as if they were the same run.
+
+    Args:
+        checkpoint: the checkpoint folder.
+        sources: this run's training screenshots.
+        dataset: this run's ``dataset_id``.
 
     Raises:
-        SystemExit: the screenshots differ, or the checkpoint lists none (``MembershipCallback``).
+        SystemExit: the screenshots or the dataset differ, or the checkpoint lists none (``MembershipCallback``).
     """
     recorded, wanted = trained_on(checkpoint), set(sources)
     if recorded != wanted:
@@ -772,6 +855,12 @@ def check_resume_sources(checkpoint: Path, sources: list[str]) -> None:
         raise SystemExit(
             f"--resume: {checkpoint.name} was trained on other screenshots than this run ({listed}); go on from it "
             "with --init-from and a new --output-dir instead"
+        )
+    saved = checkpoint / K.RF_DETR_DATASET_ID
+    if not saved.is_file() or saved.read_text(encoding="utf-8").strip() != dataset:
+        raise SystemExit(
+            f"--resume: {checkpoint.name} was trained on another dataset than this run's (another export or build); "
+            "go on from it with --init-from and a new --output-dir instead"
         )
 
 
@@ -796,7 +885,7 @@ def training_arguments(args: argparse.Namespace, checkpoints: Path) -> TrainingA
         use_cpu=args.device == "cpu",
         eval_strategy="epoch",
         save_strategy="epoch",
-        save_total_limit=2,
+        save_total_limit=None,  # PruneCallback deletes, once a checkpoint's EMA is written
         load_best_model_at_end=True,
         metric_for_best_model="mean_ap",
         greater_is_better=True,
@@ -839,9 +928,10 @@ def main(argv: list[str] | None = None) -> int:
     if args.resume and resume_from is None:  # before a model is downloaded or loaded
         raise SystemExit(f"--resume: no checkpoint (with its EMA) in {checkpoints}")
     run_sources = sorted(set(dataset["train"]["source"]))  # this run's training screenshots (after --train-subset)
+    run_dataset = dataset_id(dataset_dir)
     if resume_from is not None:
         check_resume_labels(resume_from, label_map)
-        check_resume_sources(resume_from, run_sources)
+        check_resume_sources(resume_from, run_sources, run_dataset)
     base = args.init_from or K.RF_DETR_MODEL_NAME
     processor = load_processor(base)
     model = load_model(base, label_map)
@@ -859,8 +949,9 @@ def main(argv: list[str] | None = None) -> int:
         processing_class=processor,
         # the membership first: the EMA's files, written last, mark a checkpoint whole (ema_complete)
         callbacks=[
-            MembershipCallback(run_sources),
+            MembershipCallback(run_sources, run_dataset),
             ema,
+            PruneCallback(),  # after the EMA: a checkpoint is whole before an older one goes
             EarlyStoppingCallback(args.patience, K.RF_DETR_EARLY_STOP_DELTA),
         ],
         ema=ema,
@@ -937,6 +1028,8 @@ def main(argv: list[str] | None = None) -> int:
         },
         "init_from": str(args.init_from) if args.init_from else None,
         "best_checkpoint": Path(best).name,
+        # the weights kept in best/: a scoring of best/ (simulate_loop) checks this summary is about them
+        "best_sha256": best_sha256(best_dir),
         "best_validation_mean_ap": trainer.state.best_metric,
         "test": test_metrics,
         "history": trainer.state.log_history,

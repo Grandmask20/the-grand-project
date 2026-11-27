@@ -6,6 +6,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
+import numpy as np
 import pytest
 
 from grand_project.detect import constants as DK
@@ -131,7 +132,7 @@ def test_a_pass_pre_labels_the_model_arm_and_records_both(
     monkeypatch.setattr(model_prelabel, "_blocks", lambda items: {key: key for key, _item in items})
     found = [{"label": "map_node_vaal", "family": "node", "score": 0.9, "box": [281.0, 281.0, 319.0, 319.0]}]
 
-    def predict(detector, path):
+    def predict(detector, path, detected=None):
         if path == paths[3]:  # the reviewer relabels this one while the model looks at it
             review_store.save_review(keys[3], 1, annotations=[_box("map_node_water", 300, 300, id="b0")])
         return found, (1920, 1080), (1920, 1080)
@@ -190,7 +191,7 @@ def test_a_screenshot_seeded_while_the_model_looked_keeps_the_truth(
     monkeypatch.setattr(model_prelabel, "_blocks", lambda items: {k: k for k, _item in items})
     seeded = [_box("map_node_vaal", 300, 300, source=K.ANNOTATOR_TRUTH_SOURCE, id="b0")]
 
-    def predict(detector, path):
+    def predict(detector, path, detected=None):
         mark = {K.ANNOTATOR_TRUTH_MARK: "truth.json"}
         assert review_store.save_review(key, 1, annotations=seeded, extra=mark, prelabel=True, untouched=True)
         return [], (1920, 1080), (1920, 1080)
@@ -260,7 +261,7 @@ def test_a_failed_model_pass_keeps_its_blocks_in_the_models_arm(
     monkeypatch.setattr(model_prelabel, "_blocks", lambda items: {key: key for key, _item in items})
     monkeypatch.setattr("grand_project.detect.rf_detr_model.load_detector", lambda model_dir: {})
 
-    def broken(detector, path):
+    def broken(detector, path, detected=None):
         raise RuntimeError("out of memory")
 
     monkeypatch.setattr(model_prelabel, "predict", broken)
@@ -274,7 +275,9 @@ def test_a_failed_model_pass_keeps_its_blocks_in_the_models_arm(
     assert all(K.ANNOTATOR_PRELABEL_FIELD not in review_store.item(key) for key in keys)  # still eligible
 
     found = [{"label": "map_node_vaal", "family": "node", "score": 0.9, "box": [281.0, 281.0, 319.0, 319.0]}]
-    monkeypatch.setattr(model_prelabel, "predict", lambda detector, path: (found, (1920, 1080), (1920, 1080)))
+    monkeypatch.setattr(
+        model_prelabel, "predict", lambda detector, path, detected=None: (found, (1920, 1080), (1920, 1080))
+    )
     assert model_prelabel.main([*command, "--share", "0", "--seed", "7"]) == 0  # a draw that would give none
     for key in keys:
         assert review_store.item(key)[K.ANNOTATOR_PRELABEL_FIELD]["source"] == DK.RF_DETR_SOURCE_MODEL
@@ -357,26 +360,35 @@ def test_a_dry_run_opens_the_store_read_only(tmp_path: Path, review_store: Revie
         assert db.execute("PRAGMA journal_mode").fetchone()[0] == "delete"
 
 
-def test_a_screenshot_changed_since_its_detection_gets_no_model_boxes(
-    tmp_path: Path, review_store: ReviewStore, monkeypatch: pytest.MonkeyPatch, capsys
+@pytest.mark.parametrize("now", ["other bytes", None])
+def test_a_screenshot_changed_or_unreadable_since_its_detection_gets_no_model_boxes(
+    now: str | None, tmp_path: Path, review_store: ReviewStore, monkeypatch: pytest.MonkeyPatch, capsys
 ) -> None:
-    """A file now another size than the one detected: its boxes and the model's would be in two pixel frames, so it is
-    left as it is (CodeRabbit)."""
+    """A file that is not the bytes detected (replaced since, also by one of its size): its boxes and the model's
+    would frame two pictures; one that cannot be read: said, left eligible for the next pass, the pass goes on
+    (CodeRabbit). Checked on the read the model's prediction makes."""
+    from tools.detection_dataset_annotator import detection
+
     path = tmp_path / "a.png"
     path.write_bytes(b"a")
     review_store.add_images([path])
     key = image_key(path)
-    result = {"width": 1920, "height": 1080, "annotations": [_box("map_node_grass", 300, 300)]}
+    result = {"width": 1920, "height": 1080, K.ANNOTATOR_DETECTED_SHA: "detected bytes",
+              "annotations": [_box("map_node_grass", 300, 300)]}  # fmt: skip
     review_store.record_detection(key, result, force=False)
     review_store.claim_splits({key: "train"})
-    found = [{"label": "map_node_vaal", "family": "node", "score": 0.9, "box": [281.0, 281.0, 319.0, 319.0]}]
-    monkeypatch.setattr(model_prelabel, "predict", lambda detector, path: (found, (1920, 1080), (3840, 2160)))
+    read = None if now is None else (np.zeros((1080, 1920, 3), np.uint8), now)
+    monkeypatch.setattr(detection, "read_with_digest", lambda path: read)
     monkeypatch.setattr("grand_project.detect.rf_detr_model.load_detector", lambda model_dir: {})
+    monkeypatch.setattr(
+        "grand_project.detect.rf_detr_model.predict_tiles", lambda *a, **k: pytest.fail("predicted a changed file")
+    )
     model_dir = tmp_path / "model"
     model_dir.mkdir()
     out = review_store.path.parent
     assert model_prelabel.main(["--model", str(model_dir), "--output-dir", str(out), "--share", "1"]) == 0
-    assert "changed since its detection" in capsys.readouterr().out
+    said = capsys.readouterr().out
+    assert ("changed since its detection" if now else "Could not read image") in said and "(left)" in said
     item = review_store.item(key)
     assert [b["label"] for b in item["annotations"]] == ["map_node_grass"]
-    assert K.ANNOTATOR_PRELABEL_FIELD not in item
+    assert K.ANNOTATOR_PRELABEL_FIELD not in item  # still eligible

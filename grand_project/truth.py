@@ -652,6 +652,7 @@ def cmd_save(a) -> int:
         # its row on the sheet: "row" when the call was renamed since (tools/split_icon_type), else the call itself
         row = row_of.get(b.get("row", b["detector"]))
         name, fl = n["badges"].get(bid, (n["rows"].get(row, b["detector"]), []))
+        name = b.get("renamed", {}).get(name, name)  # a type split since (tools/split_icon_type): its new name
         if name.lower() != "none":
             truth[b["shot"]]["badges"].append({"id": bid, "name": name, "x": b["x"], "y": b["y"], "flags": fl})
     res = {v.pop("name"): v for v in truth.values()}

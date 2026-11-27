@@ -1118,18 +1118,19 @@ def save_upload(folder: Path, name: str, data: bytes) -> Path:
     while True:
         try:  # the name claimed in the same step as the file is made: checked first, then written, two pictures
             # dropped together under one name both found it free and the second overwrote the first
-            with open(dest, "xb") as f:
-                try:
-                    f.write(data)
-                except BaseException:
-                    f.close()
-                    dest.unlink(missing_ok=True)  # (no cut-off picture left under the name)
-                    raise
-            return dest
+            f = open(dest, "xb")  # noqa: SIM115 (closed below, its failure included)
         except FileExistsError:
             with contextlib.suppress(OSError):
                 if dest.read_bytes() == data:  # the same picture again: its file
                     return dest
+        else:
+            try:
+                with f:  # the write and the close (its flush can fail too: a full disk)
+                    f.write(data)
+            except BaseException:
+                dest.unlink(missing_ok=True)  # this call made it: no cut-off picture left under the name
+                raise
+            return dest
         k += 1  # another picture by that name: a free name (CodeRabbit)
         dest = dest.with_name(f"{stem}_{int(time.time())}{f'_{k}' if k > 1 else ''}{dest.suffix}")
 

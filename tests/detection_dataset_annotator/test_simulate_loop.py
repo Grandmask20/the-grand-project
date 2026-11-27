@@ -171,6 +171,10 @@ def test_the_classical_boxes_are_read_from_a_store_copy(tmp_path: Path, review_s
     nothing.write_bytes(b"y")
     review_store.add_images([nothing])
     review_store.record_detection(image_key(nothing), {"width": 1920, "height": 1080, "annotations": []}, force=False)
+    failed = tmp_path / "failed.png"  # its detection failed: no boxes, but no baseline either (CodeRabbit)
+    failed.write_bytes(b"z")
+    review_store.add_images([failed, tmp_path / "queued.png"])  # (and one never detected)
+    review_store.record_failure(image_key(failed), "ValueError: unreadable", force=False)
     boxes = classical_boxes(review_store.path)
     assert boxes == {
         relative_source(path): [{"label": "tower", "bbox": [5.0, 5.0, 20.0, 20.0], "source": None}],
@@ -196,7 +200,7 @@ def test_a_simulation_trains_each_round_on_from_the_last_and_scores_every_policy
     """Round by round: the revealed screenshots (cumulative) are trained on, from the previous round's model, on one
     dataset built once; then every policy is scored on the held-out screenshots. Here the classical detector calls
     a truth Vaal node grass and the model gets it right: relabelling by the model leaves no gold edit."""
-    atlas = tmp_path / "atlas"
+    atlas = tmp_path / "atlas dir"  # (a space: each screenshot is one line of the subset file)
     atlas.mkdir()
     shots = {name: atlas / f"{name}.png" for name in ("a1", "a2", "val", "tst")}
     for index, path in enumerate(shots.values()):
@@ -214,7 +218,7 @@ def test_a_simulation_trains_each_round_on_from_the_last_and_scores_every_policy
     mark = relative_source(truth)  # as truth_seed marks the screenshots it seeded
     rows = [
         {"source": relative_source(shots[n]), "path": str(shots[n]), "split": split, K.ANNOTATOR_TRUTH_MARK: mark,
-         "annotations": [_box("map_node_vaal", 300, 300)]}
+         "width": 1920, "height": 1080, "annotations": [_box("map_node_vaal", 300, 300)]}
         for n, split in (("val", "validation"), ("tst", "test"))
     ]  # fmt: skip
     rows += [{"source": relative_source(shots[n]), "path": str(shots[n]), "split": "train", "annotations": []}
@@ -231,10 +235,13 @@ def test_a_simulation_trains_each_round_on_from_the_last_and_scores_every_policy
         dataset.mkdir(parents=True, exist_ok=True)
         (dataset / "labels.json").write_text("{}")  # the first round built the dataset, from these inputs
         provenance = {"manifest_sha256": file_hash(manifest), "ledger_sha256": file_hash(K.ANNOTATOR_SPLIT_LEDGER)}
-        metadata = {**provenance, "truth_seeded": True}
+        metadata = {**provenance, "truth_seeded": True, "max_images": None}
         (dataset / "metadata.json").write_text(json.dumps(metadata))
+        (round_dir / "best").mkdir(parents=True)
+        (round_dir / "best" / "model.safetensors").write_bytes(round_dir.name.encode())
+        best_sha = file_hash(round_dir / "best" / "model.safetensors")
         (round_dir / "training_summary.json").write_text(
-            json.dumps({"best_validation_mean_ap": 0.5, "dataset": metadata})
+            json.dumps({"best_validation_mean_ap": 0.5, "dataset": metadata, "best_sha256": best_sha})
         )
 
     found = [{"label": "map_node_vaal", "family": "node", "score": 0.9, "box": [281.0, 281.0, 319.0, 319.0]}]
@@ -256,7 +263,7 @@ def test_a_simulation_trains_each_round_on_from_the_last_and_scores_every_policy
     assert "--annotator-manifest" in first and "--init-from" not in first
     assert "--reuse-dataset" in second and second[second.index("--init-from") + 1] == str(out / "round-1" / "best")
     assert "--truth-seeded" in first and "--truth-seeded" in second
-    subsets = [(out / f"round-{n}" / "train_subset.txt").read_text().split() for n in (1, 2)]
+    subsets = [(out / f"round-{n}" / "train_subset.txt").read_text().splitlines() for n in (1, 2)]
     assert subsets == [[relative_source(shots["a1"])], [relative_source(shots["a1"]), relative_source(shots["a2"])]]
     report = json.loads((out / "report.json").read_text())
     assert [r["train_screenshots"] for r in report] == [1, 2] and report[0]["validation_mean_ap"] == 0.5
@@ -274,10 +281,21 @@ def test_gold_counts_only_nodes_the_truth_has_a_map_for_and_silver_is_against_cl
     reference = [_box("map_node_vaal", 300, 300), _box("map_node_ezomyte", 600, 300), _box("tower", 900, 300, 60)]
     prelabels = [_box("map_node_grass", 300, 300), _box("map_node_grass", 600, 300)]
     baseline = [_box("map_node_grass", 300, 300), _box("map_node_grass", 600, 300)]
-    known = lambda box: box["bbox"][0] < 450  # noqa: E731 - the truth has a map at the first node only
-    result = score(prelabels, reference, baseline, known=known)
+    map_of = lambda box: 0 if box["bbox"][0] < 450 else None  # noqa: E731 - the truth has a map at the first only
+    result = score(prelabels, reference, baseline, map_of=map_of)
     assert (result["gold"].relabelled, result["gold"].kept) == (1, 0)
     assert result["silver"].edits == 0  # the tower is the reference's alone: nothing against classical
+
+
+def test_gold_pairs_a_node_only_with_the_reference_node_of_its_own_truth_map() -> None:
+    """Two truth maps close together: a prediction at the first is never matched with the second's reference node,
+    which would turn a missed node and a false one into one relabel (CodeRabbit)."""
+    reference = [_box("map_node_vaal", 315, 300)]  # the second map's node
+    prelabels = [_box("map_node_vaal", 300, 300)]  # a node at the first map (within the match radius of the other)
+    map_of = lambda box: 0 if box["bbox"][0] < 290 else 1  # noqa: E731
+    gold = score(prelabels, reference, [], map_of=map_of)["gold"]
+    assert (gold.kept, gold.relabelled) == (0, 0)  # (finding nodes is silver's: no gold node pairs at all)
+    assert score(prelabels, reference, [])["gold"].kept == 1  # without the truth's maps: taken for one node
 
 
 def test_a_dataset_is_reused_only_when_built_from_the_same_inputs(tmp_path: Path) -> None:
@@ -287,9 +305,13 @@ def test_a_dataset_is_reused_only_when_built_from_the_same_inputs(tmp_path: Path
     assert not dataset_matches(dataset, manifest)  # none yet
     dataset.mkdir()
     (dataset / "labels.json").write_text("{}")
-    meta = {"manifest_sha256": manifest, "ledger_sha256": file_hash(K.ANNOTATOR_SPLIT_LEDGER)}
+    meta = {"manifest_sha256": manifest, "ledger_sha256": file_hash(K.ANNOTATOR_SPLIT_LEDGER), "max_images": None}
     (dataset / "metadata.json").write_text(json.dumps({**meta, "truth_seeded": True}))
     assert dataset_matches(dataset, manifest)
+    uncapped = {name: value for name, value in meta.items() if name != "max_images"}
+    for capped in ({**meta, "max_images": 40}, uncapped):  # a smoke build's cap, or none recorded
+        (dataset / "metadata.json").write_text(json.dumps({**capped, "truth_seeded": True}))
+        assert not dataset_matches(dataset, manifest)
     (dataset / "metadata.json").write_text(json.dumps({**meta, "truth_seeded": False}))
     assert not dataset_matches(dataset, manifest)  # built without the truth-seeded screenshots
     (dataset / "metadata.json").write_text(json.dumps({**meta, "truth_seeded": True}))
@@ -308,8 +330,17 @@ def test_a_round_trained_on_another_manifest_is_not_scored(tmp_path: Path) -> No
     summary.write_text(json.dumps({"dataset": {"manifest_sha256": "b" * 64}}))
     with pytest.raises(SystemExit, match="trained on another manifest"):
         check_manifest(summary, "a" * 64, 1)
-    summary.write_text(json.dumps({"best_validation_mean_ap": 0.5, "dataset": {"manifest_sha256": "a" * 64}}))
-    assert check_manifest(summary, "a" * 64, 1)["best_validation_mean_ap"] == 0.5
+    (tmp_path / "best").mkdir()
+    (tmp_path / "best" / "model.safetensors").write_bytes(b"weights")
+    kept = file_hash(tmp_path / "best" / "model.safetensors")
+    trained = {"best_validation_mean_ap": 0.5, "dataset": {"manifest_sha256": "a" * 64}}
+    summary.write_text(json.dumps({**trained, "best_sha256": kept}))
+    assert check_manifest(summary, "a" * 64, 1)["best_validation_mean_ap"] == 0.5  # (--skip-train: unchanged)
+    # a best/ the summary is not about (a run kept a new one but never wrote its summary): not reported as it
+    for other in ({"best_sha256": "c" * 64}, {}):
+        summary.write_text(json.dumps({**trained, **other}))
+        with pytest.raises(SystemExit, match="not about the model in best/"):
+            check_manifest(summary, "a" * 64, 1)
 
 
 def test_without_held_out_screenshots_nothing_is_trained(
@@ -341,3 +372,13 @@ def test_silver_node_finds_pair_by_place_alone() -> None:
     finds = node_finds(model, classical, 1.0)
     assert (finds.added, finds.deleted) == (1, 1)  # the water node missed, the node at 1200 is new
     assert score(model, [], classical)["silver"].added == 1
+
+
+def test_a_held_out_file_of_another_size_than_exported_is_not_scored(monkeypatch: pytest.MonkeyPatch, capsys) -> None:
+    """Replaced since its export: the model's boxes would be in another pixel frame than the classical and truth
+    boxes, so it is left out of the scores, said (CodeRabbit)."""
+    row = {"source": "a.png", "path": "a.png", "width": 1920, "height": 1080, "annotations": []}
+    monkeypatch.setattr(simulate_loop, "predict", lambda detector, path: ([], (1920, 1080), (2560, 1440)))
+    scores = simulate_loop._score_splits({}, {"validation": [row]}, {"a.png": []}, None)
+    assert scores["validation"]["screenshots"] == 0
+    assert "changed since its detection" in capsys.readouterr().out

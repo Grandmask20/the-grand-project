@@ -162,8 +162,10 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--ring", nargs=2, type=float, metavar=("INNER", "OUTER"), help="try another BIOME_RING (px)")
     parser.add_argument("--limit", type=int, default=None, help="score at most this many screenshots")
     args = parser.parse_args(argv)
-    if args.ring and not (np.isfinite(args.ring).all() and 0 <= args.ring[0] < args.ring[1]):
-        parser.error("--ring needs two finite radii, 0 <= INNER < OUTER")
+    if args.ring and not (
+        np.isfinite(args.ring).all() and 0 <= args.ring[0] < args.ring[1] <= K.ANNOTATOR_SCORE_RING_MAX
+    ):
+        parser.error(f"--ring needs two finite radii, 0 <= INNER < OUTER <= {K.ANNOTATOR_SCORE_RING_MAX:g}")
     if args.limit is not None and args.limit < 0:
         parser.error("--limit must be 0 or more")
     store_path = resolve_path(args.output_dir) / K.ANNOTATOR_STORE_FILE

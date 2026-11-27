@@ -58,11 +58,19 @@ def _boxes() -> list[dict[str, Any]]:
     ]
 
 
+SHA, SHA_FIELD = "the-detected-bytes", K.ANNOTATOR_DETECTED_SHA  # (what the tests' detections were made on)
+
+
+def _blank(path: Path) -> tuple[np.ndarray, str]:
+    """A screenshot file read as a blank 1920x1080 picture, the bytes its boxes were detected on."""
+    return np.zeros((1080, 1920, 3), np.uint8), SHA
+
+
 @pytest.fixture(autouse=True)
 def readable(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Every screenshot file reads as a blank 1920x1080 picture, the size its boxes were detected in (a test that
-    reads otherwise patches ``_raw_image`` itself)."""
-    monkeypatch.setattr(truth_seed, "_raw_image", lambda path: np.zeros((1080, 1920, 3), np.uint8))
+    """Every screenshot file reads as the blank picture its boxes were detected on (a test that reads otherwise
+    patches ``_raw_image`` itself)."""
+    monkeypatch.setattr(truth_seed, "_raw_image", _blank)
 
 
 @pytest.fixture
@@ -108,12 +116,19 @@ def test_the_store_is_seeded_but_reviewed_screenshots_are_left(
     tmp_path: Path, review_store: ReviewStore, desert_ring: None, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """Only unreviewed screenshots the truth places are changed; a second run changes nothing."""
-    monkeypatch.setattr(truth_seed, "_raw_image", lambda path: np.zeros((1080, 1920, 3), np.uint8))
+    monkeypatch.setattr(truth_seed, "_raw_image", _blank)
     paths = [tmp_path / name for name in ("shot.png", "reviewed.png", "elsewhere.png")]
     truth = _truth(tmp_path, files=("shot.png", "reviewed.png"))
     review_store.add_images(paths)
     for path in paths:
-        result = {"detected": True, "width": 1920, "height": 1080, "annotations": _boxes(), "error": None}
+        result = {
+            "detected": True,
+            SHA_FIELD: SHA,
+            "width": 1920,
+            "height": 1080,
+            "annotations": _boxes(),
+            "error": None,
+        }
         review_store.record_detection(image_key(path), result, force=True)
     reviewed = review_store.item(image_key(paths[1]))
     assert reviewed is not None
@@ -136,12 +151,12 @@ def test_every_screenshot_the_truth_places_is_marked(
 ) -> None:
     """The truth vouches for a placed screenshot's city areas whether it changed a box or not, so every one carries
     its mark (a truth-seeded training round takes them); changed boxes are the screenshot's new pre-labels."""
-    monkeypatch.setattr(truth_seed, "_raw_image", lambda path: np.zeros((1080, 1920, 3), np.uint8))
+    monkeypatch.setattr(truth_seed, "_raw_image", _blank)
     paths = [tmp_path / name for name in ("shot.png", "quiet.png", "elsewhere.png")]
     truth = _truth(tmp_path, files=("shot.png", "quiet.png"))
     review_store.add_images(paths)
     for path, boxes in zip(paths, (_boxes(), [_box("icon", 300, 300, size=34.0)], _boxes()), strict=True):
-        result = {"detected": True, "width": 1920, "height": 1080, "annotations": boxes, "error": None}
+        result = {"detected": True, SHA_FIELD: SHA, "width": 1920, "height": 1080, "annotations": boxes, "error": None}
         review_store.record_detection(image_key(path), result, force=True)
     _done, changed, placed = seed_store(review_store, truth)
     assert (changed, placed) == (1, 2)
@@ -166,14 +181,21 @@ def test_a_file_name_of_two_screenshots_is_left_alone(
 ) -> None:
     """The truth names its screenshots by file name only: of two different screenshots of one name in two folders
     neither is known to be its (byte copies are one screenshot: the build_store tests seed those)."""
-    monkeypatch.setattr(truth_seed, "_raw_image", lambda path: np.zeros((1080, 1920, 3), np.uint8))
+    monkeypatch.setattr(truth_seed, "_raw_image", _blank)
     paths = [tmp_path / "a" / "shot.png", tmp_path / "b" / "shot.png"]
     for index, path in enumerate(paths):
         path.parent.mkdir()
         path.write_bytes(bytes([index]))
     review_store.add_images(paths)
     for path in paths:
-        result = {"detected": True, "width": 1920, "height": 1080, "annotations": _boxes(), "error": None}
+        result = {
+            "detected": True,
+            SHA_FIELD: SHA,
+            "width": 1920,
+            "height": 1080,
+            "annotations": _boxes(),
+            "error": None,
+        }
         review_store.record_detection(image_key(path), result, force=True)
     done, changed, _placed = seed_store(review_store, _truth(tmp_path))
     assert changed == 0
@@ -202,13 +224,13 @@ def test_a_screenshot_that_cannot_be_read_is_left_unmarked_until_it_can(
     path = tmp_path / "shot.png"
     truth = _truth(tmp_path)
     review_store.add_images([path])
-    result = {"detected": True, "width": 1920, "height": 1080, "annotations": _boxes(), "error": None}
+    result = {"detected": True, SHA_FIELD: SHA, "width": 1920, "height": 1080, "annotations": _boxes(), "error": None}
     review_store.record_detection(image_key(path), result, force=True)
     monkeypatch.setattr(truth_seed, "_raw_image", lambda path: None)
     done, changed, _placed = seed_store(review_store, truth)
     item = review_store.item(image_key(path))
     assert changed == 0 and K.ANNOTATOR_TRUTH_MARK not in item and done["skipped: unreadable screenshot (not marked)"]
-    monkeypatch.setattr(truth_seed, "_raw_image", lambda path: np.zeros((1080, 1920, 3), np.uint8))
+    monkeypatch.setattr(truth_seed, "_raw_image", _blank)
     assert seed_store(review_store, truth)[1] == 1
     assert review_store.item(image_key(path))[K.ANNOTATOR_TRUTH_MARK] == truth.source
 
@@ -221,13 +243,13 @@ def test_an_edit_made_while_seeding_ran_is_kept(
     truth = _truth(tmp_path)
     review_store.add_images([path])
     key = image_key(path)
-    result = {"detected": True, "width": 1920, "height": 1080, "annotations": _boxes(), "error": None}
+    result = {"detected": True, SHA_FIELD: SHA, "width": 1920, "height": 1080, "annotations": _boxes(), "error": None}
     review_store.record_detection(key, result, force=True)
     edit = [_box("tower", 800, 300, source=K.ANNOTATOR_MANUAL_SOURCE) | {"id": "b0"}]
 
-    def read_while_edited(path: Path) -> np.ndarray:
+    def read_while_edited(path: Path) -> tuple[np.ndarray, str]:
         assert review_store.save_review(key, 1, annotations=edit)
-        return np.zeros((1080, 1920, 3), np.uint8)
+        return _blank(path)
 
     monkeypatch.setattr(truth_seed, "_raw_image", read_while_edited)
     done, changed, _placed = seed_store(review_store, truth)
@@ -244,12 +266,12 @@ def test_a_screenshot_another_truth_seeded_is_left(
 ) -> None:
     """Its boxes are that truth's: seeding over them would mix two truths, so it is left (rerun its detection
     first); a screenshot this truth seeded before is seeded again as usual."""
-    monkeypatch.setattr(truth_seed, "_raw_image", lambda path: np.zeros((1080, 1920, 3), np.uint8))
+    monkeypatch.setattr(truth_seed, "_raw_image", _blank)
     path = tmp_path / "shot.png"
     truth = _truth(tmp_path)
     review_store.add_images([path])
     key = image_key(path)
-    result = {"detected": True, "width": 1920, "height": 1080, "annotations": _boxes(), "error": None}
+    result = {"detected": True, SHA_FIELD: SHA, "width": 1920, "height": 1080, "annotations": _boxes(), "error": None}
     review_store.record_detection(key, result, force=True)
     assert review_store.save_review(key, 1, extra={K.ANNOTATOR_TRUTH_MARK: "other/truth.json"})
     done, changed, _placed = seed_store(review_store, truth)
@@ -283,7 +305,7 @@ def test_a_name_in_another_atlas_folder_is_not_the_truths(
 ) -> None:
     """The truth names its screenshots by file name only: of two of one name, the one below the truth's own folder is
     seeded and marked, the other atlas's is left unchanged and unmarked."""
-    monkeypatch.setattr(truth_seed, "_raw_image", lambda path: np.zeros((1080, 1920, 3), np.uint8))
+    monkeypatch.setattr(truth_seed, "_raw_image", _blank)
     atlas = tmp_path / "atlas"
     mine, other = atlas / "shots" / "shot.png", tmp_path / "other" / "shot.png"
     for index, path in enumerate((mine, other)):
@@ -291,7 +313,14 @@ def test_a_name_in_another_atlas_folder_is_not_the_truths(
         path.write_bytes(bytes([index]))
     review_store.add_images([mine, other])
     for path in (mine, other):
-        result = {"detected": True, "width": 1920, "height": 1080, "annotations": _boxes(), "error": None}
+        result = {
+            "detected": True,
+            SHA_FIELD: SHA,
+            "width": 1920,
+            "height": 1080,
+            "annotations": _boxes(),
+            "error": None,
+        }
         review_store.record_detection(image_key(path), result, force=True)
     truth = _truth(atlas)
     done, changed, placed = seed_store(review_store, truth)
@@ -315,12 +344,19 @@ def test_a_dry_run_counts_only_screenshots_the_save_would_take(
     tmp_path: Path, review_store: ReviewStore, desert_ring: None, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """An unreviewed screenshot a reviewer already edited keeps its boxes: a dry run does not count it as a change."""
-    monkeypatch.setattr(truth_seed, "_raw_image", lambda path: np.zeros((1080, 1920, 3), np.uint8))
+    monkeypatch.setattr(truth_seed, "_raw_image", _blank)
     paths = [tmp_path / name for name in ("shot.png", "edited.png")]
     truth = _truth(tmp_path, files=("shot.png", "edited.png"))
     review_store.add_images(paths)
     for path in paths:
-        result = {"detected": True, "width": 1920, "height": 1080, "annotations": _boxes(), "error": None}
+        result = {
+            "detected": True,
+            SHA_FIELD: SHA,
+            "width": 1920,
+            "height": 1080,
+            "annotations": _boxes(),
+            "error": None,
+        }
         review_store.record_detection(image_key(path), result, force=True)
     edited = review_store.item(image_key(paths[1]))
     boxes = [dict(box, source="manual") for box in edited["annotations"]]
@@ -332,25 +368,29 @@ def test_a_dry_run_counts_only_screenshots_the_save_would_take(
 def test_a_screenshot_changed_since_its_detection_is_left(
     tmp_path: Path, review_store: ReviewStore, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """A file now another size than the one its boxes were detected on (replaced since) is left unmarked, also when
-    no ground ring is needed (CodeRabbit); detected again, it is seeded."""
+    """A file that is not the bytes its boxes were detected on (replaced since, here by a 1440p one; one of its own
+    size alike) is left unmarked, also when no ground ring is needed (CodeRabbit); detected again, it is seeded."""
     path = tmp_path / "shot.png"
     truth = _truth(tmp_path)
     review_store.add_images([path])
     key = image_key(path)
     boxes = [_box("map_node_grass", 600, 500)]  # (a Vaal area node: no ground ring read)
     review_store.record_detection(
-        key, {"detected": True, "width": 1920, "height": 1080, "annotations": boxes}, force=True
+        key, {"detected": True, SHA_FIELD: SHA, "width": 1920, "height": 1080, "annotations": boxes}, force=True
     )
-    monkeypatch.setattr(truth_seed, "_raw_image", lambda path: np.zeros((1440, 2560, 3), np.uint8))
+    monkeypatch.setattr(truth_seed, "_raw_image", lambda path: (np.zeros((1440, 2560, 3), np.uint8), "replaced"))
     done, changed, _placed = seed_store(review_store, truth)
     assert changed == 0 and done["skipped: changed since its detection: rerun its detection"] == 1
     assert K.ANNOTATOR_TRUTH_MARK not in review_store.item(key)
+    # detected again on the new file: the same Vaal area node in its 2560x1440 pixels (the truth places it at 1080p)
+    again = [_box("map_node_grass", 800, 2000 / 3, size=40 * 4 / 3)]
     review_store.record_detection(
-        key, {"detected": True, "width": 2560, "height": 1440, "annotations": boxes}, force=True
+        key, {"detected": True, SHA_FIELD: "replaced", "width": 2560, "height": 1440, "annotations": again}, force=True
     )
-    seed_store(review_store, truth)  # detected again in the file's size: checked, seeded and marked
-    assert review_store.item(key)[K.ANNOTATOR_TRUTH_MARK] == truth.source
+    seed_store(review_store, truth)  # checked against the new bytes, seeded and marked
+    item = review_store.item(key)
+    assert item[K.ANNOTATOR_TRUTH_MARK] == truth.source
+    assert [box["label"] for box in item["annotations"]] == ["map_node_vaal"]
 
 
 def test_a_screenshot_a_model_pre_labelled_is_left(tmp_path: Path, review_store: ReviewStore) -> None:
@@ -360,7 +400,13 @@ def test_a_screenshot_a_model_pre_labelled_is_left(tmp_path: Path, review_store:
     paths = [tmp_path / "model.png", tmp_path / "classical.png"]
     review_store.add_images(paths)
     for path, arm in zip(paths, (DK.RF_DETR_SOURCE_MODEL, K.ANNOTATOR_CLASSICAL_SOURCE), strict=True):
-        result = {"detected": True, "width": 1920, "height": 1080, "annotations": [_box("map_node_grass", 600, 500)]}
+        result = {
+            "detected": True,
+            SHA_FIELD: SHA,
+            "width": 1920,
+            "height": 1080,
+            "annotations": [_box("map_node_grass", 600, 500)],
+        }
         review_store.record_detection(image_key(path), result, force=True)
         extra = {K.ANNOTATOR_PRELABEL_FIELD: {"source": arm}}
         assert review_store.save_review(image_key(path), 1, extra=extra)

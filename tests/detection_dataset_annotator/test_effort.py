@@ -142,7 +142,8 @@ def test_seconds_per_edit_are_fitted_to_the_timer() -> None:
 
 def test_the_command_line_reports_the_default_store(tmp_path: Path, annotator_output_dir: Path) -> None:
     """Without ``--output-dir`` it reads the annotator's default folder (each test's own, ``tests/conftest.py``: never
-    the reviewer's store) and saves the report as JSON; with nothing reviewed it says so and exits 1."""
+        the reviewer's store) and saves the report as JSON; with nothing reviewed it says so and exits 1, and without a
+    store it says where it looked and makes none (exit 2)."""
     folder = tmp_path / "shots"
     folder.mkdir()
     with ReviewStore.open(annotator_output_dir / K.ANNOTATOR_STORE_FILE) as store:
@@ -153,7 +154,11 @@ def test_the_command_line_reports_the_default_store(tmp_path: Path, annotator_ou
     saved = json.loads(report.read_text(encoding="utf-8"))
     assert saved["arms"]["rf_detr"]["screenshots"] == 1
     assert saved["reviews"][0]["edits"]["added"] == 1 and saved["reviews"][0]["active_s"] == 12.0
-    assert effort.main(["--output-dir", str(tmp_path / "nothing")]) == 1
+    assert effort.main(["--output-dir", str(tmp_path / "nothing")]) == 2
+    assert not (tmp_path / "nothing").exists()
+    empty = tmp_path / "empty"
+    ReviewStore.open(empty / K.ANNOTATOR_STORE_FILE).close()
+    assert effort.main(["--output-dir", str(empty)]) == 1
 
 
 def test_the_pixel_scale_is_how_the_detector_resizes_the_screenshot() -> None:

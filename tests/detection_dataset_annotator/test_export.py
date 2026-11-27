@@ -8,7 +8,7 @@ from pathlib import Path
 
 import pytest
 
-from tools.detection_dataset_annotator import ReviewStore, image_key
+from tools.detection_dataset_annotator import ReviewStore, file_hash, image_key
 from tools.detection_dataset_annotator import constants as K
 from tools.detection_dataset_annotator.export import main
 
@@ -22,8 +22,9 @@ def _store(tmp_path: Path, store: ReviewStore) -> dict[str, str]:
         path.write_bytes(bytes([index]))
     store.add_images(paths.values())
     keys = {name: image_key(path) for name, path in paths.items()}
-    for key in keys.values():
-        result = {"width": 1920, "height": 1080, "annotations": [{"label": "tower", "bbox": [5, 5, 20, 20]}]}
+    for key, path in zip(keys.values(), paths.values(), strict=True):
+        result = {"width": 1920, "height": 1080, "annotations": [{"label": "tower", "bbox": [5, 5, 20, 20]}],
+                  K.ANNOTATOR_DETECTED_SHA: file_hash(path)}  # fmt: skip
         store.record_detection(key, result, force=False)
     store.save_review(keys["reviewed"], 1, reviewed=True)
     store.save_review(keys["seeded"], 1, extra={K.ANNOTATOR_TRUTH_MARK: "atlas_test_data/fr-atlas/truth.json"})
@@ -49,6 +50,20 @@ def test_an_export_carries_the_truth_that_seeded_a_screenshot(tmp_path: Path, re
     assert {image["split"] for image in manifest["images"]} <= set(K.ANNOTATOR_SPLITS)
 
 
+def test_a_screenshot_changed_since_its_detection_is_left_out(
+    tmp_path: Path, review_store: ReviewStore, capsys
+) -> None:
+    """A file whose bytes are not the ones its boxes were detected on (replaced since, here by one of its size): its
+    boxes would frame another picture, so it is left out and named (CodeRabbit)."""
+    _store(tmp_path, review_store)
+    (tmp_path / "shots" / "plain.png").write_bytes(b"\x09")  # another picture under its name
+    out = tmp_path / "out"
+    assert main(["--output-dir", str(out), "--unreviewed"]) == 0
+    manifest = json.loads((out / K.ANNOTATOR_MANIFEST_FILE).read_text(encoding="utf-8"))
+    assert sorted(Path(image["path"]).stem for image in manifest["images"]) == ["reviewed", "seeded"]
+    assert "changed since their detection" in capsys.readouterr().out
+
+
 def test_a_relative_screenshot_path_is_exported_where_the_file_is(
     tmp_path: Path, review_store: ReviewStore, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -63,7 +78,8 @@ def test_a_relative_screenshot_path_is_exported_where_the_file_is(
     shot.write_bytes(b"a")
     relative = Path("shots") / "a.png"
     review_store.add_images([relative])
-    result = {"width": 1920, "height": 1080, "annotations": [{"label": "tower", "bbox": [5, 5, 20, 20]}]}
+    result = {"width": 1920, "height": 1080, "annotations": [{"label": "tower", "bbox": [5, 5, 20, 20]}],
+              K.ANNOTATOR_DETECTED_SHA: file_hash(shot)}  # fmt: skip
     review_store.record_detection(image_key(relative), result, force=False)
     out = tmp_path / "out"
     export.export_dataset(review_store, out, reviewed_only=False)

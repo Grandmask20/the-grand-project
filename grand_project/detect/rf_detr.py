@@ -74,7 +74,11 @@ def _annotation(label: str, raw: dict[str, Any], name_to_id: dict[str, int], man
 
 
 def load_annotator_manifest(
-    manifest_path: Path, max_images: int | None = None, *, truth_seeded: bool = False
+    manifest_path: Path,
+    max_images: int | None = None,
+    *,
+    truth_seeded: bool = False,
+    data: dict[str, Any] | None = None,
 ) -> tuple[list[Record], dict[str, str]]:
     """Load the screenshots and boxes exported by ``tools.detection_dataset_annotator``.
 
@@ -87,6 +91,8 @@ def load_annotator_manifest(
         manifest_path: the annotator's ``manifest.json``.
         max_images: keep only this many screenshots (a smoke test), every split kept represented.
         truth_seeded: also the unreviewed screenshots a hand-labelled biome truth seeded (a bootstrap round).
+        data: the manifest as the caller already parsed it (one read: what it checked and hashed is what is loaded);
+            relative screenshot paths still lie next to ``manifest_path``.
 
     Returns:
         (the records, id -> class name).
@@ -97,7 +103,8 @@ def load_annotator_manifest(
         FileNotFoundError: no screenshot of the manifest exists.
     """
     manifest_path = Path(manifest_path)
-    data = json.loads(manifest_path.read_text(encoding="utf-8"))
+    if data is None:
+        data = json.loads(manifest_path.read_text(encoding="utf-8"))
     if data.get("format") != K.RF_DETR_MANIFEST_FORMAT:
         raise ValueError(f"Not an annotator RF-DETR manifest: {manifest_path}")
     labels = {str(index): str(name) for index, name in data.get("labels", {}).items()}

@@ -126,6 +126,12 @@ export function finderPick(shown, filter) {
   return filter ? (shown[0] ?? null) : null;
 }
 
+// Whether a key in the label finder is the finder's own (Enter, Esc): not while an input method composes a word, whose
+// Enter or Esc picks or drops the composed text. Exported for tests/detection_dataset_annotator.
+export function finderKeyActs(event) {
+  return !event.isComposing && event.keyCode !== 229 && (event.key === "Enter" || event.key === "Escape");
+}
+
 // Whether a box is a guess to check first (an unsure city type, biome or city area: constants.ANNOTATOR_GUESS_SOURCES).
 export function isGuess(guessSources, box) {
   return guessSources.has(box.source);
@@ -187,6 +193,8 @@ class Annotator {
     this.view = { zoom: 1, x: 0, y: 0 };
     this.fitZoom = null;
     this.fitted = false;
+    this.autoFit = true; // the view is the fitted one: a resize fits it again (the reviewer's zoom or pan stays)
+    this.sentGoto = null; // the picker's target this editor saved its boxes for already
     this.drag = null;
     this.spaceDown = false;
     this.wheelSum = 0; // wheel delta not yet turned into box resize steps
@@ -255,6 +263,7 @@ class Annotator {
       this.endScaleGesture();
       this.wheelSum = 0;
       this.fitted = false;
+      this.sentGoto = null;
       this.seq = 0;
       this.sentSeq = 0;
       this.activeMs = 0;
@@ -270,6 +279,12 @@ class Annotator {
     if (!this.fitted) this.fit();
     // An autosave's answer redraws the boxes, not a coordinate field being typed in (its draft and focus stay).
     this.renderAll({ keepDraft: !first });
+    // Another screenshot picked in the page's list: this editor saves its latest boxes and the page moves on with the
+    // save's answer (retired first, its unsaved edits were lost). After this call: Streamlit is still rendering.
+    if (data.goto && data.goto !== this.sentGoto) {
+      this.sentGoto = data.goto;
+      setTimeout(() => this.act("goto", { target: data.goto }), 0);
+    }
   }
 
   scheduleDestroy() {
@@ -346,13 +361,13 @@ class Annotator {
     this.renderStatus();
   }
 
-  act(type) {
+  act(type, extra = {}) {
     // Navigation carries the latest boxes, so nothing typed since the last autosave is lost.
     clearTimeout(this.autosaveTimer);
     this.autosaveTimer = null;
     this.sentSeq = this.seq;
     this.statusEl.textContent = "Saving…";
-    this.setTriggerValue("action", { type, ...this.payload() });
+    this.setTriggerValue("action", { type, ...extra, ...this.payload() });
   }
 
   // ---- DOM ------------------------------------------------------------------------------------------------
@@ -491,7 +506,8 @@ class Annotator {
     // ... and again when the keyboard brings the focus back to the canvas (Tab), after a click elsewhere.
     this.on(viewport, "focus", () => this.setActive(true));
     this.resizeObserver = new ResizeObserver(() => {
-      if (!this.fitted) this.fit();
+      // fitted again while the view is still the fitted one (the page's layout or window changed size)
+      if (!this.fitted || this.autoFit) this.fit();
     });
     this.resizeObserver.observe(viewport);
   }
@@ -523,6 +539,7 @@ class Annotator {
     };
     this.fitZoom = zoom;
     this.fitted = true;
+    this.autoFit = true;
     this.applyView();
   }
 
@@ -530,6 +547,7 @@ class Annotator {
     // Put the screenshot back in the middle of the canvas at the current zoom (F also resets the zoom).
     if (!this.data) return;
     const { zoom } = this.view;
+    this.autoFit = false;
     this.view = {
       zoom,
       x: (this.viewport.clientWidth - this.data.width * zoom) / 2,
@@ -552,6 +570,7 @@ class Annotator {
     const low = (this.fitZoom ?? this.view.zoom) * MIN_ZOOM_OF_FIT;
     const zoom = clamp(this.view.zoom * factor, low, MAX_ZOOM);
     const applied = zoom / this.view.zoom;
+    this.autoFit = false;
     this.view = { zoom, x: px - (px - this.view.x) * applied, y: py - (py - this.view.y) * applied };
     this.applyView();
   }
@@ -748,6 +767,7 @@ class Annotator {
     }
     if (!this.ownsDrag(event)) return;
     if (drag.kind === "pan") {
+      this.autoFit = false;
       this.view = {
         ...drag.view,
         x: drag.view.x + event.clientX - drag.startX,
@@ -1029,6 +1049,7 @@ class Annotator {
 
   filterKey(event) {
     // In the label finder: Enter uses the first label it shows and gives the keys back to the editor; Esc clears it.
+    if (!finderKeyActs(event)) return; // other keys type (and an input method's Enter or Esc ends its word)
     if (event.key === "Enter") {
       const first = finderPick(this.filteredLabels(), this.labelFilter);
       if (first) this.useLabel(first.name);
@@ -1038,8 +1059,6 @@ class Annotator {
       this.labelFilter = "";
       this.renderLegend();
       this.viewport.focus();
-    } else {
-      return;
     }
     event.preventDefault();
     event.stopPropagation();
@@ -1190,6 +1209,7 @@ class Annotator {
     const top = box.y * zoom + y;
     const margin = REVEAL_MARGIN_PX;
     if (left < margin || top < margin || left + box.w * zoom > width - margin || top + box.h * zoom > height - margin) {
+      this.autoFit = false;
       this.view = {
         zoom,
         x: width / 2 - (box.x + box.w / 2) * zoom,

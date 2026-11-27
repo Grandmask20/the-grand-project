@@ -334,7 +334,8 @@ class WarmPool:
             with self._lock:
                 self._users -= 1
                 if not self._users and self._ex is not None and not self._closed:
-                    self._timer = threading.Timer(self.idle_s, self._idle, args=(ex,))
+                    # the executor held now: a job that dropped a broken one may end after another started anew
+                    self._timer = threading.Timer(self.idle_s, self._idle, args=(self._ex,))
                     self._timer.daemon = True
                     self._timer.start()
 

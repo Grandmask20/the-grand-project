@@ -16,7 +16,7 @@ pytest.importorskip("streamlit")
 from streamlit.testing.v1 import AppTest  # noqa: E402
 
 from grand_project import paths  # noqa: E402
-from tools.detection_dataset_annotator import ReviewStore, image_key  # noqa: E402
+from tools.detection_dataset_annotator import ReviewStore, file_hash, image_key  # noqa: E402
 from tools.detection_dataset_annotator import constants as K  # noqa: E402
 
 APP = paths.ROOT / "tools" / "detection_dataset_annotator" / "app.py"
@@ -39,7 +39,8 @@ def page(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
             cv2.imwrite(str(path), np.full((360, 640, 3), 90, np.uint8))
             store.add_images([path])
             key = image_key(path)
-            result = {"detected": True, "width": 640, "height": 360, "annotations": spec.get("boxes", [])}
+            result = {"detected": True, "width": 640, "height": 360, "annotations": spec.get("boxes", []),
+                      K.ANNOTATOR_DETECTED_SHA: file_hash(path)}  # fmt: skip
             store.record_detection(key, result, force=False)
             if spec.get("reviewed"):
                 store.save_review(key, 1, reviewed=True)
@@ -77,6 +78,16 @@ def test_export_reports_splits_and_labels_the_dataset_does_not_know(page) -> Non
         report = at.sidebar.code[0].value
         assert "citadel_stone" in report and "map_node_grass" in report
         assert set(store.splits().values()) <= set(K.ANNOTATOR_SPLITS) and len(store.splits()) == 3
+
+
+def test_a_screenshot_changed_since_its_detection_shows_no_editor(page, tmp_path: Path) -> None:
+    """Its boxes would frame another picture: the page says so and asks for a rerun instead (CodeRabbit)."""
+    at, store, _keys = page({"name": "a.png", "boxes": [_box("tower", 10)]})
+    with store:
+        cv2.imwrite(str(tmp_path / "shots" / "a.png"), np.full((360, 640, 3), 30, np.uint8))  # replaced, same size
+        at.run()
+        assert not at.exception
+        assert any("changed since its detection" in e.value for e in at.error)
 
 
 def test_most_guesses_first_orders_the_queue(page) -> None:
@@ -238,3 +249,62 @@ def test_the_undo_memory_keeps_the_detectors_version(monkeypatch: pytest.MonkeyP
     app._remember("editor", [detected])
     app._remember("editor", [{**detected, "bbox": [9.0, 2.0, 34.0, 34.0], "source": "manual", "score": None}])
     assert session[app._known_key("editor")]["b0"] == detected
+
+
+def test_a_screenshot_picked_in_the_list_waits_for_the_editor_s_save(page) -> None:
+    """With an editor on screen, picking another screenshot asks the editor to save its latest boxes and go there
+    (retired at once, its edits since the last autosave were lost: CodeRabbit); the page stays until it answers."""
+    at, store, keys = page({"name": "a.png", "boxes": [_box("tower", 10)]}, {"name": "b.png"})
+    with store:
+        at.selectbox[0].select(keys[1]).run()
+        assert not at.exception
+        assert at.session_state[K.ANNOTATOR_SESSION_SELECTED] == keys[0]
+        assert at.session_state[K.ANNOTATOR_SESSION_GOTO] == keys[1]
+
+
+def test_the_goto_action_saves_the_boxes_and_moves_whatever_the_save(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from tools.detection_dataset_annotator import app
+    from tools.detection_dataset_annotator.boxes import editor_boxes
+
+    paths = [tmp_path / name for name in ("a.png", "b.png")]
+    store_path = tmp_path / K.ANNOTATOR_STORE_FILE
+    with ReviewStore.open(store_path) as store:
+        store.add_images(paths)
+        keys = [image_key(path) for path in paths]
+        for key in keys:
+            store.record_detection(
+                key, {"width": 640, "height": 360, "annotations": [_box("tower", 10.0)]}, force=False
+            )
+        item = store.item(keys[0])
+    revision, editor = int(item["edit_version"]), "editor"
+    session: dict[str, Any] = {
+        K.ANNOTATOR_SESSION_SELECTED: keys[0],
+        K.ANNOTATOR_SESSION_PICKED: keys[1],
+        K.ANNOTATOR_SESSION_MOUNTED_IMAGE: keys[0],
+        app._base_key(editor): [dict(a) for a in item["annotations"]],
+        app._known_key(editor): {},
+    }
+    monkeypatch.setattr(app.st, "session_state", session)
+    app._on_pick()  # an editor on screen: the move waits for its save
+    assert session[K.ANNOTATOR_SESSION_SELECTED] == keys[0] and session[K.ANNOTATOR_SESSION_GOTO] == keys[1]
+
+    boxes = editor_boxes(item["annotations"])
+    boxes[0]["x"] = 50.0  # moved since the last autosave
+    action = {"type": "goto", "target": keys[1], "image_key": keys[0], "revision": revision, "seq": 1, "boxes": boxes}
+    session[editor] = {"action": action}
+    app._on_action(store_path, keys[0], revision, editor, keys)
+    with ReviewStore.open(store_path) as store:
+        assert store.item(keys[0])["annotations"][0]["bbox"][0] == 50.0  # saved before the move
+    assert session[K.ANNOTATOR_SESSION_SELECTED] == session[K.ANNOTATOR_SESSION_PICKED] == keys[1]
+    assert K.ANNOTATOR_SESSION_GOTO not in session
+
+    session.update({K.ANNOTATOR_SESSION_SELECTED: keys[0], app._base_key(editor): []})  # another tab saved first
+    app._on_action(store_path, keys[0], revision, editor, keys)
+    assert session[K.ANNOTATOR_SESSION_SELECTED] == keys[1]  # not saved (reloaded), but moved as asked
+
+    session.pop(K.ANNOTATOR_SESSION_MOUNTED_IMAGE)
+    session[K.ANNOTATOR_SESSION_PICKED] = keys[0]
+    app._on_pick()  # no editor on screen: moved at once
+    assert session[K.ANNOTATOR_SESSION_SELECTED] == keys[0]

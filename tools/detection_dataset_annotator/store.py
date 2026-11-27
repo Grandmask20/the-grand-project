@@ -559,6 +559,7 @@ class ReviewStore:
         marked: Mapping[str, Any] | None = None,
         arm_block: tuple[Iterable[str], str] | None = None,
         split: str | None = None,
+        expect_reviewed: bool | None = None,
         review_s: float = 0.0,
         reviewed_at: str | None = None,
     ) -> bool:
@@ -589,15 +590,19 @@ class ReviewStore:
             arm_block: (the screenshots of its spatial block, the pre-label arm saved): save only while none of the
                 others has another arm (``ANNOTATOR_PRELABEL_FIELD``): one block, one arm, also for two passes at once.
             split: save only while the screenshot has this split (model pre-labels: train only, user's rule).
+            expect_reviewed: save only while its review flag is still this (a toggle worked out from it: another tab
+                toggling meanwhile would otherwise be undone, and the page move on by a flag never saved).
             review_s: active review seconds added to its review log (``ANNOTATOR_REVIEW_FIELD``) in the same write,
                 so two saves close together both count.
             reviewed_at: when it was marked reviewed, kept in its review log.
         """
         with self._write():
             row = self._db.execute(
-                "SELECT edit_version, next_annotation_id, split FROM images WHERE key = ?", (key,)
+                "SELECT edit_version, next_annotation_id, split, reviewed FROM images WHERE key = ?", (key,)
             ).fetchone()
             if row is None or row[0] != revision or (split is not None and row[2] != split):
+                return False
+            if expect_reviewed is not None and bool(row[3]) != expect_reviewed:
                 return False
             if untouched and not self._untouched(key):
                 return False

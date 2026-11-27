@@ -150,19 +150,40 @@ def merge(
     return out
 
 
-def predict(detector: Mapping[str, Any], path: Path) -> tuple[list[dict[str, Any]], tuple[int, int], tuple[int, int]]:
+class UnreadableScreenshot(ValueError):
+    """A screenshot file that cannot be read (missing, damaged): ``predict``'s, apart from the model's own errors."""
+
+
+class ChangedScreenshot(ValueError):
+    """A screenshot file that is not the bytes its boxes were detected on (``state.changed_since_detection``)."""
+
+
+def predict(
+    detector: Mapping[str, Any], path: Path, *, detected: Mapping[str, Any] | None = None
+) -> tuple[list[dict[str, Any]], tuple[int, int], tuple[int, int]]:
     """A model's detections on a screenshot (detector px), the detector's size and the file's size.
 
+    Args:
+        detector: ``load_detector``'s model.
+        path: the screenshot.
+        detected: its store item, when the model's boxes join its detected ones: the bytes decoded here must be the
+            ones they were detected on (checked on the same read).
+
     Raises:
-        ValueError: the screenshot cannot be read.
+        UnreadableScreenshot: the screenshot cannot be read.
+        ChangedScreenshot: it is not the file ``detected``'s boxes were detected on.
     """
     from grand_project.detect.rf_detr_model import predict_tiles
 
-    from .detection import decode_image
+    from .detection import read_with_digest
+    from .state import changed_since_detection
 
-    raw = decode_image(path)
-    if raw is None:
-        raise ValueError(f"Could not read image: {path}")
+    read = read_with_digest(path)
+    if read is None:
+        raise UnreadableScreenshot(f"Could not read image: {path}")
+    raw, digest = read
+    if detected is not None and changed_since_detection(detected, digest):
+        raise ChangedScreenshot(f"{path} changed since its detection: rerun its detection")
     image = core.scale_screenshot(raw)
     found = predict_tiles(
         detector["model"],
@@ -327,14 +348,13 @@ def main(argv: list[str] | None = None) -> int:
                         f"{model_dir} changed while this pass ran (a training run kept a new best): run it again"
                     )
             base = store.prelabels(key)  # what the model's boxes are joined with: unchanged until the save
-            found, detector_size, raw_size = predict(detector, Path(item["path"]))
-            if raw_size != (item.get("width"), item.get("height")):
-                # the file is not the one detected (replaced since): its boxes and the model's would be in two pixel
-                # frames, so nothing is saved until it is detected again
-                print(
-                    f"  {item['source']}: {raw_size[0]}x{raw_size[1]}, detected at {item.get('width')}x"
-                    f"{item.get('height')}: changed since its detection, rerun its detection (left)"
-                )
+            try:
+                # the bytes the model sees are the ones the boxes were detected on (else they would frame another
+                # picture): checked on the read predict makes
+                found, detector_size, raw_size = predict(detector, Path(item["path"]), detected=item)
+            except (UnreadableScreenshot, ChangedScreenshot) as error:
+                # left as it is, still eligible: a later pass takes it once it can be read (or is detected again)
+                print(f"  {item['source']}: {error} (left)")
                 skipped += 1
                 continue
             model = model_annotations(found, detector_size, raw_size)
@@ -356,13 +376,16 @@ def main(argv: list[str] | None = None) -> int:
             else:
                 skipped += 1
         print(
-            f"done: {done} screenshots pre-labelled by the model, {skipped} left (reviewed, edited, seeded, "
-            f"detected again or given another arm meanwhile) ({json.dumps(counts)})"
+            f"done: {done} screenshots pre-labelled by the model, {skipped} left (unreadable, changed since its "
+            "detection, or reviewed, edited, seeded, detected again or given another arm meanwhile) "
+            f"({json.dumps(counts)})"
         )
     return 0
 
 
 __all__ = [
+    "ChangedScreenshot",
+    "UnreadableScreenshot",
     "checkpoint_state",
     "draw_arms",
     "eligible",

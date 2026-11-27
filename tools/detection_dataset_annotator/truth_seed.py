@@ -47,9 +47,9 @@ from grand_project.detect import labels as L
 from grand_project.detect.icon_types import icon_type
 
 from . import constants as K
-from .detection import decode_image
+from .detection import read_with_digest
 from .score_nodes import name_icons
-from .state import file_hash, relative_source, resolve_path
+from .state import changed_since_detection, file_hash, relative_source, resolve_path
 from .store import ReviewStore
 
 CITY_AREAS = {f"{city_type} city": city_type for city_type in cities.TYPES}
@@ -316,9 +316,9 @@ def _cities_missed(citadels: list[np.ndarray], found: np.ndarray, homography: np
     return missed
 
 
-def _raw_image(path: Path) -> np.ndarray | None:
-    """The screenshot file as it is now (BGR, its own size), or None when it cannot be read."""
-    return decode_image(path)
+def _raw_image(path: Path) -> tuple[np.ndarray, str] | None:
+    """The screenshot file as it is now (BGR, its own size) and its bytes' SHA-256, or None when it cannot be read."""
+    return read_with_digest(path)
 
 
 def _ambiguous(paths: Sequence[Path]) -> bool:
@@ -336,10 +336,15 @@ def _ambiguous(paths: Sequence[Path]) -> bool:
     return len({identity(path) for path in paths}) > 1
 
 
-def seed_store(store: ReviewStore, truth: Truth, *, dry_run: bool = False) -> tuple[Counter[str], int, int]:
+def seed_store(
+    store: ReviewStore, truth: Truth, *, dry_run: bool = False, recorded: Mapping[str, str] | None = None
+) -> tuple[Counter[str], int, int]:
     """Seed every unreviewed store screenshot the truth places, and mark each one (``ANNOTATOR_TRUTH_MARK``, in its
     ``extra``), changed or not: the truth vouches for its city areas either way, so a truth-seeded training round
     (``train_rf_detr --truth-seeded``) can take it. Changed boxes are the screenshot's new pre-labels.
+
+    ``recorded``: image key -> the detected bytes' SHA-256 a dry run of ``build_store`` would have recorded first, for
+    screenshots without one yet (so the dry run counts what the run would seed).
 
     Returns:
         (what was done, screenshots changed, screenshots the truth places).
@@ -377,12 +382,15 @@ def seed_store(store: ReviewStore, truth: Truth, *, dry_run: bool = False) -> tu
             # changes the boxes' sources, so the save's expect_boxes refuses it.)
             done["skipped: pre-labelled by a model"] += 1
             continue
-        raw = _raw_image(Path(item["path"]))
-        if raw is None:
+        read = _raw_image(Path(item["path"]))
+        if read is None:
             done["skipped: unreadable screenshot (not marked)"] += 1  # seeded on a later run, once it can be read
             continue
-        if (raw.shape[1], raw.shape[0]) != (item.get("width"), item.get("height")):
-            # not the file its boxes were detected on (replaced since): rerun its detection first
+        raw, digest = read
+        if recorded and K.ANNOTATOR_DETECTED_SHA not in item and key in recorded:
+            item = {**item, K.ANNOTATOR_DETECTED_SHA: recorded[key]}
+        if changed_since_detection(item, digest):
+            # not the bytes its boxes were detected on (replaced since, maybe by one of its size): rerun its detection
             done["skipped: changed since its detection: rerun its detection"] += 1
             continue
         detector_image = core.scale_screenshot(raw)  # (the ground rings read it: the file read once)

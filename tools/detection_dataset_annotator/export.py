@@ -32,7 +32,7 @@ from grand_project.detect.labels import dataset_classes, export_class, known
 from . import constants as K
 from .detection import decode_image
 from .splits import split_report
-from .state import relative_source, write_json_atomic
+from .state import changed_since_detection, relative_source, write_json_atomic
 
 if TYPE_CHECKING:
     from .store import ReviewStore
@@ -57,6 +57,8 @@ class ExportResult:
     """The split balance report (``splits.split_report``)."""
     ledger_added: int = 0
     """Screenshots the split ledger gained (``split_ledger.settle_splits``)."""
+    changed: tuple[str, ...] = ()
+    """Screenshots left out: their file is not the one their boxes were detected on (rerun their detection)."""
 
 
 def _exported_annotation(annotation: dict[str, Any], label_ids: dict[str, int]) -> dict[str, Any] | None:
@@ -167,6 +169,7 @@ def export_dataset(store: ReviewStore, output_dir: Path, *, reviewed_only: bool 
     annotation_rows: list[dict[str, Any]] = []
     manifest_rows: list[dict[str, Any]] = []
     skipped = 0
+    changed: list[str] = []
     roots = store.input_roots()
     for key, item in items:
         reviewed = bool(item.get("reviewed", False))
@@ -175,6 +178,9 @@ def export_dataset(store: ReviewStore, output_dir: Path, *, reviewed_only: bool 
         path = Path(item["path"])  # as the store keeps it (absolute), the file the split ledger hashed
         if key not in split_of:
             continue  # its file could not be read
+        if changed_since_detection(item, settled.digests.get(key)):
+            changed.append(str(item.get("source") or relative_source(path)))  # its boxes frame another picture
+            continue
         size = _image_size(item, path) if path.is_file() else None
         if size is None:
             continue
@@ -257,6 +263,7 @@ def export_dataset(store: ReviewStore, output_dir: Path, *, reviewed_only: bool 
         splits={split: sum(1 for row in manifest_rows if row["split"] == split) for split in K.ANNOTATOR_SPLITS},
         report=split_report(counts, split_of, settled.blocks) if counts else "",
         ledger_added=settled.added,
+        changed=tuple(changed),
     )
 
 
@@ -300,6 +307,8 @@ def main(argv: list[str] | None = None) -> int:
     print(f"splits: {result.splits}; ledger gained {result.ledger_added} screenshots")
     if result.skipped_annotations:
         print(f"skipped {result.skipped_annotations} invalid annotations or icons the dataset leaves out")
+    if result.changed:
+        print(f"left out, changed since their detection (rerun their detection): {', '.join(result.changed)}")
     if result.unknown:
         print(f"labels outside the dataset's (rerun those screenshots): {result.unknown}")
     if result.report:

@@ -25,6 +25,8 @@ RF_DETR_CUDA_PATH_SEPARATOR = ":"  # LD_LIBRARY_PATH's separator (a Linux variab
 RF_DETR_DEFAULT_MODEL_DIR = rc_paths.ROOT / "runs" / "rf-detr-small" / "best"
 RF_DETR_TRAINED_ON = "trained_on.txt"  # in a kept model's folder: the screenshots it trained on (one project-relative
 # path a line), which the annotator's model pre-labels skip (they would only replay its training labels)
+RF_DETR_DATASET_ID = "dataset_id.txt"  # in each training checkpoint: the SHA-256 of its dataset's metadata.json
+# (manifest, ledger, kinds, limit), so --resume refuses a checkpoint of another dataset of the same screenshots
 # the annotator's export (tools/detection_dataset_annotator) and the dataset loader (rf_detr.py) share these
 RF_DETR_MANIFEST_FORMAT = "the-grand-project-rf-detr-manifest"  # the manifest's "format"; other files are refused
 RF_DETR_SPLITS = ("train", "validation", "test")  # a screenshot's split (the Hugging Face split names)

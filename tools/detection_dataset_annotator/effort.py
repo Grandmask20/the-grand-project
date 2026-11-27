@@ -320,7 +320,11 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--output-dir", default=K.ANNOTATOR_DEFAULT_OUTPUT_DIR, help="the annotator's output folder")
     parser.add_argument("--json", type=Path, help="also save the report here")
     args = parser.parse_args(argv)
-    with ReviewStore.open(resolve_path(args.output_dir) / K.ANNOTATOR_STORE_FILE) as store:
+    store_path = resolve_path(args.output_dir) / K.ANNOTATOR_STORE_FILE
+    if not store_path.is_file():  # (opening it for writing would make an empty store, and its folder)
+        print(f"No annotator store at {store_path}")
+        return 2
+    with ReviewStore.open(store_path, read_only=True) as store:
         rows = reviews(store)
     print("\n".join(report_lines(rows)))
     if args.json:

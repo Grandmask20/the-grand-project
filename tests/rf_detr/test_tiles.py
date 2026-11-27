@@ -176,7 +176,7 @@ def test_tiles_are_centred_on_rare_classes_often(seed: int, runs) -> None:
     about 95% of the tiles against 39%, so a margin of 0.3 holds at 200 draws by about 7 standard deviations."""
     image = np.zeros((1080, 1920, 3), np.uint8)
     boxes = [[1700.0, 100.0, 150.0, 150.0], [100.0, 900.0, 39.0, 39.0]]  # the rare one far in a corner
-    draws = runs(200)
+    draws = max(200, runs(200))  # (fewer would not hold the margin: --runs 1 is one draw each)
 
     def share(rare: set[int]) -> float:
         rng = random.Random(seed)  # the same draws for both, so only the centring differs
@@ -186,15 +186,27 @@ def test_tiles_are_centred_on_rare_classes_often(seed: int, runs) -> None:
 
 
 def test_flips_mirror_pixels_and_boxes_together_when_turned_on(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Off by default (the atlas is never mirrored); turned on for an experiment, a box still frames its object."""
-    monkeypatch.setattr(K, "RF_DETR_AUGMENT_FLIP_PROBABILITY", 1.0)
+    """Off by default (the atlas is never mirrored); turned on for an experiment, the tile is the unflipped one
+    mirrored, and so is its box (a square object alone would look the same unflipped: CodeRabbit)."""
     monkeypatch.setattr(K, "RF_DETR_AUGMENT_RENDER_PROBABILITY", 0.0)
+    monkeypatch.setattr(K, "RF_DETR_AUGMENT_PHOTO_PROBABILITY", 0.0)
     monkeypatch.setattr(K, "RF_DETR_AUGMENT_SCALE_JITTER", 0.0)
     image = np.zeros((1080, 1920, 3), np.uint8)
     image[500:539, 900:939] = 255
-    tile, _keep, kept = T.random_tile(image, [[900.0, 500.0, 39.0, 39.0]], [0], random.Random(1))
-    x, y, w, h = (round(v) for v in kept[0])
-    assert (tile[y : y + h, x : x + w] == 255).all()
+    image[500:539, 900:910] = 128  # a left edge to tell the sides apart
+    boxes = [[900.0, 500.0, 39.0, 39.0]]
+
+    def draw(flip: float):
+        monkeypatch.setattr(K, "RF_DETR_AUGMENT_FLIP_PROBABILITY", flip)
+        return T.random_tile(image, boxes, [0], random.Random(1))  # the same draws: the same crop
+
+    plain, _keep, (box,) = draw(0.0)
+    flipped, _keep, (mirrored,) = draw(1.0)
+    size = plain.shape[1]
+    assert (flipped == plain[:, ::-1]).all() and not (flipped == plain).all()
+    assert mirrored == pytest.approx([size - box[0] - box[2], box[1], box[2], box[3]])
+    x, y, w, h = (round(v) for v in mirrored)
+    assert (flipped[y : y + h, x + w - 10 : x + w] == 128).all()  # the left edge is now on the right
 
 
 def test_the_validation_tile_of_an_empty_screenshot() -> None:

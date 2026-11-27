@@ -135,7 +135,7 @@ def score(
     baseline: Sequence[Mapping[str, Any]],
     *,
     scale: float = 1.0,
-    known: Callable[[Mapping[str, Any]], bool] | None = None,
+    map_of: Callable[[Mapping[str, Any]], int | None] | None = None,
 ) -> dict[str, Edits]:
     """A policy's pre-labels scored: ``gold`` against the truth-seeded ``reference`` (node city areas on matched
     nodes the truth knows, the citadels) and ``silver`` against the classical ``baseline`` (node finds and every
@@ -146,15 +146,25 @@ def score(
         reference: the truth-seeded boxes.
         baseline: the classical detector's boxes.
         scale: the boxes' pixels per detector pixel (``effort.pixel_scale``).
-        known: a node box -> whether the truth has a map at its middle (None: every node box).
+        map_of: a node box -> the truth map at its middle, or None where the truth has none (None: every node box
+            is of one map, as without a truth). A prediction is matched only with a reference node of its own map: two
+            maps' boxes near each other are never one node.
     """
 
-    def gold_nodes_of(boxes: Sequence[Mapping[str, Any]]) -> list[dict[str, Any]]:
-        return [city_area(a) for a in boxes if L.is_node(str(a.get("label", ""))) and (known is None or known(a))]
+    def gold_nodes_of(boxes: Sequence[Mapping[str, Any]]) -> dict[int | None, list[dict[str, Any]]]:
+        out: dict[int | None, list[dict[str, Any]]] = {}
+        for a in boxes:
+            if L.is_node(str(a.get("label", ""))):
+                at = 0 if map_of is None else map_of(a)
+                if at is not None:
+                    out.setdefault(at, []).append(city_area(a))
+        return out
 
-    gold_nodes = edit_cost(gold_nodes_of(prelabels), gold_nodes_of(reference), scale=scale, families=["node"]).get(
-        "node", Edits()
-    )
+    mine, theirs = gold_nodes_of(prelabels), gold_nodes_of(reference)
+    gold_nodes = Edits()
+    for at in mine.keys() | theirs.keys():
+        found = edit_cost(mine.get(at, []), theirs.get(at, []), scale=scale, families=["node"])
+        gold_nodes = gold_nodes + found.get("node", Edits())
     citadels = edit_cost(prelabels, reference, scale=scale, families=["citadel"]).get("citadel", Edits())
     # the node finds are node_finds' (by place alone), the citadels gold's
     others = edit_cost(
@@ -187,11 +197,12 @@ def classical_boxes(store_path: Path) -> dict[str, list[dict[str, Any]]]:
     # closing(): a connection's own ``with`` only ends a transaction, and an open file cannot be removed on Windows;
     # as_uri percent-encodes the path: a raw "#" or "?" in it would end the path early and drop "mode=ro"
     with closing(sqlite3.connect(f"{store_path.resolve().as_uri()}?mode=ro", uri=True)) as db:
-        # LEFT JOIN: a screenshot the classical detector found nothing on has its (empty) boxes too
+        # LEFT JOIN: a screenshot the classical detector found nothing on has its (empty) boxes too; one never
+        # detected (or whose detection failed) has none, which is no baseline
         rows = db.execute(
             "SELECT images.source, annotations.label, annotations.x, annotations.y, annotations.w, annotations.h, "
             "annotations.source FROM images LEFT JOIN annotations ON images.key = annotations.image_key "
-            "ORDER BY images.position, annotations.ord"
+            "WHERE images.detected = 1 ORDER BY images.position, annotations.ord"
         )
         for source, label, x, y, w, h, box_source in rows:
             boxes = out.setdefault(source, [])
@@ -306,6 +317,9 @@ def dataset_matches(dataset_dir: Path, manifest_sha: str) -> bool:
     ledger = K.ANNOTATOR_SPLIT_LEDGER
     return (
         meta.get("truth_seeded") is True
+        # built from every screenshot (a smoke build's --max-images cap is no dataset to train rounds on)
+        and "max_images" in meta
+        and meta["max_images"] is None
         and meta.get("manifest_sha256") == manifest_sha
         and ledger.is_file()
         and meta.get("ledger_sha256") == file_hash(ledger)
@@ -329,19 +343,26 @@ def check_manifest(summary_file: Path, manifest_sha: str, number: int) -> dict[s
             f"round {number}: its model was trained on another manifest ({trained}) than the one scored "
             f"({manifest_sha}): the manifest changed meanwhile; run the simulation again"
         )
+    weights = summary_file.parent / "best" / "model.safetensors"
+    kept = file_hash(weights) if weights.is_file() else None
+    if summary.get("best_sha256") is None or summary.get("best_sha256") != kept:
+        # its scores and validation AP would be reported for another model (a run that kept a new best/ but did not
+        # get to write its summary, or a best/ put there by hand)
+        raise SystemExit(
+            f"round {number}: {summary_file.name} is not about the model in best/ (its weights differ): train it again"
+        )
     return summary
 
 
-def truth_known(truth: Truth | None, row: Mapping[str, Any]) -> Callable[[Mapping[str, Any]], bool]:
-    """A held-out screenshot's node box -> whether the truth has a map at its middle (never, for a screenshot the
-    truth does not place; always, without a truth)."""
+def truth_map_of(truth: Truth | None, row: Mapping[str, Any]) -> Callable[[Mapping[str, Any]], int | None]:
+    """A held-out screenshot's node box -> the truth map at its middle, or None (always, for a screenshot the truth
+    does not place; one map, 0, for every box without a truth)."""
     if truth is None:
-        return lambda box: True
+        return lambda box: 0
     shot = truth.screenshots.get(Path(str(row["path"])).name)
     if shot is None:
-        return lambda box: False
-    at = truth_map_at(truth, shot, int(row.get("width") or shot["w"]), int(row.get("height") or shot["h"]))
-    return lambda box: at(box) is not None
+        return lambda box: None
+    return truth_map_at(truth, shot, int(row.get("width") or shot["w"]), int(row.get("height") or shot["h"]))
 
 
 def score_round(
@@ -385,20 +406,30 @@ def _score_splits(
     out: dict[str, Any] = {}
     for split, rows in shots.items():
         sums = {policy: {"gold": Edits(), "silver": Edits()} for policy in K.ANNOTATOR_PRELABEL_POLICIES}
+        scored = 0
         for row in rows:
             found, detector_size, raw_size = predict(detector, Path(row["path"]))
+            if raw_size != (row.get("width"), row.get("height")):
+                # the file is not the one exported (replaced since): the model's boxes would be in another pixel frame
+                # than the classical and truth boxes, so it is not scored
+                print(
+                    f"  {row['source']}: {raw_size[0]}x{raw_size[1]}, exported at {row.get('width')}x"
+                    f"{row.get('height')}: changed since its detection, rerun its detection (left out)"
+                )
+                continue
+            scored += 1
             model = model_annotations(found, detector_size, raw_size)
             base = classical.get(str(row["source"]), [])
             reference = [{"label": a["label"], "bbox": a["bbox"]} for a in row["annotations"]]
             scale = raw_size[0] / detector_size[0]
-            known = truth_known(truth, row)
+            map_of = truth_map_of(truth, row)
             for policy in K.ANNOTATOR_PRELABEL_POLICIES:
-                result = score(merge(base, model, policy, scale=scale), reference, base, scale=scale, known=known)
+                result = score(merge(base, model, policy, scale=scale), reference, base, scale=scale, map_of=map_of)
                 for part in ("gold", "silver"):
                     sums[policy][part] = sums[policy][part] + result[part]
-        count = max(1, len(rows))
+        count = max(1, scored)
         out[split] = {
-            "screenshots": len(rows),
+            "screenshots": scored,
             **{
                 policy: {
                     part: {**{kind: getattr(edits, kind) / count for kind in EDIT_KINDS}, "edits": edits.edits / count}
@@ -523,7 +554,7 @@ __all__ = [
     "report_markdown",
     "revealed",
     "score",
-    "truth_known",
+    "truth_map_of",
 ]
 
 

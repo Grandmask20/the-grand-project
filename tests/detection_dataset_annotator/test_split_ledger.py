@@ -311,6 +311,11 @@ def test_the_held_out_overlap_counts_map_nodes_training_screenshots_show(tmp_pat
     atlas_file.write_text(json.dumps({"frames": [], "nodes": nodes, "edges": [], "landmarks": []}), encoding="utf-8")
     overlap = held_out_overlap(atlas_file, {"a": "train", "b": "validation", "c": "test"})
     assert overlap == {"validation": (1, 0.5), "test": (1, 1.0)}
+    # screenshots in a folder below their atlas (map_state_change's) are counted under it (CodeRabbit)
+    below = tmp_path / "post-change"
+    paths = {name: below / f"{name}.png" for name in "abc"}
+    report = split_ledger.overlap_report(paths, {"a": "train", "b": "validation", "c": "test"})
+    assert "validation 1 screenshots 50%, test 1 screenshots 100%" in report
 
 
 def test_freeze_and_check_from_the_command_line(

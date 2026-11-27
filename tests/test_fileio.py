@@ -99,11 +99,15 @@ def test_process_pool_starts_its_workers_fresh():
 
 
 def _thread_limits() -> tuple[int, int, str | None]:
-    """What a worker process may use (run in it): OpenCV's threads, the largest OpenMP / BLAS pool, OMP_NUM_THREADS."""
+    """What a worker process may use (run in it): its share (and OpenCV's threads, but on macOS, whose GCD backend
+    reports the CPU count whatever it was told), the largest OpenMP / BLAS pool, OMP_NUM_THREADS."""
     import cv2
     from threadpoolctl import threadpool_info
 
-    return cv2.getNumThreads(), max(p["num_threads"] for p in threadpool_info()), os.environ.get("OMP_NUM_THREADS")
+    share = fileio.thread_share()
+    if sys.platform != "darwin":
+        assert cv2.getNumThreads() == share
+    return share, max(p["num_threads"] for p in threadpool_info()), os.environ.get("OMP_NUM_THREADS")
 
 
 def test_each_worker_process_uses_only_its_share_of_the_cpu():

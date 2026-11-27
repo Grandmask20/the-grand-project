@@ -173,7 +173,12 @@ def test_a_whole_run_trains_picks_the_best_checkpoint_and_scores_the_test_split(
     assert json.loads((best / "config.json").read_text())["num_labels"] == len(LABELS)  # the EMA model's
     assert (best / K.RF_DETR_TRAINED_ON).read_text().split() == ["shot0.png", "shot1.png", "shot2.png"]
     checkpoint = out / "checkpoints" / summary["best_checkpoint"]
-    T.check_resume_sources(checkpoint, ["shot0.png", "shot1.png", "shot2.png"])  # each checkpoint lists its run's
+    # each checkpoint lists its run's screenshots and dataset
+    T.check_resume_sources(checkpoint, ["shot0.png", "shot1.png", "shot2.png"], T.dataset_id(out / "dataset"))
+    assert summary["best_sha256"] == T.file_sha256(best / "model.safetensors")
+    assert summary["dataset"]["max_images"] is None
+    # only what a resume needs is left: the newest checkpoint and the best (the Trainer's limit is the callback's)
+    assert {p.name for p in (out / "checkpoints").glob("checkpoint-*")} == {checkpoint.name, last_name(out)}
     assert json.loads((checkpoint / T.EMA_DIR / T.EMA_STATE).read_text())["updates"] >= 1
     # what is kept is the selected checkpoint's EMA: not the last checkpoint's EMA, not the live weights
     last = max((out / "checkpoints").glob("checkpoint-*"), key=lambda path: int(path.name.split("-")[1]))
@@ -184,6 +189,11 @@ def test_a_whole_run_trains_picks_the_best_checkpoint_and_scores_the_test_split(
     assert not _same(kept, load_file(str(last / T.EMA_DIR / "model.safetensors")))
     assert not _same(kept, load_file(str(checkpoint / "model.safetensors")))  # the live weights at that checkpoint
     assert _same(FakeDetr.from_pretrained(best).state_dict(), selected)  # and a reload keeps them
+
+
+def last_name(out: Path) -> str:
+    """The newest checkpoint folder's name of a run."""
+    return max((out / "checkpoints").glob("checkpoint-*"), key=lambda path: int(path.name.split("-")[1])).name
 
 
 def _same(a: dict, b: dict) -> bool:
@@ -256,6 +266,28 @@ def test_a_build_that_fails_keeps_the_dataset_there_was(tmp_path: Path, fakes, l
                 "--overwrite-dataset"])  # fmt: skip
     assert json.loads((out / "dataset" / "metadata.json").read_text())["validation_images"] == 2
     assert not (out / "dataset.new").exists() and not (out / "dataset.previous").exists()
+
+
+def test_an_overwrite_after_a_cut_off_switch_goes_through_staging(tmp_path: Path, fakes, ledger) -> None:
+    """Only <dataset>.previous left (a switch cut off): an overwrite builds beside it and switches in, a failed one
+    keeps it (CodeRabbit)."""
+    out = tmp_path / "run"
+    manifest = _export(tmp_path)
+    _freeze(manifest, ledger)
+    assert T.main(["--annotator-manifest", str(manifest), "--output-dir", str(out), "--dataset-only"]) == 0
+    (out / "dataset").rename(out / "dataset.previous")
+    only_train = tmp_path / "only_train"
+    only_train.mkdir()
+    no_validation = _export(only_train, ["train"] * 6)
+    _freeze(no_validation, ledger)
+    with pytest.raises(ValueError, match="validation"):
+        T.main(["--annotator-manifest", str(no_validation), "--output-dir", str(out), "--dataset-only",
+                "--overwrite-dataset"])  # fmt: skip
+    assert (out / "dataset.previous" / "labels.json").is_file() and not (out / "dataset").exists()
+    _freeze(manifest, ledger)
+    args = ["--annotator-manifest", str(manifest), "--output-dir", str(out), "--dataset-only", "--overwrite-dataset"]
+    assert T.main(args) == 0
+    assert (out / "dataset" / "labels.json").is_file() and not (out / "dataset.previous").exists()
 
 
 def test_a_train_subset_keeps_only_its_screenshots(tmp_path: Path, fakes, ledger) -> None:
@@ -599,13 +631,14 @@ def test_only_the_global_main_process_writes_a_checkpoints_extras(tmp_path: Path
     ema.on_train_begin(args, None, None, model=model)
     ema.on_step_end(args, None, None, model=model)
     assert int(ema.ema.n_averaged) == 1
-    members = T.MembershipCallback(["b.png", "a.png"])
+    members = T.MembershipCallback(["b.png", "a.png"], "data-id")
     for callback in (members, ema):
         callback.on_save(args, SimpleNamespace(global_step=1, is_world_process_zero=False), None)
     assert not (tmp_path / "checkpoint-1").exists()
     for callback in (members, ema):
         callback.on_save(args, SimpleNamespace(global_step=1, is_world_process_zero=True), None)
     assert (tmp_path / "checkpoint-1" / K.RF_DETR_TRAINED_ON).read_text() == "a.png\nb.png\n"
+    assert (tmp_path / "checkpoint-1" / K.RF_DETR_DATASET_ID).read_text() == "data-id"
     assert T.ema_complete(tmp_path / "checkpoint-1")
 
 
@@ -615,11 +648,59 @@ def test_resume_refuses_a_checkpoint_of_other_screenshots(tmp_path: Path) -> Non
     checkpoint = tmp_path / "checkpoint-3"
     checkpoint.mkdir()
     with pytest.raises(SystemExit, match="it lists none"):
-        T.check_resume_sources(checkpoint, ["a.png"])
+        T.check_resume_sources(checkpoint, ["a.png"], "data")
     (checkpoint / K.RF_DETR_TRAINED_ON).write_text("a.png\nb.png\n")
-    T.check_resume_sources(checkpoint, ["b.png", "a.png"])
+    (checkpoint / K.RF_DETR_DATASET_ID).write_text("data")
+    T.check_resume_sources(checkpoint, ["b.png", "a.png"], "data")
     with pytest.raises(SystemExit, match="--init-from"):
-        T.check_resume_sources(checkpoint, ["a.png"])
+        T.check_resume_sources(checkpoint, ["a.png"], "data")
+
+
+def test_resume_refuses_a_checkpoint_of_another_dataset_of_the_same_screenshots(tmp_path: Path) -> None:
+    """Another export's boxes on the same screenshots: the dataset's identity differs (CodeRabbit)."""
+    checkpoint = tmp_path / "checkpoint-3"
+    checkpoint.mkdir()
+    (checkpoint / K.RF_DETR_TRAINED_ON).write_text("a.png\n")
+    with pytest.raises(SystemExit, match="another dataset"):
+        T.check_resume_sources(checkpoint, ["a.png"], "data")  # (it records none)
+    (checkpoint / K.RF_DETR_DATASET_ID).write_text("data")
+    with pytest.raises(SystemExit, match="another dataset"):
+        T.check_resume_sources(checkpoint, ["a.png"], "other data")
+
+
+def test_pruning_keeps_the_newest_whole_checkpoint_and_every_best_a_kept_one_names(tmp_path: Path) -> None:
+    """The newest whole checkpoint, the best so far and the best each kept one's state names stay (a resume from one
+    loads its best at the end); what nothing needs goes, only once the newest's EMA is written (CodeRabbit)."""
+
+    def checkpoint(step: int, best: int | None, whole: bool = True) -> Path:
+        path = tmp_path / f"checkpoint-{step}"
+        (path / T.EMA_DIR).mkdir(parents=True)
+        if whole:
+            (path / T.EMA_DIR / "model.safetensors").write_bytes(b"x")
+            (path / T.EMA_DIR / T.EMA_STATE).write_text('{"updates": 1}')
+        best_path = str(tmp_path / f"checkpoint-{best}") if best else None
+        (path / "trainer_state.json").write_text(json.dumps({"best_model_checkpoint": best_path}))
+        return path
+
+    for step, best in ((1, 1), (2, 1), (3, 3), (4, 3)):
+        checkpoint(step, best)
+    (tmp_path / "runs").mkdir()  # not a checkpoint
+    state = SimpleNamespace(is_world_process_zero=True, best_model_checkpoint=str(tmp_path / "checkpoint-3"))
+    T.PruneCallback().on_save(SimpleNamespace(output_dir=str(tmp_path)), state, None)
+    assert sorted(p.name for p in tmp_path.iterdir()) == ["checkpoint-3", "checkpoint-4", "runs"]
+    checkpoint(5, 1)  # a resumed state naming an older best: kept for it
+    T.PruneCallback().on_save(SimpleNamespace(output_dir=str(tmp_path)), state, None)
+    assert sorted(p.name for p in tmp_path.iterdir()) == ["checkpoint-3", "checkpoint-5", "runs"]
+    checkpoint(6, 3, whole=False)  # (cut off before its EMA): the newest whole one stays too
+    T.PruneCallback().on_save(SimpleNamespace(output_dir=str(tmp_path)), state, None)
+    assert sorted(p.name for p in tmp_path.iterdir()) == ["checkpoint-3", "checkpoint-5", "checkpoint-6", "runs"]
+
+
+def test_a_smoke_limit_must_fit_a_training_and_a_validation_screenshot() -> None:
+    """--max-images 1 left no validation screenshot, and the error told to review more (CodeRabbit)."""
+    with pytest.raises(SystemExit):
+        T.parse_args(["--max-images", "1"])
+    assert T.parse_args(["--max-images", "2"]).max_images == 2
 
 
 def test_other_processes_load_the_dataset_the_main_one_built(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -630,8 +711,13 @@ def test_other_processes_load_the_dataset_the_main_one_built(tmp_path: Path, mon
     reused = []
     monkeypatch.setattr(T, "_load_or_build_dataset", lambda args: reused.append(args.reuse_dataset))
     args = T.parse_args(["--output-dir", str(tmp_path)])
+
+    def main_process_first(local=True, **kwargs):
+        assert local is False  # one build for every node's processes (a global barrier), not one per node
+        return nullcontext()
+
     for rank in (0, 1):
-        training = SimpleNamespace(process_index=rank, main_process_first=lambda **kwargs: nullcontext())
+        training = SimpleNamespace(process_index=rank, main_process_first=main_process_first)
         T.dataset_main_first(args, training)
     T.dataset_main_first(args, None)
     assert reused == [False, True, False] and args.reuse_dataset is False

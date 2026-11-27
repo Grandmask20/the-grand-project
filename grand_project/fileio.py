@@ -97,6 +97,19 @@ def worker_threads(max_workers: int) -> int:
     return max(1, (os.cpu_count() or 2) // max(1, max_workers))
 
 
+_SHARE: int | None = None
+"""The threads this process may use, once a worker pool capped it (``_cap_threads``); None in the app itself."""
+
+
+def thread_share() -> int:
+    """The threads this process may use: its worker share (``_cap_threads``), else every CPU.
+
+    Not read back from OpenCV: on macOS (its GCD backend) ``cv2.getNumThreads()`` gives the CPU count whatever
+    ``setNumThreads`` was told, though a share of 1 does keep OpenCV serial there (CI: macOS runner).
+    """
+    return _SHARE if _SHARE is not None else (os.cpu_count() or 1)
+
+
 def _cap_threads(threads: int) -> None:
     """Limit a worker process's thread pools to `threads` (run in each worker as it starts).
 
@@ -109,6 +122,8 @@ def _cap_threads(threads: int) -> None:
     """
     from grand_project.core.constants import POOL_THREAD_ENV_VARS
 
+    global _SHARE
+    _SHARE = threads
     os.environ.update(dict.fromkeys(POOL_THREAD_ENV_VARS, str(threads)))
     import cv2
     import sklearn.ensemble  # noqa: F401  (loads scikit-learn's OpenMP runtime, so the limit reaches it)

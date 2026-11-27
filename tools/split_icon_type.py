@@ -39,6 +39,7 @@ from tools.import_poe2db_art import SIZES, render
 
 _TILE = 3  # sheet: each 34 px picture drawn this many times larger
 _COLS = 8  # sheet: pictures per row
+_DISTS_PER_LINE = 2  # sheet: distances a line under a picture (a third did not fit its width)
 
 
 @dataclass
@@ -175,10 +176,22 @@ def truth_pictures(old: str, arts: dict, unsure: float) -> list[tuple[Path, str,
     return out
 
 
+def _cell_height(types: int) -> int:
+    """A sheet cell's height (px): the picture, its name and its distances to the types' art, two a line."""
+    return icon_refs.SIZE * _TILE + 8 + 14 * (1 + -(-types // _DISTS_PER_LINE))
+
+
 def sheet(path: Path, new: list[str], matches: list[Match]) -> None:
-    """Write the review sheet: the new types' art on top, then every picture with its new name and distances."""
+    """Write the review sheet: the new types' art on top, then every picture with its new name and distances (two a
+    line, so every one shows however many types the split makes)."""
     t = icon_refs.SIZE * _TILE
-    cell_h = t + 36
+
+    def distance_lines(dists: list[float]) -> list[str]:
+        return [
+            " ".join(f"{d:.3f}" for d in dists[i : i + _DISTS_PER_LINE]) for i in range(0, len(dists), _DISTS_PER_LINE)
+        ]
+
+    cell_h = _cell_height(len(new))
 
     def tile(pic: np.ndarray | None, lines: list[str], colour=(255, 255, 255)) -> np.ndarray:
         c = np.full((cell_h, t + 40, 3), 24, np.uint8)
@@ -195,9 +208,7 @@ def sheet(path: Path, new: list[str], matches: list[Match]) -> None:
         f = next(ICON_ART_DIR / f"{k}__{n}.webp" for k in SIZES if (ICON_ART_DIR / f"{k}__{n}.webp").is_file())
         kind = f.stem.split("__")[0]
         head.append(tile(render(f, SIZES[kind][-1]), [f"art: {n}"], (120, 220, 255)))
-    cells = [
-        tile(m.crop, [("? " if m.unsure else "") + m.name, " ".join(f"{d:.3f}" for d in m.dists)]) for m in matches
-    ]
+    cells = [tile(m.crop, [("? " if m.unsure else "") + m.name, *distance_lines(m.dists)]) for m in matches]
     blank = np.full_like(head[0], 24)
 
     def grid(tiles: list[np.ndarray]) -> list[np.ndarray]:
@@ -309,6 +320,10 @@ def main(argv: list[str] | None = None) -> int:
             b = data[shot]["badges"][i]
             b["name"] = m.name
             kb = key["badges"].get(b.get("id", "")) if key else None
+            if kb:
+                # the name the truth's save gives it is rebuilt from the review's notes, which may say the old name
+                # (a single or row correction to it, whatever the detector called it): the save renames it again
+                kb.setdefault("renamed", {})[a.old] = m.name
             if kb and kb.get("detector") == a.old:
                 # the review row it was shown in stays its row (truth.cmd_save applies a row's correction by it), also
                 # when one row's icons take several new names

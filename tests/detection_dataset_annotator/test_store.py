@@ -519,3 +519,15 @@ def test_a_save_can_need_its_split(tmp_path: Path, review_store: ReviewStore) ->
     assert not review_store.save_review(test, 1, annotations=[], split="train")
     assert review_store.save_review(train, 1, annotations=[], split="train")
     assert review_store.untouched(test) and not review_store.untouched(train) and not review_store.untouched("gone")
+
+
+def test_a_toggle_needs_the_review_flag_it_was_worked_out_from(tmp_path: Path, review_store: ReviewStore) -> None:
+    """Two tabs toggling one screenshot: the second toggle, worked out from the flag before the first, is refused in
+    its own write instead of undoing the first (CodeRabbit)."""
+    (shot,) = _shots(tmp_path, "a.png")
+    key = _detected(review_store, shot, _box("icon", 10.0))
+    assert review_store.save_review(key, 1, reviewed=True, expect_reviewed=False)  # the first tab's toggle
+    assert not review_store.save_review(key, 1, reviewed=True, expect_reviewed=False)  # the second's, made from False
+    assert review_store.save_review(key, 1, reviewed=False, expect_reviewed=True)
+    assert review_store.save_review(key, 1, reviewed=True)  # "Reviewed, next": set whatever it was
+    assert review_store.item(key)["reviewed"]

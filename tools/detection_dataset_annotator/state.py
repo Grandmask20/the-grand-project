@@ -115,6 +115,21 @@ def file_hash(path: Path) -> str:
         return hashlib.file_digest(handle, "sha256").hexdigest()
 
 
+def changed_since_detection(item: Mapping[str, Any], digest: str | None) -> bool:
+    """Whether a screenshot's file (its bytes' SHA-256 now, None when it cannot be read) is not the one its boxes were
+    detected on (``ANNOTATOR_DETECTED_SHA``; a detection without one is not known to be it): its boxes are rerun, not
+    shown, pre-labelled, seeded or exported."""
+    return digest is None or item.get(K.ANNOTATOR_DETECTED_SHA) != digest
+
+
+def current_digest(path: Path) -> str | None:
+    """A file's SHA-256 now (``file_hash``), or None when it cannot be read."""
+    try:
+        return file_hash(path)
+    except OSError:
+        return None
+
+
 def _pinned(path: Path) -> bool:
     """Whether a screenshot is pinned to the test split (``splits.pinned_split``; imported here: splits imports this
     module through blocks)."""

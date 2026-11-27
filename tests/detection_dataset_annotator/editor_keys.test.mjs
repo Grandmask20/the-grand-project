@@ -7,6 +7,7 @@ import { test } from "node:test";
 import {
   closestHandle,
   coordinateValue,
+  finderKeyActs,
   finderPick,
   isGuess,
   labelForKey,
@@ -99,4 +100,12 @@ test("the finder's Enter uses its first match, nothing while it is empty", () =>
   assert.equal(finderPick(shown, "to").name, "tower");
   assert.equal(finderPick(shown, ""), null);
   assert.equal(finderPick([], "zzz"), null);
+});
+
+test("the label finder leaves Enter and Esc to an input method composing a word", () => {
+  assert.equal(finderKeyActs({ key: "Enter", isComposing: false, keyCode: 13 }), true);
+  assert.equal(finderKeyActs({ key: "Escape", isComposing: false, keyCode: 27 }), true);
+  assert.equal(finderKeyActs({ key: "Enter", isComposing: true, keyCode: 13 }), false); // picks the composed word
+  assert.equal(finderKeyActs({ key: "Enter", isComposing: false, keyCode: 229 }), false); // (Safari's end of one)
+  assert.equal(finderKeyActs({ key: "a", isComposing: false, keyCode: 65 }), false); // typed into the finder
 });

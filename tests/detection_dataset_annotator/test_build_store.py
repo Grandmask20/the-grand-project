@@ -10,15 +10,27 @@ from pathlib import Path
 import numpy as np
 import pytest
 
-from tools.detection_dataset_annotator import ReviewStore, build_store, image_key, relative_source, truth_seed
+from tools.detection_dataset_annotator import (
+    ReviewStore,
+    build_store,
+    file_hash,
+    image_key,
+    relative_source,
+    truth_seed,
+)
 from tools.detection_dataset_annotator import constants as K
 
 
 @pytest.fixture(autouse=True)
 def readable(monkeypatch: pytest.MonkeyPatch) -> None:
-    """The screenshot files here are a few bytes (their bytes tell copies apart): seeding reads each as a blank
-    1920x1080 picture, the size it was detected in."""
-    monkeypatch.setattr(truth_seed, "_raw_image", lambda path: np.zeros((1080, 1920, 3), np.uint8))
+    """The screenshot files here are a few bytes (their bytes tell copies apart): recording the detected bytes and
+    seeding read each as a blank 1920x1080 picture, the size it was detected in, with its own bytes' SHA-256."""
+
+    def blank(path: Path) -> tuple[np.ndarray, str]:
+        return np.zeros((1080, 1920, 3), np.uint8), file_hash(path)
+
+    monkeypatch.setattr(truth_seed, "_raw_image", blank)
+    monkeypatch.setattr(build_store, "read_with_digest", blank)
 
 
 def _truth(tmp_path: Path, files: list[str]) -> Path:
@@ -80,7 +92,11 @@ def test_a_run_brings_an_old_store_up_to_date_and_a_second_changes_nothing(
     lines: list[str] = []
     done = build_store.build(tmp_path / "out", truths=[truth], workers=1, say=lines.append)
 
-    assert done == Counter({"added": 1, "removed": 2, "kept reviewed": 1, "detected": 1, "seeded": 1})
+    # the old detections' bytes recorded (a, b and the reviewed copy); the new one's detection (the fake worker's)
+    # says no size, so it counts as changed until it is rerun
+    assert done == Counter(
+        {"added": 1, "removed": 2, "kept reviewed": 1, "detected": 1, "hashed": 3, "changed": 1, "seeded": 1}
+    )
     # the name as the run prints it: a file outside the project is named by its own (on Windows, backslashed) path
     assert any("kept, reviewed" in line and relative_source(old_store["copy_b"]) in line for line in lines)
     with ReviewStore.open(tmp_path / "out" / K.ANNOTATOR_STORE_FILE) as store:
@@ -97,7 +113,7 @@ def test_a_run_brings_an_old_store_up_to_date_and_a_second_changes_nothing(
         assert len(before.paths()) == 5
 
     again = build_store.build(tmp_path / "out", truths=[truth], workers=1, say=lines.append)
-    assert again == Counter({"kept reviewed": 1})  # every other count is 0
+    assert again == Counter({"kept reviewed": 1, "changed": 1})  # every other count is 0
     assert len(list((tmp_path / "out").glob(K.ANNOTATOR_BUILD_BACKUP.format(stamp="*")))) == 2
 
 
@@ -109,7 +125,7 @@ def test_a_dry_run_says_what_would_change_and_changes_nothing(tmp_path: Path, ol
 
     done = build_store.build(tmp_path / "out", truths=[truth], dry_run=True, say=lambda line: None)
     # the seed sees the store as it is: the copy of ok_a.png, not removed in a dry run, has its name
-    assert done == Counter({"added": 1, "removed": 2, "kept reviewed": 1, "seeded": 2})
+    assert done == Counter({"added": 1, "removed": 2, "kept reviewed": 1, "hashed": 5, "seeded": 2})
     with ReviewStore.open(store_file) as store:
         assert {key: store.item(key) for key in store.paths()} == before
     assert list((tmp_path / "out").glob(K.ANNOTATOR_BUILD_BACKUP.format(stamp="*"))) == []
@@ -147,3 +163,42 @@ def test_a_missing_truth_file_is_an_error_but_a_missing_default_is_skipped(
     lines: list[str] = []
     build_store.build(tmp_path / "out", roots=[tmp_path], say=lines.append)
     assert any("no truth file" in line for line in lines)
+
+
+def test_the_next_command_s_folder_is_quoted_for_cmd_on_windows(monkeypatch: pytest.MonkeyPatch) -> None:
+    """cmd.exe takes & | < > ^ ( ) literally only inside double quotes (CodeRabbit); POSIX keeps shlex's quoting."""
+    monkeypatch.setattr(build_store.os, "name", "nt")
+    assert build_store._quoted(r"C:\data\R&D (new)") == r'"C:\data\R&D (new)"'
+    monkeypatch.setattr(build_store.os, "name", "posix")
+    assert build_store._quoted("R&D (new)") == "'R&D (new)'"
+
+
+def test_old_detections_get_their_bytes_recorded_where_the_file_is_still_their_picture(
+    tmp_path: Path, review_store: ReviewStore, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A detection made before its bytes were kept gets the file's SHA-256 where the file is still the size it was
+    detected in; one replaced by another size, or unreadable, gets none (it counts as changed: rerun it). A dry run
+    records nothing."""
+    paths = {name: tmp_path / f"{name}.png" for name in ("same", "resized", "gone", "new")}
+    for path in paths.values():
+        path.write_bytes(path.stem.encode())
+    review_store.add_images(paths.values())
+    for name, path in paths.items():
+        result = {"width": 1920, "height": 1080, "annotations": []}
+        if name == "new":
+            result[K.ANNOTATOR_DETECTED_SHA] = "detected with it"
+        review_store.record_detection(image_key(path), result, force=False)
+    shapes = {"same": (1080, 1920, 3), "resized": (1440, 2560, 3)}
+    monkeypatch.setattr(
+        build_store,
+        "read_with_digest",
+        lambda path: (np.zeros(shapes[path.stem], np.uint8), f"bytes of {path.stem}") if path.stem in shapes else None,
+    )
+    counts, planned = build_store.record_digests(review_store, dry_run=True)
+    assert counts == Counter({"hashed": 1, "changed": 1, "unreadable": 1})
+    assert planned == {image_key(paths["same"]): "bytes of same"}
+    assert K.ANNOTATOR_DETECTED_SHA not in review_store.item(image_key(paths["same"]))
+    assert build_store.record_digests(review_store)[0] == counts
+    shas = {name: review_store.item(image_key(path)).get(K.ANNOTATOR_DETECTED_SHA) for name, path in paths.items()}
+    assert shas == {"same": "bytes of same", "resized": None, "gone": None, "new": "detected with it"}
+    assert build_store.record_digests(review_store)[0] == Counter({"changed": 1, "unreadable": 1})

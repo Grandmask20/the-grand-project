@@ -7,6 +7,7 @@ exported boxes fit the file the training reads.
 
 from __future__ import annotations
 
+import hashlib
 from pathlib import Path
 from typing import Any
 
@@ -24,8 +25,9 @@ DEFAULT_OPTIONS = DetectionOptions()
 """Generic ``icon`` labels (the deadly-boss icon too), no paths, no walls."""
 
 
-def decode_image(path: Path) -> np.ndarray | None:
-    """The original-size BGR image, or None when it cannot be read (``np.fromfile`` handles non-ASCII paths).
+def read_with_digest(path: Path) -> tuple[np.ndarray, str] | None:
+    """The original-size BGR image and the SHA-256 of the bytes it was decoded from (one read: the picture and its
+    identity are the same file), or None when it cannot be read (``np.fromfile`` handles non-ASCII paths).
 
     Upright, its EXIF orientation applied (OpenCV's default): training's decoder (``datasets.Image``) applies it too,
     and so does the browser, so the editor, its boxes, the model pre-labels and training share one frame. An empty
@@ -33,17 +35,16 @@ def decode_image(path: Path) -> np.ndarray | None:
     """
     try:
         encoded = np.fromfile(str(path), dtype=np.uint8)
-        return cv2.imdecode(encoded, cv2.IMREAD_COLOR) if encoded.size else None
+        image = cv2.imdecode(encoded, cv2.IMREAD_COLOR) if encoded.size else None
     except (OSError, ValueError, cv2.error):
         return None
+    return None if image is None else (image, hashlib.sha256(encoded.data).hexdigest())
 
 
-def _read_images(path: Path) -> tuple[np.ndarray, np.ndarray] | None:
-    """The original screenshot and the detector's 1080p copy of it (decoded once)."""
-    raw = decode_image(path)
-    if raw is None:
-        return None
-    return raw, core.scale_screenshot(raw)
+def decode_image(path: Path) -> np.ndarray | None:
+    """The original-size BGR image, or None when it cannot be read (``read_with_digest``)."""
+    read = read_with_digest(path)
+    return None if read is None else read[0]
 
 
 def _source(proposal: dict[str, Any]) -> str:
@@ -112,10 +113,11 @@ def run_classical_detector(path: Path, options: DetectionOptions = DEFAULT_OPTIO
 
     from .icon_proposals import hidden_nodes, map_spots, propose_icons
 
-    loaded = _read_images(path)
+    loaded = read_with_digest(path)
     if loaded is None:
         raise ValueError(f"Could not read image: {path}")
-    raw_image, detector_image = loaded
+    raw_image, digest = loaded
+    detector_image = core.scale_screenshot(raw_image)
     max_width, max_height = K.ANNOTATOR_MAX_SIDE
     if raw_image.shape[1] > max_width or raw_image.shape[0] > max_height:
         raise ValueError(
@@ -151,4 +153,5 @@ def run_classical_detector(path: Path, options: DetectionOptions = DEFAULT_OPTIO
         "detector_height": int(detector_image.shape[0]),
         "annotations": detection_annotations(detection, detector_image, raw_image, options, wall_mask=wall_mask),
         "error": None,
+        K.ANNOTATOR_DETECTED_SHA: digest,  # the bytes these boxes frame (state.changed_since_detection)
     }

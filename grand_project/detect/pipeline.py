@@ -8,10 +8,9 @@ import time
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
-import cv2
 import numpy as np
 
-from grand_project import core
+from grand_project import core, fileio
 
 from .badges import find_badges, special_icons
 from .constants import DETECT_PREFETCH_THREADS, MAP, WALL_CROSS
@@ -64,7 +63,8 @@ def _prefetch(img: np.ndarray):
     the screenshot, and are mostly OpenCV, which runs beside Python: a single detection used one core of the several
     its worker may use. Each is remembered per image (cache._per_image), so when the detection reaches it, it takes
     the result (or waits for it): the same functions on the same screenshot, so the same results. Threads: at most
-    the process's OpenCV share less one (a capped worker stays within its share); none with a share of 1.
+    the process's thread share less one (``fileio.thread_share``: a capped worker stays within it); none with a
+    share of 1.
 
     Args:
         img: BGR screenshot (1080p).
@@ -72,7 +72,7 @@ def _prefetch(img: np.ndarray):
     Yields:
         Nothing; the helper threads are done when the block ends.
     """
-    threads = min(DETECT_PREFETCH_THREADS, cv2.getNumThreads() - 1)
+    threads = min(DETECT_PREFETCH_THREADS, fileio.thread_share() - 1)
     if threads < 1:
         yield
         return
