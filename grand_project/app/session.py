@@ -438,6 +438,8 @@ class AtlasSession(
         if n := self.events.end_questions():
             self.events.log(f"closing: {n} open question(s) answered No")
         done = self.wait_idle(timeout=K.SHUTDOWN_WAIT)  # (read live: a test makes it short)
+        if self._detect_pool is not None:  # (a job cut off: its worker processes are stopped, not waited for)
+            self._detect_pool.close(wait=done)
         if not done:
             LOG.warning("closing while a job still runs: cut off")
             self.events.log(

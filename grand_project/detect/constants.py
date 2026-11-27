@@ -772,3 +772,14 @@ DETECT_DIGEST_MEMO = 20000  # screenshot hashes kept in memory (builder.file_dig
 # bytes read from the start of a saved detection to tell its detector, version and time (builder.cache_head): those
 # fields come first (name, path, sha256, detector, models, version, detected_at: ~400 bytes with a long path)
 CACHE_HEAD_BYTES = 2048
+
+# ---- detection speed (pipeline._prefetch, cache._per_image) --------------------------------------------------------
+DETECT_PER_IMAGE_KEEP = 16  # results remembered per screenshot function (cache._per_image): a detection's own
+# (dashes, amber dashes, walls, special icons, the landmark rules, square buttons) for the last two screenshots
+DETECT_PREFETCH_THREADS = (
+    3  # threads that work out a screenshot's image-only stages (dashes, special icons, the landmark
+)
+# rules, fortress walls, square buttons) while the detection finds its maps: they are mostly OpenCV, which runs
+# beside Python. At most the process's own thread share less one (fileio.process_pool), so capped workers stay capped
+PATH_FEATURE_REACH = 49.0  # px: dashes looked up around a spot for paths.path_features (its rings end at 48 px; the
+# extra px keeps a dash at 47.99... that the lookup rounds the other way)

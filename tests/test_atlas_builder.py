@@ -214,3 +214,61 @@ def test_one_picture_saved_twice_and_detected_at_once_leaves_one_whole_cache(tmp
     assert not [p for p in (tmp_path / "f").iterdir() if p.suffix != ".json"]  # (no temporary file left)
     frames = [builder.extract_frame(p, tmp_path / "f") for p in (first, second)]
     assert [Path(f.path).name for f in frames] == ["copy 1.png", "copy 2.png"]  # each its own path
+
+
+class PoolStandIn:
+    """A warm pool on threads: counts its jobs; `closed` makes it refuse as a closed pool does."""
+
+    def __init__(self):
+        self.jobs = 0
+        self.closed = False
+
+    def use(self):
+        import contextlib
+        from concurrent.futures import ThreadPoolExecutor
+
+        @contextlib.contextmanager
+        def job():
+            if self.closed:
+                raise RuntimeError("the detection workers are closed")
+            self.jobs += 1
+            with ThreadPoolExecutor(2) as ex:
+                yield ex
+
+        return job()
+
+
+def test_with_a_warm_pool_one_screenshot_goes_to_the_workers_too(tmp_path, quick_detector, monkeypatch):
+    from grand_project import builder
+
+    monkeypatch.setattr(builder, "DETECT_WORKERS", 1)  # (a 2-CPU computer: still not in the caller's process)
+    pool = PoolStandIn()
+    one = shot(tmp_path, "one.png")
+    assert builder.detect_uncached([one], tmp_path / "f", pool=pool) == {}
+    assert pool.jobs == 1 and len(quick_detector) == 1
+    assert builder.detect_uncached([one], tmp_path / "f", pool=pool) == {} and pool.jobs == 1  # cached: no job
+    assert builder.detect_uncached([shot(tmp_path, "alone.png", value=3)], tmp_path / "f") == {}  # no pool: not
+    assert len(quick_detector) == 1  # (one screenshot without a pool is left to the caller)
+
+
+def test_a_closed_warm_pool_leaves_the_screenshots_to_the_caller(tmp_path, quick_detector):
+    from grand_project import builder
+
+    pool = PoolStandIn()
+    pool.closed = True
+    lines: list[str] = []
+    assert builder.detect_uncached([shot(tmp_path, "a.png")], tmp_path / "f", log=lines.append, pool=pool) == {}
+    assert lines == ["parallel detection failed (the detection workers are closed); detecting one at a time"]
+    assert quick_detector == []
+
+
+def test_a_worker_with_another_detector_than_the_caller_detects_nothing(tmp_path, quick_detector):
+    # a warm worker started after the detector database changed (or the caller before): its detections would carry
+    # another stamp, which the caller does not count as fresh, so it would detect them all again
+    from grand_project import builder
+
+    one = shot(tmp_path, "one.png")
+    image, err = builder._detect_one((str(one), str(tmp_path / "f"), "another stamp"))
+    assert image == str(one) and err.startswith("detector changed")
+    assert quick_detector == [] and not (tmp_path / "f").exists()
+    assert builder._detect_one((str(one), str(tmp_path / "f"), builder.detector_stamp())) == (str(one), None)

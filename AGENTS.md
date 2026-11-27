@@ -76,7 +76,12 @@ README's developer section). `tools/` are developer helpers
   (`python -m grand_project.core.seams ...`), not a thread and not `multiprocessing` (spawn re-runs the caller's
   main script). The exception is a batch of the same job (detecting many screenshots, the check's path tracing):
   it goes through `fileio.process_pool`, whose workers each keep to their share of the CPU's threads (uncapped,
-  every worker started one per CPU and detection ran 2.7x slower). Anything that changes what the map's tiles hold
+  every worker started one per CPU and detection ran 2.7x slower). The app keeps its detection workers warm between
+  jobs (`builder.WarmPool`, closed when idle and by `shutdown`), and sends them single screenshots too. Within one
+  detection, the stages that read only the screenshot run on helper threads (`detect/pipeline._prefetch`): such a
+  stage is `@_per_image` (`detect/cache.py`, thread-safe; lists come back as copies), and a lazy loader it reaches
+  fills its cache in one step. Speed changes to the detector keep every result bit-identical (user's rule)
+  (check all test screenshots before and after). Anything that changes what the map's tiles hold
   bumps a version (model, map image, filters): tile URLs carry it, so the browser keeps tiles until they really
   change.
 - **The open atlas is one record** (`session.opened`: atlas, path, generation, log scope), swapped only in
