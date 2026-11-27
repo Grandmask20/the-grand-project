@@ -7,13 +7,14 @@ import { atlasLayers } from "@/logic/map/AtlasLayers";
 import { useAppStore } from "@/store/AppStore";
 import { MapLayers } from "./MapLayer";
 
-/** The layers drawn from the app's vector tiles, in the View tab's look, Find's highlight and the tilt (tilted, the
+/** The layers drawn from the app's vector tiles, in the View tab's look, Find's highlight and heatmap, and the tilt (tilted, the
  * 3D view draws paths, icons and models instead). Only what changed is set on the map. */
 export function AtlasLayers() {
 	const map = useMapLibre();
 	const { geo, info, meta } = useMapView();
 	const settings = useShownSettings(); // (with the layers you're working on: user)
 	const highlight = useAppStore((s) => s.highlight);
+	const heat = useAppStore((s) => s.heat);
 	const tilted = useTilted(map);
 	const specs = useMemo(
 		() =>
@@ -23,9 +24,10 @@ export function AtlasLayers() {
 						background: settings.ui.background ?? "picture",
 						tilted,
 						highlight,
+						heat,
 					})
 				: [],
-		[geo, info, meta, settings, tilted, highlight],
+		[geo, info, meta, settings, tilted, highlight, heat],
 	);
 	return <MapLayers specs={specs} />;
 }

@@ -30,10 +30,22 @@ describe("TypeList", () => {
 	it("clicking a name lists that type (icons with their picture's name)", async () => {
 		const onList = vi.fn();
 		const { user } = renderWithApp(<TypeList onList={onList} />, { "GET /api/types": types });
-		await user.click(await screen.findByRole("button", { name: /Breach/ }));
+		await user.click(await screen.findByRole("button", { name: /^Breach/ }));
 		expect(onList).toHaveBeenCalledWith("Breach", "Breach");
 		await user.click(screen.getByRole("button", { name: /City/ }));
 		expect(onList).toHaveBeenCalledWith("City", null);
+	});
+
+	it("a map icon's flame turns its heatmap on and off, one icon at a time; places have none", async () => {
+		const { user } = renderWithApp(<TypeList onList={vi.fn()} />, { "GET /api/types": types });
+		await user.click(await screen.findByRole("button", { name: "Heatmap of Breach" }));
+		expect(useAppStore.getState().heat).toBe("Breach");
+		await user.click(screen.getByRole("button", { name: "Heatmap of Ritual" }));
+		expect(useAppStore.getState().heat).toBe("Ritual");
+		expect(screen.getByRole("button", { name: "Heatmap of Ritual" })).toHaveAttribute("aria-pressed", "true");
+		await user.click(screen.getByRole("button", { name: "Heatmap of Ritual" }));
+		expect(useAppStore.getState().heat).toBeNull();
+		expect(screen.queryByRole("button", { name: "Heatmap of City" })).toBeNull();
 	});
 
 	it("a type listed opens its results within the list, under it; clicked again it folds", async () => {

@@ -138,6 +138,9 @@ export interface AppStoreState {
 	clearFind: () => void;
 	highlight: string | null;
 	setHighlight: (type: string | null) => void;
+	/** Find's heatmap: the icon whose maps glow where they are many (null: off). */
+	heat: string | null;
+	setHeat: (icon: string | null) => void;
 	mode: MapMode;
 	/** A map mode starts or ends; none starts while the timelapse is open (user: Route, then the timelapse, and a
 	 * click in it took a map). */
@@ -309,6 +312,8 @@ export const useAppStore = create<AppStoreState>()((set) => ({
 		set({ findText: "", query: "", listed: null, highlight: null, goto: null, results: [], resultsTitle: "" }),
 	highlight: null,
 	setHighlight: (highlight) => set({ highlight }),
+	heat: null,
+	setHeat: (heat) => set({ heat }),
 	mode: { kind: "normal" },
 	// refused while the timelapse is open, and said so (user: it was dropped without a word, not even in the log)
 	setMode: (mode) =>
