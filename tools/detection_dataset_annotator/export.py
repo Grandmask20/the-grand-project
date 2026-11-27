@@ -160,19 +160,13 @@ def export_dataset(store: ReviewStore, output_dir: Path, *, reviewed_only: bool 
     every = list(store.items())
     settled = settle_splits(store, every)
     split_of = settled.split_of
-    items = [(key, item) for key, item in every if item.get("reviewed") or not reviewed_only]
-    labels = dataset_classes(
-        str(annotation.get("label", "")).strip() for _key, item in items for annotation in item.get("annotations", [])
-    )
-    label_ids = {label: index for index, label in enumerate(labels)}
-    image_rows: list[dict[str, Any]] = []
-    annotation_rows: list[dict[str, Any]] = []
-    manifest_rows: list[dict[str, Any]] = []
-    skipped = 0
+    # the screenshots exported, chosen before the classes: one left out gives the manifest no class of its own
     changed: list[str] = []
-    roots = store.input_roots()
-    for key, item in items:
+    chosen: list[tuple[str, dict[str, Any], Path, tuple[int, int]]] = []
+    for key, item in every:
         reviewed = bool(item.get("reviewed", False))
+        if reviewed_only and not reviewed:
+            continue
         if not (reviewed or item.get("detected")):
             continue  # never processed: its empty box list is not a labelling
         path = Path(item["path"])  # as the store keeps it (absolute), the file the split ledger hashed
@@ -184,7 +178,20 @@ def export_dataset(store: ReviewStore, output_dir: Path, *, reviewed_only: bool 
         size = _image_size(item, path) if path.is_file() else None
         if size is None:
             continue
-        width, height = size
+        chosen.append((key, item, path, size))
+    labels = dataset_classes(
+        str(annotation.get("label", "")).strip()
+        for _key, item, _path, _size in chosen
+        for annotation in item.get("annotations", [])
+    )
+    label_ids = {label: index for index, label in enumerate(labels)}
+    image_rows: list[dict[str, Any]] = []
+    annotation_rows: list[dict[str, Any]] = []
+    manifest_rows: list[dict[str, Any]] = []
+    skipped = 0
+    roots = store.input_roots()
+    for key, item, path, (width, height) in chosen:
+        reviewed = bool(item.get("reviewed", False))
         image_id = len(image_rows)
         image_rows.append(
             {
@@ -299,6 +306,8 @@ def main(argv: list[str] | None = None) -> int:
     )
     args = parser.parse_args(argv)
     output_dir = resolve_path(args.output_dir)
+    if not (output_dir / K.ANNOTATOR_STORE_FILE).is_file():  # opening it would create an empty store and export it
+        parser.error(f"no annotator store at {output_dir / K.ANNOTATOR_STORE_FILE}")
     with ReviewStore.open(output_dir / K.ANNOTATOR_STORE_FILE) as store:
         result = export_dataset(store, output_dir, reviewed_only=not args.unreviewed)
     print(

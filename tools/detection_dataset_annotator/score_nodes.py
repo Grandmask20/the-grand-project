@@ -27,8 +27,8 @@ from grand_project.detect.icon_types import icon_type
 from grand_project.detect.rf_detr_model import hall_node
 
 from . import constants as K
-from .detection import decode_image
-from .state import resolve_path
+from .detection import read_with_digest
+from .state import changed_since_detection, resolve_path
 from .store import ReviewStore
 
 
@@ -190,26 +190,27 @@ def main(argv: list[str] | None = None) -> int:
 def _score(store_path: Path, limit: int | None) -> tuple[list[tuple[str, str, bool]], int]:
     """(reviewed class, guess, sure) of every reviewed node box, and how many screenshots had node boxes."""
     pairs: list[tuple[str, str, bool]] = []
-    scored = 0
+    scored = changed = 0
     with ReviewStore.open(store_path, read_only=True) as store:  # scoring changes nothing, its journal mode neither
         for _key, item in store.items(reviewed_only=True):
             if limit is not None and scored >= limit:
                 break  # before reading the next one: --limit 0 reads none
-            raw = decode_image(Path(item["path"]))
-            if raw is None:
+            read = read_with_digest(Path(item["path"]))
+            if read is None:
                 continue
-            # the boxes are in the size they were saved in: the file now may be another size of the same view
+            raw, digest = read
+            if changed_since_detection(item, digest):  # its boxes frame another picture than the file now holds
+                changed += 1
+                print(f"{item['source']}: changed since its detection: rerun its detection (not scored)")
+                continue
+            # the boxes are in the size they were saved in (the same bytes: the file's own size)
             width, height = int(item.get("width") or raw.shape[1]), int(item.get("height") or raw.shape[0])
-            if abs((width / height) / (raw.shape[1] / raw.shape[0]) - 1) > K.ANNOTATOR_SCORE_ASPECT_TOLERANCE:
-                print(
-                    f"{item['source']}: boxes saved for {width}x{height}, the file is {raw.shape[1]}x{raw.shape[0]} "
-                    "(another view): not scored"
-                )
-                continue
             img = core.scale_screenshot(raw)
             found = guess_nodes(img, item.get("annotations", []), width, height)
             pairs.extend(found)
             scored += bool(found)  # a screenshot without node boxes scores nothing: it uses none of --limit
+    if changed:
+        print(f"{changed} reviewed screenshots changed since their detection: rerun their detection to score them")
     return pairs, scored
 
 

@@ -21,9 +21,11 @@ from . import constants as K
 
 
 def _library_dirs() -> list[str]:
-    """PyTorch's CUDA library folders (cuDNN, the CUDA 13 runtime) found on ``sys.path``."""
+    """PyTorch's CUDA library folders (cuDNN, the CUDA runtime: ``cu13`` or the older wheels' ``cuda_runtime``) found
+    on ``sys.path``."""
     package_dirs = {Path(entry) / "nvidia" for entry in sys.path if entry}
-    found = [package_dir / name / "lib" for name in ("cudnn", "cu13") for package_dir in sorted(package_dirs)]
+    names = ("cudnn", "cu13", "cuda_runtime")
+    found = [package_dir / name / "lib" for name in names for package_dir in sorted(package_dirs)]
     return [str(folder) for folder in found if folder.is_dir()]
 
 

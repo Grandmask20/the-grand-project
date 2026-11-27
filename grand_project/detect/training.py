@@ -348,13 +348,11 @@ def _project_name(path: Path) -> str:
         return str(resolved)
 
 
-def _held_out(model_dir: Path, shots) -> bool | None:
-    """Whether a model trained on none of the screenshots: its ``RF_DETR_TRAINED_ON`` names none of them (None: the
-    model folder has no such list, so it is not known)."""
-    listed = model_dir / RF_DETR_TRAINED_ON
-    if not listed.is_file():
+def _held_out(trained: set[str] | None, shots) -> bool | None:
+    """Whether a model trained on none of the screenshots: its ``RF_DETR_TRAINED_ON`` list names none of them (None:
+    the model has no such list, so it is not known)."""
+    if trained is None:
         return None
-    trained = {line.strip() for line in listed.read_text(encoding="utf-8").splitlines() if line.strip()}
     return not any(_project_name(path) in trained for path in shots)
 
 
@@ -371,7 +369,7 @@ def cmd_score_rf_detr() -> int:
     Returns:
         0 (process exit code); 1 when there is no hand-labelled truth or none of its screenshots can be read.
     """
-    from .rf_detr_model import detect_rf_detr, rf_detr_model_path
+    from .rf_detr_model import detect_rf_detr, rf_detr_model_path, runtime_trained_on
 
     t0 = time.time()
     truth, where = _truth_screenshots()
@@ -397,7 +395,10 @@ def cmd_score_rf_detr() -> int:
         print("no truth screenshot could be read")
         return 1
     model_dir = rf_detr_model_path()
-    held_out = _held_out(model_dir, [where[name] for name in new])  # the screenshots scored, not every truth one
+    # the list read with the weights that detected (a new best/ swapped in meanwhile lists other screenshots)
+    held_out = _held_out(
+        runtime_trained_on(model_dir), [where[name] for name in new]
+    )  # the screenshots scored, not every truth one
     if held_out:
         kind = "held-out: the model trained on none of the scored screenshots"
     elif held_out is None:

@@ -196,6 +196,7 @@ class Annotator {
     this.autoFit = true; // the view is the fitted one: a resize fits it again (the reviewer's zoom or pan stays)
     this.sentGoto = null; // the picker's target this editor saved its boxes for already
     this.drag = null;
+    this.refitPending = false; // a fit asked for during a box drag, done when it ends
     this.spaceDown = false;
     this.wheelSum = 0; // wheel delta not yet turned into box resize steps
     this.lastScale = { at: 0, selection: "" }; // the last resize step, to merge one gesture into one undo step
@@ -506,8 +507,9 @@ class Annotator {
     // ... and again when the keyboard brings the focus back to the canvas (Tab), after a click elsewhere.
     this.on(viewport, "focus", () => this.setActive(true));
     this.resizeObserver = new ResizeObserver(() => {
-      // fitted again while the view is still the fitted one (the page's layout or window changed size)
-      if (!this.fitted || this.autoFit) this.fit();
+      // fitted again while the view is still the fitted one (the page's layout or window changed size); during a
+      // box drag only once it ends, so the drag's start point stays in the frame it was taken in
+      if (!this.fitted || this.autoFit) this.refit();
     });
     this.resizeObserver.observe(viewport);
   }
@@ -524,6 +526,18 @@ class Annotator {
     const { zoom, x, y } = this.view;
     this.stage.style.transform = `translate(${x}px, ${y}px) scale(${zoom})`;
     this.stage.style.setProperty("--inv", String(1 / zoom));
+  }
+
+  refit() {
+    // a fit now, or when the box drag in progress ends
+    if (this.drag && this.drag.kind !== "pan") this.refitPending = true;
+    else this.fit();
+  }
+
+  afterDrag() {
+    if (!this.refitPending) return;
+    this.refitPending = false;
+    if (!this.fitted || this.autoFit) this.fit();
   }
 
   fit() {
@@ -852,6 +866,7 @@ class Annotator {
     if (this.drag && !this.ownsDrag(event)) return;
     const drag = this.drag;
     this.drag = null;
+    this.afterDrag();
     this.viewport.classList.remove("ann-translating");
     if (this.viewport.hasPointerCapture(event.pointerId)) this.viewport.releasePointerCapture(event.pointerId);
     this.drawEl.hidden = true;
@@ -873,6 +888,7 @@ class Annotator {
     // Forget the drag in progress, restoring nothing.
     const drag = this.drag;
     this.drag = null;
+    this.afterDrag();
     this.viewport.classList.remove("ann-translating");
     this.drawEl.hidden = true;
     return drag;
@@ -1311,7 +1327,8 @@ class Annotator {
   typingInInspector() {
     // Whether the focus is in one of the selected box's fields (X, Y, W, H): redrawing the panel would lose the draft.
     const active = this.wrap.getRootNode().activeElement;
-    return Boolean(active && active.tagName === "INPUT" && this.inspectorEl.contains(active));
+    // the Label selector too: an autosave's answer must not take it from under the reviewer
+    return Boolean(active && ["INPUT", "SELECT"].includes(active.tagName) && this.inspectorEl.contains(active));
   }
 
   picture(parent, label, className) {
@@ -1425,10 +1442,15 @@ class Annotator {
           input.value = String(round2(box[field])); // emptied or unreadable: the box stays as it was (0 is typed)
           return;
         }
+        // a box drag ends first (as useLabel): the typed value goes on the boxes as sent, and no later cancel of the
+        // drag puts the boxes from before it back over the edit
+        if (this.drag && this.drag.kind !== "pan") this.cancelDrag();
+        const target = this.byId(box.id);
+        if (!target) return;
         this.snapshot();
-        box[field] = value;
-        this.clampBox(box);
-        this.markEdited(box);
+        target[field] = value;
+        this.clampBox(target);
+        this.markEdited(target);
         this.changed();
         this.renderAll();
       });

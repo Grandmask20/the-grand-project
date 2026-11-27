@@ -260,6 +260,8 @@ def main(argv: list[str] | None = None) -> int:
     a = ap.parse_args(argv)
     if a.old in a.new:
         ap.error("the old type cannot be one of the new ones")
+    if len(set(a.new)) != len(a.new):
+        ap.error("a new type is named twice")
     for n in a.new:
         if n not in ICON_INFO:
             print(f"warning: {n} is not in ICON_INFO (grand_project/detect/constants.py)")
@@ -323,7 +325,11 @@ def main(argv: list[str] | None = None) -> int:
             if kb:
                 # the name the truth's save gives it is rebuilt from the review's notes, which may say the old name
                 # (a single or row correction to it, whatever the detector called it): the save renames it again
-                kb.setdefault("renamed", {})[a.old] = m.name
+                renamed = kb.setdefault("renamed", {})
+                for earlier, now in renamed.items():  # an earlier split's names lead straight to the latest
+                    if now == a.old:
+                        renamed[earlier] = m.name
+                renamed[a.old] = m.name
             if kb and kb.get("detector") == a.old:
                 # the review row it was shown in stays its row (truth.cmd_save applies a row's correction by it), also
                 # when one row's icons take several new names

@@ -379,6 +379,13 @@ def test_a_held_out_file_of_another_size_than_exported_is_not_scored(monkeypatch
     boxes, so it is left out of the scores, said (CodeRabbit)."""
     row = {"source": "a.png", "path": "a.png", "width": 1920, "height": 1080, "annotations": []}
     monkeypatch.setattr(simulate_loop, "predict", lambda detector, path: ([], (1920, 1080), (2560, 1440)))
-    scores = simulate_loop._score_splits({}, {"validation": [row]}, {"a.png": []}, None)
-    assert scores["validation"]["screenshots"] == 0
+    with pytest.raises(SystemExit, match="no held-out screenshot"):  # nothing scored in either split
+        simulate_loop._score_splits({}, {"validation": [row]}, {"a.png": []}, None)
     assert "changed since its detection" in capsys.readouterr().out
+    # one split scored: the other is unavailable (no score), not zero edits
+    good = {**row, "source": "b.png", "width": 2560, "height": 1440}
+    scores = simulate_loop._score_splits({}, {"validation": [row], "test": [good]}, {"b.png": []}, None)
+    assert scores["validation"]["screenshots"] == 0 and scores["validation"]["classical"] is None
+    assert scores["test"]["screenshots"] == 1 and scores["test"]["classical"]["gold"]["edits"] == 0
+    report = simulate_loop.report_markdown([{"round": 1, "train_screenshots": 1, "scores": scores}])
+    assert "no screenshot scored" in report

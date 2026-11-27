@@ -56,11 +56,15 @@ def test_files_rewritten_from_several_threads_at_once_are_never_read_half_writte
     start = threading.Barrier(writers + reading)
     done = threading.Event()
     seen: list[str] = []
+    failed: list[BaseException] = []
 
     def write(w: int) -> None:
-        start.wait(5)
-        for i in range(each):
-            fileio.write_text_atomic(f, texts[f"{w}-{i}"])
+        try:
+            start.wait(5)
+            for i in range(each):
+                fileio.write_text_atomic(f, texts[f"{w}-{i}"])
+        except BaseException as exc:  # a writer's error fails the test, not only its thread
+            failed.append(exc)
 
     def read() -> None:
         start.wait(5)
@@ -74,6 +78,8 @@ def test_files_rewritten_from_several_threads_at_once_are_never_read_half_writte
         t.start()
     for t in threads:
         t.join(30)
+        assert not t.is_alive(), "a writer did not finish"
+    assert not failed, failed
     done.set()
     if reader:
         reader.join(10)

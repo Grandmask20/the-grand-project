@@ -174,7 +174,7 @@ them. The hand truth and reference atlases that `python -m grand_project.detect 
 
 Screenshots of one atlas overlap: a map node is on 4.5 roa-atlas and 3.3 fr-atlas screenshots on average, so a split
 drawn screenshot by screenshot put 91-93% of a held-out screenshot's map nodes on training screenshots too. The splits
-therefore draw **blocks** (`blocks.py`): an atlas's screenshots (those next to its `atlas.json`) are grouped by where
+therefore draw **blocks** (`blocks.py`): an atlas's screenshots (those next to its `atlas.json` or in folders below it) are grouped by where
 they lie, k-means of their middles in atlas units, about `ANNOTATOR_SPLIT_BLOCK_SHOTS` (60) to a block; a screenshot
 no atlas places is a block of its own. The blocks (the user's design):
 

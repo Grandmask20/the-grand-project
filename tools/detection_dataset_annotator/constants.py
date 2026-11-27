@@ -355,11 +355,6 @@ ANNOTATOR_SCORE_RING_MAX = 200.0
 side per map node: a fifth of a 1080p screenshot's height already reaches past every neighbour (BIOME_RING is
 19.35-38), and a mistyped radius would allocate without bound."""
 
-ANNOTATOR_SCORE_ASPECT_TOLERANCE = 0.01
-"""``score_nodes``: how far a screenshot file's width / height may differ from the size its boxes were saved in (as a
-ratio) and still be the same view, its boxes scaled to it (a 1440p copy of a 1080p screenshot); beyond it the file
-was replaced by another view and its boxes are not scored."""
-
 ANNOTATOR_UNASSIGNED_ARM = "unassigned"
 """The effort report's arm of a review no pre-label pass assigned an arm (reviewed before the A/B loop): its own row,
 never counted in the classical control arm."""

@@ -257,11 +257,23 @@ def recorded_arms(items: Iterable[tuple[str, Mapping[str, Any]]], blocks: Mappin
 
 
 def _blocks(items: Sequence[tuple[str, Mapping[str, Any]]]) -> dict[str, str]:
-    """Image key -> its ledger block (by its project-relative file; the key itself when the ledger has none)."""
+    """Image key -> its ledger block: the row of its file and detected bytes, else its file's rows when they all name
+    one block (a copy's own name too; rows that disagree decide nothing), else the key itself."""
     from .split_ledger import read_ledger_rows
 
-    by_file = {entry.file: entry.block for entry in read_ledger_rows()}  # a copy's own name too
-    return {key: by_file.get(str(item.get("source")), "") or key for key, item in items}
+    exact: dict[tuple[str, str], str] = {}
+    by_file: dict[str, set[str]] = {}
+    for entry in read_ledger_rows():
+        exact.setdefault((entry.file, entry.sha256), entry.block)
+        by_file.setdefault(entry.file, set()).add(entry.block)
+    out = {}
+    for key, item in items:
+        source = str(item.get("source"))
+        block = exact.get((source, str(item.get(K.ANNOTATOR_DETECTED_SHA))))
+        if block is None and len(by_file.get(source, ())) == 1:
+            (block,) = by_file[source]
+        out[key] = block or key
+    return out
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -367,6 +379,8 @@ def main(argv: list[str] | None = None) -> int:
                 prelabel=True,
                 extra={K.ANNOTATOR_PRELABEL_FIELD: record},
                 expect_boxes=base,
+                # the stored detection is still of the bytes predict read (checked in this write)
+                marked={K.ANNOTATOR_DETECTED_SHA: item.get(K.ANNOTATOR_DETECTED_SHA)},
                 **guard,
                 **one_arm,
             ):

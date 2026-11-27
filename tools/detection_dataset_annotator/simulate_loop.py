@@ -427,7 +427,10 @@ def _score_splits(
                 result = score(merge(base, model, policy, scale=scale), reference, base, scale=scale, map_of=map_of)
                 for part in ("gold", "silver"):
                     sums[policy][part] = sums[policy][part] + result[part]
-        count = max(1, scored)
+        if not scored:  # nothing observed: no score, not zero edits
+            out[split] = {"screenshots": 0, **dict.fromkeys(K.ANNOTATOR_PRELABEL_POLICIES)}
+            continue
+        count = scored
         out[split] = {
             "screenshots": scored,
             **{
@@ -438,6 +441,8 @@ def _score_splits(
                 for policy, parts in sums.items()
             },
         }
+    if shots and not any(split["screenshots"] for split in out.values()):
+        raise SystemExit("no held-out screenshot could be scored (every one changed since its detection): rerun them")
     return out
 
 
@@ -455,6 +460,9 @@ def report_markdown(results: Sequence[Mapping[str, Any]]) -> str:
         for split, scores in result["scores"].items():
             lines.append(f"**{split}** ({scores['screenshots']} screenshots)")
             lines.append("")
+            if not scores["screenshots"]:
+                lines += ["no screenshot scored", ""]
+                continue
             lines.append(
                 "| policy | gold edits | relabelled | deleted | added | silver | silver added | silver deleted |"
             )

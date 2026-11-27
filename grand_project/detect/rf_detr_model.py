@@ -152,6 +152,8 @@ def load_detector(model_dir: Path) -> dict[str, Any]:
     except Exception as exc:
         raise RuntimeError(f"could not load the RF-DETR model from {model_dir}: {exc}") from exc
     labels = _labels(model_dir, model)
+    listed = model_dir / K.RF_DETR_TRAINED_ON
+    trained = trained_on(model_dir) if listed.is_file() else None  # with the weights: the same checkpoint state
     # the files as loaded, labels.json too, must be the ones the detector stamp names (a training run swapping a new
     # best/ in meanwhile would give detections of other weights under the old stamp): the digest from before the load,
     # checked after everything was read
@@ -170,7 +172,21 @@ def load_detector(model_dir: Path) -> dict[str, Any]:
     device = _device(torch)
     model.to(device)
     model.eval()
-    return {"processor": processor, "model": model, "device": device, "families": class_families(labels)}
+    return {
+        "processor": processor,
+        "model": model,
+        "device": device,
+        "families": class_families(labels),
+        "trained_on": trained,
+    }
+
+
+def runtime_trained_on(model_dir: Path) -> set[str] | None:
+    """The screenshots the detector in use trained on (None: its folder lists none): the loaded model's list, read
+    with its weights (a new best/ swapped in since would list other ones), else the folder's."""
+    if _RUNTIME is not None and "trained_on" in _RUNTIME:
+        return _RUNTIME["trained_on"]
+    return trained_on(model_dir) if (Path(model_dir) / K.RF_DETR_TRAINED_ON).is_file() else None
 
 
 def _load_runtime() -> dict[str, Any]:
@@ -469,5 +485,6 @@ __all__ = [
     "reset_rf_detr_runtime",
     "rf_detr_enabled",
     "rf_detr_model_path",
+    "runtime_trained_on",
     "trained_on",
 ]

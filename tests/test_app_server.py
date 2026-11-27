@@ -176,6 +176,10 @@ def test_a_second_start_opens_the_running_app(app, monkeypatch, tmp_path):
     monkeypatch.setattr(S, "AtlasSession", lambda: pytest.fail("a second copy was started"))
     monkeypatch.setenv("http_proxy", "http://127.0.0.1:9")  # a proxy that refuses: the probe goes direct
     monkeypatch.setenv("HTTP_PROXY", "http://127.0.0.1:9")
+    # the classical detector, whatever this machine's setting (an RF-DETR one would answer True and be restarted)
+    from grand_project.detect import rf_detr_model
+
+    monkeypatch.setattr(rf_detr_model, "rf_detr_enabled", lambda: False)
     assert S.running_app(port) == (srv.url, S.VERSION, False)
     assert S.main(["--port", str(port)]) == 0 and opened == [srv.url]  # its page, not a second copy
     assert S.running_app(port, root=tmp_path) is None  # a copy of the program in another folder: not this one

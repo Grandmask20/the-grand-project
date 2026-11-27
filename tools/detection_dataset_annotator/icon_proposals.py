@@ -283,6 +283,14 @@ def node_offset(icons: list[dict[str, Any]], nodes: list[dict[str, Any]]) -> flo
     Crawl screenshots measure 24 px (``ROW_DY``), the res atlases 31-36; fewer than
     ``ANNOTATOR_HIDDEN_MIN_PAIRS`` pairs fall back to ``ROW_DY``.
     """
+    offsets = _node_offsets(icons, nodes)
+    if len(offsets) < K.ANNOTATOR_HIDDEN_MIN_PAIRS:
+        return float(detect_constants.ROW_DY)
+    return float(np.median(offsets))
+
+
+def _node_offsets(icons: list[dict[str, Any]], nodes: list[dict[str, Any]]) -> list[float]:
+    """Per icon centred above a visible map node: how far below it that map node sits."""
     found = _points([node for node in nodes if not node.get("hidden")])
     offsets = []
     for icon in icons:
@@ -294,9 +302,7 @@ def node_offset(icons: list[dict[str, Any]], nodes: list[dict[str, Any]]) -> flo
         below = (np.abs(dx) <= K.ANNOTATOR_ICON_CENTRED) & (dy >= low) & (dy <= high)
         if below.any():
             offsets.append(float(dy[below].min()))
-    if len(offsets) < K.ANNOTATOR_HIDDEN_MIN_PAIRS:
-        return float(detect_constants.ROW_DY)
-    return float(np.median(offsets))
+    return offsets
 
 
 def hidden_nodes(
@@ -320,6 +326,9 @@ def hidden_nodes(
     nodes = detection.get("nodes", [])
     on_nodes = [icon for icon in icons if icon.get("source") != "square button"]  # ship buttons stand on water
     offset = node_offset(on_nodes, nodes)
+    # too few pairs to measure it (the offset is a guess): a faint map node centred anywhere in the row's reach below
+    # is taken, not only one near the guessed spot (res atlases sit 31-36 px below, the guess is 24)
+    measured = len(_node_offsets(on_nodes, nodes)) >= K.ANNOTATOR_HIDDEN_MIN_PAIRS
     known = _points(nodes)
     visible = _points([node for node in nodes if not node.get("hidden")])
     spots = np.zeros((0, 2)) if spots is None else np.asarray(spots, dtype=float).reshape(-1, 2)
@@ -345,8 +354,8 @@ def hidden_nodes(
 
     for row in _icon_rows(on_nodes):
         x = (row[0]["x"] + row[-1]["x"]) / 2  # the map node sits under the row's middle (user's rule)
-        y = float(np.mean([icon["y"] for icon in row]))
-        y += offset
+        row_y = float(np.mean([icon["y"] for icon in row]))
+        y = row_y + offset
         if beside_visible(x, y):
             continue  # a visible map node this close is the row's map node, not a hidden one next to it (user's rule)
         # the row's own icons stand right above its map node (a single one ROW_DY above, closer than ICON_NMS)
@@ -356,15 +365,15 @@ def hidden_nodes(
             continue
         if len(spots):
             distance = np.hypot(spots[:, 0] - x, spots[:, 1] - y)
-            nearest = int(np.argmin(distance))
+            reach = distance <= K.ANNOTATOR_HIDDEN_SNAP
+            if not measured:
+                low, high = K.ANNOTATOR_ICON_ROW_DY
+                below = spots[:, 1] - row_y
+                reach |= (np.abs(spots[:, 0] - x) <= K.ANNOTATOR_ICON_CENTRED) & (below >= low) & (below <= high)
+            nearest = int(np.argmin(np.where(reach, distance, np.inf)))
             snapped = float(spots[nearest, 0]), float(spots[nearest, 1])
             # a snap that lands beside a visible map node, not clear or off the screen keeps the estimate
-            if (
-                distance[nearest] <= K.ANNOTATOR_HIDDEN_SNAP
-                and clear(*snapped, others)
-                and not beside_visible(*snapped)
-                and on_screen(*snapped)
-            ):
+            if reach[nearest] and clear(*snapped, others) and not beside_visible(*snapped) and on_screen(*snapped):
                 x, y = snapped
         if not on_screen(x, y):
             continue

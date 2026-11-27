@@ -586,17 +586,13 @@ def test_an_explicit_device_that_is_not_there_stops_the_run(monkeypatch: pytest.
     T.check_device("cpu")
 
 
-def test_one_process_on_several_gpus_stops_the_run(monkeypatch: pytest.MonkeyPatch) -> None:
-    """DataParallel would split each image's targets apart from it: one visible GPU, or one process per GPU."""
-    monkeypatch.setattr(T.torch.cuda, "is_available", lambda: True)
-    monkeypatch.setattr(T.torch.cuda, "device_count", lambda: 2)
-    monkeypatch.delenv("WORLD_SIZE", raising=False)
-    for device in ("auto", "cuda"):
-        with pytest.raises(SystemExit, match="2 GPUs"):
-            T.check_device(device)
-    T.check_device("cpu")
-    monkeypatch.setenv("WORLD_SIZE", "2")  # torchrun: one process per GPU
-    T.check_device("cuda")
+def test_one_process_on_several_gpus_stops_the_run() -> None:
+    """DataParallel would split each image's targets apart from it: one visible GPU, or one process per GPU (the
+    Trainer's own n_gpu says which, not an environment variable: CodeRabbit)."""
+    with pytest.raises(SystemExit, match="2 GPUs"):
+        T.check_parallel(SimpleNamespace(n_gpu=2))  # not distributed, two GPUs: DataParallel
+    T.check_parallel(SimpleNamespace(n_gpu=1))  # one GPU, or one per torchrun process
+    T.check_parallel(SimpleNamespace(n_gpu=0))  # the CPU
 
 
 def test_a_skipped_optimizer_step_leaves_the_ema(tmp_path: Path) -> None:
@@ -682,13 +678,14 @@ def test_pruning_keeps_the_newest_whole_checkpoint_and_every_best_a_kept_one_nam
         (path / "trainer_state.json").write_text(json.dumps({"best_model_checkpoint": best_path}))
         return path
 
-    for step, best in ((1, 1), (2, 1), (3, 3), (4, 3)):
+    # the newest names an older best than the run's own (a resumed state's): both bests stay
+    for step, best in ((1, 1), (2, 1), (3, 3), (4, 1)):
         checkpoint(step, best)
     (tmp_path / "runs").mkdir()  # not a checkpoint
     state = SimpleNamespace(is_world_process_zero=True, best_model_checkpoint=str(tmp_path / "checkpoint-3"))
     T.PruneCallback().on_save(SimpleNamespace(output_dir=str(tmp_path)), state, None)
-    assert sorted(p.name for p in tmp_path.iterdir()) == ["checkpoint-3", "checkpoint-4", "runs"]
-    checkpoint(5, 1)  # a resumed state naming an older best: kept for it
+    assert sorted(p.name for p in tmp_path.iterdir()) == ["checkpoint-1", "checkpoint-3", "checkpoint-4", "runs"]
+    checkpoint(5, 3)  # the older best is no longer named: it goes
     T.PruneCallback().on_save(SimpleNamespace(output_dir=str(tmp_path)), state, None)
     assert sorted(p.name for p in tmp_path.iterdir()) == ["checkpoint-3", "checkpoint-5", "runs"]
     checkpoint(6, 3, whole=False)  # (cut off before its EMA): the newest whole one stays too

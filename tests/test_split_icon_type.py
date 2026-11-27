@@ -166,3 +166,27 @@ def test_a_truth_saved_while_the_databases_were_relabelled_is_not_overwritten(tm
     with pytest.raises(SystemExit, match="truth_key.json changed while the split ran"):
         S.main(["Old", "New", "--db", str(db), "--sheet", str(tmp_path / "sheet.png")])
     assert truth.read_bytes() == before and key_file.read_text() == '{"badges": {}}'
+
+
+def test_a_note_may_name_a_type_a_split_created(tmp_path: Path) -> None:
+    """A single correction naming a split's new type (no row and no word for it yet) is read and applied
+    (CodeRabbit)."""
+    import json
+    from types import SimpleNamespace
+
+    from grand_project import truth
+
+    badge = {"shot": "S1", "x": 100, "y": 100, "detector": "Breach"}
+    key = {
+        "shots": {"S1": {"name": "shot1.png"}},
+        "maps": {},
+        "landmarks": {},
+        "badges": {"B1": {**badge, "renamed": {"ArcaneOrProsperous": "ArcaneHordes"}}, "B2": badge},
+        "rows": {"R1": "Breach"},
+    }
+    (tmp_path / "truth_key.json").write_text(json.dumps(key), encoding="utf-8")
+    labels = tmp_path / "labels.txt"
+    labels.write_text("badges\nB2 ArcaneHordes\n", encoding="utf-8")
+    assert truth.cmd_save(SimpleNamespace(out=str(tmp_path), labels=str(labels))) == 0
+    saved = json.loads((tmp_path / "truth.json").read_text(encoding="utf-8"))
+    assert [b["name"] for b in saved["shot1.png"]["badges"]] == ["Breach", "ArcaneHordes"]

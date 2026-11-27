@@ -12,6 +12,7 @@ from grand_project.detect import badges
 from tools.detection_dataset_annotator import ReviewStore, image_key, score_nodes
 from tools.detection_dataset_annotator import constants as K
 from tools.detection_dataset_annotator.score_nodes import guess_nodes, main, report
+from tools.detection_dataset_annotator.state import file_hash
 
 GRASS, SNOW = (40, 150, 150), (0, 10, 200)  # OpenCV HSV of two ground classes
 
@@ -85,7 +86,7 @@ def test_the_tool_reads_reviewed_screenshots(tmp_path: Path, capsys) -> None:
         store.add_images([shot])
         key = image_key(shot)
         result = {"detected": True, "width": 1920, "height": 1080, "annotations": [_node("map_node_grass", 400, 540)]}
-        store.record_detection(key, result, force=False)
+        store.record_detection(key, {**result, K.ANNOTATOR_DETECTED_SHA: file_hash(shot)}, force=False)
         assert main(["--output-dir", str(out)]) == 1  # nothing reviewed yet
         assert store.save_review(key, 1, reviewed=True)
     assert main(["--output-dir", str(out), "--ring", "20", "40"]) == 0
@@ -200,16 +201,15 @@ def test_a_screenshot_without_node_boxes_uses_none_of_the_limit(tmp_path: Path, 
             _shot(shot)
             store.add_images([shot])
             result = {"detected": True, "width": 1920, "height": 1080, "annotations": boxes}
-            store.record_detection(image_key(shot), result, force=False)
+            store.record_detection(image_key(shot), {**result, K.ANNOTATOR_DETECTED_SHA: file_hash(shot)}, force=False)
             assert store.save_review(image_key(shot), 1, reviewed=True)
     assert main(["--output-dir", str(out), "--limit", "1"]) == 0
     assert "1 nodes" in capsys.readouterr().out
 
 
-def test_boxes_are_read_in_the_size_they_were_saved_in(tmp_path: Path, capsys) -> None:
-    """A screenshot file replaced by a larger copy of the same view has its boxes scaled to it; one replaced by
-    another view (another aspect ratio) is named and not scored. The node is on the snow: read in the larger file's
-    size it would be at x=750, on the grass (CodeRabbit)."""
+def test_a_screenshot_changed_since_its_detection_is_not_scored(tmp_path: Path, capsys) -> None:
+    """Its boxes frame the bytes detected: a file replaced since (even a larger copy of the same view) is named and
+    not scored, by its digest, not its size (CodeRabbit)."""
     shot = tmp_path / "a.png"
     image = _shot(shot)
     out = tmp_path / "out"
@@ -218,14 +218,13 @@ def test_boxes_are_read_in_the_size_they_were_saved_in(tmp_path: Path, capsys) -
         key = image_key(shot)
         node = _node("map_node_mountain", 1500, 540)
         result = {"detected": True, "width": 1920, "height": 1080, "annotations": [node]}
-        store.record_detection(key, result, force=False)
+        store.record_detection(key, {**result, K.ANNOTATOR_DETECTED_SHA: file_hash(shot)}, force=False)
         assert store.save_review(key, 1, reviewed=True)
-    cv2.imwrite(str(shot), cv2.resize(image, (3840, 2160), interpolation=cv2.INTER_NEAREST))
     assert main(["--output-dir", str(out)]) == 0
     assert "1 nodes, 100.0% right" in capsys.readouterr().out
-    cv2.imwrite(str(shot), image[:, :1080])
+    cv2.imwrite(str(shot), cv2.resize(image, (3840, 2160), interpolation=cv2.INTER_NEAREST))
     assert main(["--output-dir", str(out)]) == 1
-    assert "boxes saved for 1920x1080, the file is 1080x1080 (another view): not scored" in capsys.readouterr().out
+    assert "changed since its detection" in capsys.readouterr().out
 
 
 def test_a_missing_store_is_named_and_not_made(tmp_path: Path, capsys) -> None:

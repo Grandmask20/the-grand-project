@@ -639,6 +639,7 @@ def _page(store: ReviewStore, settings: Settings) -> None:
             "Nothing to review: press **Discover** and **Detect new** in the sidebar, or turn off "
             "‘Hide reviewed screenshots’ to revisit completed work."
         )
+        _unmount()  # no editor on screen: the next one mounts fresh (its saved count from zero)
         return
     selected = _queue_picker(store, queue, settings, keys)
     _render_editor(store, selected, keys, settings)

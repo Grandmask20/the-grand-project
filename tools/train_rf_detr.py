@@ -361,7 +361,10 @@ class EmaCallback(TrainerCallback):
             save_native(self.ema.module, folder)
         else:  # a stand-in model (tests)
             self.ema.module.save_pretrained(folder)
-        (folder / EMA_STATE).write_text(json.dumps({"updates": int(self.ema.n_averaged.item())}), encoding="utf-8")
+        # the counter marks the EMA whole (ema_complete): written beside it, renamed into place once complete
+        partial = folder / f"{EMA_STATE}.tmp"
+        partial.write_text(json.dumps({"updates": int(self.ema.n_averaged.item())}), encoding="utf-8")
+        os.replace(partial, folder / EMA_STATE)
 
     def model(self, fallback):
         """The EMA model (eval mode), or ``fallback`` before training began."""
@@ -797,17 +800,20 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
 
 def check_device(device: str) -> None:
     """Stop when the device asked for is not there: an explicit ``cuda`` or ``mps`` must not train on the CPU
-    unnoticed (``auto`` takes what there is); and when one process would train on several GPUs (DataParallel)."""
+    unnoticed (``auto`` takes what there is)."""
     if device == "cuda" and not torch.cuda.is_available():
         raise SystemExit("--device cuda: PyTorch sees no CUDA device (use --device auto or cpu)")
     if device == "mps" and not torch.backends.mps.is_available():
         raise SystemExit("--device mps: PyTorch sees no Apple GPU (use --device auto or cpu)")
-    # one process on several GPUs: the Trainer wraps the model in DataParallel, whose scatter splits each image's
-    # target dict apart from its image (torchrun sets WORLD_SIZE: one process per GPU is fine)
-    several = device in ("auto", "cuda") and torch.cuda.is_available() and torch.cuda.device_count() > 1
-    if several and "WORLD_SIZE" not in os.environ:
+
+
+def check_parallel(training: TrainingArguments) -> None:
+    """Stop when the Trainer would run one process on several GPUs: it wraps the model in DataParallel, whose scatter
+    splits each image's target dict apart from its image. Judged by the Trainer's own settings (``n_gpu`` is above 1
+    only then), not an environment variable: one GPU, or one process per GPU (torchrun), is fine."""
+    if training.n_gpu > 1:
         raise SystemExit(
-            f"{torch.cuda.device_count()} GPUs visible to one process: expose one (CUDA_VISIBLE_DEVICES=0) or "
+            f"{training.n_gpu} GPUs visible to one process: expose one (CUDA_VISIBLE_DEVICES=0) or "
             "launch one process per GPU (torchrun)"
         )
 
@@ -912,6 +918,7 @@ def main(argv: list[str] | None = None) -> int:
         check_device(args.device)  # before a dataset is built or a model loaded
         # before the dataset: under torchrun it starts the processes' group, which the dataset's build waits on
         training_args = training_arguments(args, checkpoints)
+        check_parallel(training_args)
     dataset, label_map, dataset_dir = dataset_main_first(args, training_args)
     if args.train_subset is not None:
         dataset = train_subset(dataset, args.train_subset)

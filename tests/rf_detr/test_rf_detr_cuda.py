@@ -12,10 +12,11 @@ from grand_project.detect import constants as K
 from grand_project.detect import rf_detr_cuda
 
 
-@pytest.fixture
-def packages(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> list[str]:
-    """A site-packages with PyTorch's cuDNN and CUDA runtime folders, on Linux, not restarted yet."""
-    folders = [tmp_path / "nvidia" / name / "lib" for name in ("cudnn", "cu13")]
+@pytest.fixture(params=["cu13", "cuda_runtime"])
+def packages(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, request: pytest.FixtureRequest) -> list[str]:
+    """A site-packages with PyTorch's cuDNN and CUDA runtime folders (either wheel layout), on Linux, not restarted
+    yet."""
+    folders = [tmp_path / "nvidia" / name / "lib" for name in ("cudnn", request.param)]
     for folder in folders:
         folder.mkdir(parents=True)
     monkeypatch.setattr(sys, "path", [str(tmp_path)])
