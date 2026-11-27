@@ -3,6 +3,8 @@ one screenshot at a time and safe between sessions."""
 
 from __future__ import annotations
 
+import sqlite3
+import threading
 from pathlib import Path
 from typing import Any
 
@@ -148,6 +150,86 @@ def test_two_sessions_keep_each_others_changes(tmp_path: Path) -> None:
         assert [box["label"] for box in check.item(image_key(a))["annotations"]] == ["tower"]
         assert [box["label"] for box in check.item(key_b)["annotations"]] == ["icon"]
         assert check.settings() == DetectionOptions(named_icons=True)
+
+
+def _in_sessions(path: Path, *saves) -> list[Any]:
+    """Run each save in its own session on its own thread, all let go at the same moment; their results in order."""
+    results: list[Any] = [None] * len(saves)
+    start = threading.Barrier(len(saves))
+
+    def run(k: int) -> None:
+        with ReviewStore.open(path) as store:  # (a SQLite connection belongs to the thread that made it)
+            start.wait(5)
+            results[k] = saves[k](store)
+
+    threads = [threading.Thread(target=run, args=(k,)) for k in range(len(saves))]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join(30)
+    return results
+
+
+def test_a_save_waits_for_another_session_s_write_then_goes_through(tmp_path: Path) -> None:
+    """A detection run holds the write lock while it saves a result: an editor's save waits for it (up to
+    ``ANNOTATOR_STORE_BUSY_S``), it doesn't fail with "database is locked"."""
+    path = tmp_path / K.ANNOTATOR_STORE_FILE
+    (shot,) = _shots(tmp_path, "a.png")
+    with ReviewStore.open(path) as setup:
+        key = _detected(setup, shot, _box("map_node", 10))
+    other = sqlite3.connect(str(path), isolation_level=None)
+    other.execute("BEGIN IMMEDIATE")  # (another session in the middle of a write)
+    saved: list[bool] = []
+    editor = threading.Thread(
+        target=lambda: saved.extend(_in_sessions(path, lambda s: s.save_review(key, 1, reviewed=True)))
+    )
+    editor.start()
+    editor.join(0.5)
+    assert editor.is_alive() and not saved  # waiting for the lock, not refused
+    other.execute("COMMIT")
+    other.close()
+    editor.join(30)
+    assert saved == [True]
+    with ReviewStore.open(path) as check:
+        assert check.item(key)["reviewed"] is True
+
+
+def test_two_tabs_saving_edits_of_the_same_boxes_at_once_keep_exactly_one(tmp_path: Path, rng, runs) -> None:
+    """Two browser tabs edit one screenshot from the same boxes and save together: the first save wins and the
+    other is refused (it would drop the first one's edit), whichever comes first."""
+    path = tmp_path / K.ANNOTATOR_STORE_FILE
+    shots = _shots(tmp_path, *(f"{k}.png" for k in range(runs(10))))
+    with ReviewStore.open(path) as setup:
+        keys = [_detected(setup, shot, _box("map_node", 10)) for shot in shots]
+    for key in keys:
+        with ReviewStore.open(path) as reader:
+            shown = reader.item(key)
+        edits = [[_box(label, rng.uniform(0, 100), source="manual")] for label in ("tower", "hall")]
+        saved = _in_sessions(
+            path,
+            *(
+                lambda s, e=e, key=key, shown=shown: s.save_review(
+                    key, shown["edit_version"], annotations=e, expect_boxes=shown["annotations"]
+                )
+                for e in edits
+            ),
+        )
+        assert sorted(saved) == [False, True], saved
+        with ReviewStore.open(path) as check:
+            kept = [box["label"] for box in check.item(key)["annotations"]]
+        assert kept == ["tower" if saved[0] else "hall"]
+
+
+def test_review_time_saved_from_two_tabs_at_once_counts_both(tmp_path: Path) -> None:
+    """The review log is read, added to and written in one write: two saves together both count (none is lost)."""
+    path = tmp_path / K.ANNOTATOR_STORE_FILE
+    (shot,) = _shots(tmp_path, "a.png")
+    with ReviewStore.open(path) as setup:
+        key = _detected(setup, shot, _box("map_node", 10))
+    saves = [lambda s: s.save_review(key, 1, review_s=1.5) for _ in range(6)]
+    assert _in_sessions(path, *saves) == [True] * 6
+    with ReviewStore.open(path) as check:
+        assert check.item(key)[K.ANNOTATOR_REVIEW_FIELD]["active_s"] == 9.0
 
 
 def test_a_failed_detection_keeps_what_a_rerun_replaces(tmp_path: Path, review_store: ReviewStore) -> None:

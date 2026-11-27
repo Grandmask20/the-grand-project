@@ -77,6 +77,39 @@ describe("createHttp", () => {
 			await expect(http.send("POST", "/api/atlas/save")).rejects.toBeInstanceOf(StaleError);
 		});
 
+		it("keeps the answer of a Re-check that opened another atlas, and the update's", async () => {
+			setAtlasGen(4);
+			const http = createHttp(
+				"",
+				vi.fn().mockImplementation(async () => reply(200, { ok: 1 }, 5)),
+			);
+			// (dropped as stale, the dialog never asked for the new atlas's state)
+			expect(await http.send("POST", "/api/atlas/recheck-file", { path: "b" })).toEqual({ ok: 1 });
+			expect(await http.get("/api/update")).toEqual({ ok: 1 });
+			expect(await http.send("POST", "/api/update/check", {})).toEqual({ ok: 1 });
+		});
+
+		it("uploads with the atlas the page draws and drops an upload saved for another", async () => {
+			setAtlasGen(4);
+			const fetcher = vi.fn().mockResolvedValue(reply(200, { path: "a/shot.png" }, 4));
+			const http = createHttp("", fetcher);
+			expect(await http.upload("/api/upload", new Blob(["x"]), "shot 1.png")).toEqual({ path: "a/shot.png" });
+			const [, init] = fetcher.mock.calls[0];
+			expect(init.headers["X-Atlas-Gen"]).toBe("4");
+			expect(init.headers["X-Filename"]).toBe("shot%201.png");
+			const refused = createHttp(
+				"",
+				vi.fn().mockResolvedValue(reply(409, { error: "the atlas changed", stale: true }, 5)),
+			);
+			await expect(refused.upload("/api/upload", new Blob(["x"]), "shot.png")).rejects.toBeInstanceOf(StaleError);
+			let answer: (r: Response) => void = () => undefined;
+			const late = createHttp("", vi.fn().mockReturnValue(new Promise<Response>((r) => (answer = r))));
+			const got = late.upload("/api/upload", new Blob(["x"]), "shot.png");
+			setAtlasGen(5); // another atlas opened while the picture went up
+			answer(reply(200, { path: "a/shot.png" }, 4));
+			await expect(got).rejects.toBeInstanceOf(StaleError);
+		});
+
 		it("drops an answer whose body came in after the page learned of another atlas (CodeRabbit)", async () => {
 			setAtlasGen(4);
 			const res = reply(200, { rows: [] }, 4);

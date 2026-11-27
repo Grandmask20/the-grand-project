@@ -74,8 +74,11 @@ README's developer section). `tools/` are developer helpers
   long work runs on the session's worker (or a background thread) and reports through `Events` (log, progress,
   versions, questions). CPU-heavy work that would starve the server (Python's GIL) runs as its own process
   (`python -m grand_project.core.seams ...`), not a thread and not `multiprocessing` (spawn re-runs the caller's
-  main script). Anything that changes what the map's tiles hold bumps a version (model, map image, filters): tile
-  URLs carry it, so the browser keeps tiles until they really change.
+  main script). The exception is a batch of the same job (detecting many screenshots, the check's path tracing):
+  it goes through `fileio.process_pool`, whose workers each keep to their share of the CPU's threads (uncapped,
+  every worker started one per CPU and detection ran 2.7x slower). Anything that changes what the map's tiles hold
+  bumps a version (model, map image, filters): tile URLs carry it, so the browser keeps tiles until they really
+  change.
 - **The open atlas is one record** (`session.opened`: atlas, path, generation, log scope), swapped only in
   `AtlasSession._switch`. Work that outlives a request takes the record once when it starts, uses its parts (never
   `self.atlas` / `self.generation` read again later), checks `owns(record)` under the lock before applying a result,

@@ -100,3 +100,94 @@ def test_a_yes_coming_in_as_the_app_closes_never_undoes_its_no():
     assert ev.answer(qid, True) is False  # (too late: closing)
     t.join(2)
     assert got == [False]
+
+
+# ------------------------------------------------------------------ several threads publishing at once
+
+
+class _FirstIdHeld:
+    """An event id source that hands out id 1 only once `go` is set: the first publisher pauses right after taking its
+    id, while another thread publishes."""
+
+    def __init__(self):
+        self._ids = iter(range(1, 10**6))
+        self.taken = threading.Event()
+        self.go = threading.Event()
+
+    def __iter__(self):
+        return self
+
+    def __next__(self) -> int:
+        n = next(self._ids)
+        if n == 1:
+            self.taken.set()
+            self.go.wait(5)
+        return n
+
+
+def test_events_reach_the_history_in_the_order_of_their_ids():
+    # the id was taken outside the lock: a publisher paused between taking id 1 and appending let id 2 in first, so
+    # the history (what a reconnecting page replays) went 2, 1
+    ev = Events()
+    ids = ev._ids = _FirstIdHeld()
+    q = ev.listen()
+    first = threading.Thread(target=ev.publish, args=("model", "first"))
+    first.start()
+    assert ids.taken.wait(5)
+    second = threading.Thread(target=ev.publish, args=("model", "second"))
+    second.start()
+    second.join(0.3)  # (it waits for the first publisher now, or it was already through: the old order)
+    ids.go.set()
+    first.join(5)
+    second.join(5)
+    assert [e["id"] for e in ev.history] == [1, 2]
+    assert [q.get_nowait()["data"] for _ in range(2)] == ["first", "second"]
+
+
+def test_many_threads_publishing_lose_nothing_and_keep_the_id_order(rng, runs):
+    for _ in range(runs(5)):
+        ev = Events()
+        listener = ev.listen()
+        threads, each = rng.randint(2, 8), rng.randint(5, 20)
+        start = threading.Barrier(threads)
+
+        def publish(t: int, ev=ev, start=start, each=each) -> None:
+            start.wait(5)
+            for i in range(each):
+                ev.publish("model", (t, i))
+
+        workers = [threading.Thread(target=publish, args=(t,)) for t in range(threads)]
+        for w in workers:
+            w.start()
+        for w in workers:
+            w.join(10)
+        got = [listener.get_nowait() for _ in range(threads * each)]
+        assert listener.empty()
+        assert [e["id"] for e in got] == sorted(e["id"] for e in got) == list(range(1, threads * each + 1))
+        assert [e["id"] for e in ev.history] == sorted(e["id"] for e in ev.history)
+        for t in range(threads):  # each thread's own events in the order it published them
+            assert [e["data"][1] for e in got if e["data"][0] == t] == list(range(each))
+
+
+def test_jobs_reporting_progress_from_their_own_threads_leave_the_box_as_last_published():
+    ev = Events()
+    owners = ["job", "map1", "seams"]
+    start = threading.Barrier(len(owners))
+
+    def report(owner: str) -> None:
+        start.wait(5)
+        for i in range(1, 11):
+            ev.set_progress(f"{owner} step {i} / 10", owner=owner)
+        if owner != "seams":
+            ev.set_progress(None, owner=owner)
+
+    workers = [threading.Thread(target=report, args=(o,)) for o in owners]
+    for w in workers:
+        w.start()
+    for w in workers:
+        w.join(10)
+    shown = [e["data"] for e in ev.history if e["kind"] == "progress"]
+    assert ev.progress == shown[-1] == "seams step 10 / 10"  # (the box the page keeps is the one published last)
+    lines = [line.split("  ", 1)[1] for line in ev.log_lines]
+    for owner in owners:  # every tenth of each job's step once, whichever thread came first
+        assert [ln for ln in lines if ln.startswith(owner)] == [f"{owner} step {i} / 10" for i in range(1, 11)]
