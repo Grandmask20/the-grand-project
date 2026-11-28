@@ -41,7 +41,7 @@ def save_model(name: str, model, info: dict, path: Path | None = None) -> None:
         name: Model name, e.g. "maps", "badges", "towers"; replaces a stored model of that name.
         model: The fitted scikit-learn model.
         info: Extra facts about the training (stored as JSON).
-        path: Database file; None uses DB_PATH (tools/split_icon_type.py writes other icon databases too).
+        path: Database file; None uses DB_PATH.
     """
     buf = _skops().dumps(model)
     with _db(path) as c:
@@ -128,8 +128,7 @@ def load_model(name: str, path: Path | None = None):
     Raises:
         UnsafeModel: The stored archive is not a trusted detector model (see safe_model_loads).
     """
-    # as_uri percent-encodes the path: a raw "#" or "?" in it would end the path early and drop "mode=ro"
-    c = sqlite3.connect(f"{Path(path or DB_PATH).resolve().as_uri()}?mode=ro", uri=True)
+    c = sqlite3.connect(f"file:{Path(path or DB_PATH).as_posix()}?mode=ro", uri=True)
     try:
         row = c.execute("SELECT blob FROM detector_models WHERE name = ?", (name,)).fetchone()
     except sqlite3.OperationalError:

@@ -498,9 +498,6 @@ def parse_notes(path: Path, key: dict) -> dict:
         flags)}, rows: {row id: name}, unclear: lines it could not read}.
     """
     known = set(key["rows"].values()) | {w[1] for w in BADGE_WORDS}
-    # the types a split renamed (tools/split_icon_type), old and new: a note may name either (the old one is then
-    # translated for its own badge only, in cmd_save)
-    known |= {name for b in key.get("badges", {}).values() for pair in b.get("renamed", {}).items() for name in pair}
     maps, lms, badges, rows, unclear = {}, {}, {}, {}, []
     section = "maps"
     for raw in path.read_text(encoding="utf-8").splitlines():
@@ -652,10 +649,8 @@ def cmd_save(a) -> int:
                 B.append({"id": mid, "name": nm, "x": m["x"], "y": m["y"], "flags": ["from_map_tile"]})
     row_of = {nm: r for r, nm in key["rows"].items()}
     for bid, b in key["badges"].items():
-        # its row on the sheet: "row" when the call was renamed since (tools/split_icon_type), else the call itself
-        row = row_of.get(b.get("row", b["detector"]))
-        name, fl = n["badges"].get(bid, (n["rows"].get(row, b["detector"]), []))
-        name = b.get("renamed", {}).get(name, name)  # a type split since (tools/split_icon_type): its new name
+        # (a call no sheet row has: truth_key.json's B55 / B362 are ArcaneHordes, its rows still ArcaneOrProsperous)
+        name, fl = n["badges"].get(bid, (n["rows"].get(row_of.get(b["detector"]), b["detector"]), []))
         if name.lower() != "none":
             truth[b["shot"]]["badges"].append({"id": bid, "name": name, "x": b["x"], "y": b["y"], "flags": fl})
     res = {v.pop("name"): v for v in truth.values()}
