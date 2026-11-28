@@ -30,6 +30,8 @@ jobs:
         os: [windows-latest, macos-latest, ubuntu-latest]
         python: ["3.11", "3.13"]
     runs-on: ${{ matrix.os }}
+    # a test that hangs (a thread or worker process waiting forever) ends the job, not GitHub's 6 hours
+    timeout-minutes: 30
     env:
       COVER: ${{ matrix.os == 'ubuntu-latest' && matrix.python == '3.13' }}
     steps:

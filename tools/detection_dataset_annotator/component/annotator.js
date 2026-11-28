@@ -17,6 +17,7 @@ const HANDLE_PX = 9; // resize handle reach on screen, at any zoom
 const DRAG_START_PX = 3; // pointer travel on screen before a press becomes a drag
 const HIT_PAD_PX = 2; // boxes are hit this far outside their border (screen pixels)
 const MIN_BOX_PX = 2; // smaller drags are clicks, not new boxes (source pixels)
+const MIN_SIDE_PX = 1; // , / . and the wheel shrink a box side down to this (never grown back up to MIN_BOX_PX)
 const HISTORY_LIMIT = 200;
 const MAX_ZOOM = 16;
 const MIN_ZOOM_OF_FIT = 0.5; // zoom out to half the fitted size at most
@@ -53,7 +54,7 @@ const SHORTCUTS = [
   ["Drag box / handle", "move / resize"],
   ["Ctrl+drag", "move the selected boxes, even from a handle (small boxes)"],
   ["1 … 9, 0, Shift+1 … 0", "label the selected boxes, or pick the label for new boxes (keys in the label list)"],
-  ["/", "find a label by its name, icon name or other names (Enter: use the first one, Esc: clear)"],
+  ["/", "find a label by its name, icon name or other names (Enter: use the first match, Esc: clear)"],
   ["Del, Backspace", "delete selected"],
   ["Ctrl+D", "duplicate selected"],
   ["Ctrl+A", "select all"],
@@ -69,7 +70,7 @@ const SHORTCUTS = [
   ["F", "fit the screenshot"],
   ["C", "centre the screenshot (keeps the zoom)"],
   ["H / L", "hide boxes / show every label"],
-  ["Enter", "mark reviewed and go to the next screenshot"],
+  ["Enter", "mark reviewed and go to the next screenshot (held down, once only)"],
   ["Shift+Enter", "toggle reviewed"],
   ["N or ] / P or [", "next / previous screenshot (edits are saved first)"],
   ["?", "this help"],
@@ -110,6 +111,38 @@ export function plainKeyTarget(labels, { key, code, shiftKey }) {
   const label = labelForKey(labels, code, shiftKey);
   if (label) return { label };
   return { shortcut: key.length === 1 ? key.toLowerCase() : key };
+}
+
+// Shortcuts a held key does once: a repeat of Enter or N would mark and skip one screenshot after another unseen.
+// Exported for tests/detection_dataset_annotator.
+const ONCE_SHORTCUTS = new Set(["Enter", "n", "p", "[", "]"]);
+export function repeatIgnored(shortcut) {
+  return ONCE_SHORTCUTS.has(shortcut);
+}
+
+// The label the finder's Enter uses: the first it shows for the words typed, none for an empty finder (it shows every
+// label then, and Enter would relabel the selected boxes with whichever comes first). Exported for
+// tests/detection_dataset_annotator.
+export function finderPick(shown, filter) {
+  return filter ? (shown[0] ?? null) : null;
+}
+
+// Whether a key in the label finder is the finder's own (Enter, Esc): not while an input method composes a word, whose
+// Enter or Esc picks or drops the composed text. Exported for tests/detection_dataset_annotator.
+export function finderKeyActs(event) {
+  return !event.isComposing && event.keyCode !== 229 && (event.key === "Enter" || event.key === "Escape");
+}
+
+// A box side grown (step > 0) or shrunk by step source px on each end: never below MIN_SIDE_PX, and a side already
+// smaller is never grown by a shrink (the 2 px floor of a drawn box made a 1 px side grow). Exported for tests.
+export function scaledSide(side, step) {
+  return Math.max(Math.min(side, MIN_SIDE_PX), side + 2 * step);
+}
+
+// The boxes a label changes: those with another label (a box that has it already keeps its detector source and
+// score). Exported for tests/detection_dataset_annotator.
+export function relabelled(boxes, name) {
+  return boxes.filter((box) => box.label !== name);
 }
 
 // Whether a box is a guess to check first (an unsure city type, biome or city area: constants.ANNOTATOR_GUESS_SOURCES).
@@ -162,6 +195,30 @@ export function coordinateValue(text) {
   return Number.isFinite(value) ? value : null;
 }
 
+// After a move or resize drag: each box whose geometry is as before the drag gets its source and score back (the drag
+// marked it edited); whether any box did change. Exported for tests/detection_dataset_annotator.
+export function keepUnmoved(boxes, before) {
+  const was = new Map(before.map((box) => [box.id, box]));
+  let moved = false;
+  for (const box of boxes) {
+    const old = was.get(box.id);
+    if (!old) continue;
+    if (["x", "y", "w", "h"].every((field) => box[field] === old[field])) {
+      box.source = old.source;
+      box.score = old.score;
+    } else {
+      moved = true;
+    }
+  }
+  return moved;
+}
+
+// The source line under a box's fields: where the box came from, and its score.
+function sourceText(box) {
+  const score = box.score == null ? "" : ` · score ${Number(box.score).toFixed(3)}`;
+  return `${box.source || MANUAL}${score}`;
+}
+
 class Annotator {
   constructor(root) {
     this.root = root;
@@ -173,7 +230,10 @@ class Annotator {
     this.view = { zoom: 1, x: 0, y: 0 };
     this.fitZoom = null;
     this.fitted = false;
+    this.autoFit = true; // the view is the fitted one: a resize fits it again (the reviewer's zoom or pan stays)
+    this.sentGoto = null; // the picker's target this editor saved its boxes for already
     this.drag = null;
+    this.refitPending = false; // a fit asked for during a box drag, done when it ends
     this.spaceDown = false;
     this.wheelSum = 0; // wheel delta not yet turned into box resize steps
     this.lastScale = { at: 0, selection: "" }; // the last resize step, to merge one gesture into one undo step
@@ -221,6 +281,14 @@ class Annotator {
     // A drag on the old screenshot ends without putting anything back: its boxes must never return over the new one
     // (a later Esc would restore them).
     if (first) this.endDrag();
+    // the page answered the pending action (act), or shows another screenshot: edits are taken again, on these boxes.
+    // An autosave's answer (the same screenshot, the action not handled yet) keeps the editor locked: an edit made
+    // then would land after the boxes the action sent.
+    if (first || (this.pendingAction && data.action_done === this.pendingAction)) {
+      this.pendingAction = null;
+      this.leaving = false;
+      this.wrap.inert = false;
+    }
     this.data = data;
     this.labels = data.labels ?? [];
     // Sources of guessed boxes (an unsure city type, biome or city area: constants.ANNOTATOR_GUESS_SOURCES)
@@ -241,6 +309,7 @@ class Annotator {
       this.endScaleGesture();
       this.wheelSum = 0;
       this.fitted = false;
+      this.sentGoto = null;
       this.seq = 0;
       this.sentSeq = 0;
       this.activeMs = 0;
@@ -256,6 +325,12 @@ class Annotator {
     if (!this.fitted) this.fit();
     // An autosave's answer redraws the boxes, not a coordinate field being typed in (its draft and focus stay).
     this.renderAll({ keepDraft: !first });
+    // Another screenshot picked in the page's list: this editor saves its latest boxes and the page moves on with the
+    // save's answer (retired first, its unsaved edits were lost). After this call: Streamlit is still rendering.
+    if (data.goto && data.goto !== this.sentGoto) {
+      this.sentGoto = data.goto;
+      setTimeout(() => this.act("goto", { target: data.goto }), 0);
+    }
   }
 
   scheduleDestroy() {
@@ -332,13 +407,20 @@ class Annotator {
     this.renderStatus();
   }
 
-  act(type) {
-    // Navigation carries the latest boxes, so nothing typed since the last autosave is lost.
+  act(type, extra = {}) {
+    // Navigation carries the latest boxes, so nothing typed since the last autosave is lost. A box drag ends first,
+    // put back (an edit made after the boxes were sent was lost, or saved under the next screenshot); until the page
+    // answers (update), the editor takes no edits (inert), so none can land after the boxes it sent.
+    this.endBoxDrag();
+    this.actionCount = (this.actionCount ?? 0) + 1;
+    this.pendingAction = `${this.session}-${this.actionCount}`; // the page answers with it (data.action_done)
+    this.leaving = true;
+    this.wrap.inert = true;
     clearTimeout(this.autosaveTimer);
     this.autosaveTimer = null;
     this.sentSeq = this.seq;
     this.statusEl.textContent = "Saving…";
-    this.setTriggerValue("action", { type, ...this.payload() });
+    this.setTriggerValue("action", { type, ...extra, ...this.payload(), action_id: this.pendingAction });
   }
 
   // ---- DOM ------------------------------------------------------------------------------------------------
@@ -413,8 +495,9 @@ class Annotator {
     const view = el("div", "ann-row ann-tools", side);
     this.boxesBtn = this.button(view, "Boxes", "Hide or show boxes (H)", () => this.toggleBoxes());
     this.chipsBtn = this.button(view, "Labels", "Show every label (L)", () => this.toggleChips());
-    this.button(view, "Fit", "Fit the screenshot (F)", () => this.fit());
-    this.button(view, "Centre", "Centre the screenshot, keeping the zoom (C)", () => this.centre());
+    // a box drag ends first (as the F and C keys end it): its boxes would jump to the new view under the pointer
+    this.button(view, "Fit", "Fit the screenshot (F)", () => this.endBoxDrag() || this.fit());
+    this.button(view, "Centre", "Centre the screenshot, keeping the zoom (C)", () => this.endBoxDrag() || this.centre());
     this.helpBtn = this.button(view, "?", "Shortcuts (?)", () => this.toggleHelp());
     this.helpBtn.setAttribute("aria-label", "Shortcuts");
   }
@@ -477,7 +560,9 @@ class Annotator {
     // ... and again when the keyboard brings the focus back to the canvas (Tab), after a click elsewhere.
     this.on(viewport, "focus", () => this.setActive(true));
     this.resizeObserver = new ResizeObserver(() => {
-      if (!this.fitted) this.fit();
+      // fitted again while the view is still the fitted one (the page's layout or window changed size); during a
+      // box drag only once it ends, so the drag's start point stays in the frame it was taken in
+      if (!this.fitted || this.autoFit) this.refit();
     });
     this.resizeObserver.observe(viewport);
   }
@@ -496,6 +581,18 @@ class Annotator {
     this.stage.style.setProperty("--inv", String(1 / zoom));
   }
 
+  refit() {
+    // a fit now, or when the box drag in progress ends
+    if (this.drag && this.drag.kind !== "pan") this.refitPending = true;
+    else this.fit();
+  }
+
+  afterDrag() {
+    if (!this.refitPending) return;
+    this.refitPending = false;
+    if (!this.fitted || this.autoFit) this.fit();
+  }
+
   fit() {
     if (!this.data) return;
     const width = this.viewport.clientWidth;
@@ -509,6 +606,7 @@ class Annotator {
     };
     this.fitZoom = zoom;
     this.fitted = true;
+    this.autoFit = true;
     this.applyView();
   }
 
@@ -516,6 +614,7 @@ class Annotator {
     // Put the screenshot back in the middle of the canvas at the current zoom (F also resets the zoom).
     if (!this.data) return;
     const { zoom } = this.view;
+    this.autoFit = false;
     this.view = {
       zoom,
       x: (this.viewport.clientWidth - this.data.width * zoom) / 2,
@@ -538,6 +637,7 @@ class Annotator {
     const low = (this.fitZoom ?? this.view.zoom) * MIN_ZOOM_OF_FIT;
     const zoom = clamp(this.view.zoom * factor, low, MAX_ZOOM);
     const applied = zoom / this.view.zoom;
+    this.autoFit = false;
     this.view = { zoom, x: px - (px - this.view.x) * applied, y: py - (py - this.view.y) * applied };
     this.applyView();
   }
@@ -734,6 +834,7 @@ class Annotator {
     }
     if (!this.ownsDrag(event)) return;
     if (drag.kind === "pan") {
+      this.autoFit = false;
       this.view = {
         ...drag.view,
         x: drag.view.x + event.clientX - drag.startX,
@@ -818,6 +919,7 @@ class Annotator {
     if (this.drag && !this.ownsDrag(event)) return;
     const drag = this.drag;
     this.drag = null;
+    this.afterDrag();
     this.viewport.classList.remove("ann-translating");
     if (this.viewport.hasPointerCapture(event.pointerId)) this.viewport.releasePointerCapture(event.pointerId);
     this.drawEl.hidden = true;
@@ -829,16 +931,26 @@ class Annotator {
       this.select(box.id);
       this.changed();
     } else if (drag.moved && (drag.kind === "move" || drag.kind === "resize")) {
-      this.remember(drag.before);
-      this.changed();
+      // A box that ended where it began (dragged out and back, or held against the image edge) keeps its source and
+      // score; a drag that moved nothing is no edit: no undo step, no autosave.
+      if (keepUnmoved(this.boxes, drag.before)) {
+        this.remember(drag.before);
+        this.changed();
+      }
     }
     this.renderAll();
+  }
+
+  endBoxDrag() {
+    // Cancel a box drag (its boxes put back); a pan goes on.
+    if (this.drag && this.drag.kind !== "pan") this.cancelDrag();
   }
 
   endDrag() {
     // Forget the drag in progress, restoring nothing.
     const drag = this.drag;
     this.drag = null;
+    this.afterDrag();
     this.viewport.classList.remove("ann-translating");
     this.drawEl.hidden = true;
     return drag;
@@ -879,6 +991,11 @@ class Annotator {
 
   keyDown(event) {
     if (!this.active || !this.data || isTyping(event)) return;
+    if (this.leaving && event.composedPath().includes(this.wrap)) {
+      event.preventDefault(); // no edit after the boxes an action sent (act): the page answers first
+      event.stopPropagation();
+      return;
+    }
     if (!this.helpEl.hidden) {
       // The shortcuts card is open: Esc or ? closes it, wherever the focus is in the editor; every other key keeps
       // its own meaning (Tab, Enter on Close), so nothing is edited behind the card.
@@ -937,6 +1054,7 @@ class Annotator {
       return true;
     }
     const target = plainKeyTarget(this.labels, event);
+    if (event.repeat && repeatIgnored(target.shortcut)) return true; // held down: once only (still no browser default)
     if (target.label) {
       this.useLabel(target.label.name);
       return true;
@@ -1014,8 +1132,9 @@ class Annotator {
 
   filterKey(event) {
     // In the label finder: Enter uses the first label it shows and gives the keys back to the editor; Esc clears it.
+    if (!finderKeyActs(event)) return; // other keys type (and an input method's Enter or Esc ends its word)
     if (event.key === "Enter") {
-      const [first] = this.filteredLabels();
+      const first = finderPick(this.filteredLabels(), this.labelFilter);
       if (first) this.useLabel(first.name);
       this.viewport.focus();
     } else if (event.key === "Escape") {
@@ -1023,8 +1142,6 @@ class Annotator {
       this.labelFilter = "";
       this.renderLegend();
       this.viewport.focus();
-    } else {
-      return;
     }
     event.preventDefault();
     event.stopPropagation();
@@ -1064,9 +1181,10 @@ class Annotator {
       this.renderSide();
       return;
     }
-    if (boxes.every((box) => box.label === name)) return;
+    const changing = relabelled(boxes, name);
+    if (!changing.length) return;
     this.snapshot();
-    for (const box of boxes) {
+    for (const box of changing) {
       box.label = name;
       this.markEdited(box);
     }
@@ -1146,8 +1264,8 @@ class Annotator {
     const resize = (box) => {
       const cx = box.x + box.w / 2;
       const cy = box.y + box.h / 2;
-      box.w = Math.max(MIN_BOX_PX, box.w + 2 * step);
-      box.h = Math.max(MIN_BOX_PX, box.h + 2 * step);
+      box.w = scaledSide(box.w, step);
+      box.h = scaledSide(box.h, step);
       box.x = cx - box.w / 2;
       box.y = cy - box.h / 2;
     };
@@ -1175,6 +1293,7 @@ class Annotator {
     const top = box.y * zoom + y;
     const margin = REVEAL_MARGIN_PX;
     if (left < margin || top < margin || left + box.w * zoom > width - margin || top + box.h * zoom > height - margin) {
+      this.autoFit = false;
       this.view = {
         zoom,
         x: width / 2 - (box.x + box.w / 2) * zoom,
@@ -1276,7 +1395,8 @@ class Annotator {
   typingInInspector() {
     // Whether the focus is in one of the selected box's fields (X, Y, W, H): redrawing the panel would lose the draft.
     const active = this.wrap.getRootNode().activeElement;
-    return Boolean(active && active.tagName === "INPUT" && this.inspectorEl.contains(active));
+    // the Label selector too: an autosave's answer must not take it from under the reviewer
+    return Boolean(active && ["INPUT", "SELECT"].includes(active.tagName) && this.inspectorEl.contains(active));
   }
 
   picture(parent, label, className) {
@@ -1377,6 +1497,8 @@ class Annotator {
     const rule = this.labelByName[box.label]?.rule;
     if (rule) el("p", "ann-muted ann-rule", panel).textContent = rule;
     const grid = el("div", "ann-grid", panel);
+    const inputs = {};
+    let sourceEl = null;
     for (const field of ["x", "y", "w", "h"]) {
       const label = el("label", "", grid);
       el("span", "", label).textContent = field.toUpperCase();
@@ -1384,22 +1506,36 @@ class Annotator {
       input.type = "number";
       input.step = "1";
       input.value = String(round2(box[field]));
+      inputs[field] = input;
       input.addEventListener("change", () => {
         const value = coordinateValue(input.value);
         if (value === null) {
           input.value = String(round2(box[field])); // emptied or unreadable: the box stays as it was (0 is typed)
           return;
         }
+        // a box drag ends first (as useLabel): the typed value goes on the boxes as sent, and no later cancel of the
+        // drag puts the boxes from before it back over the edit
+        if (this.drag && this.drag.kind !== "pan") this.cancelDrag();
+        const target = this.byId(box.id);
+        if (!target) return;
         this.snapshot();
-        box[field] = value;
-        this.clampBox(box);
-        this.markEdited(box);
+        target[field] = value;
+        this.clampBox(target);
+        this.markEdited(target);
         this.changed();
-        this.renderAll();
+        // the fields stay (Tab has the next one in hand: drawing the panel anew lost it): their values follow the
+        // clamped box, the rest of the editor is drawn again
+        this.applyView();
+        this.renderBoxes();
+        this.renderSide({ keepDraft: true });
+        if (this.inspectorEl.contains(input)) {
+          for (const [name, node] of Object.entries(inputs)) node.value = String(round2(target[name]));
+          sourceEl.textContent = sourceText(target);
+        }
       });
     }
-    const score = box.score == null ? "" : ` · score ${Number(box.score).toFixed(3)}`;
-    el("p", "ann-muted", panel).textContent = `${box.source || MANUAL}${score}`;
+    sourceEl = el("p", "ann-muted", panel);
+    sourceEl.textContent = sourceText(box);
     this.button(panel, "Delete", "Delete selected (Del)", () => this.deleteSelected());
   }
 }

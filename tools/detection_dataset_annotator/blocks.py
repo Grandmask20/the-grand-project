@@ -1,9 +1,9 @@
 """Spatial blocks of the screenshots, which the splits draw whole (``splits.assign_splits``).
 
 Screenshots of one atlas overlap: drawn one by one, a held-out screenshot shares most of its map nodes with training
-screenshots (``ANNOTATOR_SPLIT_BLOCK_SHOTS`` has the numbers). So an atlas's screenshots (those next to its
-``atlas.json``, where the app finds them, or in a folder right below it) are grouped by where they lie: k-means of
-their middles in atlas units, about ``ANNOTATOR_SPLIT_BLOCK_SHOTS`` to a block. A screenshot no atlas places
+screenshots (``ANNOTATOR_SPLIT_BLOCK_SHOTS`` has the numbers). So an atlas's screenshots (those below the folder of
+its ``atlas.json``: next to it, where the app finds them, or in folders below it) are grouped by where they lie: k-means
+of their middles in atlas units, about ``ANNOTATOR_SPLIT_BLOCK_SHOTS`` to a block. A screenshot no atlas places
 (``placed_by``) is a block of its own.
 """
 
@@ -13,6 +13,7 @@ import math
 from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path, PureWindowsPath
+from typing import TypeVar
 
 import numpy as np
 
@@ -21,6 +22,8 @@ from grand_project.core.geometry import persp, screen_to_atlas
 
 from . import constants as K
 from .state import relative_source
+
+T = TypeVar("T")
 
 
 @dataclass(frozen=True, order=True)
@@ -34,8 +37,10 @@ class Block:
 
 
 def atlas_of(folder: Path) -> Path | None:
-    """The atlas file that places a folder's screenshots: next to them, else one folder up; None without one."""
-    for place in (folder, folder.parent):
+    """The atlas file of a folder's screenshots: the nearest one in the folder or above it (``map_state_change`` keeps
+    its screenshots in folders below its atlas), None without one. Whether it places a screenshot is ``placed_by``'s:
+    one it saved no path for stays a block of its own."""
+    for place in (folder, *folder.parents):
         if (place / K.ANNOTATOR_ATLAS_FILE).is_file():
             return place / K.ANNOTATOR_ATLAS_FILE
     return None
@@ -53,10 +58,9 @@ def frame_middles(atlas_file: Path) -> dict[tuple[str, ...], tuple[float, float]
     return out
 
 
-def placed_by(
-    middles: dict[tuple[str, ...], tuple[float, float]], atlas_dir: Path, path: Path
-) -> tuple[float, float] | None:
-    """The middle of the screenshot at ``path`` in its atlas: the frame whose saved path ends with the file's own path
+def placed_by(middles: Mapping[tuple[str, ...], T], atlas_dir: Path, path: Path) -> T | None:
+    """The middle of the screenshot at ``path`` in its atlas (or what else ``middles`` keeps of each frame by its saved
+    path's parts, ``frame_middles``): the frame whose saved path ends with the file's own path
     from the atlas folder (``x.png`` next to it, ``pre/x.png`` in a folder below), wherever the atlas was made or
     moved; a file of a frame's name elsewhere is not that frame. None when no frame (or more than one) ends so.
 
@@ -91,7 +95,7 @@ def screenshot_blocks(
 
     by_atlas: dict[Path | None, list[str]] = {}
     for key in sorted(paths):
-        by_atlas.setdefault(atlas_of(Path(paths[key]).parent), []).append(key)
+        by_atlas.setdefault(atlas_of(Path(paths[key]).resolve().parent), []).append(key)
     out: dict[str, Block] = {}
     for atlas_file, keys in by_atlas.items():
         middles = frame_middles(atlas_file) if atlas_file is not None else {}
@@ -113,4 +117,4 @@ def screenshot_blocks(
     return out
 
 
-__all__ = ["Block", "frame_middles", "placed_by", "screenshot_blocks"]
+__all__ = ["Block", "atlas_of", "frame_middles", "placed_by", "screenshot_blocks"]

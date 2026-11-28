@@ -57,7 +57,7 @@ in the side panel says when they are saved.
 | `F` | fit the screenshot |
 | `C` | centre the screenshot, keeping the zoom |
 | `H` / `L` | hide boxes / show every label |
-| `Enter` | mark reviewed and go to the next screenshot |
+| `Enter` | mark reviewed and go to the next screenshot (held down, once only) |
 | `Shift+Enter` | toggle reviewed |
 | `N` or `]` / `P` or `[` | next / previous screenshot |
 | `?` | shortcut help |
@@ -174,7 +174,7 @@ them. The hand truth and reference atlases that `python -m grand_project.detect 
 
 Screenshots of one atlas overlap: a map node is on 4.5 roa-atlas and 3.3 fr-atlas screenshots on average, so a split
 drawn screenshot by screenshot put 91-93% of a held-out screenshot's map nodes on training screenshots too. The splits
-therefore draw **blocks** (`blocks.py`): an atlas's screenshots (those next to its `atlas.json`) are grouped by where
+therefore draw **blocks** (`blocks.py`): an atlas's screenshots (those next to its `atlas.json` or in folders below it) are grouped by where
 they lie, k-means of their middles in atlas units, about `ANNOTATOR_SPLIT_BLOCK_SHOTS` (60) to a block; a screenshot
 no atlas places is a block of its own. The blocks (the user's design):
 
@@ -218,18 +218,27 @@ manifest's, with the ledger (run it before each training round). Both print each
 run's store (1,947 screenshots, 2026-11-20) to the one being reviewed, so a new machine, a lost store or an old one
 comes out the same:
 
+0. a store an older annotator built (its tables or columns are not this one's: the page refuses to open it) is
+   backed up and brought up to date: every row is copied into the new layout, so every box, review flag, split and
+   pre-label is kept. Stop the annotator page first;
 1. back up the store (`review_state.before-build-<time>.sqlite3` next to it; safe while the page runs);
 2. discover the screenshots below the roots (the store's, else the four defaults; `--root` to change them) and queue
    the new ones;
 3. remove what discovery leaves out: byte copies of another screenshot (the first in discovery order stays, the one
    Discover keeps: the 115 `screenshots/crawl` copies of fr-atlas) and an atlas's own map pictures. Reviewed ones
    stay and are named; missing files are only counted;
-4. detect the screenshots not detected yet in worker processes (`--workers N`; `--no-detect` leaves them for the page);
+4. detect the screenshots not detected yet in worker processes (`--workers N`; `--no-detect` leaves them for the page).
+   Every detection keeps the SHA-256 of the bytes it was made on: a screenshot whose file has changed since (even to
+   one of the same size) is not shown in the editor, pre-labelled, seeded or exported until its detection is rerun;
 5. seed the biome truths (`--truth`, by default the PM's fr-atlas `truth.json`: [below](#seeding-from-a-biome-truth)).
 
-Each step changes only what is not done yet, so a second run changes nothing; `--dry-run` says what would change. When
-the store's tables change, a new store is built the same way: run it with a new `--output-dir` (or after moving the
-old `review_state.sqlite3` aside); the ledger gives every screenshot its split back. Then
+Each step changes only what is not done yet, so a second run changes nothing; `--dry-run` says what would change.
+
+Rebuilding is not recovering: a run into a new `--output-dir` (a lost store, a new machine) detects every screenshot
+again and seeds the truths again, and the split ledger gives every screenshot its split back, but the review work
+(edited and drawn boxes, review flags, review times, model pre-labels and their arms) lives only in
+`review_state.sqlite3`. To keep it, keep that file (or one of its `review_state.before-build-*.sqlite3` backups) and
+run `build_store` on its folder. Then
 `python -m tools.detection_dataset_annotator.split_ledger` gives every screenshot its split, the ledger's where it has
 one ([Splits](#splits)). Restart the annotator page afterwards: it keeps the screenshots it showed.
 
@@ -246,9 +255,13 @@ see `atlas_test_data/fr-atlas/README.md`), where the classical guesses were abou
   take their area's city type.
 
 The boxes it sets are solid (`biome_truth`), but the screenshot is still to be reviewed: the truth is about 90% right
-by its labeller's estimate. Every screenshot the truth places is marked with it (`truth` in its `extra`, changed or
-not: the truth vouches for its city areas either way), so a bootstrap training round can take it unreviewed
-([Training](#training)); a detection rerun drops the mark with the boxes it vouched for. Reviewed screenshots are never
+by its labeller's estimate. Every eligible screenshot the truth places is marked with it (`truth` in its `extra`,
+changed or not: the truth vouches for its city areas either way), so a bootstrap training round can take it unreviewed
+([Training](#training)); a detection rerun drops the mark with the boxes it vouched for. Eligible means: unreviewed and
+detected, below the truth's folder, its file name no other screenshot's, and its file the very bytes the truth placed
+(each placement's `sha256`: a truth without them seeds nothing until it is refreshed) and the ones its boxes were
+detected on. A screenshot another truth seeded, one a model pre-labelled (`rf_detr` arm), one that cannot be read and
+one edited or reviewed while the seed runs are left unmarked too, and a bootstrap round does not train on them. Reviewed screenshots are never
 changed. It reports the truth Cities a screenshot shows without a
 citadel box (draw them) and the stronghold boxes far from every truth stronghold area (check them). On fr-atlas it
 takes about 15 minutes (the ground ring names each screenshot's icons for the Delirium mist rule).
@@ -277,7 +290,8 @@ make train_rf_detr                       # trains into runs/rf-detr-small (best/
 ```
 
 - **What it trains on**: reviewed screenshots. A bootstrap round (`RF_DETR_OPTIONS=--truth-seeded`, after `make
-  export_dataset EXPORT_OPTIONS=--unreviewed`) also takes the unreviewed screenshots a biome truth seeded: their city
+  export_dataset EXPORT_OPTIONS=--unreviewed`) also takes the unreviewed screenshots a biome truth seeded and marked
+  (only the eligible ones are: [above](#seeding-from-a-biome-truth)): their city
   areas and citadels are the truth's, every other box the classical detector's (which a reviewed round then
   corrects).
 - **Before it builds a dataset** it checks the manifest against the split ledger (`split_ledger.check_manifest`) and
@@ -326,9 +340,11 @@ work:
   it fits the seconds per kind of edit.
 - **The simulated loop** (`python -m tools.detection_dataset_annotator.simulate_loop --manifest ... --classical-store
   ...`) plays the loop on a hand-labelled atlas without a reviewer: rounds reveal more of fr-atlas's training blocks,
-  each trains a model from the last, and every pre-label policy is scored on fr-atlas's validation and test blocks
-  against the PM's truth (the city areas and citadels: gold) and the classical boxes (the rest: silver). Its report is
-  the loop's learning curve.
+  each trains a model from the last, and every pre-label policy is scored on fr-atlas's validation and test blocks.
+  Gold is against the PM's truth: the city-area class of each node box at a map the truth has, and the citadels.
+  Silver is against the classical boxes: map nodes added or deleted (matched by place alone) and every edit to the
+  other families (icons, towers, halls, strongholds, reveal buttons). Neither counts a node relabelled from one biome
+  to another (the truth knows city areas, not the ground). Its report is the loop's learning curve.
 
 ## Detection details
 

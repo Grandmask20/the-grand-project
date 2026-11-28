@@ -177,6 +177,17 @@ def test_tiles_in_a_dataloader_worker_follow_its_seed(monkeypatch: pytest.Monkey
     assert tile_transform(_echo_processor, train=True, seed=7)._random().random() == random.Random(7).random()
 
 
+def test_a_retired_class_only_a_left_out_screenshot_uses_is_no_class(tmp_path: Path) -> None:
+    """An unreviewed screenshot's retired label stops nothing: it is not trained on, so its class is dropped and the
+    others are numbered again in the manifest's order (CodeRabbit)."""
+    kept = _image(tmp_path, "a.png", annotations=[{"label": "icon", "bbox": [1, 2, 9, 9]}])
+    left = _image(tmp_path, "b.png", reviewed=False, annotations=[{"label": "city", "bbox": [1, 2, 9, 9]}])
+    labels = {"0": "city", "1": "map_node_grass", "2": "icon"}
+    records, label_map = load_annotator_manifest(_manifest(tmp_path, [kept, left], labels=labels))
+    assert label_map == {"0": "map_node_grass", "1": "icon"}
+    assert [r.path.name for r in records] == ["a.png"] and records[0].annotations[0]["category_id"] == 1
+
+
 def test_annotator_manifest_errors_say_what_is_wrong(tmp_path: Path) -> None:
     with pytest.raises(ValueError, match="Not an annotator"):
         load_annotator_manifest(_manifest(tmp_path, [], format="coco"))
@@ -188,7 +199,8 @@ def test_annotator_manifest_errors_say_what_is_wrong(tmp_path: Path) -> None:
         )
     with pytest.raises(ValueError, match=r"classes the labels do not have \(my_label\)"):
         # a reviewer's own class: the model would be refused at inference (load_detector), so it never trains
-        load_annotator_manifest(_manifest(tmp_path, [_image(tmp_path)], labels={"0": "map_node", "1": "my_label"}))
+        shot = _image(tmp_path, annotations=[{"label": "my_label", "bbox": [0, 0, 9, 9]}])
+        load_annotator_manifest(_manifest(tmp_path, [shot], labels={"0": "map_node", "1": "my_label"}))
     with pytest.raises(ValueError, match="Invalid annotator bbox"):
         load_annotator_manifest(_manifest(tmp_path, [_image(tmp_path, annotations=[{"label": "icon", "bbox": "box"}])]))
     with pytest.raises(ValueError, match="positive"):
@@ -234,3 +246,43 @@ def test_the_dataset_keeps_the_annotators_splits(tmp_path: Path) -> None:
         build_dataset(records, label_map=labels, output_dir=out)
     no_test = build_dataset(records[:2], label_map=labels)  # no test screenshot yet: an empty test split
     assert len(no_test["test"]) == 0 and no_test["test"].features == no_test["train"].features
+
+
+def test_the_dataset_holds_the_bytes_it_checked_and_appears_only_whole(tmp_path: Path) -> None:
+    """Each screenshot is read once: its SHA-256 goes to ``check_bytes`` and its bytes into the dataset (a file replaced
+    later changes nothing trained on). The folder is built as ``<name>.partial`` and named once whole: a build stopped
+    by the check leaves no dataset to reuse (CodeRabbit)."""
+    pytest.importorskip("datasets")
+    import hashlib
+
+    from grand_project.detect.rf_detr import build_dataset, load_dataset
+
+    for name in ("a", "b"):
+        Image.new("RGB", (64, 36), (20, 120, 20)).save(tmp_path / f"{name}.png")
+    records = [
+        Record(0, tmp_path / "a.png", "a", "annotator_reviewed", "g", 64, 36, (), "train"),
+        Record(1, tmp_path / "b.png", "b", "annotator_reviewed", "g", 64, 36, (), "validation"),
+    ]
+    labels = {"0": "map_node_grass"}
+    originals = {n: hashlib.sha256((tmp_path / f"{n}.png").read_bytes()).hexdigest() for n in ("a", "b")}
+    seen = {}
+
+    def check_then_replace(record, digest):
+        seen.setdefault(record.source, digest)
+        if record.source == "a":  # replaced while the build still runs, right after its bytes were checked
+            Image.new("RGB", (32, 18), (200, 0, 0)).save(tmp_path / "a.png")
+
+    out = tmp_path / "dataset"
+    build_dataset(records, label_map=labels, output_dir=out, check_bytes=check_then_replace)
+    assert seen == originals
+    assert not (tmp_path / "dataset.partial").exists()
+    saved = load_dataset(out)
+    assert saved["train"][0]["image"].size == (64, 36)  # the bytes checked, not the file now
+    assert len(saved["test"]) == 0  # (none: an empty split comes back empty)
+
+    def refuse(record, digest):
+        raise SystemExit("changed")
+
+    with pytest.raises(SystemExit):
+        build_dataset(records, label_map=labels, output_dir=tmp_path / "other", check_bytes=refuse)
+    assert not (tmp_path / "other").exists()

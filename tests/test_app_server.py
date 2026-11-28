@@ -236,7 +236,11 @@ def test_a_second_start_opens_the_running_app(app, monkeypatch, tmp_path):
     monkeypatch.setattr(S, "AtlasSession", lambda: pytest.fail("a second copy was started"))
     monkeypatch.setenv("http_proxy", "http://127.0.0.1:9")  # a proxy that refuses: the probe goes direct
     monkeypatch.setenv("HTTP_PROXY", "http://127.0.0.1:9")
-    assert S.running_app(port) == (srv.url, S.VERSION)
+    # the classical detector, whatever this machine's setting (an RF-DETR one would answer True and be restarted)
+    from grand_project.detect import rf_detr_model
+
+    monkeypatch.setattr(rf_detr_model, "rf_detr_enabled", lambda: False)
+    assert S.running_app(port) == (srv.url, S.VERSION, False)
     assert S.main(["--port", str(port)]) == 0 and opened == [srv.url]  # its page, not a second copy
     assert S.running_app(port, root=tmp_path) is None  # a copy of the program in another folder: not this one
     # an atlas asked for on the command line is opened by the running copy (it was dropped)
@@ -249,7 +253,8 @@ def test_a_second_start_opens_the_running_app(app, monkeypatch, tmp_path):
 
 
 def test_an_older_running_copy_is_closed_for_the_update(monkeypatch):
-    monkeypatch.setattr(S, "running_app", lambda port: ("http://127.0.0.1:1/", "1.0"))  # an older copy answers
+    # an older copy answers
+    monkeypatch.setattr(S, "running_app", lambda port: ("http://127.0.0.1:1/", "1.0", False))
     monkeypatch.setattr(S, "APP_QUIT_WAIT", 0.5)
     state = {"gone": False, "quits": 0}
 
@@ -266,6 +271,20 @@ def test_an_older_running_copy_is_closed_for_the_update(monkeypatch):
     assert S.reuse_running(1, None, browser=False) == S.START and state["quits"] == 1  # it quit: the update starts
     state.update(gone=False, obeys=False)  # still closing after the wait: no second copy writing the same atlas
     assert S.reuse_running(1, None, browser=False) == S.FAILED
+
+
+def test_a_start_with_another_detector_says_the_running_copy_keeps_its_own(monkeypatch, capsys):
+    """A start with GRAND_PROJECT_USE_RF_DETR finds a copy running the classical detector: it hands over and says the
+    flag was not applied (it was reused silently: CodeRabbit)."""
+    from grand_project.detect import constants as DK
+
+    monkeypatch.setattr(S, "running_app", lambda port: ("http://127.0.0.1:1/", S.VERSION, False))
+    monkeypatch.setenv(DK.RF_DETR_USE_ENV, "1")
+    assert S.reuse_running(1, None, browser=False) == S.HANDED
+    assert "uses the classical detector" in capsys.readouterr().out
+    monkeypatch.setattr(S, "running_app", lambda port: ("http://127.0.0.1:1/", S.VERSION, True))
+    assert S.reuse_running(1, None, browser=False) == S.HANDED
+    assert "detector" not in capsys.readouterr().out  # the same detector: nothing to say
 
 
 def test_a_refused_atlas_hand_over_is_reported(app, monkeypatch, tmp_path):
@@ -347,7 +366,7 @@ def test_a_quit_copy_counts_as_gone_though_its_port_wont_bind_yet(monkeypatch):
         s.listen(1)
         assert not S._stopped("127.0.0.1", port)  # still listening: not gone
     assert S._stopped("127.0.0.1", port)  # closed: the connection is refused, so it is gone (it waited out 40 s)
-    monkeypatch.setattr(S, "running_app", lambda p: (f"http://127.0.0.1:{port}/", "1.0"))  # an older copy...
+    monkeypatch.setattr(S, "running_app", lambda p: (f"http://127.0.0.1:{port}/", "1.0", False))  # an older copy...
     monkeypatch.setattr(S, "_local", lambda url, data=None, timeout=0: {"ok": True})  # ...asked to quit
     assert S.reuse_running(port, None, browser=False) == S.START
 
@@ -421,3 +440,137 @@ def test_the_page_s_log_lines_and_group_names_are_checked(app, caplog):
     with caplog.at_level(logging.INFO, logger=S.LOG.name):
         call(srv, "/api/log", "POST", {"lines": ["two\nlines"]})
     assert "two lines" in caplog.text
+
+
+# ------------------------------------------------------------------ uploads arriving at once
+
+
+def test_pictures_uploaded_at_once_under_one_name_each_keep_their_own_file(tmp_path, runs):
+    # the free name was checked, then written: two pictures dropped together under one name could both find it free
+    # and the second overwrote the first (one screenshot lost, both answered with the same path)
+    old = S.sys.getswitchinterval()
+    S.sys.setswitchinterval(1e-6)  # threads switch as often as they can: the race shows up in a few rounds
+    try:
+        for r in range(runs(20)):
+            folder = tmp_path / str(r)
+            folder.mkdir()
+            pictures = [bytes([k]) * (1 + k) for k in range(8)]
+            start = threading.Barrier(len(pictures))
+            saved: dict[int, Path] = {}
+
+            def upload(k: int, folder=folder, start=start, saved=saved, pictures=pictures) -> None:
+                start.wait(5)
+                saved[k] = S.save_upload(folder, "shot.png", pictures[k])
+
+            threads = [threading.Thread(target=upload, args=(k,)) for k in range(len(pictures))]
+            for t in threads:
+                t.start()
+            for t in threads:
+                t.join(10)
+            assert len(set(saved.values())) == len(pictures), f"round {r}: two pictures were given one file"
+            for k, path in saved.items():
+                assert path.read_bytes() == pictures[k], f"round {r}: a picture was overwritten"
+    finally:
+        S.sys.setswitchinterval(old)
+
+
+def test_the_same_picture_uploaded_again_keeps_its_file(tmp_path):
+    first = S.save_upload(tmp_path, "shot.png", b"one")
+    other = S.save_upload(tmp_path, "shot.png", b"two")
+    assert S.save_upload(tmp_path, "shot.png", b"one") == first != other
+    assert sorted(p.read_bytes() for p in tmp_path.iterdir()) == [b"one", b"two"]
+
+
+def test_an_upload_that_fails_as_its_file_closes_leaves_no_cut_off_picture(tmp_path, monkeypatch):
+    """A full disk can fail the close (its flush) as well as the write: the file this upload made is removed, a
+    picture already there under the name is kept (CodeRabbit)."""
+    real = open
+
+    class FailingClose:
+        def __init__(self, f):
+            self.f = f
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *exc):
+            self.f.close()
+            raise OSError("disk full")
+
+        def write(self, data):
+            return self.f.write(data)
+
+    (tmp_path / "shot.png").write_bytes(b"one")
+    monkeypatch.setattr(S, "open", lambda path, mode: FailingClose(real(path, mode)), raising=False)
+    with pytest.raises(OSError, match="disk full"):
+        S.save_upload(tmp_path, "shot.png", b"two")
+    assert [(p.name, p.read_bytes()) for p in tmp_path.iterdir()] == [("shot.png", b"one")]
+
+
+def test_a_second_drop_waits_until_the_first_writer_has_closed_its_file(tmp_path, monkeypatch):
+    """The same picture dropped twice: the second gets the file only once the first upload closed it (it found it
+    whole while the writer was still open, whose close could still fail and remove it: CodeRabbit)."""
+    import threading
+
+    real = open
+    writing, release = threading.Event(), threading.Event()
+
+    class SlowClose:
+        def __init__(self, f):
+            self.f = f
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *exc):
+            writing.set()
+            release.wait(5)
+            self.f.close()
+
+        def write(self, data):
+            self.f.write(data)
+            self.f.flush()  # the bytes are in the file: a reader would take it for whole
+
+    monkeypatch.setattr(S, "open", lambda path, mode: SlowClose(real(path, mode)), raising=False)
+    got = {}
+    first = threading.Thread(target=lambda: got.setdefault("first", S.save_upload(tmp_path, "shot.png", b"one")))
+    first.start()
+    assert writing.wait(5)
+    second = threading.Thread(target=lambda: got.setdefault("second", S.save_upload(tmp_path, "shot.png", b"one")))
+    second.start()
+    second.join(0.3)
+    assert second.is_alive()  # waits for the first writer
+    release.set()
+    first.join(5)
+    second.join(5)
+    assert got["first"] == got["second"] == tmp_path / "shot.png"
+
+
+def test_an_upload_for_the_atlas_switched_away_while_it_came_in_is_refused(app, tmp_path):
+    import http.client
+
+    srv, _pts = app
+    (tmp_path / "b").mkdir()
+    b, _pts_b, _img = make_atlas(tmp_path / "b")
+    a_folder = srv.session.path.parent
+    before = {p.name for p in a_folder.iterdir()} | {p.name for p in b.parent.iterdir()}
+    data = b"\x89PNG" + b"x" * 1000
+    conn = http.client.HTTPConnection(srv.server_address[0], srv.server_address[1], timeout=10)
+    conn.putrequest("POST", "/api/upload")
+    for k, v in {
+        "X-Grand": "1",
+        "X-Filename": "late.png",
+        "Content-Type": "application/octet-stream",
+        "Content-Length": str(len(data)),
+        S.GEN_HEADER: str(srv.session.generation),  # made for atlas A
+    }.items():
+        conn.putheader(k, v)
+    conn.endheaders()
+    conn.send(data[:100])
+    srv.session.open_atlas(b)  # B opens while the picture is still coming in
+    conn.send(data[100:])
+    res = conn.getresponse()
+    assert res.status == 409 and json.loads(res.read())["stale"]
+    conn.close()
+    after = {p.name for p in a_folder.iterdir()} | {p.name for p in b.parent.iterdir()}
+    assert after == before  # saved in neither atlas's folder

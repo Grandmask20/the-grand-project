@@ -37,7 +37,6 @@ def test_art_is_added_only_for_types_without_pictures(
     # the stored badges model's own labelled pictures name WisdomsTeachings (only its names are read here)
     models.save_model("badges", {"names": ["WisdomsTeachings"], "F": np.zeros((1, 3), np.float32)}, {}, path=db)
     monkeypatch.setattr(import_poe2db_art, "ART", art)
-    monkeypatch.setattr(import_poe2db_art, "TRUTH_SETS", [])
     monkeypatch.setattr(sys, "argv", ["import_poe2db_art", str(db)])
 
     import_poe2db_art.main()
@@ -46,3 +45,22 @@ def test_art_is_added_only_for_types_without_pictures(
     out = capsys.readouterr().out
     assert "NotAType is not an icon type" in out
     assert "art pictures added for 1 types: RogueExile" in out
+
+
+def test_without_a_stored_model_only_the_pictures_and_templates_count(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture
+) -> None:
+    """No badges model yet: a type the truth files hold is not one the detector can name, so its art is added (it was
+    left out, unsaid: CodeRabbit), and the run says no model was found."""
+    art = tmp_path / "art"
+    art.mkdir()
+    shutil.copy(K.ICON_ART_DIR / "full__RogueExile.webp", art / "full__RogueExile.webp")
+    db = tmp_path / "icons.sqlite3"
+    icon_refs._db(db).close()
+    monkeypatch.setattr(import_poe2db_art, "ART", art)
+    monkeypatch.setattr(sys, "argv", ["import_poe2db_art", str(db)])
+
+    import_poe2db_art.main()
+
+    assert _names(db) == {"RogueExile": 1}
+    assert "no stored badges model" in capsys.readouterr().out

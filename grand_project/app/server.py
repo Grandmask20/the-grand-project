@@ -420,8 +420,12 @@ class Handler(BaseHTTPRequestHandler):
 
     @route("GET", "/api/hello")
     def get_hello(self, q) -> None:
-        """Which program answers here (a second start finds the copy already running: running_app)."""
-        self._json({"app": HELLO_APP, "version": VERSION, "root": str(rc_paths.ROOT.resolve())})
+        """Which program answers here and with which detector (a second start finds the copy already running:
+        running_app)."""
+        from grand_project.detect.rf_detr_model import rf_detr_enabled
+
+        root = str(rc_paths.ROOT.resolve())
+        self._json({"app": HELLO_APP, "version": VERSION, "root": root, "rf_detr": rf_detr_enabled()})
 
     @route("GET", "/api/meta")
     def get_meta(self, q) -> None:
@@ -640,14 +644,8 @@ class Handler(BaseHTTPRequestHandler):
             opened = self.S.opened
             if not self.S.owns(gen) or opened.path is None:  # another atlas opened while it came in (CodeRabbit)
                 raise StaleAtlas()
-        dest = opened.path.parent / name  # (the folder of the atlas it was checked for, from its own record)
-        stem, k = dest.stem, 0
-        while dest.exists() and dest.read_bytes() != data:  # another picture by that name: a free name (CodeRabbit)
-            k += 1
-            dest = dest.with_name(f"{stem}_{int(time.time())}{f'_{k}' if k > 1 else ''}{dest.suffix}")
-        if not dest.exists():
-            dest.write_bytes(data)
-        self._json({"path": str(dest)})
+        # (the folder of the atlas it was checked for, from its own record)
+        self._json({"path": str(save_upload(opened.path.parent, name, data))})
 
     # ------------------------------------------------------------------ adding screenshots
     @route("POST", "/api/screenshots")
@@ -1124,6 +1122,49 @@ def meta() -> dict:
     }
 
 
+_UPLOADS = threading.Lock()
+"""Held while one upload creates, compares and closes its file: a second drop of the same picture never takes a file
+for its own whose writer is still open (its close may yet fail and remove it: CodeRabbit)."""
+
+
+def save_upload(folder: Path, name: str, data: bytes) -> Path:
+    """Save a dropped screenshot in a folder under its own name, or a free name when another picture has it.
+
+    Args:
+        folder: The open atlas's folder.
+        name: The file's name.
+        data: The file's bytes.
+
+    Returns:
+        The file holding the picture (the one already there when it is the same picture).
+    """
+    with _UPLOADS:
+        return _save_upload(folder / name, data)
+
+
+def _save_upload(dest: Path, data: bytes) -> Path:
+    """``save_upload`` with the upload lock held."""
+    stem, k = dest.stem, 0
+    while True:
+        try:  # the name claimed in the same step as the file is made: checked first, then written, two pictures
+            # dropped together under one name both found it free and the second overwrote the first
+            f = open(dest, "xb")  # noqa: SIM115 (closed below, its failure included)
+        except FileExistsError:
+            with contextlib.suppress(OSError):
+                if dest.read_bytes() == data:  # the same picture again: its file
+                    return dest
+        else:
+            try:
+                with f:  # the write and the close (its flush can fail too: a full disk)
+                    f.write(data)
+            except BaseException:
+                dest.unlink(missing_ok=True)  # this call made it: no cut-off picture left under the name
+                raise
+            return dest
+        k += 1  # another picture by that name: a free name (CodeRabbit)
+        dest = dest.with_name(f"{stem}_{int(time.time())}{f'_{k}' if k > 1 else ''}{dest.suffix}")
+
+
 def _jsonable(o):
     """Turn numpy values and sets into JSON.
 
@@ -1277,7 +1318,7 @@ def _stopped(host: str, port: int) -> bool:
         return False
 
 
-def running_app(port: int, host: str = APP_HOST, root: Path | None = None) -> tuple[str, str] | None:
+def running_app(port: int, host: str = APP_HOST, root: Path | None = None) -> tuple[str, str, bool] | None:
     """Find this program's own copy already running on one of the ports it would take.
 
     Starting it again (a double-click on the launcher, which shows no window on Windows) started a second copy on
@@ -1289,7 +1330,7 @@ def running_app(port: int, host: str = APP_HOST, root: Path | None = None) -> tu
         root: The program folder a running copy must be in (default: this one's).
 
     Returns:
-        (the running copy's URL, its version), or None.
+        (the running copy's URL, its version, whether it runs the RF-DETR detector), or None.
     """
     want = str((root or rc_paths.ROOT).resolve())
     for p in range(port, port + APP_PORT_TRIES):
@@ -1299,7 +1340,7 @@ def running_app(port: int, host: str = APP_HOST, root: Path | None = None) -> tu
         url = f"http://{host}:{p}/"
         hello = _local(url + "api/hello")
         if hello and hello.get("app") == HELLO_APP and hello.get("root") == want:
-            return url, str(hello.get("version", ""))
+            return url, str(hello.get("version", "")), bool(hello.get("rf_detr"))
     return None
 
 
@@ -1325,7 +1366,7 @@ def reuse_running(port: int, atlas: str | None, browser: bool) -> str:
     found = running_app(port)
     if not found:
         return START
-    url, version = found
+    url, version, rf_detr = found
     if version != VERSION:
         _say(f"An older copy (v{version}) is running: closing it to start v{VERSION}")
         _local(url + "api/quit", {})
@@ -1341,6 +1382,17 @@ def reuse_running(port: int, atlas: str | None, browser: bool) -> str:
         _say(f"The older copy at {url} is still closing: start the app again in a moment.")
         return FAILED
     _say(f"The Grand Project is already running: {url}")
+    from grand_project.detect.rf_detr_model import rf_detr_enabled
+
+    if rf_detr != rf_detr_enabled():
+        # the running copy keeps its own detector: this start's GRAND_PROJECT_USE_RF_DETR is not applied (CodeRabbit)
+        detector = "RF-DETR" if rf_detr else "classical"
+        note = (
+            f"The running copy uses the {detector} detector: this start's GRAND_PROJECT_USE_RF_DETR was not applied "
+            "(quit it and start again to switch)."
+        )
+        LOG.warning(note)
+        _say(note)
     if browser:
         webbrowser.open(url)
     if atlas and _local(url + "api/atlas/open", {"path": str(Path(atlas).resolve()), "background": True}) is None:

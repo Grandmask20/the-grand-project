@@ -18,7 +18,6 @@ Energized Ley Lines) should then get real pictures stored from the screenshots i
 
 from __future__ import annotations
 
-import json
 import sys
 from pathlib import Path
 
@@ -27,7 +26,7 @@ import numpy as np
 
 from grand_project import icon_refs
 from grand_project.detect import models
-from grand_project.detect.constants import ICON_ART_DIR, ICON_INFO, ICON_LEGACY, SPECIAL_ICONS, TRUTH_SETS
+from grand_project.detect.constants import ICON_ART_DIR, ICON_INFO, ICON_LEGACY, SPECIAL_ICONS
 
 ART = ICON_ART_DIR
 SIZES = {"full": (34,), "inner": (20, 22)}
@@ -54,8 +53,8 @@ def known_names(db: Path) -> set[str]:
     """The icon types the classical detector can already name with this database.
 
     Its stored pictures (badge_refs), the labelled pictures kept in its stored badges model and the icons found by
-    their own template (SPECIAL_ICONS). Without a stored model, the hand-labelled truth files (the model is trained
-    from them) stand in for its pictures.
+    their own template (SPECIAL_ICONS). Without a stored model, only the pictures and the templates: the truth files
+    are no names the detector knows until a model is trained from them.
 
     Args:
         db: The icon database.
@@ -67,12 +66,10 @@ def known_names(db: Path) -> set[str]:
     have = {r[0] for r in c.execute("SELECT DISTINCT name FROM badge_refs")} | set(SPECIAL_ICONS)
     c.close()
     model = models.load_model("badges", db)
-    if model is not None:
-        return have | set(model["names"])
-    for tf, _shots in TRUTH_SETS:
-        if tf.exists():
-            have |= {b["name"] for v in json.loads(tf.read_text(encoding="utf-8")).values() for b in v["badges"]}
-    return have
+    if model is None:
+        print(f"  {db.name}: no stored badges model, the stored pictures and templates only")
+        return have
+    return have | set(model["names"])
 
 
 def main():

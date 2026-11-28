@@ -37,6 +37,8 @@ from tools.detection_dataset_annotator.pool import cpu_count, default_workers, d
 from tools.detection_dataset_annotator.split_ledger import SplitConflict
 from tools.detection_dataset_annotator.state import (
     DetectionOptions,
+    changed_since_detection,
+    current_digest,
     discover_images,
     image_key,
     label_names,
@@ -89,6 +91,11 @@ def _saved_seq_key(editor_key: str) -> str:
     return f"saved-seq-{editor_key}"
 
 
+def _action_done_key(editor_key: str) -> str:
+    """The id of the editor's last action the page handled: the editor stays locked until it is told so."""
+    return f"action-done-{editor_key}"
+
+
 def _known_key(editor_key: str) -> str:
     return f"known-boxes-{editor_key}"
 
@@ -100,7 +107,12 @@ def _base_key(editor_key: str) -> str:
 
 def _forget(editor_key: str) -> None:
     """Drop an editor's session memory (save counter, undo memory, base boxes): only the editor on screen keeps any."""
-    for name in (_saved_seq_key(editor_key), _known_key(editor_key), _base_key(editor_key)):
+    for name in (
+        _saved_seq_key(editor_key),
+        _known_key(editor_key),
+        _base_key(editor_key),
+        _action_done_key(editor_key),
+    ):
         st.session_state.pop(name, None)
 
 
@@ -210,24 +222,82 @@ def _action_target(kind: str, reviewed: bool, keys: list[str], image_key: str) -
     return None, (neighbour_key(keys, image_key, step) if step else None) or image_key
 
 
+def _select(key: str) -> None:
+    """Show a screenshot: the page's own and the list's choice (a move the list asked for is done)."""
+    st.session_state[K.ANNOTATOR_SESSION_SELECTED] = key
+    st.session_state[K.ANNOTATOR_SESSION_PICKED] = key
+    st.session_state.pop(K.ANNOTATOR_SESSION_GOTO, None)
+
+
+def _unmount() -> None:
+    """No editor on screen: the next one mounts fresh, without this one's saved count or undo memory."""
+    st.session_state.pop(K.ANNOTATOR_SESSION_MOUNTED_IMAGE, None)
+    if mounted := st.session_state.pop(K.ANNOTATOR_SESSION_MOUNTED_EDITOR, None):
+        _forget(mounted)
+
+
+def _on_pick() -> None:
+    """The screenshot list: with an editor on screen, it is asked to save its latest boxes and go there (its "goto"
+    action, ``_on_action``); retired at once, edits made since its last autosave were lost (CodeRabbit). Without
+    one, the page goes there now."""
+    picked = st.session_state.get(K.ANNOTATOR_SESSION_PICKED)
+    shown = st.session_state.get(K.ANNOTATOR_SESSION_SELECTED)
+    if picked == shown:
+        st.session_state.pop(K.ANNOTATOR_SESSION_GOTO, None)
+    elif st.session_state.get(K.ANNOTATOR_SESSION_MOUNTED_IMAGE) == shown:
+        st.session_state[K.ANNOTATOR_SESSION_GOTO] = picked
+    else:
+        _select(picked)
+
+
 def _on_action(store_path: Path, image_key: str, revision: int, editor_key: str, keys: list[str]) -> None:
-    """Navigation and review keys: save the boxes the action carries, then move through the queue."""
+    """Navigation and review keys: save the boxes the action carries, then move through the queue. The list's "goto"
+    moves to the screenshot picked whether its save went through or not (it was asked for)."""
     action = (st.session_state.get(editor_key) or {}).get("action")
+    if isinstance(action, dict):
+        # handled, saved or not: the editor unlocks when the page answers with it (and only then: an autosave's answer
+        # comes before)
+        st.session_state[_action_done_key(editor_key)] = action.get("action_id")
+    if isinstance(action, dict) and action.get("type") == "goto":
+        picked = action.get("target")
+        _save_action(store_path, image_key, revision, editor_key, keys, action)
+        _select(picked if picked in keys else image_key)
+        return
+    target = _save_action(store_path, image_key, revision, editor_key, keys, action)
+    if target is not None:
+        _select(target)
+
+
+def _save_action(
+    store_path: Path, image_key: str, revision: int, editor_key: str, keys: list[str], action: Any
+) -> str | None:
+    """Save what an editor action carries (its boxes, the review flag); return the screenshot to show next, or None
+    when nothing was saved (a stale message, or another tab's save first: the editor is reloaded)."""
     with ReviewStore.open(store_path) as store:
         item = _message_item(store, image_key, revision, action)
         if item is None or _changed_elsewhere(item, editor_key):
-            return
+            return None
         edited = _edited_annotations(item, editor_key, action)
-        reviewed, target = _action_target(str(action.get("type")), bool(item.get("reviewed")), keys, image_key)
+        kind = str(action.get("type"))
+        reviewed, target = _action_target(kind, bool(item.get("reviewed")), keys, image_key)
         log = _review_log(action, reviewed=reviewed)
         changes = edited is not None or reviewed is not None or log["review_s"] > 0
+        # a toggle is of the flag read here: saved only while it still is (another tab may have toggled it), so the
+        # queue moves by the flag saved; "Reviewed, next" sets it whatever it was
+        was = bool(item.get("reviewed")) if kind == "toggle_review" else None
         if changes and not store.save_review(
-            image_key, revision, annotations=edited, reviewed=reviewed, expect_boxes=item["annotations"], **log
+            image_key,
+            revision,
+            annotations=edited,
+            reviewed=reviewed,
+            expect_boxes=item["annotations"],
+            expect_reviewed=was,
+            **log,
         ):
             _reload_editor()  # a detector rerun or another tab's save landed in between
-            return
+            return None
     _accepted(editor_key, action, edited)
-    st.session_state[K.ANNOTATOR_SESSION_SELECTED] = target
+    return target
 
 
 def _render_editor(store: ReviewStore, key: str, keys: list[str], settings: Settings) -> None:
@@ -239,16 +309,23 @@ def _render_editor(store: ReviewStore, key: str, keys: list[str], settings: Sett
     if item.get("error"):
         st.error(item["error"])
     if not item.get("detected"):
-        # no editor on screen: the next one mounts fresh, without this one's saved count or undo memory
-        if mounted := st.session_state.pop(K.ANNOTATOR_SESSION_MOUNTED_EDITOR, None):
-            _forget(mounted)
+        _unmount()
         st.info("This screenshot has not been processed by the classical detector yet. Press **Detect**.")
+        return
+    if changed_since_detection(item, current_digest(path)):
+        # its boxes frame the picture detected, not the file now (replaced since, maybe by one of its size)
+        _unmount()
+        st.error(
+            f"`{item['source']}` is missing or changed since its detection: its boxes would frame another picture. "
+            "Press **Rerun detection** (it replaces its boxes)."
+        )
         return
     try:
         image_url = _image_url(str(path), path.stat().st_mtime_ns)
     except OSError:
         image_url = None
     if image_url is None:
+        _unmount()
         st.error(f"The screenshot could not be read: `{item['source']}`")
         return
 
@@ -261,6 +338,7 @@ def _render_editor(store: ReviewStore, key: str, keys: list[str], settings: Sett
         if mounted:
             _forget(mounted)
         st.session_state[K.ANNOTATOR_SESSION_MOUNTED_EDITOR] = editor_key
+        st.session_state[K.ANNOTATOR_SESSION_MOUNTED_IMAGE] = key
         st.session_state[_saved_seq_key(editor_key)] = 0
         st.session_state[_known_key(editor_key)] = {}
         st.session_state[_base_key(editor_key)] = copy.deepcopy(item.get("annotations", []))
@@ -289,6 +367,9 @@ def _render_editor(store: ReviewStore, key: str, keys: list[str], settings: Sett
         "has_prev": index > 0,
         "has_next": 0 <= index < len(keys) - 1,
         "saved_seq": st.session_state.get(_saved_seq_key(editor_key), 0),
+        "action_done": st.session_state.get(_action_done_key(editor_key)),
+        # a screenshot picked in the list: the editor saves its latest boxes and asks to go there (_on_action)
+        "goto": goto if (goto := st.session_state.get(K.ANNOTATOR_SESSION_GOTO)) in keys and goto != key else None,
         "chip_px": K.ANNOTATOR_EDITOR_CHIP_PX,
         "autosave_ms": K.ANNOTATOR_EDITOR_AUTOSAVE_MS,
         "idle_ms": K.ANNOTATOR_IDLE_MS,
@@ -416,6 +497,11 @@ def _export(store: ReviewStore, settings: Settings) -> None:
         )
     if result.skipped_annotations:
         st.warning(f"Skipped {result.skipped_annotations} invalid annotations or icons the dataset leaves out.")
+    if result.changed:
+        st.warning(
+            f"Left out {len(result.changed)} screenshots changed since their detection (rerun their detection): "
+            + ", ".join(f"`{source}`" for source in result.changed[:20])
+        )
     if result.report:
         with st.expander("Split balance"):
             st.code(result.report, language=None)
@@ -504,10 +590,17 @@ def _sidebar_actions(store: ReviewStore, queue: list[QueueEntry], settings: Sett
 
 
 def _queue_picker(store: ReviewStore, queue: list[QueueEntry], settings: Settings, keys: list[str]) -> str:
-    """The screenshot select box and its detect / rerun button; return the selected image key."""
+    """The screenshot select box and its detect / rerun button; return the image key on screen (a screenshot picked
+    in the list is shown once the editor saved its boxes for the move: ``_on_pick``)."""
     entries = {entry.key: entry for entry in queue}
-    if st.session_state.get(K.ANNOTATOR_SESSION_SELECTED) not in keys:
-        st.session_state[K.ANNOTATOR_SESSION_SELECTED] = keys[0]
+    state = st.session_state
+    if state.get(K.ANNOTATOR_SESSION_SELECTED) not in keys:
+        _select(keys[0])
+    shown = state[K.ANNOTATOR_SESSION_SELECTED]
+    if state.get(K.ANNOTATOR_SESSION_GOTO) not in keys:
+        state.pop(K.ANNOTATOR_SESSION_GOTO, None)  # (the list changed meanwhile: the move is off)
+    if state.get(K.ANNOTATOR_SESSION_PICKED) not in (shown, state.get(K.ANNOTATOR_SESSION_GOTO)):
+        state[K.ANNOTATOR_SESSION_PICKED] = shown  # (set before the list is drawn, as Streamlit allows)
 
     def option_text(key: str) -> str:
         entry = entries[key]
@@ -518,12 +611,14 @@ def _queue_picker(store: ReviewStore, queue: list[QueueEntry], settings: Setting
     processed = sum(entry.detected for entry in queue)
     reviewed = sum(entry.reviewed for entry in queue)
     pick, detect = st.columns([5, 1], vertical_alignment="bottom")
-    selected = pick.selectbox(
+    pick.selectbox(
         f"Screenshot · {len(queue)} images · {processed} processed · {reviewed} reviewed",
         keys,
         format_func=option_text,
-        key=K.ANNOTATOR_SESSION_SELECTED,
+        key=K.ANNOTATOR_SESSION_PICKED,
+        on_change=_on_pick,
     )
+    selected = shown
     detected = entries[selected].detected
     if detected:
         run = detect.button(
@@ -550,7 +645,10 @@ def _page(store: ReviewStore, settings: Settings) -> None:
     if notice := st.session_state.pop(K.ANNOTATOR_SESSION_NOTICE, None):
         st.toast(notice)
 
-    shown = [entry for entry in queue if not settings.hide_reviewed or not entry.reviewed]
+    # the screenshot on screen stays in the queue until the editor moves on (which saves its boxes first): hiding the
+    # reviewed ones (the checkbox ticked) retired its editor with edits not saved yet (CodeRabbit)
+    current = st.session_state.get(K.ANNOTATOR_SESSION_SELECTED)
+    shown = [entry for entry in queue if not settings.hide_reviewed or not entry.reviewed or entry.key == current]
     if settings.guesses_first:
         shown.sort(key=lambda entry: -entry.guesses)  # stable: equal counts keep the queue's order
     keys = [entry.key for entry in shown]
@@ -559,6 +657,7 @@ def _page(store: ReviewStore, settings: Settings) -> None:
             "Nothing to review: press **Discover** and **Detect new** in the sidebar, or turn off "
             "‘Hide reviewed screenshots’ to revisit completed work."
         )
+        _unmount()  # no editor on screen: the next one mounts fresh (its saved count from zero)
         return
     selected = _queue_picker(store, queue, settings, keys)
     _render_editor(store, selected, keys, settings)

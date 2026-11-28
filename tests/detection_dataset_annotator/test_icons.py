@@ -233,6 +233,26 @@ def test_a_snap_onto_the_hud_keeps_the_estimate() -> None:
     assert [(node["x"], node["y"]) for node in found] == [(600.0, 932.0)]
 
 
+def test_a_nearer_spot_that_will_not_do_never_hides_one_that_will() -> None:
+    """The HUD spot 6 px off is no snap; one 6.3 px off, clear of the HUD, is the nearest that will do: snapped to
+    (only the nearest was tried, and the estimate stayed: CodeRabbit)."""
+    image = np.zeros((1080, 1920, 3), np.uint8)
+    spots = np.array([[600.0, 938.0], [606.0, 930.0]])
+    found = icon_proposals.hidden_nodes(image, {"nodes": []}, [{"x": 600, "y": 908}], spots)
+    assert [(node["x"], node["y"]) for node in found] == [(606.0, 930.0)]
+
+
+def test_a_blocked_estimate_still_snaps_to_a_spot_that_will_do() -> None:
+    """The estimate is 20 px from a known (hidden) map node, too close; a faint spot 7 px off is 27 px from it, clear:
+    the row's map node is that spot (the blocked estimate dropped the row before the snap was tried: CodeRabbit). With
+    no spot the blocked estimate gives none."""
+    image = np.zeros((1080, 1920, 3), np.uint8)
+    known = [{"x": 580.0, "y": 424.0, "hidden": True}]
+    found = icon_proposals.hidden_nodes(image, {"nodes": known}, [{"x": 600, "y": 400}], np.array([[607.0, 426.0]]))
+    assert [(node["x"], node["y"]) for node in found] == [(607.0, 426.0)]
+    assert icon_proposals.hidden_nodes(image, {"nodes": known}, [{"x": 600, "y": 400}]) == []
+
+
 def test_a_proposed_map_node_keeps_its_class_guess() -> None:
     """A hidden map node whose biome or city area is only a guess stays a dotted guess, not a plain icon-row box."""
     from grand_project.detect import constants as DK

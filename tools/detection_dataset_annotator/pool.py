@@ -36,8 +36,8 @@ if TYPE_CHECKING:
 Progress = Callable[[int, int, str], None]
 """Called with (finished, total, screenshot path) after each screenshot."""
 
-Job = tuple[str, str]
-"""A screenshot's key and path."""
+Job = tuple[str, str, int]
+"""A screenshot's key, path and review generation when it was queued (``ReviewStore.detection_jobs``)."""
 
 
 def cpu_count() -> int:
@@ -95,7 +95,7 @@ class _Run:
         # The store raises the screenshot's revision: the editor remounts and shows these detections instead of
         # autosaving old boxes over them.
         try:
-            self.store.record_detection(job[0], result, force=self.force)
+            self.store.record_detection(job[0], result, force=self.force, generation=job[2])
         except KeyError:
             if not self._gone(job):
                 raise
@@ -105,7 +105,7 @@ class _Run:
 
     def fail(self, job: Job, error: str) -> None:
         try:
-            self.store.record_failure(job[0], error, force=self.force)
+            self.store.record_failure(job[0], error, force=self.force, generation=job[2])
         except KeyError:
             if not self._gone(job):
                 raise
@@ -193,14 +193,20 @@ async def _stop_worker(process: asyncio.subprocess.Process, *, graceful: bool) -
 
 
 async def _send(process: asyncio.subprocess.Process, job: Job, settings: dict) -> str | None:
-    """Write one request to the worker; return the error when it cannot be sent."""
+    """Write one request to the worker; return the error when it cannot be sent.
+
+    Raises:
+        TimeoutError: the worker took no input for ``ANNOTATOR_WORKER_ANSWER_S`` (stuck: its pipe stays full).
+    """
     if process.stdin is None:
         return "Detection worker input was unavailable."
-    key, path = job
+    key, path, _generation = job
     request = {"key": key, "path": path, **settings}
     try:
         process.stdin.write((json.dumps(request) + "\n").encode("utf-8"))
-        await process.stdin.drain()
+        await asyncio.wait_for(process.stdin.drain(), K.ANNOTATOR_WORKER_ANSWER_S)
+    except TimeoutError:
+        raise  # a stuck worker (TimeoutError is an OSError): the driver stops it, it is no broken pipe
     except (ConnectionError, OSError) as exc:  # BrokenPipeError / ConnectionResetError: the worker is gone
         return f"Could not send screenshot to detection worker: {exc}"
     return None
@@ -217,13 +223,21 @@ async def _drive_worker(run: _Run, options: DetectionOptions, process: asyncio.s
         while True:
             while accepting and run.pending and len(in_flight) < K.ANNOTATOR_WORKER_IN_FLIGHT:
                 job = run.pending.popleft()
-                error = await _send(process, job, settings)
+                try:
+                    error = await _send(process, job, settings)
+                except TimeoutError:  # stuck reading: its screenshots fail (retryable), it is stopped, not waited on
+                    error = f"Detection worker took no input within {K.ANNOTATOR_WORKER_ANSWER_S:g} s; it was stopped."
+                    run.fail(job, error)
+                    while in_flight:
+                        run.fail(in_flight.popleft(), error)
+                    stuck = True
+                    break
                 if error is None:
                     in_flight.append(job)
                 else:
                     run.fail(job, error)
                     accepting = False  # read what was already sent, then stop
-            if not in_flight:
+            if stuck or not in_flight:
                 break
             try:
                 line = await asyncio.wait_for(process.stdout.readline(), K.ANNOTATOR_WORKER_ANSWER_S)

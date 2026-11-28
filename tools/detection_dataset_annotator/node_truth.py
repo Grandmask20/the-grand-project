@@ -35,9 +35,15 @@ from grand_project import core, icon_refs
 from grand_project.detect import labels as L
 
 from . import constants as K
+from .detection import read_with_digest
 from .state import relative_source, resolve_path
 from .store import ReviewStore
-from .truth_seed import _detector_image
+
+
+def _detector_image(path: Path) -> np.ndarray | None:
+    """The screenshot as the detector reads it (1080p BGR), or None when it cannot be read."""
+    read = read_with_digest(path)
+    return None if read is None else core.scale_screenshot(read[0])
 
 
 @dataclass(frozen=True)

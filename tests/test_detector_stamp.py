@@ -94,3 +94,15 @@ def test_a_screenshot_that_cannot_be_detected_fails_the_add(tmp_path, monkeypatc
     assert builder.cmd_add(args) == 1
     assert "1 screenshots could not be detected: broken.png" in capsys.readouterr().out
     assert not (tmp_path / "atlas.json").exists()
+
+
+def test_an_rf_detr_stamp_without_its_checkpoint_is_worked_out_again(tmp_path, monkeypatch):
+    """With RF-DETR on and no checkpoint folder yet, the stamp is not kept: once the folder appears in this process
+    (a training run finishing), the stamp names its contents (CodeRabbit)."""
+    folder = tmp_path / "best"
+    before = _rf_detr_stamp(monkeypatch, folder)
+    assert builder._STAMP == []
+    folder.mkdir()
+    (folder / "model.safetensors").write_bytes(b"weights")
+    after = builder.detector_stamp()  # (no reset: the same process)
+    assert after != before and [after] == builder._STAMP

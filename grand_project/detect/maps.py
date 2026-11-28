@@ -57,6 +57,12 @@ _rad2 = np.hypot(_X2, _Y2)
 _WIDE = [(_rad2 >= a) & (_rad2 < a + 8) for a in range(8, RIM_R, 8)]
 
 
+_HUE_RAD = np.arange(256, dtype=np.float32) / 90 * np.pi  # OpenCV hue (0-179) as an angle, float32 as a plane's
+
+
+_HUE_COS, _HUE_SIN = np.cos(_HUE_RAD), np.sin(_HUE_RAD)
+
+
 def map_features(img: np.ndarray, pts: np.ndarray, dogv: np.ndarray) -> np.ndarray:
     """Map classifier features per candidate.
 
@@ -77,30 +83,25 @@ def map_features(img: np.ndarray, pts: np.ndarray, dogv: np.ndarray) -> np.ndarr
     n = len(pts)
     P = RIM_R + 2
     big = cv2.copyMakeBorder(img, P, P, P, P, cv2.BORDER_REFLECT)
-    hsv = cv2.cvtColor(big, cv2.COLOR_BGR2HSV).astype(np.float32)
-    lab = cv2.cvtColor(big, cv2.COLOR_BGR2LAB).astype(np.float32)
+    hsv = cv2.cvtColor(big, cv2.COLOR_BGR2HSV)  # (uint8: every plane below holds these whole numbers as float32)
     g = cv2.cvtColor(big, cv2.COLOR_BGR2GRAY)
     gx = cv2.Sobel(g, cv2.CV_32F, 1, 0)
     gy = cv2.Sobel(g, cv2.CV_32F, 0, 1)
     mag, ori = np.hypot(gx, gy), np.arctan2(gy, gx) % np.pi
-    gold = ((hsv[..., 0] >= 8) & (hsv[..., 0] <= 32) & (hsv[..., 1] > 90) & (hsv[..., 2] > 110)).astype(np.float32)
+    gold = (hsv[..., 0] >= 8) & (hsv[..., 0] <= 32) & (hsv[..., 1] > 90) & (hsv[..., 2] > 110)
     obin = (ori / np.pi * 8).astype(int).clip(0, 7)
-    hrad = hsv[..., 0] / 90 * np.pi
-    planes = np.stack(
-        [
-            hsv[..., 2],
-            hsv[..., 1],
-            lab[..., 0],
-            lab[..., 1],
-            lab[..., 2],
-            np.cos(hrad),
-            np.sin(hrad),
-            np.zeros_like(mag),
-            mag,
-        ]
-        + [mag * (obin == k) for k in range(8)],
-        -1,
-    )  # (H, W, 17)
+    # (H, W, 17): every plane written straight into one array (stacked from 17 separate planes, building it was a
+    # quarter of this function's time); cos / sin of the hue angle looked up for its 180 values
+    planes = np.empty(big.shape[:2] + (17,), np.float32)
+    planes[..., 0] = hsv[..., 2]
+    planes[..., 1] = hsv[..., 1]
+    planes[..., 2:5] = cv2.cvtColor(big, cv2.COLOR_BGR2LAB)
+    planes[..., 5] = _HUE_COS[hsv[..., 0]]
+    planes[..., 6] = _HUE_SIN[hsv[..., 0]]
+    planes[..., 7] = 0.0
+    planes[..., 8] = mag
+    for k in range(8):
+        np.multiply(mag, obin == k, out=planes[..., 9 + k])
     cx = pts[:, 0].astype(int) + P if n else np.zeros(0, int)
     cy = pts[:, 1].astype(int) + P if n else np.zeros(0, int)
     oy, ox = np.mgrid[-R : R + 1, -R : R + 1]
@@ -156,8 +157,9 @@ def map_features(img: np.ndarray, pts: np.ndarray, dogv: np.ndarray) -> np.ndarr
             .reshape(k, -1)
         )
         thumbs = (thumbs - thumbs.mean(1, keepdims=True)) / (thumbs.std(1, keepdims=True) + 1)
-        wv = hsv[..., 2][Y[:, None, None] + oy2, X[:, None, None] + ox2].reshape(k, -1)
-        wg = gold[Y[:, None, None] + oy2, X[:, None, None] + ox2].reshape(k, -1)
+        wy, wx = Y[:, None, None] + oy2, X[:, None, None] + ox2  # (read as bytes: 4x less to gather)
+        wv = hsv[..., 2][wy, wx].reshape(k, -1).astype(np.float32)
+        wg = gold[wy, wx].reshape(k, -1).astype(np.float32)
         wmean = (wv @ all2_w)[:, 0]
         wstd = wv.std(1)
         c5 = (pat[..., 0] @ in5_w)[:, 0]

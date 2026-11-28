@@ -7,9 +7,15 @@ import { test } from "node:test";
 import {
   closestHandle,
   coordinateValue,
+  finderKeyActs,
+  finderPick,
   isGuess,
+  keepUnmoved,
   labelForKey,
   plainKeyTarget,
+  relabelled,
+  repeatIgnored,
+  scaledSide,
   wheelPixels,
 } from "../../tools/detection_dataset_annotator/component/annotator.js";
 
@@ -83,4 +89,61 @@ test("an emptied coordinate is no 0", () => {
   assert.equal(coordinateValue("abc"), null);
   assert.equal(coordinateValue("0"), 0);
   assert.equal(coordinateValue(" 12.5 "), 12.5);
+});
+
+test("a held key reviews or moves to another screenshot once; arrows, undo and zoom repeat", () => {
+  for (const shortcut of ["Enter", "n", "p", "[", "]"]) assert.equal(repeatIgnored(shortcut), true, shortcut);
+  for (const shortcut of ["ArrowLeft", "z", "+", "-", ",", ".", "j"]) assert.equal(repeatIgnored(shortcut), false);
+  // N and P with Shift: the shortcut is the lower-case letter
+  assert.equal(repeatIgnored(plainKeyTarget(palette, { key: "N", code: "KeyN", shiftKey: true }).shortcut), true);
+});
+
+test("the finder's Enter uses its first match, nothing while it is empty", () => {
+  const shown = [{ name: "tower" }, { name: "hall" }];
+  assert.equal(finderPick(shown, "to").name, "tower");
+  assert.equal(finderPick(shown, ""), null);
+  assert.equal(finderPick([], "zzz"), null);
+});
+
+test("the label finder leaves Enter and Esc to an input method composing a word", () => {
+  assert.equal(finderKeyActs({ key: "Enter", isComposing: false, keyCode: 13 }), true);
+  assert.equal(finderKeyActs({ key: "Escape", isComposing: false, keyCode: 27 }), true);
+  assert.equal(finderKeyActs({ key: "Enter", isComposing: true, keyCode: 13 }), false); // picks the composed word
+  assert.equal(finderKeyActs({ key: "Enter", isComposing: false, keyCode: 229 }), false); // (Safari's end of one)
+  assert.equal(finderKeyActs({ key: "a", isComposing: false, keyCode: 65 }), false); // typed into the finder
+});
+
+test("shrinking a box never grows a side below the drawn-box minimum", () => {
+  assert.equal(scaledSide(1, -1), 1); // a 1 px side stays (the 2 px floor made it grow)
+  assert.equal(scaledSide(3, -1), 1);
+  assert.equal(scaledSide(3, -5), 1);
+  assert.equal(scaledSide(1, 1), 3);
+});
+
+test("a label changes only the boxes that have another one", () => {
+  const boxes = [
+    { id: "a", label: "tower", source: "classical" },
+    { id: "b", label: "hall", source: "classical" },
+  ];
+  assert.deepEqual(
+    relabelled(boxes, "tower").map((box) => box.id),
+    ["b"],
+  );
+});
+
+test("a drag that ends where it began is no edit of that box", () => {
+  // the drag marked both edited; one moved, the other was held against the image edge and stayed
+  const before = [
+    { id: "a", x: 10, y: 10, w: 40, h: 40, source: "classical", score: 0.9 },
+    { id: "b", x: 0, y: 0, w: 40, h: 40, source: "biome_guess", score: 0.5 },
+  ];
+  const boxes = [
+    { id: "a", x: 12, y: 10, w: 40, h: 40, source: "manual", score: null },
+    { id: "b", x: 0, y: 0, w: 40, h: 40, source: "manual", score: null },
+  ];
+  assert.equal(keepUnmoved(boxes, before), true);
+  assert.deepEqual([boxes[0].source, boxes[1].source, boxes[1].score], ["manual", "biome_guess", 0.5]);
+  const still = [{ ...before[0], source: "manual", score: null }];
+  assert.equal(keepUnmoved(still, before), false); // nothing moved: no undo step, no autosave
+  assert.equal(still[0].source, "classical");
 });

@@ -39,6 +39,7 @@ from tools.import_poe2db_art import SIZES, render
 
 _TILE = 3  # sheet: each 34 px picture drawn this many times larger
 _COLS = 8  # sheet: pictures per row
+_DISTS_PER_LINE = 2  # sheet: distances a line under a picture (a third did not fit its width)
 
 
 @dataclass
@@ -175,10 +176,22 @@ def truth_pictures(old: str, arts: dict, unsure: float) -> list[tuple[Path, str,
     return out
 
 
+def _cell_height(types: int) -> int:
+    """A sheet cell's height (px): the picture, its name and its distances to the types' art, two a line."""
+    return icon_refs.SIZE * _TILE + 8 + 14 * (1 + -(-types // _DISTS_PER_LINE))
+
+
 def sheet(path: Path, new: list[str], matches: list[Match]) -> None:
-    """Write the review sheet: the new types' art on top, then every picture with its new name and distances."""
+    """Write the review sheet: the new types' art on top, then every picture with its new name and distances (two a
+    line, so every one shows however many types the split makes)."""
     t = icon_refs.SIZE * _TILE
-    cell_h = t + 36
+
+    def distance_lines(dists: list[float]) -> list[str]:
+        return [
+            " ".join(f"{d:.3f}" for d in dists[i : i + _DISTS_PER_LINE]) for i in range(0, len(dists), _DISTS_PER_LINE)
+        ]
+
+    cell_h = _cell_height(len(new))
 
     def tile(pic: np.ndarray | None, lines: list[str], colour=(255, 255, 255)) -> np.ndarray:
         c = np.full((cell_h, t + 40, 3), 24, np.uint8)
@@ -195,9 +208,7 @@ def sheet(path: Path, new: list[str], matches: list[Match]) -> None:
         f = next(ICON_ART_DIR / f"{k}__{n}.webp" for k in SIZES if (ICON_ART_DIR / f"{k}__{n}.webp").is_file())
         kind = f.stem.split("__")[0]
         head.append(tile(render(f, SIZES[kind][-1]), [f"art: {n}"], (120, 220, 255)))
-    cells = [
-        tile(m.crop, [("? " if m.unsure else "") + m.name, " ".join(f"{d:.3f}" for d in m.dists)]) for m in matches
-    ]
+    cells = [tile(m.crop, [("? " if m.unsure else "") + m.name, *distance_lines(m.dists)]) for m in matches]
     blank = np.full_like(head[0], 24)
 
     def grid(tiles: list[np.ndarray]) -> list[np.ndarray]:
@@ -249,6 +260,8 @@ def main(argv: list[str] | None = None) -> int:
     a = ap.parse_args(argv)
     if a.old in a.new:
         ap.error("the old type cannot be one of the new ones")
+    if len(set(a.new)) != len(a.new):
+        ap.error("a new type is named twice")
     for n in a.new:
         if n not in ICON_INFO:
             print(f"warning: {n} is not in ICON_INFO (grand_project/detect/constants.py)")
@@ -285,6 +298,19 @@ def main(argv: list[str] | None = None) -> int:
     ]
     if changed:
         raise SystemExit(f"truth icons changed while the split ran ({', '.join(changed[:5])}): nothing written")
+    # an icon named on a map tile (an Expedition ship marker) has no row of its own in truth_key.json: the truth's
+    # save rebuilds its name from the map note, so a new name given here would not last
+    keys = {tf: json.loads(read[k].decode("utf-8")) for tf in fresh if (k := tf.parent / "truth_key.json") in read}
+    from_notes = [
+        f"{tf.parent.name} {shot} {identity[0]}"
+        for tf, shot, _i, _m, identity in truth
+        if tf in keys and identity[0] not in keys[tf].get("badges", {})
+    ]
+    if from_notes:
+        raise SystemExit(
+            f"truth icons named in map notes ({', '.join(from_notes[:5])}): rename them in labels.txt and run "
+            "`python -m grand_project.truth save`, or split with --no-truth; nothing written"
+        )
     _unchanged(read, list(read))  # and nothing saved since the reread, before the databases change
     for db, rows in stored.items():
         if rows:
@@ -309,6 +335,14 @@ def main(argv: list[str] | None = None) -> int:
             b = data[shot]["badges"][i]
             b["name"] = m.name
             kb = key["badges"].get(b.get("id", "")) if key else None
+            if kb:
+                # the name the truth's save gives it is rebuilt from the review's notes, which may say the old name
+                # (a single or row correction to it, whatever the detector called it): the save renames it again
+                renamed = kb.setdefault("renamed", {})
+                for earlier, now in renamed.items():  # an earlier split's names lead straight to the latest
+                    if now == a.old:
+                        renamed[earlier] = m.name
+                renamed[a.old] = m.name
             if kb and kb.get("detector") == a.old:
                 # the review row it was shown in stays its row (truth.cmd_save applies a row's correction by it), also
                 # when one row's icons take several new names

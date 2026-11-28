@@ -76,17 +76,17 @@ def test_blocks_are_the_same_every_time(tmp_path: Path) -> None:
 
 
 def test_screenshots_in_folders_below_their_atlas_are_its_blocks(tmp_path: Path) -> None:
-    """map_state_change keeps its screenshots in pre-change/, post-change/ ... with atlas.json one folder up: they are
-    that atlas's blocks together, not one block each."""
+    """map_state_change keeps its screenshots in pre-change/, post-change/ ... below its atlas.json: they are that
+    atlas's blocks together, not one block each; so is one two folders down (the nearest atlas above it)."""
     atlas = tmp_path / "state_change"
     places = {f"pre{i}": (i * 300.0, 0.0) for i in range(4)} | {f"post{i}": (i * 300.0, 100.0) for i in range(4)}
-    folder = {name: "pre" if name.startswith("pre") else "post" for name in places}
+    folder = {name: "pre" if name.startswith("pre") else "post\\day2" for name in places}
     write_atlas(atlas, places)
     saved = json.loads((atlas / K.ANNOTATOR_ATLAS_FILE).read_text(encoding="utf-8"))
     for frame in saved["frames"]:  # the atlas saved where it found them (here: as an atlas made on Windows)
         frame["path"] = f"C:\\atlases\\state_change\\{folder[frame['name']]}\\{frame['name']}.png"
     (atlas / K.ANNOTATOR_ATLAS_FILE).write_text(json.dumps(saved), encoding="utf-8")
-    paths = {name: atlas / folder[name] / f"{name}.png" for name in places}
+    paths = {name: atlas.joinpath(*folder[name].split("\\"), f"{name}.png") for name in places}
     blocks = screenshot_blocks(paths, shots_per_block=8)
     assert set(blocks.values()) == {Block(relative_source(atlas), 0)}
 

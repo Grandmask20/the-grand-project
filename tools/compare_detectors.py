@@ -49,7 +49,7 @@ from grand_project.detect.constants import (
 )
 from grand_project.detect.pipeline import detect_classical
 from grand_project.detect.rf_detr_cuda import prefer_pip_cuda_libraries
-from grand_project.detect.rf_detr_model import detect_rf_detr, reset_rf_detr_runtime
+from grand_project.detect.rf_detr_model import checkpoint_digest, detect_rf_detr, reset_rf_detr_runtime
 
 
 @dataclass(frozen=True)
@@ -83,9 +83,12 @@ def _backend_environment(backend: Backend, model_dir: Path, device: str) -> Iter
                 os.environ[name] = value
 
 
-def _score_module(atlas_root: Path):
-    """Load the existing atlas scorer from the supplied test-data folder."""
-    scorer_path = atlas_root / "score_atlases.py"
+SCORER = project_paths.ROOT / "atlas_test_data" / "res_atlases" / "score_atlases.py"
+"""The atlas scorer, this checkout's own: the atlas folder given on the command line is data, never code to run."""
+
+
+def _score_module(scorer_path: Path = SCORER):
+    """Load this checkout's atlas scorer (it takes the atlas folders it scores as arguments)."""
     if not scorer_path.is_file():
         raise FileNotFoundError(f"atlas scorer not found: {scorer_path}")
     spec = importlib.util.spec_from_file_location("grand_project_atlas_test_scorer", scorer_path)
@@ -96,7 +99,7 @@ def _score_module(atlas_root: Path):
     return scorer
 
 
-def _atlas_folders(atlas_root: Path, requested: list[str] | None) -> list[Path]:
+def _atlas_folders(atlas_root: Path, requested: list[str] | None, scorer) -> list[Path]:
     """Find standard atlas folders in the scorer's stable display order."""
     folders = sorted(p.parent for p in atlas_root.glob("res_*/atlas.json") if p.is_file())
     if requested:
@@ -107,7 +110,7 @@ def _atlas_folders(atlas_root: Path, requested: list[str] | None) -> list[Path]:
             raise FileNotFoundError(f"requested atlas folder(s) not found: {', '.join(sorted(missing))}")
     if not folders:
         raise FileNotFoundError(f"no res_*/atlas.json folders found below {atlas_root}")
-    order = {name: index for index, name in enumerate(getattr(_score_module(atlas_root), "ORDER", []))}
+    order = {name: index for index, name in enumerate(getattr(scorer, "ORDER", []))}
     return sorted(folders, key=lambda folder: (order.get(folder.name, 999), folder.name))
 
 
@@ -157,7 +160,7 @@ def _rebuild_accuracy(
             for folder in run_folders:
                 print(f"  {backend.name}: rebuilding {folder.name} ...", flush=True)
                 try:
-                    scorer.rebuild(folder)
+                    placed = scorer.rebuild(folder)
                 except subprocess.CalledProcessError as failed:
                     # the builder exits 1 when a screenshot could not be detected: no score for a broken backend
                     output = (failed.stdout or b"") + (failed.stderr or b"")
@@ -165,10 +168,9 @@ def _rebuild_accuracy(
                         output = output.decode("utf-8", "replace")
                     tail = "\n".join(output.strip().splitlines()[-10:])
                     raise SystemExit(f"{backend.name}: rebuilding {folder.name} failed:\n{tail}") from failed
-                except FileNotFoundError:
-                    # the builder ran without error and placed nothing: no atlas.json, scored as an empty atlas
-                    if (folder / "atlas.json").exists():
-                        raise
+                if placed is False:
+                    # the builder ran without error and placed nothing (the scorer says so): an empty atlas. A missing
+                    # file or program is an error, never scored as empty
                     print(f"    {backend.name}: no screenshots placed in {folder.name}; scoring it as empty")
                     _write_empty_atlas(folder)
 
@@ -285,15 +287,28 @@ def _add_landmark_metrics(
     return comparison
 
 
-def _synchronise_accelerator(backend: Backend) -> None:
-    """Wait for asynchronous accelerator work before taking the next timing sample."""
+def _model_device(backend: Backend):
+    """The device the backend's model runs on (the loaded RF-DETR's, ``auto`` resolved), or None: the classical
+    detector, or no model loaded yet."""
     if backend.name != "RF-DETR":
+        return None
+    from grand_project.detect import rf_detr_model
+
+    runtime = rf_detr_model._RUNTIME
+    return None if runtime is None else runtime.get("device")
+
+
+def _synchronise_accelerator(device) -> None:
+    """Wait for that device's asynchronous work before taking the next timing sample: a CUDA or Apple GPU only, never
+    another accelerator than the one inferring (a CPU run on a CUDA machine must not start a CUDA context)."""
+    kind = getattr(device, "type", None)
+    if kind not in ("cuda", "mps"):
         return
     import torch
 
-    if torch.cuda.is_available():
-        torch.cuda.synchronize()
-    elif hasattr(torch, "mps") and torch.backends.mps.is_available() and hasattr(torch.mps, "synchronize"):
+    if kind == "cuda":
+        torch.cuda.synchronize(device)
+    elif hasattr(torch, "mps") and hasattr(torch.mps, "synchronize"):
         torch.mps.synchronize()
 
 
@@ -321,10 +336,10 @@ def _benchmark_speed(
     if first is None:
         raise ValueError(f"could not read benchmark screenshot: {image_paths[0]}")
     with _backend_environment(backend, model_dir, device):
-        _synchronise_accelerator(backend)
-        started = time.perf_counter()
+        started = time.perf_counter()  # (nothing to wait for before the model is loaded)
         backend.detect(first)
-        _synchronise_accelerator(backend)
+        device = _model_device(backend)
+        _synchronise_accelerator(device)
         warmup_seconds = time.perf_counter() - started
 
         timings: list[float] = []
@@ -333,10 +348,10 @@ def _benchmark_speed(
             image = core.read_screenshot(image_path)
             if image is None:
                 raise ValueError(f"could not read benchmark screenshot: {image_path}")
-            _synchronise_accelerator(backend)
+            _synchronise_accelerator(device)
             started = time.perf_counter()
             result = backend.detect(image)
-            _synchronise_accelerator(backend)
+            _synchronise_accelerator(device)
             timings.append(time.perf_counter() - started)
             for key, value in _detection_counts(result).items():
                 totals[key] += value
@@ -415,16 +430,29 @@ def main() -> int:
     """Run both detector comparisons and return a process exit code."""
     prefer_pip_cuda_libraries()  # RF-DETR on CUDA needs PyTorch's own cuDNN, before torch loads (rf_detr_cuda)
     args = _parse_args()
-    model_dir = args.model_dir.expanduser().resolve()
-    if not model_dir.is_dir():
-        raise SystemExit(f"RF-DETR model directory does not exist: {model_dir} (use --model-dir)")
+    given = args.model_dir.expanduser().resolve()
+    if not given.is_dir():
+        raise SystemExit(f"RF-DETR model directory does not exist: {given} (use --model-dir)")
+    with tempfile.TemporaryDirectory(prefix="grand-project-compare-model-") as temporary:
+        # one copy of the checkpoint for both phases: a best/ a training run swaps in meanwhile never mixes two models
+        # into one report
+        model_dir = Path(temporary) / given.name
+        shutil.copytree(given, model_dir)
+        return _compare(args, given, model_dir)
 
+
+def _compare(args: argparse.Namespace, given: Path, model_dir: Path) -> int:
+    """``main`` with the checkpoint copied to ``model_dir``."""
     backends = [Backend("classical", detect_classical), Backend("RF-DETR", detect_rf_detr)]
-    report: dict[str, Any] = {"accuracy": {}, "speed": {}}
+    report: dict[str, Any] = {
+        "model": {"dir": str(given), "digest": checkpoint_digest(model_dir)},
+        "accuracy": {},
+        "speed": {},
+    }
     if not args.speed_only:
         atlas_root = args.atlas_tests.expanduser().resolve()
-        folders = _atlas_folders(atlas_root, args.atlas_names)
-        scorer = _score_module(atlas_root)
+        scorer = _score_module()
+        folders = _atlas_folders(atlas_root, args.atlas_names, scorer)
         for backend in backends:
             report["accuracy"][backend.name] = _rebuild_accuracy(
                 backend, atlas_root, folders, model_dir, args.device, scorer

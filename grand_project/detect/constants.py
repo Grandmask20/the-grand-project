@@ -25,6 +25,12 @@ RF_DETR_CUDA_PATH_SEPARATOR = ":"  # LD_LIBRARY_PATH's separator (a Linux variab
 RF_DETR_DEFAULT_MODEL_DIR = rc_paths.ROOT / "runs" / "rf-detr-small" / "best"
 RF_DETR_TRAINED_ON = "trained_on.txt"  # in a kept model's folder: the screenshots it trained on (one project-relative
 # path a line), which the annotator's model pre-labels skip (they would only replay its training labels)
+RF_DETR_TRAINED_ON_PARTIAL = "trained_on.partial"  # beside RF_DETR_TRAINED_ON: the list misses what an ancestor
+# trained on (gone on from with --init-from, a model without its own list), so "trained on none of these" is not known
+RF_DETR_RUN_SOURCES = "run_sources.txt"  # in each training checkpoint: this run's own training screenshots, which
+# --resume compares (RF_DETR_TRAINED_ON there lists every screenshot the weights learned, its ancestors' too)
+RF_DETR_DATASET_ID = "dataset_id.txt"  # in each training checkpoint: the SHA-256 of its dataset's metadata.json
+# (manifest, ledger, kinds, limit), so --resume refuses a checkpoint of another dataset of the same screenshots
 # the annotator's export (tools/detection_dataset_annotator) and the dataset loader (rf_detr.py) share these
 RF_DETR_MANIFEST_FORMAT = "the-grand-project-rf-detr-manifest"  # the manifest's "format"; other files are refused
 RF_DETR_SPLITS = ("train", "validation", "test")  # a screenshot's split (the Hugging Face split names)
@@ -83,6 +89,7 @@ RF_DETR_REPEAT_THRESHOLD = 0.1  # LVIS repeat-factor sampling: a class on fewer 
 # the best of them, and duplicates are suppressed within the family (across tiles too).
 RF_DETR_FAMILY_NMS_IOU = 0.50  # overlap: one object predicted twice within a family (two tiles, two classes)
 RF_DETR_INFER_BATCH = 8  # tiles per forward pass (a 1080p screenshot has 8)
+RF_DETR_DATASET_WRITE_BATCH = 32  # screenshots a dataset build holds in memory before writing them (~3 MB each)
 RF_DETR_BOSS_ROW = (10.0, 45.0)  # px: a deadly-boss icon's map node is this far below it (the row is ROW_DY = 24
 # above the map; the res atlases' larger icons sat 26-36 above it)
 RF_DETR_BOSS_DX = 30.0  # px: and at most this far left or right of it (the icon is the middle one of its row)
@@ -326,6 +333,10 @@ RF_DETR_BUTTON_SHIFT = 16  # px: how far around an RF-DETR reveal button's middl
 # Box sources of first guesses (the annotator draws guessed boxes dotted, for the reviewer to check first)
 RF_DETR_SOURCE_CLASSICAL = "classical"  # a classical detector result taken as it is
 RF_DETR_SOURCE_CITY_GUESS = "city_guess"  # a citadel whose type is an unsure look-alike guess (CITY_LOOK_SURE)
+# Look-alike distance margin (second-best type minus best) from which one screenshot's city type guess counts as sure
+# (cities.screenshot_city_types): leave-one-out over the 173 looks in city_refs.npz was 95% right overall (mostly
+# Ezomyte <-> Vaal mix-ups) and 100% right (124 of 173) at a margin of 0.1 or more.
+CITY_LOOK_SURE = 0.10
 RF_DETR_SOURCE_BIOME_GUESS = "biome_guess"  # a node whose biome the ground ring could not tell surely
 RF_DETR_SOURCE_CITY_AREA_GUESS = "city_area_guess"  # a node in a city's area (one screenshot may cut the area off)
 RF_DETR_SOURCE_MODEL = "rf_detr"  # a box an RF-DETR model's pre-labels agree on with the classical detector
@@ -799,3 +810,14 @@ DETECT_DIGEST_MEMO = 20000  # screenshot hashes kept in memory (builder.file_dig
 # bytes read from the start of a saved detection to tell its detector, version and time (builder.cache_head): those
 # fields come first (name, path, sha256, detector, models, version, detected_at: ~400 bytes with a long path)
 CACHE_HEAD_BYTES = 2048
+
+# ---- detection speed (pipeline._prefetch, cache._per_image) --------------------------------------------------------
+DETECT_PER_IMAGE_KEEP = 16  # results remembered per screenshot function (cache._per_image): a detection's own
+# (dashes, amber dashes, walls, special icons, the landmark rules, square buttons) for the last two screenshots
+DETECT_PREFETCH_THREADS = (
+    3  # threads that work out a screenshot's image-only stages (dashes, special icons, the landmark
+)
+# rules, fortress walls, square buttons) while the detection finds its maps: they are mostly OpenCV, which runs
+# beside Python. At most the process's own thread share less one (fileio.process_pool), so capped workers stay capped
+PATH_FEATURE_REACH = 49.0  # px: dashes looked up around a spot for paths.path_features (its rings end at 48 px; the
+# extra px keeps a dash at 47.99... that the lookup rounds the other way)

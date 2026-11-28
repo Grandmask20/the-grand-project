@@ -3,6 +3,9 @@ one screenshot at a time and safe between sessions."""
 
 from __future__ import annotations
 
+import contextlib
+import sqlite3
+import threading
 from pathlib import Path
 from typing import Any
 
@@ -150,6 +153,102 @@ def test_two_sessions_keep_each_others_changes(tmp_path: Path) -> None:
         assert check.settings() == DetectionOptions(named_icons=True)
 
 
+def _in_sessions(path: Path, *saves) -> list[Any]:
+    """Run each save in its own session on its own thread, all let go at the same moment; their results in order."""
+    results: list[Any] = [None] * len(saves)
+    start = threading.Barrier(len(saves))
+
+    def run(k: int) -> None:
+        with ReviewStore.open(path) as store:  # (a SQLite connection belongs to the thread that made it)
+            start.wait(5)
+            results[k] = saves[k](store)
+
+    threads = [threading.Thread(target=run, args=(k,)) for k in range(len(saves))]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join(30)
+    return results
+
+
+def test_a_save_waits_for_another_session_s_write_then_goes_through(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A detection run holds the write lock while it saves a result: an editor's save waits for it (up to
+    ``ANNOTATOR_STORE_BUSY_S``), it doesn't fail with "database is locked"."""
+    path = tmp_path / K.ANNOTATOR_STORE_FILE
+    (shot,) = _shots(tmp_path, "a.png")
+    with ReviewStore.open(path) as setup:
+        key = _detected(setup, shot, _box("map_node", 10))
+    writing = threading.Event()
+    write = ReviewStore._write
+
+    @contextlib.contextmanager
+    def seen_writing(self):
+        writing.set()  # the save is at its write transaction (BEGIN IMMEDIATE next)
+        with write(self):
+            yield
+
+    monkeypatch.setattr(ReviewStore, "_write", seen_writing)
+    other = sqlite3.connect(str(path), isolation_level=None)
+    try:
+        other.execute("BEGIN IMMEDIATE")  # (another session in the middle of a write)
+        saved: list[bool] = []
+        editor = threading.Thread(
+            target=lambda: saved.extend(_in_sessions(path, lambda s: s.save_review(key, 1, reviewed=True)))
+        )
+        editor.start()
+        assert writing.wait(10)
+        editor.join(0.5)
+        assert editor.is_alive() and not saved  # waiting for the lock, not refused
+    finally:
+        if other.in_transaction:
+            other.execute("COMMIT")
+        other.close()
+    editor.join(30)
+    assert saved == [True]
+    with ReviewStore.open(path) as check:
+        assert check.item(key)["reviewed"] is True
+
+
+def test_two_tabs_saving_edits_of_the_same_boxes_at_once_keep_exactly_one(tmp_path: Path, rng, runs) -> None:
+    """Two browser tabs edit one screenshot from the same boxes and save together: the first save wins and the
+    other is refused (it would drop the first one's edit), whichever comes first."""
+    path = tmp_path / K.ANNOTATOR_STORE_FILE
+    shots = _shots(tmp_path, *(f"{k}.png" for k in range(runs(10))))
+    with ReviewStore.open(path) as setup:
+        keys = [_detected(setup, shot, _box("map_node", 10)) for shot in shots]
+    for key in keys:
+        with ReviewStore.open(path) as reader:
+            shown = reader.item(key)
+        edits = [[_box(label, rng.uniform(0, 100), source="manual")] for label in ("tower", "hall")]
+        saved = _in_sessions(
+            path,
+            *(
+                lambda s, e=e, key=key, shown=shown: s.save_review(
+                    key, shown["edit_version"], annotations=e, expect_boxes=shown["annotations"]
+                )
+                for e in edits
+            ),
+        )
+        assert sorted(saved) == [False, True], saved
+        with ReviewStore.open(path) as check:
+            kept = [box["label"] for box in check.item(key)["annotations"]]
+        assert kept == ["tower" if saved[0] else "hall"]
+
+
+def test_review_time_saved_from_two_tabs_at_once_counts_both(tmp_path: Path) -> None:
+    """The review log is read, added to and written in one write: two saves together both count (none is lost)."""
+    path = tmp_path / K.ANNOTATOR_STORE_FILE
+    (shot,) = _shots(tmp_path, "a.png")
+    with ReviewStore.open(path) as setup:
+        key = _detected(setup, shot, _box("map_node", 10))
+    saves = [lambda s: s.save_review(key, 1, review_s=1.5) for _ in range(6)]
+    assert _in_sessions(path, *saves) == [True] * 6
+    with ReviewStore.open(path) as check:
+        assert check.item(key)[K.ANNOTATOR_REVIEW_FIELD]["active_s"] == 9.0
+
+
 def test_a_failed_detection_keeps_what_a_rerun_replaces(tmp_path: Path, review_store: ReviewStore) -> None:
     new, old = _shots(tmp_path, "new.png", "old.png")
     review_store.add_images([new])
@@ -187,9 +286,25 @@ def test_detection_jobs_follow_selection_and_force(tmp_path: Path, review_store:
     review_store.add_images([a, b, c])
     review_store.record_detection(image_key(b), _result(), force=False)
     keys = [image_key(path) for path in (a, b, c)]
-    assert review_store.detection_jobs() == [(keys[0], str(a)), (keys[2], str(c))]
-    assert review_store.detection_jobs(keys[:2]) == [(keys[0], str(a))]
-    assert review_store.detection_jobs(keys[1:], force=True) == [(keys[1], str(b)), (keys[2], str(c))]
+    assert review_store.detection_jobs() == [(keys[0], str(a), 0), (keys[2], str(c), 0)]
+    assert review_store.detection_jobs(keys[:2]) == [(keys[0], str(a), 0)]
+    assert review_store.detection_jobs(keys[1:], force=True) == [(keys[1], str(b), 1), (keys[2], str(c), 0)]
+
+
+def test_a_rerun_queued_before_an_edit_or_review_changes_nothing(tmp_path: Path, review_store: ReviewStore) -> None:
+    """A forced rerun asked for, then the screenshot edited or reviewed before its result came: the result (or its
+    failure) is stale and dropped, the review kept; one queued after the edit goes through (CodeRabbit)."""
+    (shot,) = _shots(tmp_path, "a.png")
+    key = _detected(review_store, shot, _box("icon", 10.0))
+    ((_key, _path, generation),) = review_store.detection_jobs([key], force=True)
+    assert review_store.save_review(key, 1, reviewed=True)
+    before = review_store.item(key)
+    assert not review_store.record_detection(key, _result(_box("tower", 30)), force=True, generation=generation)
+    review_store.record_failure(key, "boom", force=True, generation=generation)
+    assert review_store.item(key) == before
+    ((_key, _path, now),) = review_store.detection_jobs([key], force=True)
+    assert review_store.record_detection(key, _result(_box("tower", 30)), force=True, generation=now)
+    assert review_store.item(key)["reviewed"] is False
 
 
 def test_used_labels_are_sorted_and_distinct(tmp_path: Path, review_store: ReviewStore) -> None:
@@ -437,3 +552,15 @@ def test_a_save_can_need_its_split(tmp_path: Path, review_store: ReviewStore) ->
     assert not review_store.save_review(test, 1, annotations=[], split="train")
     assert review_store.save_review(train, 1, annotations=[], split="train")
     assert review_store.untouched(test) and not review_store.untouched(train) and not review_store.untouched("gone")
+
+
+def test_a_toggle_needs_the_review_flag_it_was_worked_out_from(tmp_path: Path, review_store: ReviewStore) -> None:
+    """Two tabs toggling one screenshot: the second toggle, worked out from the flag before the first, is refused in
+    its own write instead of undoing the first (CodeRabbit)."""
+    (shot,) = _shots(tmp_path, "a.png")
+    key = _detected(review_store, shot, _box("icon", 10.0))
+    assert review_store.save_review(key, 1, reviewed=True, expect_reviewed=False)  # the first tab's toggle
+    assert not review_store.save_review(key, 1, reviewed=True, expect_reviewed=False)  # the second's, made from False
+    assert review_store.save_review(key, 1, reviewed=False, expect_reviewed=True)
+    assert review_store.save_review(key, 1, reviewed=True)  # "Reviewed, next": set whatever it was
+    assert review_store.item(key)["reviewed"]

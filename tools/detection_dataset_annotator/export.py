@@ -32,7 +32,7 @@ from grand_project.detect.labels import dataset_classes, export_class, known
 from . import constants as K
 from .detection import decode_image
 from .splits import split_report
-from .state import relative_source, write_json_atomic
+from .state import changed_since_detection, relative_source, write_json_atomic
 
 if TYPE_CHECKING:
     from .store import ReviewStore
@@ -57,14 +57,12 @@ class ExportResult:
     """The split balance report (``splits.split_report``)."""
     ledger_added: int = 0
     """Screenshots the split ledger gained (``split_ledger.settle_splits``)."""
+    changed: tuple[str, ...] = ()
+    """Screenshots left out: their file is not the one their boxes were detected on (rerun their detection)."""
 
 
-def _exported_annotation(annotation: dict[str, Any], label_ids: dict[str, int]) -> dict[str, Any] | None:
-    """One annotation as exported (under its detector class), or None when its label is unknown, retired or its box
-    invalid."""
-    label = export_class(str(annotation.get("label", "")).strip())
-    if label not in label_ids:
-        return None
+def _export_bbox(annotation: dict[str, Any]) -> tuple[float, float, float, float] | None:
+    """An annotation's box as exported (x, y, w, h rounded to 0.01 px), or None when it is no box to export."""
     try:
         values = [float(value) for value in annotation["bbox"]]
         x, y, width, height = values
@@ -75,6 +73,17 @@ def _exported_annotation(annotation: dict[str, Any], label_ids: dict[str, int]) 
     x, y, width, height = (round(value, 2) for value in values)
     if width <= 0 or height <= 0:  # after rounding: a box this thin would be exported as zero
         return None
+    return x, y, width, height
+
+
+def _exported_annotation(annotation: dict[str, Any], label_ids: dict[str, int]) -> dict[str, Any] | None:
+    """One annotation as exported (under its detector class), or None when its label is unknown, retired or its box
+    invalid."""
+    label = export_class(str(annotation.get("label", "")).strip())
+    bbox = _export_bbox(annotation)
+    if label not in label_ids or bbox is None:
+        return None
+    x, y, width, height = bbox
     return {
         "category_id": label_ids[label],
         "bbox": [x, y, width, height],
@@ -158,9 +167,31 @@ def export_dataset(store: ReviewStore, output_dir: Path, *, reviewed_only: bool 
     every = list(store.items())
     settled = settle_splits(store, every)
     split_of = settled.split_of
-    items = [(key, item) for key, item in every if item.get("reviewed") or not reviewed_only]
+    # the screenshots exported, chosen before the classes: one left out gives the manifest no class of its own
+    changed: list[str] = []
+    chosen: list[tuple[str, dict[str, Any], Path, tuple[int, int]]] = []
+    for key, item in every:
+        reviewed = bool(item.get("reviewed", False))
+        if reviewed_only and not reviewed:
+            continue
+        if not (reviewed or item.get("detected")):
+            continue  # never processed: its empty box list is not a labelling
+        path = Path(item["path"])  # as the store keeps it (absolute), the file the split ledger hashed
+        if key not in split_of:
+            continue  # its file could not be read
+        if changed_since_detection(item, settled.digests.get(key)):
+            changed.append(str(item.get("source") or relative_source(path)))  # its boxes frame another picture
+            continue
+        size = _image_size(item, path) if path.is_file() else None
+        if size is None:
+            continue
+        chosen.append((key, item, path, size))
+    # the classes of the boxes exported: one left out (no box to export) gives the manifest no class of its own
     labels = dataset_classes(
-        str(annotation.get("label", "")).strip() for _key, item in items for annotation in item.get("annotations", [])
+        str(annotation.get("label", "")).strip()
+        for _key, item, _path, _size in chosen
+        for annotation in item.get("annotations", [])
+        if _export_bbox(annotation) is not None
     )
     label_ids = {label: index for index, label in enumerate(labels)}
     image_rows: list[dict[str, Any]] = []
@@ -168,17 +199,8 @@ def export_dataset(store: ReviewStore, output_dir: Path, *, reviewed_only: bool 
     manifest_rows: list[dict[str, Any]] = []
     skipped = 0
     roots = store.input_roots()
-    for key, item in items:
+    for key, item, path, (width, height) in chosen:
         reviewed = bool(item.get("reviewed", False))
-        if not (reviewed or item.get("detected")):
-            continue  # never processed: its empty box list is not a labelling
-        path = Path(item["path"])  # as the store keeps it (absolute), the file the split ledger hashed
-        if key not in split_of:
-            continue  # its file could not be read
-        size = _image_size(item, path) if path.is_file() else None
-        if size is None:
-            continue
-        width, height = size
         image_id = len(image_rows)
         image_rows.append(
             {
@@ -212,6 +234,9 @@ def export_dataset(store: ReviewStore, output_dir: Path, *, reviewed_only: bool 
                 "width": width,
                 "height": height,
                 "reviewed": reviewed,
+                # the bytes exported (the ones its boxes were detected on): tools reading the manifest later check the
+                # file still is them (simulate_loop)
+                K.ANNOTATOR_DETECTED_SHA: settled.digests[key],
                 **({K.ANNOTATOR_TRUTH_MARK: item[K.ANNOTATOR_TRUTH_MARK]} if item.get(K.ANNOTATOR_TRUTH_MARK) else {}),
                 "annotations": objects,
             }
@@ -257,6 +282,7 @@ def export_dataset(store: ReviewStore, output_dir: Path, *, reviewed_only: bool 
         splits={split: sum(1 for row in manifest_rows if row["split"] == split) for split in K.ANNOTATOR_SPLITS},
         report=split_report(counts, split_of, settled.blocks) if counts else "",
         ledger_added=settled.added,
+        changed=tuple(changed),
     )
 
 
@@ -292,6 +318,8 @@ def main(argv: list[str] | None = None) -> int:
     )
     args = parser.parse_args(argv)
     output_dir = resolve_path(args.output_dir)
+    if not (output_dir / K.ANNOTATOR_STORE_FILE).is_file():  # opening it would create an empty store and export it
+        parser.error(f"no annotator store at {output_dir / K.ANNOTATOR_STORE_FILE}")
     with ReviewStore.open(output_dir / K.ANNOTATOR_STORE_FILE) as store:
         result = export_dataset(store, output_dir, reviewed_only=not args.unreviewed)
     print(
@@ -300,6 +328,8 @@ def main(argv: list[str] | None = None) -> int:
     print(f"splits: {result.splits}; ledger gained {result.ledger_added} screenshots")
     if result.skipped_annotations:
         print(f"skipped {result.skipped_annotations} invalid annotations or icons the dataset leaves out")
+    if result.changed:
+        print(f"left out, changed since their detection (rerun their detection): {', '.join(result.changed)}")
     if result.unknown:
         print(f"labels outside the dataset's (rerun those screenshots): {result.unknown}")
     if result.report:

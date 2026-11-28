@@ -12,10 +12,11 @@ from grand_project.detect import constants as K
 from grand_project.detect import rf_detr_cuda
 
 
-@pytest.fixture
-def packages(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> list[str]:
-    """A site-packages with PyTorch's cuDNN and CUDA runtime folders, on Linux, not restarted yet."""
-    folders = [tmp_path / "nvidia" / name / "lib" for name in ("cudnn", "cu13")]
+@pytest.fixture(params=["cu13", "cuda_runtime"])
+def packages(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, request: pytest.FixtureRequest) -> list[str]:
+    """A site-packages with PyTorch's cuDNN and CUDA runtime folders (either wheel layout), on Linux, not restarted
+    yet."""
+    folders = [tmp_path / "nvidia" / name / "lib" for name in ("cudnn", request.param)]
     for folder in folders:
         folder.mkdir(parents=True)
     monkeypatch.setattr(sys, "path", [str(tmp_path)])
@@ -63,3 +64,32 @@ def test_a_main_given_its_own_arguments_restarts_with_them(packages: list[str], 
         [sys.executable, "-u", "-m", "grand_project", "new.json", "--port", "0"],
         [sys.executable, "-u", "-m", "grand_project", "old.json"],
     ]
+
+
+def test_the_environments_own_libraries_come_before_a_system_wheels(tmp_path: Path, monkeypatch) -> None:
+    """In the interpreter's search order: a system folder sorting first ("/usr/...") never comes before the
+    environment's site-packages listed before it on sys.path (CodeRabbit)."""
+    env, system = tmp_path / "z-env", tmp_path / "a-system"
+    for root in (env, system):
+        (root / "nvidia" / "cudnn" / "lib").mkdir(parents=True)
+    monkeypatch.setattr(sys, "path", [str(env), str(system)])
+    assert rf_detr_cuda._library_dirs() == [
+        str(env / "nvidia" / "cudnn" / "lib"),
+        str(system / "nvidia" / "cudnn" / "lib"),
+    ]
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="a ':' in a folder name is a POSIX case")
+def test_a_wheel_folder_the_linker_would_split_is_named_not_restarted(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """glibc splits LD_LIBRARY_PATH at ':' and ';': such a folder is never searched, so no restart claims it is."""
+    site = tmp_path / "env:a"
+    for name in ("cudnn", "cu13"):
+        (site / "nvidia" / name / "lib").mkdir(parents=True)
+    monkeypatch.setattr(sys, "path", [str(site)])
+    monkeypatch.setattr(sys, "platform", "linux")
+    monkeypatch.delenv(K.RF_DETR_CUDA_REEXEC_ENV, raising=False)
+    monkeypatch.setattr(rf_detr_cuda.os, "execve", lambda *a: pytest.fail("restarted"))
+    rf_detr_cuda.prefer_pip_cuda_libraries()
+    assert "cannot search it" in capsys.readouterr().err

@@ -33,7 +33,7 @@ def settled(session) -> None:
     filter version), which landed in the middle of a test on a busy machine."""
     t = getattr(session, "_lock_thread", None)
     if t:
-        t.join(60)  # (the test runner's own timeout covers a hang)
+        t.join(60)  # (a hang fails here; pytest's faulthandler_timeout prints the stacks of one that doesn't end)
         assert not t.is_alive(), "the locked-stronghold search didn't end"
 
 

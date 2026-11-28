@@ -5,6 +5,7 @@ anything is written."""
 from __future__ import annotations
 
 import json
+import os
 import shutil
 from pathlib import Path
 
@@ -121,6 +122,48 @@ def test_copies_share_one_split_and_keep_a_row_each(tmp_path: Path, review_store
     assert settle_splits(review_store).added == 0  # a second settle adds no row
 
 
+def test_a_copys_ledger_row_names_its_own_atlas_block(
+    tmp_path: Path, review_store: ReviewStore, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Copies in two atlases are drawn together (one split), but each row names its own atlas's block: a tool picking
+    atlas B's blocks finds B's copy too (it was entered under A's: CodeRabbit)."""
+    paths = _shots(tmp_path / "shots", 3)
+    copy = tmp_path / "copies" / "copy.png"
+    copy.parent.mkdir()
+    shutil.copy(paths[0], copy)
+    _detect(review_store, [*paths, copy])
+    own = {image_key(path): Block("A", 0) for path in paths} | {image_key(copy): Block("B", 1)}
+    monkeypatch.setattr(split_ledger, "screenshot_blocks", lambda found: {key: own[key] for key in found})
+    settled = settle_splits(review_store)
+    assert settled.split_of[image_key(copy)] == settled.split_of[image_key(paths[0])]
+    rows = {entry.file: entry.block for entry in read_ledger_rows()}
+    assert rows[relative_source(copy)] == "B#1" and rows[relative_source(paths[0])] == "A#0"
+
+
+def test_a_failed_ledger_write_takes_back_only_the_splits_this_claim_gave(
+    tmp_path: Path, review_store: ReviewStore, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Another session gives one screenshot the same split just before this claim: the ledger write fails and only
+    this claim's splits are taken back; that session's stays (CodeRabbit)."""
+    paths = _shots(tmp_path / "shots", 3)
+    _detect(review_store, paths)
+    claim = review_store.claim_splits
+    first = image_key(paths[0])
+
+    def claim_after_another(splits, **options):
+        claim({first: splits[first]})  # (the other session, in between)
+        return claim(splits, **options)
+
+    def full_disk(*args, **kwargs):
+        raise OSError("disk full")
+
+    monkeypatch.setattr(review_store, "claim_splits", claim_after_another)
+    monkeypatch.setattr(split_ledger, "write_ledger", full_disk)
+    with pytest.raises(OSError, match="disk full"):
+        settle_splits(review_store)
+    assert list(review_store.splits()) == [first]
+
+
 def test_a_copy_whose_bytes_changed_keeps_its_originals_held_out_split(
     tmp_path: Path, review_store: ReviewStore
 ) -> None:
@@ -162,7 +205,30 @@ def test_a_split_claimed_meanwhile_that_differs_publishes_nothing(
     with pytest.raises(SplitConflict, match="given .*, store"):
         settle_splits(review_store)
     assert not split_ledger_file.exists()
-    assert asked == [{"only_if_free": True}]  # all or nothing: the store writes none of them either
+    assert [options["only_if_free"] for options in asked] == [True]  # all or nothing: the store writes none either
+
+
+def test_a_screenshot_replaced_while_the_splits_are_settled_gets_none(
+    tmp_path: Path, review_store: ReviewStore, split_ledger_file: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Its bytes are checked again right before the claim: a file replaced since it was hashed stops the settlement,
+    nothing claimed and no ledger row written (CodeRabbit)."""
+    paths = _shots(tmp_path / "shots", 3)
+    _detect(review_store, paths)
+    real = split_ledger.hash_files
+    calls = []
+
+    def hash_files(chosen):
+        calls.append(1)
+        if len(calls) == 2:  # the check before the claim: the first one changed meanwhile
+            paths[0].write_bytes(b"replaced")
+        return real(chosen)
+
+    monkeypatch.setattr(split_ledger, "hash_files", hash_files)
+    with pytest.raises(SplitConflict, match="changed while the splits were settled"):
+        settle_splits(review_store)
+    assert not split_ledger_file.exists()
+    assert review_store.splits() == {}
 
 
 def test_a_manifest_row_under_a_pinned_root_must_be_test(
@@ -307,10 +373,22 @@ def test_the_held_out_overlap_counts_map_nodes_training_screenshots_show(tmp_pat
         {"x": 1, "y": 0, "n": 1, "frames": ["b"], "tower": False, "hidden": False},
         {"x": 2, "y": 0, "n": 2, "frames": ["a", "c"], "tower": False, "hidden": False},
     ]
+    frames = [
+        {"name": n, "path": f"post-change/{n}.png", "w": 1920, "h": 1080, "M": [[1, 0, 0], [0, 1, 0]], "horizon": None}
+        for n in "abc"
+    ]
     atlas_file = tmp_path / K.ANNOTATOR_ATLAS_FILE
-    atlas_file.write_text(json.dumps({"frames": [], "nodes": nodes, "edges": [], "landmarks": []}), encoding="utf-8")
+    atlas = {"frames": frames, "nodes": nodes, "edges": [], "landmarks": []}
+    atlas_file.write_text(json.dumps(atlas), encoding="utf-8")
     overlap = held_out_overlap(atlas_file, {"a": "train", "b": "validation", "c": "test"})
     assert overlap == {"validation": (1, 0.5), "test": (1, 1.0)}
+    # screenshots in a folder below their atlas (map_state_change's) are counted under it (CodeRabbit)
+    below = tmp_path / "post-change"
+    paths = {name: below / f"{name}.png" for name in "abc"}
+    # a file of a frame's name the atlas did not place (another folder) never takes that frame's split (CodeRabbit)
+    paths["other"] = tmp_path / "elsewhere" / "b.png"
+    report = split_ledger.overlap_report(paths, {"a": "train", "b": "validation", "c": "test", "other": "train"})
+    assert "validation 1 screenshots 50%, test 1 screenshots 100%" in report
 
 
 def test_freeze_and_check_from_the_command_line(
@@ -335,12 +413,15 @@ def test_a_relative_manifest_path_lies_in_the_manifests_folder(tmp_path: Path, s
     assert check_manifest({"images": rows}, base=tmp_path / "export") == []
 
 
-def test_the_ledger_is_held_for_one_read_check_and_write(split_ledger_file: Path) -> None:
-    """A second export waits while one holds the ledger (its rows would otherwise be written over)."""
+def test_the_ledger_is_held_for_one_read_check_and_write(
+    split_ledger_file: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A second export waits while one holds the ledger (its rows would otherwise be written over): it is seen
+    asking for the lock while the first holds it, and gets it only once the first lets go."""
     import threading
 
     order: list[str] = []
-    holding, done = threading.Event(), threading.Event()
+    holding, asking, done = threading.Event(), threading.Event(), threading.Event()
 
     def other() -> None:
         holding.wait()
@@ -349,10 +430,28 @@ def test_the_ledger_is_held_for_one_read_check_and_write(split_ledger_file: Path
         done.set()
 
     thread = threading.Thread(target=other)
+    if os.name == "nt":
+        import msvcrt
+
+        real, name = msvcrt.locking, "locking"
+        target = msvcrt
+    else:
+        import fcntl
+
+        real, name = fcntl.flock, "flock"
+        target = fcntl
+
+    def spy(*args):
+        if threading.current_thread() is thread:
+            asking.set()  # the contender is at the lock call itself
+        return real(*args)
+
+    monkeypatch.setattr(target, name, spy)
     thread.start()
     with split_ledger._ledger_lock(split_ledger_file):
         holding.set()
-        assert not done.wait(0.3)  # still waiting for this one
+        assert asking.wait(10)
+        assert not done.wait(0.3) and thread.is_alive()  # asked, and still waiting for this one
         order.append("first")
     assert done.wait(10)
     thread.join()

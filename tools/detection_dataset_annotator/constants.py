@@ -166,7 +166,7 @@ ANNOTATOR_MANUAL_SOURCE = "manual"
 
 ANNOTATOR_CITY_GUESS_SOURCE = RF_DETR_SOURCE_CITY_GUESS
 """Annotation source of a citadel whose city type is an unsure look-alike guess (``cities.screenshot_city_types``:
-margin under ``CITY_LOOK_SURE`` or a window cut off by the screenshot edge)."""
+margin under ``detect.constants.CITY_LOOK_SURE`` or a window cut off by the screenshot edge)."""
 
 ANNOTATOR_GUESS_SOURCES = RF_DETR_GUESS_SOURCES
 """Sources of guessed boxes (an unsure city type, biome or city area): the editor draws them dotted and the queue
@@ -210,6 +210,17 @@ ANNOTATOR_EDITOR_IMAGE_CACHE = 8
 
 ANNOTATOR_SESSION_SELECTED = "selected_image"
 """Streamlit session key: the image key of the screenshot on screen."""
+
+ANNOTATOR_SESSION_PICKED = "picked_image"
+"""Streamlit session key of the screenshot list: the screenshot picked there. The page moves to it only once the editor
+on screen saved its latest boxes (``ANNOTATOR_SESSION_GOTO``); every other move sets both."""
+
+ANNOTATOR_SESSION_GOTO = "goto_image"
+"""Streamlit session key: the screenshot picked in the list while an editor was on screen; the editor is asked to save
+its latest boxes and go there (its "goto" action), so edits made since its last autosave are not lost."""
+
+ANNOTATOR_SESSION_MOUNTED_IMAGE = "mounted_image"
+"""Streamlit session key: the image key of the editor on screen (``ANNOTATOR_SESSION_MOUNTED_EDITOR``'s screenshot)."""
 
 ANNOTATOR_SESSION_HIDE_REVIEWED = "hide_reviewed"
 """Streamlit session key of the "Hide reviewed screenshots" checkbox (the action callback reads it)."""
@@ -304,6 +315,11 @@ ANNOTATOR_HIDDEN_SOURCE = "icon_row"
 ANNOTATOR_TRUTH_FILES = (paths.TEST_DATA / "fr-atlas" / "truth.json",)
 """The hand-labelled biome truths ``build_store`` seeds the store from (the PM's fr-atlas truth, 2026-11-20)."""
 
+ANNOTATOR_DETECTED_SHA = "sha256"
+"""The field (in a screenshot's detection result, kept in its ``extra``) holding the SHA-256 of the bytes its boxes were
+detected on (``detection.read_with_digest``): a file replaced since, even by one of its size, is no longer the
+picture they frame (``state.changed_since_detection``); its detection is rerun first."""
+
 ANNOTATOR_TRUTH_MARK = "truth"
 """The field (in a screenshot's ``extra``, and the export's manifest) naming the truth that seeded it: a biome truth
 (``truth_seed``) vouches for its city areas and citadels, hand-checked map node positions (``node_truth``) for its map
@@ -339,14 +355,17 @@ ANNOTATOR_EFFORT_MOVE_IOU = 0.75
 """Overlap under which a kept box counts as moved or resized (``effort.edit_cost``): a node box (38.7 px) shifted
 about 5 px, or resized about 10 %. Smaller nudges are within the box rules' tolerance."""
 
-ANNOTATOR_SCORE_ASPECT_TOLERANCE = 0.01
-"""``score_nodes``: how far a screenshot file's width / height may differ from the size its boxes were saved in (as a
-ratio) and still be the same view, its boxes scaled to it (a 1440p copy of a 1080p screenshot); beyond it the file
-was replaced by another view and its boxes are not scored."""
+ANNOTATOR_SCORE_RING_MAX = 200.0
+"""``score_nodes --ring``: the largest OUTER radius tried (detector px). The ring's mask is a square of twice it a
+side per map node: a fifth of a 1080p screenshot's height already reaches past every neighbour (BIOME_RING is
+19.35-38), and a mistyped radius would allocate without bound."""
 
 ANNOTATOR_UNASSIGNED_ARM = "unassigned"
 """The effort report's arm of a review no pre-label pass assigned an arm (reviewed before the A/B loop): its own row,
 never counted in the classical control arm."""
+
+ANNOTATOR_EDIT_KINDS = ("kept", "relabelled", "moved", "deleted", "added")
+"""What a review can do to a box (``effort.Edits``' fields, in this order: the report's columns and the fit's)."""
 
 ANNOTATOR_EFFORT_SECONDS = {"kept": 0.3, "relabelled": 1.5, "moved": 3.0, "deleted": 1.0, "added": 5.0}
 """Estimated seconds a reviewer spends per box by what the review did to it (a kept box still has to be checked).

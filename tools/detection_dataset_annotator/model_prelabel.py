@@ -150,19 +150,40 @@ def merge(
     return out
 
 
-def predict(detector: Mapping[str, Any], path: Path) -> tuple[list[dict[str, Any]], tuple[int, int], tuple[int, int]]:
+class UnreadableScreenshot(ValueError):
+    """A screenshot file that cannot be read (missing, damaged): ``predict``'s, apart from the model's own errors."""
+
+
+class ChangedScreenshot(ValueError):
+    """A screenshot file that is not the bytes its boxes were detected on (``state.changed_since_detection``)."""
+
+
+def predict(
+    detector: Mapping[str, Any], path: Path, *, detected: Mapping[str, Any] | None = None
+) -> tuple[list[dict[str, Any]], tuple[int, int], tuple[int, int]]:
     """A model's detections on a screenshot (detector px), the detector's size and the file's size.
 
+    Args:
+        detector: ``load_detector``'s model.
+        path: the screenshot.
+        detected: its store item, when the model's boxes join its detected ones: the bytes decoded here must be the
+            ones they were detected on (checked on the same read).
+
     Raises:
-        ValueError: the screenshot cannot be read.
+        UnreadableScreenshot: the screenshot cannot be read.
+        ChangedScreenshot: it is not the file ``detected``'s boxes were detected on.
     """
     from grand_project.detect.rf_detr_model import predict_tiles
 
-    from .detection import decode_image
+    from .detection import read_with_digest
+    from .state import changed_since_detection
 
-    raw = decode_image(path)
-    if raw is None:
-        raise ValueError(f"Could not read image: {path}")
+    read = read_with_digest(path)
+    if read is None:
+        raise UnreadableScreenshot(f"Could not read image: {path}")
+    raw, digest = read
+    if detected is not None and changed_since_detection(detected, digest):
+        raise ChangedScreenshot(f"{path} changed since its detection: rerun its detection")
     image = core.scale_screenshot(raw)
     found = predict_tiles(
         detector["model"],
@@ -236,15 +257,28 @@ def recorded_arms(items: Iterable[tuple[str, Mapping[str, Any]]], blocks: Mappin
 
 
 def _blocks(items: Sequence[tuple[str, Mapping[str, Any]]]) -> dict[str, str]:
-    """Image key -> its ledger block (by its project-relative file; the key itself when the ledger has none)."""
+    """Image key -> its ledger block: the row of its file and detected bytes, else its file's rows when they all name
+    one block (a copy's own name too; rows that disagree decide nothing), else the key itself."""
     from .split_ledger import read_ledger_rows
 
-    by_file = {entry.file: entry.block for entry in read_ledger_rows()}  # a copy's own name too
-    return {key: by_file.get(str(item.get("source")), "") or key for key, item in items}
+    exact: dict[tuple[str, str], str] = {}
+    by_file: dict[str, set[str]] = {}
+    for entry in read_ledger_rows():
+        exact.setdefault((entry.file, entry.sha256), entry.block)
+        by_file.setdefault(entry.file, set()).add(entry.block)
+    out = {}
+    for key, item in items:
+        source = str(item.get("source"))
+        block = exact.get((source, str(item.get(K.ANNOTATOR_DETECTED_SHA))))
+        if block is None and len(by_file.get(source, ())) == 1:
+            (block,) = by_file[source]
+        out[key] = block or key
+    return out
 
 
 def main(argv: list[str] | None = None) -> int:
     """Pre-label the eligible training screenshots: a share of their blocks by the model, the rest classical."""
+    from .split_ledger import _ledger_lock
     from .state import resolve_path
     from .store import ReviewStore
 
@@ -272,10 +306,15 @@ def main(argv: list[str] | None = None) -> int:
     if not store_path.is_file():  # opening it would create an empty store (and its folder)
         print(f"0 screenshots eligible: no annotator store at {store_path}")
         return 0
-    with ReviewStore.open(store_path) as store:
-        every = list(store.items())
+    # a dry run reads the store only: no journal change, no plan written
+    with ReviewStore.open(store_path, read_only=args.dry_run) as store:
+        # the store and the ledger read in one step under the ledger's lock: an export settling splits claims them in
+        # the store first and writes the ledger rows after (both under the lock), so a screenshot read between the
+        # two had a training split but no block yet, and took one of its own (CodeRabbit)
+        with _ledger_lock():
+            every = list(store.items())
+            blocks = _blocks(every)
         todo = eligible(every, set(trained))
-        blocks = _blocks(every)
         # every eligible block is drawn, whatever --limit leaves for later: the share is of all of them, not of a pass.
         # A block keeps the arm planned for it before (a pass that failed or stopped) or an earlier pass gave it.
         given = {**store.prelabel_plan(), **recorded_arms(every, blocks)}
@@ -284,17 +323,16 @@ def main(argv: list[str] | None = None) -> int:
             # planned before any work, so a model pass that fails leaves its blocks in the model's arm for the next
             plan = store.claim_prelabel_arms({blocks[key]: arms[key] for key, _item in todo})
             arms = {key: plan.get(blocks[key], arm) for key, arm in arms.items()}
-        if args.limit is not None:
-            todo = todo[: args.limit]
         counts = dict(Counter(arms[key] for key, _item in todo))
         members: dict[str, set[str]] = {}
         for key, block in blocks.items():
             members.setdefault(block, set()).add(key)
-        print(f"{len(todo)} screenshots eligible; arms {counts} (policy {args.policy}, model {model_dir})")
+        limit = "" if args.limit is None else f", at most {args.limit} this pass"
+        print(f"{len(todo)} screenshots eligible; arms {counts} (policy {args.policy}, model {model_dir}{limit})")
         if args.dry_run or not todo:
             return 0
         detector = None
-        done = skipped = 0
+        done = skipped = completed = 0  # completed: saved in either arm, what --limit counts
         # a screenshot reviewed, edited, truth-seeded or pre-labelled by another pass meanwhile (the page or another
         # tool open beside this one) keeps what it has: every save checks that in its own write
         # and stays a training screenshot (held-out ones never get model pre-labels: user's rule)
@@ -303,16 +341,22 @@ def main(argv: list[str] | None = None) -> int:
             "unmarked": (K.ANNOTATOR_TRUTH_MARK, K.ANNOTATOR_PRELABEL_FIELD),
             "split": "train",
         }
+        # --limit counts the screenshots saved, not the ones tried: one left (unreadable, edited meanwhile) is tried
+        # once in this pass and stays eligible, and the next one is taken instead
         for key, item in todo:
+            if args.limit is not None and completed >= args.limit:
+                break
             if item.get("split") != "train":  # never: eligible() takes training screenshots only (user's rule)
                 raise RuntimeError(f"refusing to pre-label a {item.get('split')} screenshot: {item['path']}")
             record = {"source": arms[key], "policy": args.policy, "round": round_name}
             # its block's other screenshots have no other arm, checked in the save (another pass may run beside this)
             one_arm = {"arm_block": (members[blocks[key]], arms[key])}
             if arms[key] == K.ANNOTATOR_CLASSICAL_SOURCE:
-                if not store.save_review(
+                if store.save_review(
                     key, int(item["edit_version"]), extra={K.ANNOTATOR_PRELABEL_FIELD: record}, **guard, **one_arm
                 ):
+                    completed += 1
+                else:
                     skipped += 1
                 continue
             if detector is None:
@@ -326,7 +370,15 @@ def main(argv: list[str] | None = None) -> int:
                         f"{model_dir} changed while this pass ran (a training run kept a new best): run it again"
                     )
             base = store.prelabels(key)  # what the model's boxes are joined with: unchanged until the save
-            found, detector_size, raw_size = predict(detector, Path(item["path"]))
+            try:
+                # the bytes the model sees are the ones the boxes were detected on (else they would frame another
+                # picture): checked on the read predict makes
+                found, detector_size, raw_size = predict(detector, Path(item["path"]), detected=item)
+            except (UnreadableScreenshot, ChangedScreenshot) as error:
+                # left as it is, still eligible: a later pass takes it once it can be read (or is detected again)
+                print(f"  {item['source']}: {error} (left)")
+                skipped += 1
+                continue
             model = model_annotations(found, detector_size, raw_size)
             boxes = merge(base, model, args.policy, scale=raw_size[0] / detector_size[0])
             record.update(model=str(model_dir), model_sha=model_sha, found=len(model))
@@ -337,22 +389,28 @@ def main(argv: list[str] | None = None) -> int:
                 prelabel=True,
                 extra={K.ANNOTATOR_PRELABEL_FIELD: record},
                 expect_boxes=base,
+                # the stored detection is still of the bytes predict read (checked in this write)
+                marked={K.ANNOTATOR_DETECTED_SHA: item.get(K.ANNOTATOR_DETECTED_SHA)},
                 **guard,
                 **one_arm,
             ):
                 done += 1
+                completed += 1
                 if done % 50 == 0:
                     print(f"  {done} pre-labelled", flush=True)
             else:
                 skipped += 1
         print(
-            f"done: {done} screenshots pre-labelled by the model, {skipped} left (reviewed, edited, seeded, "
-            f"detected again or given another arm meanwhile) ({json.dumps(counts)})"
+            f"done: {done} screenshots pre-labelled by the model, {skipped} left (unreadable, changed since its "
+            "detection, or reviewed, edited, seeded, detected again or given another arm meanwhile) "
+            f"({json.dumps(counts)})"
         )
     return 0
 
 
 __all__ = [
+    "ChangedScreenshot",
+    "UnreadableScreenshot",
     "checkpoint_state",
     "draw_arms",
     "eligible",

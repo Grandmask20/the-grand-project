@@ -7,6 +7,7 @@ import numpy as np
 
 from grand_project import core, icon_refs
 
+from .cache import _per_image
 from .constants import (
     BADGE_FINDER_FILE,
     BADGE_MIN,
@@ -48,9 +49,11 @@ def _finder() -> dict:
         r = np.hypot(xx - S / 2 + 0.5, yy - S / 2 + 0.5)
         m = ((r >= ICON_RIM_R[0]) & (r < ICON_RIM_R[1])).astype(np.float32)
         t = (mean - (mean * m).sum() / m.sum()) * m
-        _rim.update(T=t / np.linalg.norm(t), M=m, n=float(m.sum()))
         with np.load(BADGE_FINDER_FILE) as z:
-            _rim["special"] = {k[8:]: z[k].astype(np.float32) for k in z.files if k.startswith("special_")}
+            special = {k[8:]: z[k].astype(np.float32) for k in z.files if k.startswith("special_")}
+        # filled in one step: the special icons are found on a thread of their own (pipeline._prefetch), and a
+        # second thread finding _rim half filled had no "special" yet
+        _rim.update(T=t / np.linalg.norm(t), M=m, n=float(m.sum()), special=special)
     return _rim
 
 
@@ -81,6 +84,7 @@ def _in_water(img: np.ndarray, x: float, y: float) -> bool:
     return len(c) > 200 and float((c == 0).mean()) >= need
 
 
+@_per_image
 def special_icons(img: np.ndarray) -> list[dict]:
     """Icons with their own rim (SPECIAL_ICONS), found and named by a whole-icon template.
 

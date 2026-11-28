@@ -31,7 +31,7 @@ from collections import Counter, defaultdict
 from collections.abc import Iterable, Iterator, Mapping
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
-from pathlib import Path
+from pathlib import Path, PureWindowsPath
 from typing import Any
 
 import numpy as np
@@ -40,7 +40,7 @@ from grand_project.core.atlas import Atlas
 from grand_project.detect.labels import export_class
 
 from . import constants as K
-from .blocks import Block, atlas_of, screenshot_blocks
+from .blocks import Block, atlas_of, placed_by, screenshot_blocks
 from .splits import assign_splits, pinned_split, split_report
 from .state import file_hash, relative_source, resolve_path, write_text_atomic
 from .store import ReviewStore
@@ -77,6 +77,8 @@ class Settled:
     """Rows added to the ledger."""
     unreadable: list[str]
     """Processed screenshots whose file could not be read: no split."""
+    digests: dict[str, str]
+    """Image key -> the SHA-256 of its file now (read for its split), for every one that could be read."""
 
 
 class SplitConflict(ValueError):
@@ -334,10 +336,18 @@ def settle_splits(
             else:
                 origins["drawn"] += 1
         new = {key: split for key, split in split_of.items() if stored.get(key) != split}
+        # the files claimed and entered are hashed again first: one replaced since it was hashed above would be given
+        # (and entered under) the split of bytes it no longer holds (CodeRabbit)
+        entering = {key for key in keys if digests[key] not in book or len(same_bytes[digests[key]]) > 1}
+        again = hash_files({key: paths[key] for key in sorted(set(new) | entering)})
+        moved = [names[key] for key in sorted(set(new) | entering) if again.get(key) != digests[key]]
+        if moved:
+            raise SplitConflict([f"{name}: changed while the splits were settled, run again" for name in moved])
+        written: set[str] = set()  # the splits this claim gave: only those are taken back should the ledger fail
         if new:
             # all or nothing: a split claimed meanwhile (outside this lock) that is not the one given here stops the
             # claim before anything is written, and the ledger is not written either
-            claimed = store.claim_splits(new, only_if_free=True)
+            claimed = store.claim_splits(new, only_if_free=True, written=written)
             moved = [
                 f"{names[key]}: given {new[key]}, store {claimed[key]}"
                 for key in new
@@ -356,17 +366,20 @@ def settle_splits(
             if (digests[key] not in book or copy) and (digests[key], names[key]) not in seen:
                 known = book.get(digests[key])
                 split = known.split if known is not None else split_of[key]  # a digest keeps its split
-                rows.append(Entry(digests[key], split, _block_name(blocks[key], names[key]), names[key]))
+                # the screenshot's own block (its atlas's), not the joined one its copies drew it with: a block names
+                # its atlas, and a tool picking an atlas's blocks must find all of its screenshots (CodeRabbit)
+                rows.append(Entry(digests[key], split, _block_name(own[key], names[key]), names[key]))
                 seen.add((digests[key], names[key]))
                 added += 1
         if added:
             try:
                 write_ledger(rows, ledger)
             except BaseException:
-                # the claims stand only with the ledger rows that keep them: a ledger not written takes them back
-                store.release_splits(new)
+                # the claims stand only with the ledger rows that keep them: a ledger not written takes back the ones
+                # this claim made (another session's claim of the same split stays)
+                store.release_splits({key: new[key] for key in written})
                 raise
-    return Settled(split_of, blocks, items, origins, added, unreadable)
+    return Settled(split_of, blocks, items, origins, added, unreadable, digests)
 
 
 def _check_rows(rows: list[tuple[str, Path, str | None, str]], ledger: Path | None) -> list[str]:
@@ -488,10 +501,21 @@ def held_out_overlap(atlas_file: Path, split_of_frame: Mapping[str, str]) -> dic
 def overlap_report(paths: Mapping[str, Path], split_of: Mapping[str, str]) -> str:
     """``held_out_overlap`` of every atlas the screenshots lie next to, as lines."""
     by_atlas: dict[Path, dict[str, str]] = defaultdict(dict)
+    frames: dict[Path, dict[tuple[str, ...], str]] = {}
     for key, split in split_of.items():
         path = Path(paths[key])
-        if (atlas_file := atlas_of(path.parent)) is not None:
-            by_atlas[atlas_file][path.stem] = split
+        # the nearest atlas at or above its folder (map_state_change keeps its screenshots below its atlas)
+        if (atlas_file := atlas_of(path.parent)) is None:
+            continue
+        if atlas_file not in frames:
+            frames[atlas_file] = {
+                PureWindowsPath(str(frame["path"])).parts: str(frame["name"]) for frame in Atlas.load(atlas_file).frames
+            }
+        # the frame the atlas placed it as (by its saved path): a file of a frame's name it did not place never takes
+        # that frame's split
+        name = placed_by(frames[atlas_file], atlas_file.parent, path)
+        if name is not None:
+            by_atlas[atlas_file][name] = split
     lines = []
     for atlas_file in sorted(by_atlas):
         overlap = held_out_overlap(atlas_file, by_atlas[atlas_file])

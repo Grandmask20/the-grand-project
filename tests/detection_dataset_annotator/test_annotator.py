@@ -354,7 +354,8 @@ def test_editor_never_changes_the_screenshot(tmp_path: Path, review_store: Revie
     key = image_key(shot)
     detection = {"nodes": [{"x": 100, "y": 100, "score": 0.9}], "icons": [{"x": 300, "y": 200}]}
     annotations = detection_annotations(detection, image, image)
-    review_store.record_detection(key, {"width": 640, "height": 360, "annotations": annotations}, force=False)
+    detected = {"width": 640, "height": 360, "annotations": annotations, K.ANNOTATOR_DETECTED_SHA: file_hash(shot)}
+    review_store.record_detection(key, detected, force=False)
     item = review_store.item(key)
     boxes = editor_boxes(item["annotations"])
     boxes[0]["x"] += 5
@@ -418,6 +419,7 @@ def _export_store(tmp_path: Path, store: ReviewStore) -> dict[str, str]:
     }
     for name, annotations in detected.items():
         result = {"width": 1920, "height": 1080, "annotations": annotations}
+        result[K.ANNOTATOR_DETECTED_SHA] = file_hash(paths[name])
         store.record_detection(keys[name], result, force=False)
     store.save_review(keys["reviewed_empty"], 1, reviewed=True)
     return keys
@@ -458,7 +460,8 @@ def test_an_export_gives_every_screenshot_its_block_split(tmp_path: Path, review
         path.write_bytes(bytes([i]))
     review_store.add_images(paths)
     for path in paths:
-        result = {"width": 1920, "height": 1080, "annotations": [{"label": "tower", "bbox": [5, 5, 20, 20]}]}
+        result = {"width": 1920, "height": 1080, "annotations": [{"label": "tower", "bbox": [5, 5, 20, 20]}],
+                  K.ANNOTATOR_DETECTED_SHA: file_hash(path)}  # fmt: skip
         review_store.record_detection(image_key(path), result, force=False)
     review_store.save_review(image_key(paths[0]), 1, reviewed=True)
 
@@ -592,3 +595,14 @@ def test_discovery_and_the_store_clean_up_skip_the_same_folders(tmp_path: Path) 
         assert terrain.resolve() not in found
         assert left_out({image_key(path): path for path in found}, found) == {}
     assert set(left_out({"t": terrain}, [])) == {"t"}
+
+
+def test_an_editor_box_with_a_coordinate_that_is_not_finite_is_dropped() -> None:
+    """NaN passes every clip (each comparison is False) and would be saved; such a box is no box (CodeRabbit)."""
+    boxes = [
+        {"id": "b1", "label": "map_node", "x": float("nan"), "y": 10, "w": 20, "h": 20, "source": "manual"},
+        {"id": "b2", "label": "map_node", "x": 10, "y": 10, "w": float("inf"), "h": 20, "source": "manual"},
+        {"id": "b3", "label": "map_node", "x": 10, "y": 10, "w": 20, "h": 20, "source": "manual"},
+    ]
+    saved = apply_editor_boxes([], boxes, width=100, height=100)
+    assert [(a["id"], a["bbox"]) for a in saved] == [("b3", [10.0, 10.0, 20.0, 20.0])]

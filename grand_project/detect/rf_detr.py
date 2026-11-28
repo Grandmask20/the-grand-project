@@ -17,9 +17,14 @@ tests work without the optional training stack.
 
 from __future__ import annotations
 
+import gc
+import hashlib
 import json
 import math
 import random
+import shutil
+import tempfile
+from collections.abc import Callable, Iterator
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -74,7 +79,11 @@ def _annotation(label: str, raw: dict[str, Any], name_to_id: dict[str, int], man
 
 
 def load_annotator_manifest(
-    manifest_path: Path, max_images: int | None = None, *, truth_seeded: bool = False
+    manifest_path: Path,
+    max_images: int | None = None,
+    *,
+    truth_seeded: bool = False,
+    data: dict[str, Any] | None = None,
 ) -> tuple[list[Record], dict[str, str]]:
     """Load the screenshots and boxes exported by ``tools.detection_dataset_annotator``.
 
@@ -87,6 +96,8 @@ def load_annotator_manifest(
         manifest_path: the annotator's ``manifest.json``.
         max_images: keep only this many screenshots (a smoke test), every split kept represented.
         truth_seeded: also the unreviewed screenshots a hand-labelled biome truth seeded (a bootstrap round).
+        data: the manifest as the caller already parsed it (one read: what it checked and hashed is what is loaded);
+            relative screenshot paths still lie next to ``manifest_path``.
 
     Returns:
         (the records, id -> class name).
@@ -97,26 +108,33 @@ def load_annotator_manifest(
         FileNotFoundError: no screenshot of the manifest exists.
     """
     manifest_path = Path(manifest_path)
-    data = json.loads(manifest_path.read_text(encoding="utf-8"))
+    if data is None:
+        data = json.loads(manifest_path.read_text(encoding="utf-8"))
     if data.get("format") != K.RF_DETR_MANIFEST_FORMAT:
         raise ValueError(f"Not an annotator RF-DETR manifest: {manifest_path}")
     labels = {str(index): str(name) for index, name in data.get("labels", {}).items()}
     if not labels:
         raise ValueError(f"Annotator manifest has no labels: {manifest_path}")
-    label_names = [labels[str(index)] for index in range(len(labels))]
-    unknown = sorted(name for name in label_names if not L.known(name))
+    exported = [labels[str(index)] for index in range(len(labels))]
+    admitted = []
+    for item in data.get("images", []):
+        seeded = truth_seeded and not item.get("reviewed") and bool(item.get("truth"))
+        if item.get("reviewed") or seeded:  # unreviewed classical boxes would teach the classical detector's mistakes
+            admitted.append((item, seeded))
+    # the classes the admitted screenshots use: a retired label only a left-out screenshot carries is no class
+    used = {str(raw.get("label", "")) for item, _seeded in admitted for raw in item.get("annotations", [])}
+    unknown = sorted(name for name in exported if not L.known(name) and name in used)
     if unknown:
         # checked before training: a model with these classes would be refused at inference (load_detector)
         raise ValueError(
             f"{manifest_path} has classes the labels do not have ({', '.join(unknown)}): relabel or rerun those "
             "screenshots in the annotator and export again"
         )
+    # the manifest's order kept, numbered again without the unknown classes nothing admitted uses
+    label_names = [name for name in exported if L.known(name)]
     name_to_id = {name: index for index, name in enumerate(label_names)}
     records: list[Record] = []
-    for item in data.get("images", []):
-        seeded = truth_seeded and not item.get("reviewed") and bool(item.get("truth"))
-        if not (item.get("reviewed") or seeded):
-            continue  # unreviewed classical boxes would teach the classical detector's mistakes
+    for item, seeded in admitted:
         image_path = Path(str(item.get("path", "")))
         if not image_path.is_absolute():
             image_path = manifest_path.parent / image_path
@@ -204,13 +222,18 @@ def _features(label_names: list[str]):
     )
 
 
-def _rows(records: list[Record]) -> list[dict[str, Any]]:
-    """Convert records to the Hugging Face object-detection schema."""
-    rows = []
+def _rows(records: list[Record], check_bytes: Callable[[Record, str], None] | None = None) -> Iterator[dict[str, Any]]:
+    """The records in the Hugging Face object-detection schema, one at a time (a split's screenshots are never all in
+    memory), each screenshot's bytes read once and embedded (training never reads the file again: what was checked is
+    what it trains on), after ``check_bytes(record, their SHA-256)`` (it raises to stop the build)."""
     for record in records:
-        rows.append(
+        data = Path(record.path).read_bytes()
+        if check_bytes is not None:
+            check_bytes(record, hashlib.sha256(data).hexdigest())
+        yield (
             {
-                "image": str(record.path),
+                # no path: given an existing file, datasets keeps only the path and reads the file again when saving
+                "image": {"bytes": data, "path": None},
                 "image_id": record.image_id,
                 "source": record.source,
                 "source_type": record.source_type,
@@ -227,7 +250,19 @@ def _rows(records: list[Record]) -> list[dict[str, Any]]:
                 "annotation_sources": [str(a["provenance"]) for a in record.annotations],
             }
         )
-    return rows
+
+
+def _write_split(records: list[Record], features, path: Path, check_bytes) -> Any:
+    """One split written to an Arrow file ``RF_DETR_DATASET_WRITE_BATCH`` screenshots at a time, and read back
+    memory-mapped: the bytes ``check_bytes`` saw go into the file as they are."""
+    from datasets import Dataset
+    from datasets.arrow_writer import ArrowWriter
+
+    with ArrowWriter(features=features, path=str(path), writer_batch_size=K.RF_DETR_DATASET_WRITE_BATCH) as writer:
+        for row in _rows(records, check_bytes):
+            writer.write(features.encode_example(row))
+        writer.finalize()
+    return Dataset.from_file(str(path))
 
 
 def build_dataset(
@@ -236,11 +271,15 @@ def build_dataset(
     label_map: dict[str, str],
     output_dir: Path | None = None,
     provenance: dict[str, Any] | None = None,
+    check_bytes: Callable[[Record, str], None] | None = None,
 ) -> Any:
     """Create a ``DatasetDict`` (train, validation, test, as the records' splits say) and optionally save it.
 
-    The saved folder holds ``labels.json`` and ``metadata.json``: the screenshots per split and kind (reviewed,
-    truth-seeded), the tile, and ``provenance`` (the manifest's and the ledger's SHA-256: which data a model saw).
+    The saved folder holds the screenshots' bytes (``_rows``; ``check_bytes`` sees each one's SHA-256 first),
+    ``labels.json`` and ``metadata.json``: the screenshots per split and kind (reviewed, truth-seeded), the tile, and
+    ``provenance`` (the manifest's and the ledger's SHA-256: which data a model saw). All three are written to
+    ``<output_dir>.partial`` and the folder takes its name only once they are: a folder at ``output_dir`` is always a
+    whole dataset (a build cut off leaves none to reuse).
 
     Raises:
         ValueError: no training or no validation screenshot.
@@ -250,21 +289,34 @@ def build_dataset(
 
     splits = records_by_split(records)
     features = _features([label_map[str(index)] for index in range(len(label_map))])
-    # an empty split (no test screenshot yet) from empty columns: from_list([]) has no columns to match the features
+    final = None
+    if output_dir is not None:
+        final = Path(output_dir)
+        if final.exists() and any(final.iterdir()):
+            raise FileExistsError(f"dataset output directory is not empty: {final}")
+        output_dir = final.with_name(f"{final.name}.partial")
+        if output_dir.exists():
+            shutil.rmtree(output_dir)  # a build cut off before
+        output_dir.mkdir(parents=True)
+        scratch = output_dir / "rows"
+        scratch.mkdir()
+    else:
+        scratch = Path(tempfile.mkdtemp(prefix="grand-project-dataset-"))  # the returned dataset maps its files
+    # an empty split (no test screenshot yet) from empty columns: no file to match the features
     dataset = DatasetDict(
         {
-            split: Dataset.from_list(_rows(chosen), features=features)
+            split: _write_split(chosen, features, scratch / f"{split}.arrow", check_bytes)
             if chosen
             else Dataset.from_dict({name: [] for name in features}, features=features)
             for split, chosen in splits.items()
         }
     )
     if output_dir is not None:
-        output_dir = Path(output_dir)
-        if output_dir.exists() and any(output_dir.iterdir()):
-            raise FileExistsError(f"dataset output directory is not empty: {output_dir}")
-        output_dir.mkdir(parents=True, exist_ok=True)
-        dataset.save_to_disk(str(output_dir))
+        # an empty split (no test screenshot yet) is not saved: datasets cannot load an empty one back (load_dataset)
+        DatasetDict({split: rows for split, rows in dataset.items() if len(rows)}).save_to_disk(str(output_dir))
+        del dataset
+        gc.collect()  # the scratch files' maps closed (Windows keeps a mapped file)
+        shutil.rmtree(scratch)
         (output_dir / "labels.json").write_text(json.dumps(label_map, indent=2) + "\n", encoding="utf-8")
         kinds: dict[str, dict[str, int]] = {}
         for split, chosen in splits.items():
@@ -286,7 +338,22 @@ def build_dataset(
             + "\n",
             encoding="utf-8",
         )
+        if final.exists():
+            final.rmdir()  # (empty: checked above)
+        output_dir.rename(final)
+        return load_dataset(final)
     return dataset
+
+
+def load_dataset(folder: Path) -> Any:
+    """A dataset ``build_dataset`` saved, every split there (one saved without screenshots comes back empty, with the
+    others' features)."""
+    from datasets import Dataset, DatasetDict, load_from_disk
+
+    saved = load_from_disk(str(folder))
+    features = next(iter(saved.values())).features
+    empty = Dataset.from_dict({name: [] for name in features}, features=features)
+    return DatasetDict({split: saved.get(split, empty) for split in K.RF_DETR_SPLITS})
 
 
 class TileTransform:
@@ -352,6 +419,7 @@ def tile_transform(processor, *, train: bool, seed: int = 1337, rare: frozenset[
 
 __all__ = [
     "Record",
+    "load_dataset",
     "TileTransform",
     "build_dataset",
     "load_annotator_manifest",

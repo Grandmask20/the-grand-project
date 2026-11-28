@@ -19,8 +19,9 @@ Modes: TRAINING fits models from the hand-labelled truth and stores them in the 
 
     python -m grand_project.detect score         every stage tested leave-one-screenshot-out (each labelled
                                                  screenshot judged by models trained without it)
-    python -m grand_project.detect score_rf_detr the optional RF-DETR detector on the same screenshots (always
-                                                 held out: never training data)
+    python -m grand_project.detect score_rf_detr the optional RF-DETR detector on the same screenshots; checks
+                                                 and reports whether they are held out (held out, not held out,
+                                                 or unknown: the model's training list decides)
     python -m grand_project.detect train         training mode: fit every model on all labelled screenshots -> DB
     python -m grand_project.detect train_cities  only the City barrel model
     python -m grand_project.detect run IMG...    live mode: maps per screenshot (reads the DB, never writes it)

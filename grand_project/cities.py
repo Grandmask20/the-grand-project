@@ -12,7 +12,7 @@ City types
     "look-alike"). Faridun is easy to tell by its sand; Vaal vs Ezomyte by look alone is weak, so
     the trio rule and hand-set types (atlas.city_types, right-click on the map) win over it.
     On ONE screenshot (screenshot_city_types: the dataset annotator's first pass, the RF-DETR dataset) only the look
-    and "close cities differ" apply; a guess under CITY_LOOK_SURE is reported as unsure.
+    and "close cities differ" apply; a guess under DK.CITY_LOOK_SURE (detect/constants.py) is reported as unsure.
 
 Potential maps
     Maps within a few path steps of a City or a Breach stronghold may take on its biome.
@@ -38,10 +38,6 @@ REFS = rc_paths.ref("city_refs.npz")
 LOCK_ICON = rc_paths.ref("lock_icon.png")  # the hand badge of a locked Breach stronghold
 LOCK_SAME = 150.0  # atlas units: hand badges this close are the same one
 COLOR_W = 2.0  # weight of the colour histogram against the edge directions
-# Look-alike distance margin (second-best type minus best) from which one screenshot's guess counts as sure:
-# leave-one-out over the 173 looks in city_refs.npz was 95% right overall (mostly Ezomyte <-> Vaal mix-ups) and
-# 100% right (124 of 173) at a margin of 0.1 or more.
-CITY_LOOK_SURE = 0.10
 _refs = None
 
 
@@ -146,11 +142,13 @@ def screenshot_city_types(
         known: index in ``points`` -> the type that city already has (a citadel's own label).
 
     Returns:
-        One (type, sure) per point; sure is False when the margin is under CITY_LOOK_SURE, the window is cut off by
+        One (type, sure) per point; sure is False when the margin is under DK.CITY_LOOK_SURE, the window is cut off by
         the screenshot edge, there is nothing to compare with (then the type is TYPES[0]), a city decided before
         it closer than TRIO_GAP, whose type ruled one out, is unsure itself, or the cities closer than TRIO_GAP
         took every type (contradictory labels: any type is a guess).
     """
+    from grand_project.detect import constants as DK  # (here: the detector package imports this module)
+
     n = len(points)
     out: list[tuple[str, bool] | None] = [None] * n
     for k, typ in (known or {}).items():
@@ -193,7 +191,7 @@ def screenshot_city_types(
             not stuck
             and dist[k] is not None
             and whole[k]
-            and margin >= CITY_LOOK_SURE
+            and margin >= DK.CITY_LOOK_SURE
             and all(out[j][1] for j in leaned)
         )
         out[k] = (t, bool(sure))

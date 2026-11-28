@@ -8,7 +8,7 @@ import numpy as np
 import pytest
 
 from tools import compare_detectors
-from tools.compare_detectors import _f1, _landmark_hits, _normalise_accuracy, _parse_match
+from tools.compare_detectors import _landmark_hits, _normalise_accuracy, _parse_match
 
 
 def test_parse_match_returns_precision_recall_and_f1() -> None:
@@ -18,7 +18,7 @@ def test_parse_match_returns_precision_recall_and_f1() -> None:
     assert result["reference"] == 20
     assert result["precision"] == 10 / 12
     assert result["recall"] == 0.5
-    assert result["f1"] == _f1(10 / 12, 0.5)
+    assert result["f1"] == pytest.approx(0.625)
 
 
 def test_parse_match_handles_empty_summary() -> None:
@@ -89,3 +89,48 @@ def test_landmarks_are_read_as_the_scorer_counts_them(tmp_path: Path) -> None:
         {"kind": "City", "x": 1, "y": 2, "status": "kept"}
     ]
     assert loaded == [tmp_path / "atlas.json"]
+
+
+def test_only_the_scorers_own_no_placement_is_scored_as_an_empty_atlas(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The scorer says when the builder placed nothing (False): that atlas is scored empty. A missing file or program
+    is an error, never an empty atlas (CodeRabbit)."""
+    reference = tmp_path / "ref"
+    reference.mkdir()
+    (reference / "atlas.json").write_text("{}")
+    folder = tmp_path / "res_1080_100"
+    folder.mkdir()
+    backend = compare_detectors.Backend("classical", lambda img: {})
+
+    def missing(work: Path) -> bool:
+        raise FileNotFoundError("python")
+
+    with pytest.raises(FileNotFoundError):
+        compare_detectors._rebuild_accuracy(
+            backend, tmp_path, [folder], tmp_path / "model", "cpu", SimpleNamespace(REFERENCE="ref", rebuild=missing)
+        )
+    written = []
+    scorer = SimpleNamespace(REFERENCE="ref", rebuild=lambda work: False, _import=lambda: (None, None))
+    monkeypatch.setattr(compare_detectors, "_write_empty_atlas", lambda work: written.append(work.name))
+    with pytest.raises(AttributeError):  # (the stand-in scorer has no numbers(): it stops after the rebuilds)
+        compare_detectors._rebuild_accuracy(backend, tmp_path, [folder], tmp_path / "model", "cpu", scorer)
+    assert written == ["res_1080_100"]
+
+
+def test_timing_waits_only_for_the_device_that_infers(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A CPU run on a CUDA machine never synchronises CUDA; a CUDA device does (CodeRabbit)."""
+    torch = pytest.importorskip("torch")
+    calls = []
+    monkeypatch.setattr(torch.cuda, "synchronize", lambda device=None: calls.append(device))
+    compare_detectors._synchronise_accelerator(None)
+    compare_detectors._synchronise_accelerator(torch.device("cpu"))
+    assert calls == []
+    compare_detectors._synchronise_accelerator(torch.device("cuda"))
+    assert calls == [torch.device("cuda")]
+
+
+def test_the_scorer_comes_from_this_checkout_not_the_data_folder() -> None:
+    """The atlas folder given on the command line is data: its own score_atlases.py is never run (CodeRabbit)."""
+    assert compare_detectors.SCORER.is_relative_to(compare_detectors.project_paths.ROOT)
+    assert compare_detectors.SCORER.is_file()

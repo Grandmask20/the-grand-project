@@ -12,6 +12,8 @@ from grand_project.detect import constants as DK
 from tools.detection_dataset_annotator import ReviewStore, image_key, relative_source, simulate_loop
 from tools.detection_dataset_annotator import constants as K
 from tools.detection_dataset_annotator.simulate_loop import (
+    Baseline,
+    check_manifest,
     check_round,
     city_area,
     classical_boxes,
@@ -40,7 +42,7 @@ def test_rounds_reveal_training_blocks_cumulatively() -> None:
             [("train", 0), ("train", 0), ("train", 2), ("validation", 7), ("test", 5), ("train", 8)]
         )
     ]
-    trained = [entry.file for entry in ledger if entry.split == "train"]
+    trained = {entry.file: entry.sha256 for entry in ledger if entry.split == "train"}
     assert parse_rounds("8,2; 0") == [["8", "2"], ["0"]]
     rounds = revealed(ledger, ATLAS, parse_rounds("8,2;0"), trained)
     assert rounds == [[f"{ATLAS}/shot5.png", f"{ATLAS}/shot2.png"], [f"{ATLAS}/shot5.png", f"{ATLAS}/shot2.png",
@@ -63,11 +65,28 @@ def test_a_screenshot_is_revealed_under_the_name_the_manifest_trains_on() -> Non
         Entry("sha0", "train", f"{ATLAS}#0", f"{ATLAS}/shot0.png"),
         Entry("sha1", "train", f"{ATLAS}#0", f"{ATLAS}/shot1.png"),
     ]
-    assert revealed(ledger, ATLAS, [["0"]], [f"{ATLAS}/shot0.png", f"{ATLAS}/shot1.png"]) == [
+    manifest = {f"{ATLAS}/shot0.png": "sha0", f"{ATLAS}/shot1.png": "sha1"}
+    assert revealed(ledger, ATLAS, [["0"]], manifest) == [[f"{ATLAS}/shot0.png", f"{ATLAS}/shot1.png"]]
+    with pytest.raises(ValueError, match="no training screenshot of the manifest"):
+        revealed(ledger, ATLAS, [["0"]], {f"{ATLAS}/shot0.png": "sha0"})
+
+
+def test_a_screenshot_is_matched_by_its_bytes_before_its_name() -> None:
+    """A file whose bytes changed has an old ledger row of its name in an earlier block: the manifest's new bytes are
+    revealed with their own block, never early by that name (CodeRabbit); a manifest row without a digest falls back
+    to its name."""
+    ledger = [
+        Entry("old", "train", f"{ATLAS}#0", f"{ATLAS}/shot0.png"),  # its bytes before
+        Entry("new", "train", f"{ATLAS}#1", f"{ATLAS}/shot0.png"),
+        Entry("sha1", "train", f"{ATLAS}#0", f"{ATLAS}/shot1.png"),
+    ]
+    manifest = {f"{ATLAS}/shot0.png": "new", f"{ATLAS}/shot1.png": "sha1"}
+    with pytest.raises(ValueError, match="no training screenshot of the manifest"):
+        revealed(ledger, ATLAS, [["0"]], manifest)  # block 0's old bytes are in no manifest row
+    assert revealed(ledger, ATLAS, [["1"]], manifest) == [[f"{ATLAS}/shot0.png"]]
+    assert revealed(ledger, ATLAS, [["0"]], {f"{ATLAS}/shot0.png": None, f"{ATLAS}/shot1.png": "sha1"}) == [
         [f"{ATLAS}/shot0.png", f"{ATLAS}/shot1.png"]
     ]
-    with pytest.raises(ValueError, match="no training screenshot of the manifest"):
-        revealed(ledger, ATLAS, [["0"]], [f"{ATLAS}/shot0.png"])
 
 
 def test_a_node_counts_for_the_truth_only_by_its_city_area() -> None:
@@ -170,11 +189,17 @@ def test_the_classical_boxes_are_read_from_a_store_copy(tmp_path: Path, review_s
     nothing.write_bytes(b"y")
     review_store.add_images([nothing])
     review_store.record_detection(image_key(nothing), {"width": 1920, "height": 1080, "annotations": []}, force=False)
+    failed = tmp_path / "failed.png"  # its detection failed: no boxes, but no baseline either (CodeRabbit)
+    failed.write_bytes(b"z")
+    review_store.add_images([failed, tmp_path / "queued.png"])  # (and one never detected)
+    review_store.record_failure(image_key(failed), "ValueError: unreadable", force=False)
     boxes = classical_boxes(review_store.path)
     assert boxes == {
-        relative_source(path): [{"label": "tower", "bbox": [5.0, 5.0, 20.0, 20.0], "source": None}],
-        relative_source(nothing): [],
+        relative_source(path): Baseline(None, [{"label": "tower", "bbox": [5.0, 5.0, 20.0, 20.0], "source": None}]),
+        relative_source(nothing): Baseline(None, []),
     }
+    review_store.record_detection(image_key(nothing), {**result, K.ANNOTATOR_DETECTED_SHA: "abc"}, force=True)
+    assert classical_boxes(review_store.path)[relative_source(nothing)].sha256 == "abc"  # the bytes detected
 
 
 def test_the_report_lists_every_policy_per_round() -> None:
@@ -195,7 +220,7 @@ def test_a_simulation_trains_each_round_on_from_the_last_and_scores_every_policy
     """Round by round: the revealed screenshots (cumulative) are trained on, from the previous round's model, on one
     dataset built once; then every policy is scored on the held-out screenshots. Here the classical detector calls
     a truth Vaal node grass and the model gets it right: relabelling by the model leaves no gold edit."""
-    atlas = tmp_path / "atlas"
+    atlas = tmp_path / "atlas dir"  # (a space: each screenshot is one line of the subset file)
     atlas.mkdir()
     shots = {name: atlas / f"{name}.png" for name in ("a1", "a2", "val", "tst")}
     for index, path in enumerate(shots.values()):
@@ -208,16 +233,18 @@ def test_a_simulation_trains_each_round_on_from_the_last_and_scores_every_policy
     review_store.add_images([shots["val"], shots["tst"]])
     for n in ("val", "tst"):
         result = {"width": 1920, "height": 1080, "annotations": [_box("map_node_grass", 300, 300)]}
+        result[K.ANNOTATOR_DETECTED_SHA] = f"sha-{n}"  # the bytes detected, which the export names too
         review_store.record_detection(image_key(shots[n]), result, force=False)
     truth = tmp_path / "truth.json"
     mark = relative_source(truth)  # as truth_seed marks the screenshots it seeded
     rows = [
         {"source": relative_source(shots[n]), "path": str(shots[n]), "split": split, K.ANNOTATOR_TRUTH_MARK: mark,
-         "annotations": [_box("map_node_vaal", 300, 300)]}
+         "width": 1920, "height": 1080, "annotations": [_box("map_node_vaal", 300, 300)],
+         K.ANNOTATOR_DETECTED_SHA: f"sha-{n}"}
         for n, split in (("val", "validation"), ("tst", "test"))
     ]  # fmt: skip
-    rows += [{"source": relative_source(shots[n]), "path": str(shots[n]), "split": "train", "annotations": []}
-             for n in ("a1", "a2")]  # fmt: skip
+    rows += [{"source": relative_source(shots[n]), "path": str(shots[n]), "split": "train", "reviewed": True,
+              "annotations": [], K.ANNOTATOR_DETECTED_SHA: f"sha-{n}"} for n in ("a1", "a2")]  # fmt: skip
     manifest = tmp_path / "manifest.json"
     manifest.write_text(json.dumps({"images": rows}), encoding="utf-8")
 
@@ -226,16 +253,24 @@ def test_a_simulation_trains_each_round_on_from_the_last_and_scores_every_policy
     def train(command, check):
         commands.append(command)
         round_dir = Path(command[command.index("--output-dir") + 1])
-        (round_dir / "training_summary.json").write_text(json.dumps({"best_validation_mean_ap": 0.5}))
         dataset = Path(command[command.index("--dataset-dir") + 1])
         dataset.mkdir(parents=True, exist_ok=True)
         (dataset / "labels.json").write_text("{}")  # the first round built the dataset, from these inputs
         provenance = {"manifest_sha256": file_hash(manifest), "ledger_sha256": file_hash(K.ANNOTATOR_SPLIT_LEDGER)}
-        (dataset / "metadata.json").write_text(json.dumps({**provenance, "truth_seeded": True}))
+        metadata = {**provenance, "truth_seeded": True, "max_images": None}
+        (dataset / "metadata.json").write_text(json.dumps(metadata))
+        (round_dir / "best").mkdir(parents=True)
+        (round_dir / "best" / "model.safetensors").write_bytes(round_dir.name.encode())
+        best_sha = file_hash(round_dir / "best" / "model.safetensors")
+        (round_dir / "training_summary.json").write_text(
+            json.dumps({"best_validation_mean_ap": 0.5, "dataset": metadata, "best_sha256": best_sha})
+        )
 
     found = [{"label": "map_node_vaal", "family": "node", "score": 0.9, "box": [281.0, 281.0, 319.0, 319.0]}]
     monkeypatch.setattr(simulate_loop.subprocess, "run", train)
-    monkeypatch.setattr(simulate_loop, "predict", lambda detector, path: (found, (1920, 1080), (1920, 1080)))
+    monkeypatch.setattr(
+        simulate_loop, "predict", lambda detector, path, detected=None: (found, (1920, 1080), (1920, 1080))
+    )
     monkeypatch.setattr("grand_project.detect.rf_detr_model.load_detector", lambda model_dir: {})
     out = tmp_path / "sim"
     # a Vaal area map where both held-out screenshots show their node (1:1)
@@ -252,7 +287,7 @@ def test_a_simulation_trains_each_round_on_from_the_last_and_scores_every_policy
     assert "--annotator-manifest" in first and "--init-from" not in first
     assert "--reuse-dataset" in second and second[second.index("--init-from") + 1] == str(out / "round-1" / "best")
     assert "--truth-seeded" in first and "--truth-seeded" in second
-    subsets = [(out / f"round-{n}" / "train_subset.txt").read_text().split() for n in (1, 2)]
+    subsets = [(out / f"round-{n}" / "train_subset.txt").read_text().splitlines() for n in (1, 2)]
     assert subsets == [[relative_source(shots["a1"])], [relative_source(shots["a1"]), relative_source(shots["a2"])]]
     report = json.loads((out / "report.json").read_text())
     assert [r["train_screenshots"] for r in report] == [1, 2] and report[0]["validation_mean_ap"] == 0.5
@@ -262,6 +297,15 @@ def test_a_simulation_trains_each_round_on_from_the_last_and_scores_every_policy
         assert scores["classical"]["gold"]["relabelled"] == 1.0 and scores["relabel"]["gold"]["edits"] == 0.0
     assert "## Round 2: 2 training screenshots" in (out / "report.md").read_text()
 
+    # a revealed screenshot the trainer would not train on (neither reviewed nor truth-seeded) stops the run before
+    # any dataset is built (CodeRabbit)
+    rows[-1]["reviewed"] = False
+    manifest.write_text(json.dumps({"images": rows}), encoding="utf-8")
+    commands.clear()
+    with pytest.raises(ValueError, match="no training screenshot of the manifest"):
+        simulate_loop.main([*args[:-4], "--output-dir", str(tmp_path / "sim2"), "--epochs", "2"])
+    assert commands == []
+
 
 def test_gold_counts_only_nodes_the_truth_has_a_map_for_and_silver_is_against_classical() -> None:
     """A node box at no truth map kept its classical class in the reference: no gold edit either way. Silver
@@ -270,31 +314,66 @@ def test_gold_counts_only_nodes_the_truth_has_a_map_for_and_silver_is_against_cl
     reference = [_box("map_node_vaal", 300, 300), _box("map_node_ezomyte", 600, 300), _box("tower", 900, 300, 60)]
     prelabels = [_box("map_node_grass", 300, 300), _box("map_node_grass", 600, 300)]
     baseline = [_box("map_node_grass", 300, 300), _box("map_node_grass", 600, 300)]
-    known = lambda box: box["bbox"][0] < 450  # noqa: E731 - the truth has a map at the first node only
-    result = score(prelabels, reference, baseline, known=known)
+    map_of = lambda box: 0 if box["bbox"][0] < 450 else None  # noqa: E731 - the truth has a map at the first only
+    result = score(prelabels, reference, baseline, map_of=map_of)
     assert (result["gold"].relabelled, result["gold"].kept) == (1, 0)
     assert result["silver"].edits == 0  # the tower is the reference's alone: nothing against classical
 
 
+def test_gold_pairs_a_node_only_with_the_reference_node_of_its_own_truth_map() -> None:
+    """Two truth maps close together: a prediction at the first is never matched with the second's reference node,
+    which would turn a missed node and a false one into one relabel (CodeRabbit)."""
+    reference = [_box("map_node_vaal", 315, 300)]  # the second map's node
+    prelabels = [_box("map_node_vaal", 300, 300)]  # a node at the first map (within the match radius of the other)
+    map_of = lambda box: 0 if box["bbox"][0] < 290 else 1  # noqa: E731
+    gold = score(prelabels, reference, [], map_of=map_of)["gold"]
+    assert (gold.kept, gold.relabelled) == (0, 0)  # (finding nodes is silver's: no gold node pairs at all)
+    assert score(prelabels, reference, [])["gold"].kept == 1  # without the truth's maps: taken for one node
+
+
 def test_a_dataset_is_reused_only_when_built_from_the_same_inputs(tmp_path: Path) -> None:
-    manifest = tmp_path / "manifest.json"
-    manifest.write_text("{}")
+    manifest = "a" * 64  # the SHA-256 of the manifest bytes the simulation read
     write_ledger([Entry("sha", "train", "", "a.png")])
     dataset = tmp_path / "dataset"
     assert not dataset_matches(dataset, manifest)  # none yet
     dataset.mkdir()
     (dataset / "labels.json").write_text("{}")
-    meta = {"manifest_sha256": file_hash(manifest), "ledger_sha256": file_hash(K.ANNOTATOR_SPLIT_LEDGER)}
+    meta = {"manifest_sha256": manifest, "ledger_sha256": file_hash(K.ANNOTATOR_SPLIT_LEDGER), "max_images": None}
     (dataset / "metadata.json").write_text(json.dumps({**meta, "truth_seeded": True}))
     assert dataset_matches(dataset, manifest)
+    uncapped = {name: value for name, value in meta.items() if name != "max_images"}
+    for capped in ({**meta, "max_images": 40}, uncapped):  # a smoke build's cap, or none recorded
+        (dataset / "metadata.json").write_text(json.dumps({**capped, "truth_seeded": True}))
+        assert not dataset_matches(dataset, manifest)
     (dataset / "metadata.json").write_text(json.dumps({**meta, "truth_seeded": False}))
     assert not dataset_matches(dataset, manifest)  # built without the truth-seeded screenshots
     (dataset / "metadata.json").write_text(json.dumps({**meta, "truth_seeded": True}))
-    manifest.write_text('{"images": []}')
-    assert not dataset_matches(dataset, manifest)  # another export
+    assert not dataset_matches(dataset, "b" * 64)  # another export
     for broken in ("{not json", "[1, 2]"):  # an interrupted build's record: built anew, never an error
         (dataset / "metadata.json").write_text(broken)
         assert not dataset_matches(dataset, manifest)
+
+
+def test_a_round_trained_on_another_manifest_is_not_scored(tmp_path: Path) -> None:
+    """The manifest changed while a round trained (another export): its model was not trained on the snapshot the
+    held-out rows come from, so the simulation stops (CodeRabbit)."""
+    summary = tmp_path / "training_summary.json"
+    with pytest.raises(SystemExit, match="no training_summary.json"):
+        check_manifest(summary, "a" * 64, 1)
+    summary.write_text(json.dumps({"dataset": {"manifest_sha256": "b" * 64}}))
+    with pytest.raises(SystemExit, match="trained on another manifest"):
+        check_manifest(summary, "a" * 64, 1)
+    (tmp_path / "best").mkdir()
+    (tmp_path / "best" / "model.safetensors").write_bytes(b"weights")
+    kept = file_hash(tmp_path / "best" / "model.safetensors")
+    trained = {"best_validation_mean_ap": 0.5, "dataset": {"manifest_sha256": "a" * 64}}
+    summary.write_text(json.dumps({**trained, "best_sha256": kept}))
+    assert check_manifest(summary, "a" * 64, 1)["best_validation_mean_ap"] == 0.5  # (--skip-train: unchanged)
+    # a best/ the summary is not about (a run kept a new one but never wrote its summary): not reported as it
+    for other in ({"best_sha256": "c" * 64}, {}):
+        summary.write_text(json.dumps({**trained, **other}))
+        with pytest.raises(SystemExit, match="not about the model in best/"):
+            check_manifest(summary, "a" * 64, 1)
 
 
 def test_without_held_out_screenshots_nothing_is_trained(
@@ -326,3 +405,79 @@ def test_silver_node_finds_pair_by_place_alone() -> None:
     finds = node_finds(model, classical, 1.0)
     assert (finds.added, finds.deleted) == (1, 1)  # the water node missed, the node at 1200 is new
     assert score(model, [], classical)["silver"].added == 1
+
+
+def test_a_held_out_file_changed_since_its_export_is_not_scored(monkeypatch: pytest.MonkeyPatch, capsys) -> None:
+    """The bytes the model reads (checked on that read, by digest: a same-size replacement too) and the classical
+    boxes' must be the exported ones; else the screenshot is left out of the scores, said (CodeRabbit)."""
+    sha = K.ANNOTATOR_DETECTED_SHA
+    row = {"source": "a.png", "path": "a.png", "width": 1920, "height": 1080, "annotations": [], sha: "exported"}
+
+    def predict(detector, path, detected=None):
+        if detected.get(sha) != "now":  # (the file's bytes now hash to "now")
+            raise simulate_loop.ChangedScreenshot("changed")
+        return [], (1920, 1080), (1920, 1080)
+
+    monkeypatch.setattr(simulate_loop, "predict", predict)
+    with pytest.raises(SystemExit, match="no held-out screenshot"):  # nothing scored in either split
+        simulate_loop._score_splits({}, {"validation": [row]}, {"a.png": Baseline("exported", [])}, None)
+    assert "changed since its export" in capsys.readouterr().out
+    other = {**row, sha: "now"}
+    with pytest.raises(SystemExit, match="no held-out screenshot"):
+        simulate_loop._score_splits({}, {"validation": [other]}, {"a.png": Baseline("before", [])}, None)
+    assert "classical boxes are of other bytes" in capsys.readouterr().out
+    # one split scored: the other is unavailable (no score), not zero edits
+    good = {**row, "source": "b.png", sha: "now"}
+    baselines = {"a.png": Baseline("exported", []), "b.png": Baseline("now", [])}
+    scores = simulate_loop._score_splits({}, {"validation": [row], "test": [good]}, baselines, None)
+    assert scores["validation"]["screenshots"] == 0 and scores["validation"]["classical"] is None
+    assert scores["test"]["screenshots"] == 1 and scores["test"]["classical"]["gold"]["edits"] == 0
+    report = simulate_loop.report_markdown([{"round": 1, "train_screenshots": 1, "scores": scores}])
+    assert "no screenshot scored" in report
+
+
+def test_a_held_out_screenshot_that_cannot_be_read_is_left_out(monkeypatch: pytest.MonkeyPatch, capsys) -> None:
+    """One file unreadable: named and left out, the others scored (it stopped the whole round: CodeRabbit)."""
+    from tools.detection_dataset_annotator.model_prelabel import UnreadableScreenshot
+
+    gone = {"source": "a.png", "path": "a.png", "width": 1920, "height": 1080, "annotations": []}
+    good = {**gone, "source": "b.png", "path": "b.png"}
+
+    def predict(detector, path, detected=None):
+        if path.name == "a.png":
+            raise UnreadableScreenshot(f"Could not read image: {path}")
+        return [], (1920, 1080), (1920, 1080)
+
+    monkeypatch.setattr(simulate_loop, "predict", predict)
+    baselines = {"a.png": Baseline(None, []), "b.png": Baseline(None, [])}
+    scores = simulate_loop._score_splits({}, {"validation": [gone, good]}, baselines, None)
+    assert scores["validation"]["screenshots"] == 1
+    assert "a.png: cannot be read" in capsys.readouterr().out
+
+
+def test_a_round_revealing_another_truths_unreviewed_screenshot_stops_before_training(tmp_path: Path) -> None:
+    """An unreviewed training screenshot another truth seeded is no gold for this one: a round revealing it stops the
+    run, naming it, before anything is trained (any truth's mark let it in: CodeRabbit)."""
+    atlas = tmp_path / "atlas"
+    atlas.mkdir()
+    shots = {n: atlas / f"{n}.png" for n in ("a1", "val")}
+    for index, path in enumerate(shots.values()):
+        path.write_bytes(bytes([index]))
+    name = relative_source(atlas)
+    write_ledger([Entry("sha-a1", "train", f"{name}#0", relative_source(shots["a1"])),
+                  Entry("sha-val", "validation", f"{name}#7", relative_source(shots["val"]))])  # fmt: skip
+    truth = tmp_path / "truth.json"
+    truth.write_text(json.dumps({"maps": [], "biomes": [], "screenshots": []}), encoding="utf-8")
+    rows = [
+        {"source": relative_source(shots["val"]), "path": str(shots["val"]), "split": "validation",
+         K.ANNOTATOR_TRUTH_MARK: relative_source(truth), "annotations": [], K.ANNOTATOR_DETECTED_SHA: "sha-val"},
+        {"source": relative_source(shots["a1"]), "path": str(shots["a1"]), "split": "train",
+         K.ANNOTATOR_TRUTH_MARK: "other/states.json", "annotations": [], K.ANNOTATOR_DETECTED_SHA: "sha-a1"},
+    ]  # fmt: skip
+    manifest = tmp_path / "manifest.json"
+    manifest.write_text(json.dumps({"images": rows}), encoding="utf-8")
+    command = ["--manifest", str(manifest), "--classical-store", str(tmp_path / "none.sqlite3"), "--rounds", "0",
+               "--atlas", name, "--truth", str(truth), "--output-dir", str(tmp_path / "run")]  # fmt: skip
+    with pytest.raises(SystemExit, match="seeded by another truth"):
+        simulate_loop.main(command)
+    assert not (tmp_path / "run").exists()

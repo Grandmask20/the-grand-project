@@ -12,6 +12,7 @@ import copy
 import functools
 import hashlib
 import io
+import math
 from collections.abc import Iterable
 from pathlib import Path
 from typing import Any
@@ -158,6 +159,8 @@ def _xywh(values: Any) -> tuple[float, float, float, float] | None:
         x, y, width, height = (float(value) for value in values)
     except (TypeError, ValueError):
         return None
+    if not all(math.isfinite(value) for value in (x, y, width, height)):
+        return None  # NaN would pass every clip and be saved (and an infinite size would fill the screenshot)
     return x, y, width, height
 
 

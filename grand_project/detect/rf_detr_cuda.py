@@ -21,9 +21,12 @@ from . import constants as K
 
 
 def _library_dirs() -> list[str]:
-    """PyTorch's CUDA library folders (cuDNN, the CUDA 13 runtime) found on ``sys.path``."""
-    package_dirs = {Path(entry) / "nvidia" for entry in sys.path if entry}
-    found = [package_dir / name / "lib" for name in ("cudnn", "cu13") for package_dir in sorted(package_dirs)]
+    """PyTorch's CUDA library folders (cuDNN, the CUDA runtime: ``cu13`` or the older wheels' ``cuda_runtime``) found
+    on ``sys.path``."""
+    # in the interpreter's search order: sorted, a system wheel folder could come before the environment's own
+    package_dirs = list(dict.fromkeys(Path(entry) / "nvidia" for entry in sys.path if entry))
+    names = ("cudnn", "cu13", "cuda_runtime")
+    found = [package_dir / name / "lib" for name in names for package_dir in package_dirs]
     return [str(folder) for folder in found if folder.is_dir()]
 
 
@@ -52,6 +55,17 @@ def prefer_pip_cuda_libraries(argv: list[str] | None = None) -> None:
         return
     entries = _library_dirs()
     if not entries:
+        return
+    # glibc splits LD_LIBRARY_PATH at ":" and ";": a wheel folder holding either is never searched, so restarting
+    # would only claim a set-up that did not happen (CodeRabbit). Real POSIX only: tests faking Linux on Windows use
+    # drive-letter folders
+    split = [entry for entry in entries if os.name == "posix" and (":" in entry or ";" in entry)]
+    if split:
+        print(
+            f"PyTorch's CUDA libraries are in a folder whose path holds ':' or ';' ({split[0]}): the dynamic linker "
+            "cannot search it. Move the Python environment to a path without them; RF-DETR on CUDA may fail.",
+            file=sys.stderr,
+        )
         return
     sep = K.RF_DETR_CUDA_PATH_SEPARATOR
     first = sep.join(entries)

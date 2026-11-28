@@ -30,6 +30,7 @@ import contextlib
 import itertools
 import json
 import operator
+import os
 import sqlite3
 from collections.abc import Iterable, Iterator, Mapping
 from dataclasses import dataclass
@@ -59,7 +60,8 @@ _SCHEMA = (
         next_annotation_id INTEGER NOT NULL DEFAULT 0,
         extra TEXT NOT NULL DEFAULT '{}',
         split TEXT,
-        guesses INTEGER NOT NULL DEFAULT 0
+        guesses INTEGER NOT NULL DEFAULT 0,
+        review_generation INTEGER NOT NULL DEFAULT 0
     )""",
     # x, y, w, h may be NULL: SQLite stores a NaN as NULL. The editor and export skip such a box, as they skip NaN.
     """CREATE TABLE annotations (
@@ -230,6 +232,83 @@ def _extra(item: Mapping[str, Any]) -> str:
     return json.dumps({name: value for name, value in item.items() if name not in _ITEM_FIELDS})
 
 
+def _columns(db: sqlite3.Connection, table: str, schema: str = "main") -> list[str]:
+    """A table's columns, in order (none: no such table)."""
+    return [row[1] for row in db.execute(f"PRAGMA {schema}.table_info({table})")]
+
+
+def _layout() -> dict[str, list[str]]:
+    """Every table this annotator writes and its columns, as ``_SCHEMA`` makes them."""
+    with contextlib.closing(sqlite3.connect(":memory:")) as db:
+        for statement in _SCHEMA:
+            db.execute(statement)
+        return {table: _columns(db, table) for table in _TABLES}
+
+
+def layout_problems(db: sqlite3.Connection, schema: str = "main") -> list[str]:
+    """What an opened store lacks of this annotator's tables and columns ("prelabels table", "images.split"); empty
+    when it has them all."""
+    out = []
+    for table, columns in _layout().items():
+        have = set(_columns(db, table, schema))
+        if not have:
+            out.append(f"{table} table")
+        else:
+            out += [f"{table}.{column}" for column in columns if column not in have]
+    return out
+
+
+def upgrade_layout(path: Path, target: Path | None = None) -> dict[str, int]:
+    """Copy a store an older annotator built into this annotator's layout, every row kept (a column it lacks takes its
+    default, a table it lacks starts empty), checked by counting.
+
+    The store at ``path`` is only read. The copy is written to ``target`` (default: ``path`` itself, replaced once the
+    copy is whole and counted; keep a backup first, as ``build_store`` does). No annotator page may have the store open
+    while it is replaced.
+
+    Returns:
+        Table -> rows copied.
+
+    Raises:
+        sqlite3.Error: The store cannot be read, or the copy's rows do not add up.
+    """
+    path = Path(path)
+    final = path if target is None else Path(target)
+    staging = final.with_name(f"{final.name}.upgrade")
+    staging.unlink(missing_ok=True)
+    # the old store's write-ahead log folded into its file first, so the copy and the swap see every committed write
+    with contextlib.closing(sqlite3.connect(str(path), isolation_level=None)) as old:
+        old.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+    copied: dict[str, int] = {}
+    # uri=True: ATTACH reads a "file:...?mode=ro" name as a URI only on a URI-enabled connection (Linux builds have it
+    # on by default, the Windows and macOS ones do not); a plain staging path still opens as a path
+    with contextlib.closing(sqlite3.connect(str(staging), uri=True, isolation_level=None)) as db:
+        db.execute("BEGIN")
+        for statement in _SCHEMA:
+            db.execute(statement)
+        db.execute("ATTACH DATABASE ? AS old", (f"{path.resolve().as_uri()}?mode=ro",))
+        for table, columns in _layout().items():
+            kept = [column for column in columns if column in set(_columns(db, table, "old"))]
+            if not kept:
+                copied[table] = 0
+                continue
+            listed = ", ".join(kept)
+            db.execute(f"INSERT INTO main.{table} ({listed}) SELECT {listed} FROM old.{table}")
+            (before,) = db.execute(f"SELECT COUNT(*) FROM old.{table}").fetchone()
+            (after,) = db.execute(f"SELECT COUNT(*) FROM main.{table}").fetchone()
+            if before != after:
+                raise sqlite3.DatabaseError(f"{table}: {before} rows in {path}, {after} copied")
+            copied[table] = after
+        (version,) = db.execute("PRAGMA old.user_version").fetchone()
+        db.execute("COMMIT")
+        db.execute("DETACH DATABASE old")
+        db.execute(f"PRAGMA user_version = {int(version) or int(K.ANNOTATOR_STORE_CREATED)}")
+    for suffix in ("-wal", "-shm"):  # (checkpointed and closed above: no log of the old file may meet the new one)
+        Path(f"{final}{suffix}").unlink(missing_ok=True)
+    os.replace(staging, final)
+    return copied
+
+
 class StoreLayoutError(sqlite3.DatabaseError):
     """A review store whose tables an older annotator made (``ReviewStore.open`` refuses it)."""
 
@@ -312,18 +391,18 @@ class ReviewStore:
             self._db.execute(f"PRAGMA user_version = {int(K.ANNOTATOR_STORE_CREATED)}")
 
     def _check_tables(self) -> None:
-        """Refuse a store an older annotator built: its tables lack ones this one writes (a new store is built
-        instead, no migration: the split ledger gives every screenshot its split back).
+        """Refuse a store an older annotator built: it lacks tables or columns this one writes (``build_store``
+        brings it up to date, every row kept: ``upgrade_layout``).
 
         Raises:
-            StoreLayoutError: a table is missing.
+            StoreLayoutError: a table or column is missing.
         """
-        have = {name for (name,) in self._db.execute("SELECT name FROM sqlite_master WHERE type = 'table'")}
-        missing = [name for name in _TABLES if name not in have]
+        missing = layout_problems(self._db)
         if missing:
+            folder = relative_source(Path(self.path).parent)
             raise StoreLayoutError(
-                f"{self.path} was built by an older annotator (no {', '.join(missing)} table): build a new store in "
-                "a new folder (python -m tools.detection_dataset_annotator.build_store --output-dir NEW) and open that"
+                f"{self.path} was built by an older annotator (no {', '.join(missing)}): bring it up to date with "
+                f"python -m tools.detection_dataset_annotator.build_store --output-dir {folder} (its work is kept)"
             )
 
     # ---- transactions --------------------------------------------------------------------------------------------
@@ -424,13 +503,17 @@ class ReviewStore:
             FileExistsError: ``target`` exists.
         """
         target.parent.mkdir(parents=True, exist_ok=True)
-        if target.exists():
-            raise FileExistsError(target)
-        copy = sqlite3.connect(str(target))
+        with open(target, "xb"):  # claimed in one step: a backup of the same name at once raises, never shares it
+            pass
         try:
-            self._db.backup(copy)
-        finally:
-            copy.close()
+            copy = sqlite3.connect(str(target))
+            try:
+                self._db.backup(copy)
+            finally:
+                copy.close()
+        except BaseException:
+            target.unlink(missing_ok=True)  # this call made it: no half a backup left under the name
+            raise
 
     def queue(self) -> list[QueueEntry]:
         """Every screenshot in queue order, without boxes."""
@@ -483,7 +566,9 @@ class ReviewStore:
         """Image key -> split, for the screenshots that have one."""
         return dict(self._db.execute("SELECT key, split FROM images WHERE split IS NOT NULL"))
 
-    def claim_splits(self, splits: Mapping[str, str], *, only_if_free: bool = False) -> dict[str, str]:
+    def claim_splits(
+        self, splits: Mapping[str, str], *, only_if_free: bool = False, written: set[str] | None = None
+    ) -> dict[str, str]:
         """Give screenshots their split where they have none yet, in one write, so two exports at once cannot give
         one screenshot two splits. A split is kept: nothing here moves a screenshot to another split.
 
@@ -491,6 +576,8 @@ class ReviewStore:
             splits: image key -> the split to give it.
             only_if_free: all or nothing: when any of them already has another split, none is written (checked in the
                 same write), so the caller can stop with the store as it was.
+            written: filled with the keys this write gave their split (not those another session gave the same one
+                first): the ones to take back should the caller's next step fail (``release_splits``).
 
         Returns:
             Image key -> split as the store now has it, for every key of ``splits`` still in the store.
@@ -501,7 +588,9 @@ class ReviewStore:
                 if any(taken.get(key, split) != split for key, split in splits.items()):
                     return {key: taken.get(key, split) for key, split in splits.items() if key in taken}
             for key, split in splits.items():
-                self._db.execute("UPDATE images SET split = ? WHERE key = ? AND split IS NULL", (split, key))
+                cursor = self._db.execute("UPDATE images SET split = ? WHERE key = ? AND split IS NULL", (split, key))
+                if cursor.rowcount and written is not None:
+                    written.add(key)
             stored = dict(self._db.execute("SELECT key, split FROM images WHERE split IS NOT NULL"))
         return {key: stored[key] for key in splits if key in stored}
 
@@ -559,6 +648,7 @@ class ReviewStore:
         marked: Mapping[str, Any] | None = None,
         arm_block: tuple[Iterable[str], str] | None = None,
         split: str | None = None,
+        expect_reviewed: bool | None = None,
         review_s: float = 0.0,
         reviewed_at: str | None = None,
     ) -> bool:
@@ -589,15 +679,19 @@ class ReviewStore:
             arm_block: (the screenshots of its spatial block, the pre-label arm saved): save only while none of the
                 others has another arm (``ANNOTATOR_PRELABEL_FIELD``): one block, one arm, also for two passes at once.
             split: save only while the screenshot has this split (model pre-labels: train only, user's rule).
+            expect_reviewed: save only while its review flag is still this (a toggle worked out from it: another tab
+                toggling meanwhile would otherwise be undone, and the page move on by a flag never saved).
             review_s: active review seconds added to its review log (``ANNOTATOR_REVIEW_FIELD``) in the same write,
                 so two saves close together both count.
             reviewed_at: when it was marked reviewed, kept in its review log.
         """
         with self._write():
             row = self._db.execute(
-                "SELECT edit_version, next_annotation_id, split FROM images WHERE key = ?", (key,)
+                "SELECT edit_version, next_annotation_id, split, reviewed FROM images WHERE key = ?", (key,)
             ).fetchone()
             if row is None or row[0] != revision or (split is not None and row[2] != split):
+                return False
+            if expect_reviewed is not None and bool(row[3]) != expect_reviewed:
                 return False
             if untouched and not self._untouched(key):
                 return False
@@ -613,6 +707,9 @@ class ReviewStore:
                     return False
             if arm_block is not None and not self._one_arm(key, *arm_block):
                 return False
+            if annotations is not None or reviewed is not None:
+                # a detection queued before this edit must not replace it (record_detection's ``generation``)
+                self._db.execute("UPDATE images SET review_generation = review_generation + 1 WHERE key = ?", (key,))
             if annotations is not None:
                 numbered, counter = _numbered(annotations, row[1])
                 self._replace_annotations(key, numbered)
@@ -679,25 +776,38 @@ class ReviewStore:
 
     # ---- detection -----------------------------------------------------------------------------------------------
 
-    def detection_jobs(self, keys: Iterable[str] | None = None, *, force: bool = False) -> list[tuple[str, str]]:
-        """(key, path) of the screenshots to detect, in queue order: the selected ones (all without ``keys``),
-        only those not detected yet unless ``force``."""
+    def detection_jobs(self, keys: Iterable[str] | None = None, *, force: bool = False) -> list[tuple[str, str, int]]:
+        """(key, path, review generation) of the screenshots to detect, in queue order: the selected ones (all without
+        ``keys``), only those not detected yet unless ``force``. The generation goes with the job to
+        ``record_detection``: an edit or review saved meanwhile makes its result stale."""
         selected = set(keys) if keys is not None else None
-        rows = self._db.execute("SELECT key, path, detected FROM images ORDER BY position")
+        rows = self._db.execute("SELECT key, path, detected, review_generation FROM images ORDER BY position")
         return [
-            (key, path)
-            for key, path, detected in rows
+            (key, path, generation)
+            for key, path, detected, generation in rows
             if (selected is None or key in selected) and (force or not detected)
         ]
 
-    def record_detection(self, key: str, result: Mapping[str, Any], *, force: bool) -> bool:
+    def _stale(self, key: str, generation: int | None) -> bool:
+        """Whether a job queued at ``generation`` is stale: the screenshot's boxes or review changed since (inside a
+        write). None: no generation to check."""
+        if generation is None:
+            return False
+        (now,) = self._db.execute("SELECT review_generation FROM images WHERE key = ?", (key,)).fetchone()
+        return now != generation
+
+    def record_detection(
+        self, key: str, result: Mapping[str, Any], *, force: bool, generation: int | None = None
+    ) -> bool:
         """Replace a screenshot's detector fields and boxes with a detection result.
 
         Its revision goes up, so an editor showing the old boxes is remounted and its late saves are refused. A
         forced rerun also clears the review flag. Box ids continue the screenshot's counter, so none is reused.
 
         A result that is not forced, for a screenshot detected meanwhile (another run took the same screenshot), is
-        dropped: it must not replace that detection and the edits made since.
+        dropped: it must not replace that detection and the edits made since. So is any result, forced too, of a job
+        queued at another ``generation`` (``detection_jobs``): boxes edited or a review saved since the rerun was
+        asked for are kept, never cleared by it.
 
         Returns:
             Whether the result was saved.
@@ -709,13 +819,14 @@ class ReviewStore:
             row = self._db.execute("SELECT next_annotation_id, detected FROM images WHERE key = ?", (key,)).fetchone()
             if row is None:
                 raise KeyError(key)
-            if row[1] and not force:
+            if (row[1] and not force) or self._stale(key, generation):
                 return False
             annotations, counter = _numbered(result.get("annotations", []), row[0])
             self._db.execute(
                 "UPDATE images SET detected = ?, detector = ?, width = ?, height = ?, detector_width = ?, "
                 "detector_height = ?, error = ?, extra = ?, next_annotation_id = ?, edit_version = edit_version + 1, "
-                "reviewed = CASE WHEN ? THEN 0 ELSE reviewed END WHERE key = ?",
+                "review_generation = review_generation + 1, reviewed = CASE WHEN ? THEN 0 ELSE reviewed END "
+                "WHERE key = ?",
                 (
                     bool(result.get("detected", True)),
                     *(result.get(name) for name in _RESULT_COLUMNS),
@@ -729,10 +840,10 @@ class ReviewStore:
             self._replace_prelabels(key, annotations)
         return True
 
-    def record_failure(self, key: str, error: str, *, force: bool) -> None:
+    def record_failure(self, key: str, error: str, *, force: bool, generation: int | None = None) -> None:
         """Note a failed detection. A failed rerun of a detected screenshot keeps its boxes and review flag; a failure
-        that is not forced, for a screenshot detected meanwhile (by another run), changes nothing; otherwise the
-        screenshot counts as not detected (it can be retried).
+        that is not forced, for a screenshot detected meanwhile (by another run), or of a job queued at another
+        ``generation``, changes nothing; otherwise the screenshot counts as not detected (it can be retried).
 
         Raises:
             KeyError: The screenshot is not in the store.
@@ -741,6 +852,8 @@ class ReviewStore:
             row = self._db.execute("SELECT detected FROM images WHERE key = ?", (key,)).fetchone()
             if row is None:
                 raise KeyError(key)
+            if self._stale(key, generation):
+                return  # edited or reviewed since the job was queued: what it shows stands
             if force and row[0]:
                 message = f"Rerun failed; kept previous detections. {error}"
                 self._db.execute("UPDATE images SET error = ? WHERE key = ?", (message, key))

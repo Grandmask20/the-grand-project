@@ -134,3 +134,12 @@ ISLAND_CANDIDATES = 12  # shifts passing the quick count that get the exact chec
 ISLAND_TERRAIN_TRIES = 3  # of those passing it, the best this many get the terrain check
 ISLAND_COVER_CELL = 20.0  # atlas units: grid cell for "which area does an atlas / a group cover"
 ISLAND_QUICK_TOL = 8.0  # px: a map counts as landing on one in the quick count (shifts are rounded to 4 units)
+
+
+# worker processes (fileio.process_pool: detecting many screenshots at once, the atlas-wide check's path tracing)
+# Each worker's thread pools (OpenCV, OpenMP, BLAS, PyTorch) are limited to its share of the CPU: the CPUs divided
+# among the workers. Uncapped, every worker started one thread per CPU (the map and tower models' predict, OpenCV),
+# and 4 workers detecting 16 screenshots took 4.33 s per screenshot instead of 1.63 s capped (22-thread Ryzen 9 7900X,
+# screenshots/crawl, 2026-11-27); 1, 2 or 5 threads per worker made no difference once capped.
+POOL_THREAD_ENV_VARS = ("OMP_NUM_THREADS", "OPENBLAS_NUM_THREADS", "MKL_NUM_THREADS")
+"""Thread limits set in each worker for libraries it loads later (PyTorch for RF-DETR reads them when it starts)."""
