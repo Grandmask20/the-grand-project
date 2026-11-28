@@ -16,6 +16,7 @@ export const PAGE_OF: Record<string, [string, string]> = {
 	auto: ["atlases", "auto"],
 	route: ["bookmarks", "route"],
 	debug: ["log", "debug"],
+	experimental: ["log", "experimental"],
 };
 
 export type MapMode =

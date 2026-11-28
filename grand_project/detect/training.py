@@ -19,6 +19,7 @@ from .constants import (
     EXTRA_BADGES,
     EXTRA_MAPS,
     MAP,
+    RF_DETR_TRAINED_ON,
     TESTS,
     TOWER_REFS,
     TREE_NEG_WEIGHT,
@@ -43,12 +44,7 @@ def _labelled() -> tuple[dict, dict]:
         (old_landmarks), "dashes", "path", and (points, features, labels) tuples for "towers", "maps" and
         "badges".
     """
-    truth, where = {}, {}
-    for tf, shots in TRUTH_SETS:
-        if tf.exists():
-            for name, t in json.loads(tf.read_text(encoding="utf-8")).items():
-                truth[name] = dict(t, badges=[b for b in t["badges"] if not b["name"].startswith("ExpeditionShip")])
-                where[name] = shots / name
+    truth, where = _truth_screenshots()
     data = {}
     for name, t in truth.items():
         img = cv2.imdecode(np.fromfile(str(where[name]), np.uint8), cv2.IMREAD_COLOR)
@@ -326,6 +322,91 @@ def cmd_score() -> int:
     atlas_truth.print_score(atlas_truth.score(truth, new))
     print(f"\nhidden maps from badge rows: {sum(1 for o in new.values() for n in o['nodes'] if n.get('hidden'))}")
     (TRUTH.parent / "last_score_outputs.json").write_text(json.dumps(new, default=float), encoding="utf-8")
+    print(f"{time.time() - t0:.0f} s")
+    return 0
+
+
+def _truth_screenshots() -> tuple[dict, dict]:
+    """The hand-labelled truth (all TRUTH_SETS) and where each screenshot is, as ``_labelled`` reads them (Expedition
+    ship markers are not ring badges: left out)."""
+    truth, where = {}, {}
+    for tf, shots in TRUTH_SETS:
+        if tf.exists():
+            for name, t in json.loads(tf.read_text(encoding="utf-8")).items():
+                truth[name] = dict(t, badges=[b for b in t["badges"] if not b["name"].startswith("ExpeditionShip")])
+                where[name] = shots / name
+    return truth, where
+
+
+def _project_name(path: Path) -> str:
+    """A screenshot's project-relative name, as a model's ``RF_DETR_TRAINED_ON`` lists it (its absolute path outside
+    the project)."""
+    resolved = Path(path).resolve()
+    try:
+        return resolved.relative_to(rc_paths.ROOT.resolve()).as_posix()
+    except ValueError:
+        return str(resolved)
+
+
+def _held_out(trained: set[str] | None, shots) -> bool | None:
+    """Whether a model trained on none of the screenshots: None when it has no ``RF_DETR_TRAINED_ON`` list (not
+    known), else whether the list names none of them."""
+    if trained is None:
+        return None
+    return not any(_project_name(path) in trained for path in shots)
+
+
+def cmd_score_rf_detr() -> int:
+    """Command `python -m grand_project.detect score_rf_detr`: the RF-DETR detector on the hand-labelled screenshots.
+
+    The model is --rf-detr-model's, else runs/rf-detr-small/best. The truth screenshots are pinned to the
+    annotator's test split, so a `tools.train_rf_detr` run never trains on them itself; a model gone on from another
+    (`--init-from`) may still have learned them in that ancestor's run. The score is called held-out only when the
+    model's own list of training screenshots (RF_DETR_TRAINED_ON, ancestors' included) confirms it, beside `score`'s
+    leave-one-out score of the classical detector. Icons are named leave-one-out too: with the labelled
+    pictures of the other truth screenshots, not the stored icon model's (which holds every truth screenshot's).
+    Writes the outputs to last_score_outputs_rf_detr.json next to TRUTH.
+
+    Returns:
+        0 (process exit code); 1 when there is no hand-labelled truth or none of its screenshots can be read.
+    """
+    from .rf_detr_model import detect_rf_detr, rf_detr_model_path, trained_on
+
+    t0 = time.time()
+    truth, where = _truth_screenshots()
+    if not truth:
+        print("no hand-labelled truth: none of " + ", ".join(str(tf) for tf, _shots in TRUTH_SETS) + " is there")
+        return 1
+    imgs = {}
+    for name in truth:
+        img = core.read_screenshot(where[name])  # 1080p, as the program reads it and the truth is labelled
+        if img is None:
+            print(f"cannot read {where[name]}: left out")
+            continue
+        imgs[name] = img
+    new = {}
+    for name, img in imgs.items():
+        # the icons are named with the labelled pictures of the other truth screenshots only, as `score` names them
+        # (the stored icon model's book holds this screenshot's own pictures): the model's weights are what is scored
+        book = badge_book(truth, imgs, [other for other in imgs if other != name])
+        out = detect_rf_detr(img, book=book)
+        out["icons"] = [icon for icon in out["icons"] if not icon["name"].startswith("ExpeditionShip")]
+        new[name] = out
+    if not new:  # nothing to score: the outputs of the last score stay
+        print("no truth screenshot could be read")
+        return 1
+    model_dir = rf_detr_model_path()
+    # the screenshots scored, not every truth one
+    held_out = _held_out(trained_on(model_dir), [where[name] for name in new])
+    if held_out:
+        kind = "held-out: the model trained on none of the scored screenshots"
+    elif held_out is None:
+        kind = f"not known to be held-out: {model_dir} does not list its training screenshots ({RF_DETR_TRAINED_ON})"
+    else:
+        kind = "NOT held-out: the model trained on some of the scored screenshots"
+    print(f"\n== RF-DETR detector ({kind})")
+    atlas_truth.print_score(atlas_truth.score(truth, new))
+    (TRUTH.parent / "last_score_outputs_rf_detr.json").write_text(json.dumps(new, default=float), encoding="utf-8")
     print(f"{time.time() - t0:.0f} s")
     return 0
 

@@ -11,12 +11,15 @@ Stages, each scored against atlas_test_data/truth/truth.json (not shipped) with 
               strongholds (old purple rule), locked when a hand badge is near or no map is inside
   5. paths    amber / dim-gold / fog-orange dash mask -> dash-by-dash tracing between maps by the user's
               path rules; two dead ends meeting = a missed map; dashes around a spot are map evidence too
-  6. biome    ground type per map
+  6. biome    ground type per map: only as first guesses of the RF-DETR dataset's node classes (biomes.py)
 Modes: TRAINING fits models from the hand-labelled truth and stores them in the reference DB
 (table detector_models); LIVE only reads them and never writes the DB.
 
     python -m grand_project.detect score         every stage tested leave-one-screenshot-out (each labelled
                                                  screenshot judged by models trained without it)
+    python -m grand_project.detect score_rf_detr the optional RF-DETR detector on the same screenshots; checks
+                                                 and reports whether they are held out (held out, not held out,
+                                                 or unknown: the model's training list decides)
     python -m grand_project.detect train         training mode: fit every model on all labelled screenshots -> DB
     python -m grand_project.detect train_cities  only the City barrel model
     python -m grand_project.detect run IMG...    live mode: maps per screenshot (reads the DB, never writes it)

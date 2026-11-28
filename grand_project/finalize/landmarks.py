@@ -268,13 +268,32 @@ def _beam(img, x, y, spread=0):
     Returns:
         (blue pixel count, orange pixel count) of the best column; (0, 0) when too near the top.
     """
+    _cx, blue, orange = _beam_column(img, x, y, spread)
+    return blue, orange
+
+
+def _beam_column(img, x, y, spread=0) -> tuple[int, int, int]:
+    """Find the beam column of _beam: where it is, besides its blue / orange pixel counts.
+
+    The dataset's hall box uses where it is: the hall structure stands under its beam (detect/proposals.py).
+
+    Args:
+        img: the screenshot (BGR image).
+        x: x of the building in screen px.
+        y: y of the building in screen px.
+        spread: how far left / right to look for the beam column (screen px); 0 for just x.
+
+    Returns:
+        (x of the best column's middle, blue pixel count, orange pixel count); (round(x), 0, 0) when too near the
+        top or no column holds a beam pixel.
+    """
     h, w = img.shape[:2]
     # a building's own beam rises right above it; for a badge-only spot look only low down, so a
     # different Hall / City higher up the screen (whose beam is in the same column) doesn't count
     y0, y1 = int(max(0, y - (150 if spread else 330))), int(max(0, y - 40))
     if y1 - y0 < 40:
-        return 0, 0
-    best = (0, 0)
+        return int(round(x)), 0, 0
+    best = (int(round(x)), 0, 0)
     for cx in range(int(x - spread), int(x + spread) + 1, 20) if spread else [int(x)]:
         x0, x1 = max(0, cx - 22), min(w, cx + 22)
         if x1 <= x0:
@@ -283,8 +302,8 @@ def _beam(img, x, y, spread=0):
         H, S, V = hsv[..., 0], hsv[..., 1], hsv[..., 2]
         blue = int(((H >= 90) & (H <= 130) & (S >= 60) & (V >= 140)).sum())
         orange = int((((H <= 22) | (H >= 170)) & (S >= 110) & (V >= 150)).sum())
-        if blue + orange > sum(best):
-            best = (blue, orange)
+        if blue + orange > best[1] + best[2]:
+            best = (cx, blue, orange)
     return best
 
 

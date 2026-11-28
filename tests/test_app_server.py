@@ -244,7 +244,8 @@ def test_a_second_start_opens_the_running_app(app, monkeypatch, tmp_path):
 
 
 def test_an_older_running_copy_is_closed_for_the_update(monkeypatch):
-    monkeypatch.setattr(S, "running_app", lambda port: ("http://127.0.0.1:1/", "1.0"))  # an older copy answers
+    # an older copy answers
+    monkeypatch.setattr(S, "running_app", lambda port: ("http://127.0.0.1:1/", "1.0"))
     monkeypatch.setattr(S, "APP_QUIT_WAIT", 0.5)
     state = {"gone": False, "quits": 0}
 
@@ -261,6 +262,36 @@ def test_an_older_running_copy_is_closed_for_the_update(monkeypatch):
     assert S.reuse_running(1, None, browser=False) == S.START and state["quits"] == 1  # it quit: the update starts
     state.update(gone=False, obeys=False)  # still closing after the wait: no second copy writing the same atlas
     assert S.reuse_running(1, None, browser=False) == S.FAILED
+
+
+def test_the_start_runs_the_saved_detector(app_settings, monkeypatch):
+    """The detector is the saved settings' (Log > Experimental), set as the app starts; only RF-DETR restarts the
+    process with PyTorch's CUDA libraries first."""
+    from grand_project.app.session import saved_detector
+    from grand_project.detect import detector_config, rf_detr_cuda
+
+    restarted = []
+    monkeypatch.setattr(rf_detr_cuda, "prefer_pip_cuda_libraries", lambda argv: restarted.append(argv))
+    monkeypatch.setattr(S, "reuse_running", lambda port, atlas, browser: S.HANDED)  # (no server started)
+    assert S.main(["--port", "1"]) == 0
+    # (the workers are within this computer's cores, as the app keeps them: a 4-core CI runner has 3 of the default 4)
+    assert detector_config.current() == saved_detector({}) and restarted == []  # nothing saved
+    saved = {"detection": {"rf_detr": True, "model": "me/model", "device": "cpu"}}
+    app_settings.write_text(json.dumps(saved))
+    assert S.main(["--port", "1"]) == 0
+    assert detector_config.current() == saved_detector(saved) and detector_config.current().rf_detr
+    assert restarted == [["--port", "1"]]
+
+
+def test_the_page_learns_the_detector_it_can_choose(monkeypatch):
+    """The Experimental tab's choices: the detector this run uses, what RF-DETR misses, the most workers."""
+    from grand_project.detect import detector_config
+
+    monkeypatch.setattr(detector_config, "rf_detr_missing", lambda: "torch")
+    got = S.meta()["detection"]
+    assert got["rf_detr_missing"] == "torch" and got["active"]["rf_detr"] is detector_config.current().rf_detr
+    assert got["active"]["workers"] == min(detector_config.current().workers, got["max_workers"])  # (as many as run)
+    assert got["max_workers"] >= 1 and got["devices"][0] == "auto" and got["default_model"]
 
 
 def test_a_refused_atlas_hand_over_is_reported(app, monkeypatch, tmp_path):

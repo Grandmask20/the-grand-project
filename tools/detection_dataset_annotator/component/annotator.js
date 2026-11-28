@@ -1,0 +1,1567 @@
+// Box editor for the detection dataset annotator (a Streamlit components v2 module, no build step).
+//
+// The screenshot is a plain <img>; every box is its own element above it, so the picture is never changed and
+// "Save image as" gives the clean screenshot. All coordinates are source-image pixels; the stage is scaled with a
+// CSS transform for zoom and pan.
+//
+// Streamlit calls the default export again whenever the data changes (after every autosave rerun) and runs only
+// the last returned cleanup, on unmount. So one Annotator lives per mount point and later calls only update it:
+// a rerun must never reset boxes that are still being edited.
+//
+// Python sends the sizes and timings (chip_px, editor_height, autosave_ms) with the data; the numbers below only
+// shape the interaction itself.
+
+const INSTANCES = new WeakMap();
+const DESTROY_DELAY_MS = 100; // a cleanup followed by a new call for the same mount point is a re-render
+const HANDLE_PX = 9; // resize handle reach on screen, at any zoom
+const DRAG_START_PX = 3; // pointer travel on screen before a press becomes a drag
+const HIT_PAD_PX = 2; // boxes are hit this far outside their border (screen pixels)
+const MIN_BOX_PX = 2; // smaller drags are clicks, not new boxes (source pixels)
+const MIN_SIDE_PX = 1; // , / . and the wheel shrink a box side down to this (never grown back up to MIN_BOX_PX)
+const HISTORY_LIMIT = 200;
+const MAX_ZOOM = 16;
+const MIN_ZOOM_OF_FIT = 0.5; // zoom out to half the fitted size at most
+const WHEEL_ZOOM_RATE = 0.0015; // zoom factor exponent per wheel delta unit
+const WHEEL_LINE_PX = 40; // a wheel delta given in lines (Firefox's mouse wheel: 3 a notch) is this many pixels each
+const KEY_ZOOM_STEP = 1.25; // + / - zoom factor
+const NEW_BOX_OFFSET = 8; // duplicate offset (source pixels)
+const NUDGE_PX = 1; // arrows move / resize this much (source pixels)
+const NUDGE_SHIFT_PX = 10; // ... with Shift
+const SCALE_STEP_PX = 1; // , and . shrink / grow every side of a box this much (source pixels)
+const SCALE_STEP_SHIFT_PX = 5; // ... with Shift
+const SCALE_WHEEL_DELTA = 100; // wheel delta per resize step: one mouse-wheel notch; trackpads add up small deltas
+const SCALE_UNDO_MS = 600; // resize steps closer together than this are one undo step (one wheel gesture)
+const REVEAL_MARGIN_PX = 24; // J / K pan when the box comes closer than this to the viewport edge
+const MANUAL = "manual"; // box source of drawn or changed boxes (constants.ANNOTATOR_MANUAL_SOURCE)
+const DRAG_KEEPS_KEYS = new Set(["Shift", "Control", "Alt", "AltGraph", "Meta", " "]); // keys a box drag goes on with
+
+const HANDLES = ["nw", "n", "ne", "e", "se", "s", "sw", "w"];
+const HANDLE_CURSORS = {
+  nw: "nwse-resize",
+  se: "nwse-resize",
+  ne: "nesw-resize",
+  sw: "nesw-resize",
+  n: "ns-resize",
+  s: "ns-resize",
+  e: "ew-resize",
+  w: "ew-resize",
+};
+
+const SHORTCUTS = [
+  ["Drag on the screenshot", "draw a box with the current label"],
+  ["Click / Shift+click", "select / add to selection (smallest box under the pointer)"],
+  ["Alt+click", "cycle through boxes stacked under the pointer"],
+  ["Drag box / handle", "move / resize"],
+  ["Ctrl+drag", "move the selected boxes, even from a handle (small boxes)"],
+  ["1 … 9, 0, Shift+1 … 6", "label the selected boxes, or pick the label for new boxes (keys in the label list)"],
+  ["/", "find a label by its name, icon name or other names (Enter: use the first match, Esc: clear)"],
+  ["Del, Backspace", "delete selected"],
+  ["Ctrl+D", "duplicate selected"],
+  ["Ctrl+A", "select all"],
+  ["Arrows (+Shift)", "move 1 px (10 px)"],
+  ["Alt+Arrows (+Shift)", "resize 1 px (10 px)"],
+  [", / . (+Shift)", "shrink / grow 1 px on every side (5 px), keeping the centre"],
+  ["J / K", "next / previous box"],
+  ["Ctrl+Z / Ctrl+Shift+Z, Ctrl+Y", "undo / redo"],
+  ["Esc", "cancel drag, deselect, close help"],
+  ["Wheel / + / -", "zoom; with boxes selected: grow / shrink them 1 px on every side"],
+  ["Ctrl+wheel", "zoom, also with boxes selected"],
+  ["Space+drag, middle drag", "pan"],
+  ["F", "fit the screenshot"],
+  ["C", "centre the screenshot (keeps the zoom)"],
+  ["H / L", "hide boxes / show every label"],
+  ["Enter", "mark reviewed and go to the next screenshot (held down, once only)"],
+  ["Shift+Enter", "toggle reviewed"],
+  ["N or ] / P or [", "next / previous screenshot (edits are saved first)"],
+  ["?", "this help"],
+];
+
+function el(tag, className, parent) {
+  const node = document.createElement(tag);
+  if (className) node.className = className;
+  parent?.appendChild(node);
+  return node;
+}
+
+function clamp(value, low, high) {
+  return Math.min(high, Math.max(low, value));
+}
+
+function cloneBoxes(boxes) {
+  return boxes.map((box) => ({ ...box }));
+}
+
+function isTyping(event) {
+  const target = event.composedPath()[0];
+  if (!(target instanceof Element)) return false;
+  return target.isContentEditable || ["INPUT", "SELECT", "TEXTAREA"].includes(target.tagName);
+}
+
+// The label a key press picks: labels name a key by its code (Digit1 …) and whether Shift is held, the same on every
+// keyboard layout (Shift+1 types "!" on one and "+" on another). Exported for tests/detection_dataset_annotator.
+export function labelForKey(labels, code, shift) {
+  return labels.find((label) => label.code && label.code === code && Boolean(label.shift) === Boolean(shift));
+}
+
+// What a plain key press does: a label's key picks the label before any character shortcut, since Shift+digit types
+// a shortcut's character on some layouts (Shift+1 is "+", zoom, on a Swiss keyboard); any other key is the shortcut of the character it types (letters in lower case).
+// Exported for tests/detection_dataset_annotator.
+export function plainKeyTarget(labels, { key, code, shiftKey }) {
+  const label = labelForKey(labels, code, shiftKey);
+  if (label) return { label };
+  return { shortcut: key.length === 1 ? key.toLowerCase() : key };
+}
+
+// Shortcuts a held key does once: a repeat of Enter or N would mark and skip one screenshot after another unseen.
+// Exported for tests/detection_dataset_annotator.
+const ONCE_SHORTCUTS = new Set(["Enter", "n", "p", "[", "]"]);
+export function repeatIgnored(shortcut) {
+  return ONCE_SHORTCUTS.has(shortcut);
+}
+
+// The label the finder's Enter uses: the first it shows for the words typed, none for an empty finder (it shows every
+// label then, and Enter would relabel the selected boxes with whichever comes first). Exported for
+// tests/detection_dataset_annotator.
+export function finderPick(shown, filter) {
+  return filter ? (shown[0] ?? null) : null;
+}
+
+// Whether a key in the label finder is the finder's own (Enter, Esc): not while an input method composes a word, whose
+// Enter or Esc picks or drops the composed text. Exported for tests/detection_dataset_annotator.
+export function finderKeyActs(event) {
+  return !event.isComposing && event.keyCode !== 229 && (event.key === "Enter" || event.key === "Escape");
+}
+
+// A box side grown (step > 0) or shrunk by step source px on each end: never below MIN_SIDE_PX, and a side already
+// smaller is never grown by a shrink (the 2 px floor of a drawn box made a 1 px side grow). Exported for tests.
+export function scaledSide(side, step) {
+  return Math.max(Math.min(side, MIN_SIDE_PX), side + 2 * step);
+}
+
+// The boxes a label changes: those with another label (a box that has it already keeps its detector source and
+// score). Exported for tests/detection_dataset_annotator.
+export function relabelled(boxes, name) {
+  return boxes.filter((box) => box.label !== name);
+}
+
+// Whether a box is a guess to check first (an unsure city type, biome or city area: constants.ANNOTATOR_GUESS_SOURCES).
+export function isGuess(guessSources, box) {
+  return guessSources.has(box.source);
+}
+
+function round2(value) {
+  return Math.round(value * 100) / 100;
+}
+
+// Where a resize handle of a box sits (source pixels).
+export function handleSpot(box, handle) {
+  const x = handle.includes("w") ? box.x : handle.includes("e") ? box.x + box.w : box.x + box.w / 2;
+  const y = handle.includes("n") ? box.y : handle.includes("s") ? box.y + box.h : box.y + box.h / 2;
+  return { x, y };
+}
+
+// The handle nearest the point within reach of it, of the given boxes (the first box wins a tie): on a small box
+// every handle is in reach, and the nearest is the one meant. Exported for tests/detection_dataset_annotator.
+export function closestHandle(point, boxes, reach) {
+  let best = null;
+  for (const box of boxes) {
+    for (const handle of HANDLES) {
+      const spot = handleSpot(box, handle);
+      const dx = Math.abs(point.x - spot.x);
+      const dy = Math.abs(point.y - spot.y);
+      if (dx > reach || dy > reach) continue;
+      const distance = Math.hypot(dx, dy);
+      if (!best || distance < best.distance) best = { box, handle, distance };
+    }
+  }
+  return best && { box: best.box, handle: best.handle };
+}
+
+// A wheel delta in pixels, whatever unit the browser gave it in (WheelEvent.deltaMode: 0 pixels, 1 lines, 2 pages).
+// Exported for tests/detection_dataset_annotator.
+export function wheelPixels(delta, mode, pageHeight) {
+  if (mode === 1) return delta * WHEEL_LINE_PX;
+  if (mode === 2) return delta * pageHeight;
+  return delta;
+}
+
+// A typed coordinate, or null for an empty or unreadable field (Number("") is 0: an emptied field is no 0).
+// Exported for tests/detection_dataset_annotator.
+export function coordinateValue(text) {
+  const trimmed = String(text ?? "").trim();
+  if (!trimmed) return null;
+  const value = Number(trimmed);
+  return Number.isFinite(value) ? value : null;
+}
+
+// After a move or resize drag: each box whose geometry is as before the drag gets its source and score back (the drag
+// marked it edited); whether any box did change. Exported for tests/detection_dataset_annotator.
+export function keepUnmoved(boxes, before) {
+  const was = new Map(before.map((box) => [box.id, box]));
+  let moved = false;
+  for (const box of boxes) {
+    const old = was.get(box.id);
+    if (!old) continue;
+    if (["x", "y", "w", "h"].every((field) => box[field] === old[field])) {
+      box.source = old.source;
+      box.score = old.score;
+    } else {
+      moved = true;
+    }
+  }
+  return moved;
+}
+
+// Whether an edit moved or resized a box: any of x, y, w, h differs by more than rounding (a clamp that undid the edit,
+// or a centre kept as x + w / 2 - w / 2, is no change). Exported for tests/detection_dataset_annotator.
+export function geometryChanged(before, after) {
+  return ["x", "y", "w", "h"].some((field) => Math.abs(before[field] - after[field]) > 1e-6);
+}
+
+// The source line under a box's fields: where the box came from, and its score.
+function sourceText(box) {
+  const score = box.score == null ? "" : ` · score ${Number(box.score).toFixed(3)}`;
+  return `${box.source || MANUAL}${score}`;
+}
+
+class Annotator {
+  constructor(root) {
+    this.root = root;
+    this.boxes = [];
+    this.selected = new Set();
+    this.hoverId = null;
+    this.history = [];
+    this.future = [];
+    this.view = { zoom: 1, x: 0, y: 0 };
+    this.fitZoom = null;
+    this.fitted = false;
+    this.autoFit = true; // the view is the fitted one: a resize fits it again (the reviewer's zoom or pan stays)
+    this.sentGoto = null; // the picker's target this editor saved its boxes for already
+    this.sentLeave = null; // the output folder this editor saved its boxes for already (the page's "leave" request)
+    this.refocus = false; // the canvas had the focus when an action locked the editor: it gets it back on the answer
+    this.drag = null;
+    this.refitPending = false; // a fit asked for during a box drag, done when it ends
+    this.spaceDown = false;
+    this.wheelSum = 0; // wheel delta not yet turned into box resize steps
+    this.lastScale = { at: 0, selection: "" }; // the last resize step, to merge one gesture into one undo step
+    this.active = true; // keys go to the editor until the user clicks elsewhere on the page
+    this.showBoxes = true;
+    this.showAllChips = false;
+    this.helpOpener = null; // where the focus was when the shortcuts card opened
+    this.seq = 0;
+    this.sentSeq = 0;
+    this.autosaveTimer = null;
+    this.destroyTimer = null;
+    this.newId = 0;
+    this.session = Date.now().toString(36);
+    this.currentLabel = null;
+    this.data = null;
+    this.labels = [];
+    this.labelByName = {};
+    this.labelFilter = ""; // words typed in the label finder
+    this.colors = {};
+    this.listeners = [];
+    this.build();
+    this.listen();
+  }
+
+  // ---- Streamlit glue -------------------------------------------------------------------------------------
+
+  bind(component) {
+    this.setStateValue = component.setStateValue;
+    this.setTriggerValue = component.setTriggerValue;
+    clearTimeout(this.destroyTimer);
+    this.destroyTimer = null;
+  }
+
+  update(data) {
+    // A new screenshot, detection revision or review state file (output folder) starts a fresh editor, and so does
+    // a reload with the saved boxes (another tab saved this screenshot first).
+    const first =
+      !this.data ||
+      this.data.dataset !== data.dataset ||
+      this.data.image_key !== data.image_key ||
+      this.data.revision !== data.revision ||
+      this.data.reload !== data.reload;
+    // A drag on the old screenshot ends without putting anything back: its boxes must never return over the new one
+    // (a later Esc would restore them).
+    if (first) this.endDrag();
+    // the page answered the pending action (act), or shows another screenshot: edits are taken again, on these boxes.
+    // An autosave's answer (the same screenshot, the action not handled yet) keeps the editor locked: an edit made
+    // then would land after the boxes the action sent.
+    if (first || (this.pendingAction && data.action_done === this.pendingAction)) {
+      this.pendingAction = null;
+      this.leaving = false;
+      this.wrap.inert = false;
+      this.restoreFocus();
+    }
+    this.data = data;
+    this.labels = data.labels ?? [];
+    // Sources of guessed boxes (an unsure city type, biome or city area: constants.ANNOTATOR_GUESS_SOURCES)
+    this.guessSources = new Set(data.guess_sources ?? []);
+    this.labelByName = Object.fromEntries(this.labels.map((label) => [label.name, label]));
+    this.colors = Object.fromEntries(this.labels.map((label) => [label.name, label.color]));
+    if (!this.currentLabel || !this.colors[this.currentLabel]) {
+      this.currentLabel = this.labels[0]?.name ?? "";
+    }
+    this.wrap.style.setProperty("--chip-px", `${data.chip_px}px`);
+    this.wrap.style.height = `${data.editor_height}px`;
+    if (first) {
+      this.boxes = cloneBoxes(data.boxes ?? []);
+      this.selected.clear();
+      this.history = [];
+      this.future = [];
+      // a resize gesture or wheel steps begun on the last screenshot never carry over to this one
+      this.endScaleGesture();
+      this.wheelSum = 0;
+      this.fitted = false;
+      this.sentGoto = null;
+      this.sentLeave = null;
+      this.seq = 0;
+      this.sentSeq = 0;
+    }
+    if (this.img.dataset.src !== data.image_url) {
+      this.img.dataset.src = data.image_url ?? "";
+      this.fitted = false;
+      this.img.src = data.image_url ?? "";
+    }
+    this.stage.style.width = `${data.width}px`;
+    this.stage.style.height = `${data.height}px`;
+    if (!this.fitted) this.fit();
+    // An autosave's answer redraws the boxes, not a coordinate field being typed in (its draft and focus stay).
+    this.renderAll({ keepDraft: !first });
+    // Another screenshot picked in the page's list (or another output folder asked for): this editor saves its latest
+    // boxes and the page moves on with the save's answer (retired first, its unsaved edits were lost). Only when no
+    // action is waiting for its answer: a second action would take the first one's place, and the editor would never
+    // unlock for it (the request is sent with the answer that unlocks, in this same update). After this call:
+    // Streamlit is still rendering.
+    if (!this.pendingAction) {
+      if (data.goto && data.goto !== this.sentGoto) {
+        this.sentGoto = data.goto;
+        setTimeout(() => this.act("goto", { target: data.goto }), 0);
+      } else if (data.leave && data.leave !== this.sentLeave) {
+        this.sentLeave = data.leave;
+        setTimeout(() => this.act("leave", { target: data.leave }), 0);
+      }
+    }
+  }
+
+  scheduleDestroy() {
+    clearTimeout(this.destroyTimer);
+    this.destroyTimer = setTimeout(() => {
+      this.destroyTimer = null;
+      this.flushAutosave();
+      this.destroy();
+    }, DESTROY_DELAY_MS);
+  }
+
+  destroy() {
+    for (const [target, type, handler, options] of this.listeners) {
+      target.removeEventListener(type, handler, options);
+    }
+    this.listeners = [];
+    this.resizeObserver?.disconnect();
+    clearTimeout(this.autosaveTimer);
+    this.wrap.remove();
+    INSTANCES.delete(this.root);
+  }
+
+  payload() {
+    // During a drag the boxes are only on their way: the last committed ones are sent (an autosave timer can fire
+    // mid-drag, and a cancelled drag puts them back exactly as sent).
+    const boxes = this.drag?.before ?? this.boxes;
+    return {
+      image_key: this.data.image_key,
+      revision: this.data.revision,
+      seq: this.seq,
+      // the source tells the page which boxes were edited here (manual), however little they moved
+      boxes: boxes.map(({ id, label, x, y, w, h, source }) => ({
+        id,
+        label,
+        x: round2(x),
+        y: round2(y),
+        w: round2(w),
+        h: round2(h),
+        source,
+      })),
+    };
+  }
+
+  changed() {
+    this.seq += 1;
+    clearTimeout(this.autosaveTimer);
+    this.autosaveTimer = setTimeout(() => this.flushAutosave(), this.data.autosave_ms);
+    this.renderStatus();
+  }
+
+  flushAutosave() {
+    clearTimeout(this.autosaveTimer);
+    this.autosaveTimer = null;
+    // review time alone is sent with the next change or action, never on its own (no save without a change)
+    if (!this.data || this.seq === this.sentSeq || !this.setStateValue) return;
+    this.sentSeq = this.seq;
+    this.setStateValue("edit", this.payload());
+    this.renderStatus();
+  }
+
+  act(type, extra = {}) {
+    // Navigation carries the latest boxes, so nothing typed since the last autosave is lost. A box drag ends first,
+    // put back (an edit made after the boxes were sent was lost, or saved under the next screenshot); until the page
+    // answers (update), the editor takes no edits (inert), so none can land after the boxes it sent.
+    this.endBoxDrag();
+    // an inert editor drops the focus; it comes back to the canvas with the answer, if it was there and is nowhere else
+    const active = this.wrap.getRootNode().activeElement;
+    this.refocus = Boolean(active && this.viewport.contains(active));
+    this.actionCount = (this.actionCount ?? 0) + 1;
+    this.pendingAction = `${this.session}-${this.actionCount}`; // the page answers with it (data.action_done)
+    this.leaving = true;
+    this.wrap.inert = true;
+    clearTimeout(this.autosaveTimer);
+    this.autosaveTimer = null;
+    this.sentSeq = this.seq;
+    this.statusEl.textContent = "Saving…";
+    // the review flag on screen: a toggle flips this one, whatever another tab saved meanwhile
+    const shown_reviewed = Boolean(this.data.reviewed);
+    const message = { type, ...extra, ...this.payload(), shown_reviewed, action_id: this.pendingAction };
+    this.setTriggerValue("action", message);
+  }
+
+  restoreFocus() {
+    // After an action's answer: the canvas gets the focus back only if it had it when the action began and nothing else
+    // on the page has taken it since (an inert editor leaves it on the body).
+    const wanted = this.refocus;
+    this.refocus = false;
+    const active = this.wrap.getRootNode().activeElement;
+    if (wanted && (!active || active === document.body)) this.viewport.focus({ preventScroll: true });
+  }
+
+  // ---- DOM ------------------------------------------------------------------------------------------------
+
+  build() {
+    this.wrap = el("div", "ann", this.root);
+    const main = el("div", "ann-main", this.wrap);
+    this.viewport = el("div", "ann-viewport", main);
+    this.viewport.tabIndex = 0;
+    this.stage = el("div", "ann-stage", this.viewport);
+    this.img = el("img", "ann-shot", this.stage);
+    this.img.alt = "screenshot";
+    this.img.draggable = false;
+    this.img.addEventListener("load", () => {
+      if (!this.fitted) this.fit();
+    });
+    this.layer = el("div", "ann-boxes", this.stage);
+    this.drawEl = el("div", "ann-draw", this.stage);
+    this.drawEl.hidden = true;
+
+    this.helpEl = el("div", "ann-help", this.viewport);
+    this.helpEl.hidden = true;
+    this.helpEl.setAttribute("role", "dialog");
+    this.helpEl.setAttribute("aria-label", "Shortcuts");
+    const card = el("div", "ann-help-card", this.helpEl);
+    el("h3", "", card).textContent = "Shortcuts";
+    const table = el("table", "", card);
+    for (const [keys, what] of SHORTCUTS) {
+      const row = el("tr", "", table);
+      el("td", "ann-key", row).textContent = keys;
+      el("td", "", row).textContent = what;
+    }
+    el("p", "ann-muted", card).textContent = "Edits save automatically. Press ? or Esc to close.";
+    // The card's own button: the focus goes to it when the card opens (see toggleHelp).
+    this.helpCloseBtn = el("button", "ann-btn", card);
+    this.helpCloseBtn.type = "button";
+    this.helpCloseBtn.textContent = "Close";
+    this.helpCloseBtn.title = "Close the shortcuts (Esc)";
+    this.helpCloseBtn.addEventListener("click", (event) => {
+      this.toggleHelp();
+      this.backToCanvas(event);
+    });
+
+    const side = el("div", "ann-side", main);
+    this.side = side;
+    const nav = el("div", "ann-row", side);
+    this.prevBtn = this.button(nav, "◀ Prev", "Previous screenshot (P)", () => this.act("prev"));
+    this.positionEl = el("span", "ann-position", nav);
+    this.nextBtn = this.button(nav, "Next ▶", "Next screenshot (N)", () => this.act("next"));
+    this.reviewBtn = this.button(side, "✓ Reviewed, next", "Mark reviewed and go to the next screenshot (Enter)", () =>
+      this.act("review_next"),
+    );
+    this.reviewBtn.classList.add("ann-primary");
+    this.reviewState = el("div", "ann-row ann-muted", side);
+    this.statusEl = el("div", "ann-status", side);
+    this.statusEl.setAttribute("aria-live", "polite");
+
+    el("div", "ann-heading", side).textContent = "Labels";
+    this.filterEl = el("input", "ann-filter", side);
+    this.filterEl.type = "search";
+    this.filterEl.placeholder = "Find a label (/)";
+    this.filterEl.setAttribute("aria-label", "Find a label");
+    this.filterEl.addEventListener("input", () => {
+      this.labelFilter = this.filterEl.value.trim().toLowerCase();
+      this.renderLegend();
+    });
+    this.filterEl.addEventListener("keydown", (event) => this.filterKey(event));
+    this.legendEl = el("div", "ann-legend", side);
+
+    el("div", "ann-heading", side).textContent = "Selection";
+    this.inspectorEl = el("div", "ann-inspector", side);
+
+    const view = el("div", "ann-row ann-tools", side);
+    this.boxesBtn = this.button(view, "Boxes", "Hide or show boxes (H)", () => this.toggleBoxes());
+    this.chipsBtn = this.button(view, "Labels", "Show every label (L)", () => this.toggleChips());
+    // a box drag ends first (as the F and C keys end it): its boxes would jump to the new view under the pointer
+    this.button(view, "Fit", "Fit the screenshot (F)", () => this.endBoxDrag() || this.fit());
+    this.button(view, "Centre", "Centre the screenshot, keeping the zoom (C)", () => this.endBoxDrag() || this.centre());
+    this.helpBtn = this.button(view, "?", "Shortcuts (?)", () => this.toggleHelp());
+    this.helpBtn.setAttribute("aria-label", "Shortcuts");
+  }
+
+  button(parent, text, title, onClick) {
+    const node = el("button", "ann-btn", parent);
+    node.type = "button";
+    node.textContent = text;
+    node.title = title;
+    node.addEventListener("click", (event) => {
+      event.preventDefault();
+      onClick();
+      this.backToCanvas(event);
+    });
+    return node;
+  }
+
+  backToCanvas(event) {
+    // After a mouse click on a side-panel button the shortcuts go on working; a keyboard press (detail 0) keeps the
+    // focus where Tab put it, and so does the open shortcuts card (its Close button holds it).
+    if (event.detail > 0 && this.helpEl.hidden) this.viewport.focus({ preventScroll: true });
+  }
+
+  on(target, type, handler, options) {
+    target.addEventListener(type, handler, options);
+    this.listeners.push([target, type, handler, options]);
+  }
+
+  listen() {
+    const viewport = this.viewport;
+    this.on(viewport, "pointerdown", (event) => this.pointerDown(event));
+    this.on(viewport, "pointermove", (event) => this.pointerMove(event));
+    this.on(viewport, "pointerup", (event) => this.pointerUp(event));
+    this.on(viewport, "pointercancel", (event) => this.ownsDrag(event) && this.cancelDrag());
+    this.on(viewport, "pointerleave", () => {
+      if (!this.drag) this.setHover(null);
+    });
+    this.on(viewport, "wheel", (event) => this.wheel(event), { passive: false });
+    this.on(viewport, "auxclick", (event) => event.button === 1 && event.preventDefault());
+    this.on(document, "keydown", (event) => this.keyDown(event), true);
+    this.on(document, "keyup", (event) => {
+      if (event.key === " ") this.spaceDown = false;
+    });
+    // Keys belong to the editor after a click inside it and stop after a click anywhere else on the page.
+    this.on(document, "pointerdown", (event) => this.setActive(event.composedPath().includes(this.wrap)));
+    // ... and again when the keyboard brings the focus back to the canvas (Tab), after a click elsewhere.
+    this.on(viewport, "focus", () => this.setActive(true));
+    this.resizeObserver = new ResizeObserver(() => {
+      // fitted again while the view is still the fitted one (the page's layout or window changed size); during a
+      // box drag only once it ends, so the drag's start point stays in the frame it was taken in
+      if (!this.fitted || this.autoFit) this.refit();
+    });
+    this.resizeObserver.observe(viewport);
+  }
+
+  setActive(active) {
+    this.active = active;
+    this.wrap.classList.toggle("ann-inactive", !active);
+  }
+
+  // ---- geometry -------------------------------------------------------------------------------------------
+
+  applyView() {
+    const { zoom, x, y } = this.view;
+    this.stage.style.transform = `translate(${x}px, ${y}px) scale(${zoom})`;
+    this.stage.style.setProperty("--inv", String(1 / zoom));
+  }
+
+  refit() {
+    // a fit now, or when the box drag in progress ends
+    if (this.drag && this.drag.kind !== "pan") this.refitPending = true;
+    else this.fit();
+  }
+
+  afterDrag() {
+    if (!this.refitPending) return;
+    this.refitPending = false;
+    if (!this.fitted || this.autoFit) this.fit();
+  }
+
+  fit() {
+    if (!this.data) return;
+    const width = this.viewport.clientWidth;
+    const height = this.viewport.clientHeight;
+    if (!width || !height || !this.data.width || !this.data.height) return;
+    const zoom = Math.min(width / this.data.width, height / this.data.height);
+    this.view = {
+      zoom,
+      x: (width - this.data.width * zoom) / 2,
+      y: (height - this.data.height * zoom) / 2,
+    };
+    this.fitZoom = zoom;
+    this.fitted = true;
+    this.autoFit = true;
+    this.applyView();
+  }
+
+  centre() {
+    // Put the screenshot back in the middle of the canvas at the current zoom (F also resets the zoom).
+    if (!this.data) return;
+    const { zoom } = this.view;
+    this.autoFit = false;
+    this.view = {
+      zoom,
+      x: (this.viewport.clientWidth - this.data.width * zoom) / 2,
+      y: (this.viewport.clientHeight - this.data.height * zoom) / 2,
+    };
+    this.applyView();
+  }
+
+  origin() {
+    // The stage's origin on the page: inside the viewport's border (getBoundingClientRect is its outer edge), so the
+    // screenshot's corner is (0, 0) and a drawn box is saved where it was drawn.
+    const rect = this.viewport.getBoundingClientRect();
+    return { left: rect.left + this.viewport.clientLeft, top: rect.top + this.viewport.clientTop };
+  }
+
+  zoomAt(factor, clientX, clientY) {
+    const { left, top } = this.origin();
+    const px = clientX - left;
+    const py = clientY - top;
+    const low = (this.fitZoom ?? this.view.zoom) * MIN_ZOOM_OF_FIT;
+    const zoom = clamp(this.view.zoom * factor, low, MAX_ZOOM);
+    const applied = zoom / this.view.zoom;
+    this.autoFit = false;
+    this.view = { zoom, x: px - (px - this.view.x) * applied, y: py - (py - this.view.y) * applied };
+    this.applyView();
+  }
+
+  zoomCentre(factor) {
+    const { left, top } = this.origin();
+    this.zoomAt(factor, left + this.viewport.clientWidth / 2, top + this.viewport.clientHeight / 2);
+  }
+
+  toImage(event) {
+    const { left, top } = this.origin();
+    return {
+      x: (event.clientX - left - this.view.x) / this.view.zoom,
+      y: (event.clientY - top - this.view.y) / this.view.zoom,
+    };
+  }
+
+  boxesAt(point) {
+    // Every box under the point, smallest first (a map node inside a tower box wins).
+    const pad = HIT_PAD_PX / this.view.zoom;
+    return this.boxes
+      .filter(
+        (box) =>
+          point.x >= box.x - pad &&
+          point.x <= box.x + box.w + pad &&
+          point.y >= box.y - pad &&
+          point.y <= box.y + box.h + pad,
+      )
+      .sort((a, b) => a.w * a.h - b.w * b.h);
+  }
+
+  handleAt(point) {
+    // The nearest handle of the selected box (one selected) or the hovered one, so a small box can be resized
+    // directly, from the corner meant.
+    const candidates = [];
+    if (this.selected.size === 1) candidates.push(this.selectedBoxes()[0]);
+    if (this.hoverId) candidates.push(this.byId(this.hoverId));
+    return closestHandle(point, candidates.filter(Boolean), HANDLE_PX / this.view.zoom);
+  }
+
+  selectedAt(point) {
+    // A selected box under the point, its handles' reach included (a handle sticks out past the box edge).
+    const reach = Math.max(HANDLE_PX, HIT_PAD_PX) / this.view.zoom;
+    return this.selectedBoxes().find(
+      (box) =>
+        point.x >= box.x - reach &&
+        point.x <= box.x + box.w + reach &&
+        point.y >= box.y - reach &&
+        point.y <= box.y + box.h + reach,
+    );
+  }
+
+  byId(id) {
+    return this.boxes.find((box) => box.id === id);
+  }
+
+  selectedBoxes() {
+    return [...this.selected].map((id) => this.byId(id)).filter(Boolean);
+  }
+
+  clampBox(box) {
+    const { width, height } = this.data;
+    box.w = clamp(box.w, 1, width);
+    box.h = clamp(box.h, 1, height);
+    box.x = clamp(box.x, 0, width - box.w);
+    box.y = clamp(box.y, 0, height - box.h);
+  }
+
+  makeId() {
+    // Unique across mounts, so a box drawn after coming back never shares an id with one drawn before.
+    this.newId += 1;
+    return `new-${this.session}-${this.newId}`;
+  }
+
+  markEdited(box) {
+    box.source = MANUAL;
+    box.score = null;
+  }
+
+  // ---- history --------------------------------------------------------------------------------------------
+
+  snapshot() {
+    this.remember(cloneBoxes(this.boxes));
+  }
+
+  remember(boxes) {
+    // A new undo step: the redo history ends, and so does a resize gesture (the next , / . / wheel step is its own).
+    this.history.push(boxes);
+    if (this.history.length > HISTORY_LIMIT) this.history.shift();
+    this.future = [];
+    this.endScaleGesture();
+  }
+
+  endScaleGesture() {
+    this.lastScale = { at: 0, selection: "" };
+  }
+
+  undo() {
+    if (!this.history.length) return;
+    this.endScaleGesture();
+    this.future.push(cloneBoxes(this.boxes));
+    this.boxes = this.history.pop();
+    this.afterRestore();
+  }
+
+  redo() {
+    if (!this.future.length) return;
+    this.endScaleGesture();
+    this.history.push(cloneBoxes(this.boxes));
+    this.boxes = this.future.pop();
+    this.afterRestore();
+  }
+
+  afterRestore() {
+    for (const id of [...this.selected]) if (!this.byId(id)) this.selected.delete(id);
+    this.changed();
+    this.renderAll();
+  }
+
+  // ---- pointer --------------------------------------------------------------------------------------------
+
+  inHelp(event) {
+    // Events on the shortcuts card: it lies over the canvas, but scrolling or selecting its text edits nothing.
+    return !this.helpEl.hidden && event.composedPath().includes(this.helpEl);
+  }
+
+  ownsDrag(event) {
+    // Whether a pointer event belongs to the drag in progress (a second finger or pen never moves or ends it).
+    return Boolean(this.drag) && this.drag.pointerId === event.pointerId;
+  }
+
+  pointerDown(event) {
+    if (this.inHelp(event)) return;
+    if (this.drag) return; // one drag at a time: another pointer cannot take it over
+    this.setActive(true);
+    this.viewport.focus({ preventScroll: true });
+    if (event.button === 2) return; // keep the browser's menu (Save image as gives the clean screenshot)
+    event.preventDefault();
+    const point = this.toImage(event);
+    if (event.button === 1 || this.spaceDown) {
+      this.drag = { kind: "pan", startX: event.clientX, startY: event.clientY, view: { ...this.view } };
+    } else if (!this.showBoxes) {
+      return;
+    } else {
+      this.drag = this.startBoxDrag(event, point);
+      // A Ctrl move hides the handles, so the box itself shows where it lands (they hide a small box).
+      const translating = this.drag.kind === "move" && (event.ctrlKey || event.metaKey);
+      this.viewport.classList.toggle("ann-translating", translating);
+    }
+    this.viewport.setPointerCapture(event.pointerId);
+    this.drag.pointerId = event.pointerId;
+    this.drag.moved = false;
+    this.renderAll();
+  }
+
+  startBoxDrag(event, point) {
+    // A press on a handle resizes, on a box selects and moves, elsewhere draws a new box.
+    // Ctrl (Cmd) skips the handles: on a small box they cover the whole box, so it could only be resized.
+    const translate = event.ctrlKey || event.metaKey;
+    if (translate && this.selectedAt(point)) {
+      return { kind: "move", start: point, originals: cloneBoxes(this.selectedBoxes()) };
+    }
+    // Alt (cycle) and Shift (add to the selection) are selection clicks, even on a handle.
+    const handle = translate || event.altKey || event.shiftKey ? null : this.handleAt(point);
+    if (handle) {
+      this.select(handle.box.id);
+      return { kind: "resize", handle: handle.handle, start: point, box: { ...handle.box }, id: handle.box.id };
+    }
+    const under = this.boxesAt(point);
+    if (!under.length) {
+      if (!event.shiftKey) this.selected.clear();
+      return { kind: "draw", start: point };
+    }
+    let target = under[0];
+    if (event.altKey && under.length > 1) {
+      const current = under.findIndex((box) => this.selected.has(box.id));
+      target = under[(current + 1) % under.length];
+    }
+    if (event.shiftKey) {
+      if (this.selected.has(target.id)) this.selected.delete(target.id);
+      else this.selected.add(target.id);
+    } else if (!this.selected.has(target.id) || event.altKey) {
+      this.select(target.id);
+    }
+    return { kind: "move", start: point, originals: cloneBoxes(this.selectedBoxes()) };
+  }
+
+  pointerMove(event) {
+    const point = this.toImage(event);
+    const drag = this.drag;
+    if (!drag) {
+      this.hoverAt(point, event);
+      return;
+    }
+    if (!this.ownsDrag(event)) return;
+    if (drag.kind === "pan") {
+      this.autoFit = false;
+      this.view = {
+        ...drag.view,
+        x: drag.view.x + event.clientX - drag.startX,
+        y: drag.view.y + event.clientY - drag.startY,
+      };
+      this.applyView();
+      return;
+    }
+    const dx = point.x - drag.start.x;
+    const dy = point.y - drag.start.y;
+    if (!drag.moved && Math.hypot(dx, dy) * this.view.zoom < DRAG_START_PX) return;
+    // The state before the drag becomes an undo step only when the drag ends (a cancelled drag keeps redo).
+    if (!drag.moved && drag.kind !== "draw") drag.before = cloneBoxes(this.boxes);
+    drag.moved = true;
+    if (drag.kind === "move") this.dragMove(drag, dx, dy);
+    else if (drag.kind === "resize") this.dragResize(drag, dx, dy);
+    else if (drag.kind === "draw") this.dragDraw(drag, point);
+  }
+
+  hoverAt(point, event) {
+    if (!this.showBoxes) return;
+    const translate = (event?.ctrlKey || event?.metaKey) && this.selectedAt(point);
+    const handle = translate || event?.altKey || event?.shiftKey ? null : this.handleAt(point);
+    const under = this.boxesAt(point);
+    this.setHover(handle?.box.id ?? under[0]?.id ?? null);
+    let cursor = "crosshair";
+    if (this.spaceDown) cursor = "grab";
+    else if (translate) cursor = "move";
+    else if (handle) cursor = HANDLE_CURSORS[handle.handle];
+    else if (under.length) cursor = "move";
+    this.viewport.style.cursor = cursor;
+  }
+
+  dragMove(drag, dx, dy) {
+    for (const original of drag.originals) {
+      const box = this.byId(original.id);
+      if (!box) continue;
+      box.x = original.x + dx;
+      box.y = original.y + dy;
+      this.clampBox(box);
+      this.markEdited(box);
+      this.updateBoxNode(box);
+    }
+  }
+
+  dragResize(drag, dx, dy) {
+    const box = this.byId(drag.id);
+    if (!box) return;
+    const { width, height } = this.data;
+    const start = drag.box;
+    const left = clamp(start.x + (drag.handle.includes("w") ? dx : 0), 0, width);
+    const right = clamp(start.x + start.w + (drag.handle.includes("e") ? dx : 0), 0, width);
+    const top = clamp(start.y + (drag.handle.includes("n") ? dy : 0), 0, height);
+    const bottom = clamp(start.y + start.h + (drag.handle.includes("s") ? dy : 0), 0, height);
+    box.x = Math.min(left, right);
+    box.y = Math.min(top, bottom);
+    box.w = Math.max(1, Math.abs(right - left));
+    box.h = Math.max(1, Math.abs(bottom - top));
+    this.clampBox(box); // an edge collapsed onto the image's edge: the 1 px minimum must not stick out past it
+    this.markEdited(box);
+    this.updateBoxNode(box);
+  }
+
+  dragDraw(drag, point) {
+    const { width, height } = this.data;
+    const left = clamp(Math.min(drag.start.x, point.x), 0, width);
+    const top = clamp(Math.min(drag.start.y, point.y), 0, height);
+    const right = clamp(Math.max(drag.start.x, point.x), 0, width);
+    const bottom = clamp(Math.max(drag.start.y, point.y), 0, height);
+    drag.rect = { x: left, y: top, w: right - left, h: bottom - top };
+    Object.assign(this.drawEl.style, {
+      left: `${left}px`,
+      top: `${top}px`,
+      width: `${right - left}px`,
+      height: `${bottom - top}px`,
+      borderColor: this.colors[this.currentLabel] ?? "#fff",
+    });
+    this.drawEl.hidden = false;
+  }
+
+  pointerUp(event) {
+    if (this.drag && !this.ownsDrag(event)) return;
+    const drag = this.drag;
+    this.drag = null;
+    this.afterDrag();
+    this.viewport.classList.remove("ann-translating");
+    if (this.viewport.hasPointerCapture(event.pointerId)) this.viewport.releasePointerCapture(event.pointerId);
+    this.drawEl.hidden = true;
+    if (!drag) return;
+    if (drag.moved && drag.kind === "draw" && drag.rect?.w >= MIN_BOX_PX && drag.rect?.h >= MIN_BOX_PX) {
+      this.snapshot();
+      const box = { id: this.makeId(), label: this.currentLabel, ...drag.rect, score: null, source: MANUAL };
+      this.boxes.push(box);
+      this.select(box.id);
+      this.changed();
+    } else if (drag.moved && (drag.kind === "move" || drag.kind === "resize")) {
+      // A box that ended where it began (dragged out and back, or held against the image edge) keeps its source and
+      // score; a drag that moved nothing is no edit: no undo step, no autosave.
+      if (keepUnmoved(this.boxes, drag.before)) {
+        this.remember(drag.before);
+        this.changed();
+      }
+    }
+    this.renderAll();
+  }
+
+  endBoxDrag() {
+    // Cancel a box drag (its boxes put back); a pan goes on.
+    if (this.drag && this.drag.kind !== "pan") this.cancelDrag();
+  }
+
+  endDrag() {
+    // Forget the drag in progress, restoring nothing.
+    const drag = this.drag;
+    this.drag = null;
+    this.afterDrag();
+    this.viewport.classList.remove("ann-translating");
+    this.drawEl.hidden = true;
+    return drag;
+  }
+
+  cancelDrag() {
+    const drag = this.endDrag();
+    if (!drag) return;
+    if ((drag.kind === "move" || drag.kind === "resize") && drag.moved) {
+      this.boxes = drag.before;
+    }
+    this.renderAll();
+  }
+
+  wheel(event) {
+    if (this.inHelp(event)) return; // the card scrolls; the boxes and the zoom stay
+    event.preventDefault();
+    // in pixels: Firefox gives a mouse wheel's notch in lines (3), which would barely zoom or resize
+    const page = this.viewport.clientHeight || window.innerHeight;
+    const deltaY = wheelPixels(event.deltaY, event.deltaMode, page);
+    const deltaX = wheelPixels(event.deltaX, event.deltaMode, page);
+    if (this.selected.size && !(event.ctrlKey || event.metaKey)) {
+      // no resize while a box is dragged: the drag would put back or save boxes it never saw
+      if (this.drag && this.drag.kind !== "pan") return;
+      // A selected box is resized from its centre; Shift+wheel scrolls sideways in some browsers, so read both.
+      this.wheelSum += deltaY || deltaX;
+      const steps = Math.trunc(this.wheelSum / SCALE_WHEEL_DELTA);
+      if (steps) {
+        this.wheelSum -= steps * SCALE_WHEEL_DELTA;
+        this.scaleSelected(-steps * (event.shiftKey ? SCALE_STEP_SHIFT_PX : SCALE_STEP_PX));
+      }
+      return;
+    }
+    this.zoomAt(Math.exp(-deltaY * WHEEL_ZOOM_RATE), event.clientX, event.clientY);
+  }
+
+  // ---- keyboard -------------------------------------------------------------------------------------------
+
+  keyDown(event) {
+    if (!this.active || !this.data || isTyping(event)) return;
+    if (this.leaving && event.composedPath().includes(this.wrap)) {
+      event.preventDefault(); // no edit after the boxes an action sent (act): the page answers first
+      event.stopPropagation();
+      return;
+    }
+    if (!this.helpEl.hidden) {
+      // The shortcuts card is open: Esc or ? closes it, wherever the focus is in the editor; Tab stays on the card (its
+      // Close button is its one control: the controls behind it are inert); every other key keeps its own meaning
+      // (Enter on Close), so nothing is edited behind the card.
+      if (event.key === "Escape" || event.key === "?") {
+        this.toggleHelp();
+        event.preventDefault();
+        event.stopPropagation();
+      } else if (event.key === "Tab") {
+        this.helpCloseBtn.focus({ preventScroll: true });
+        event.preventDefault();
+        event.stopPropagation();
+      }
+      return;
+    }
+    // Shortcuts belong to the canvas: Tab moving the focus and Enter / Space on a focused button keep their meaning.
+    if (!event.composedPath().includes(this.viewport)) return;
+    if (this.drag && this.drag.kind !== "pan" && !DRAG_KEEPS_KEYS.has(event.key)) {
+      // A key during a box drag ends the drag first (Esc does only that): an edit acts on the boxes as they were, not
+      // on boxes on their way, and an autosave never sends the boxes before the drag under the edit's number.
+      this.cancelDrag();
+      if (event.key === "Escape") {
+        event.preventDefault();
+        event.stopPropagation();
+        return;
+      }
+    }
+    const handled = event.ctrlKey || event.metaKey ? this.commandKey(event) : this.plainKey(event);
+    if (handled) {
+      event.preventDefault();
+      event.stopPropagation(); // Streamlit's own page shortcuts must not also fire
+    }
+  }
+
+  commandKey(event) {
+    // Ctrl / Cmd shortcuts; anything else (copy, paste, reload …) is left to the browser.
+    switch (event.key.toLowerCase()) {
+      case "z":
+        if (event.shiftKey) this.redo();
+        else this.undo();
+        return true;
+      case "y":
+        this.redo();
+        return true;
+      case "d":
+        this.duplicate();
+        return true;
+      case "a":
+        this.selected = new Set(this.boxes.map((box) => box.id));
+        this.renderAll();
+        return true;
+      default:
+        return false;
+    }
+  }
+
+  plainKey(event) {
+    const { key, shiftKey } = event;
+    if (key.startsWith("Arrow")) {
+      this.nudge(key, shiftKey ? NUDGE_SHIFT_PX : NUDGE_PX, event.altKey);
+      return true;
+    }
+    const target = plainKeyTarget(this.labels, event);
+    if (event.repeat && repeatIgnored(target.shortcut)) return true; // held down: once only (still no browser default)
+    if (target.label) {
+      this.useLabel(target.label.name);
+      return true;
+    }
+    switch (target.shortcut) {
+      case " ":
+        this.spaceDown = true;
+        this.viewport.style.cursor = "grab";
+        return true;
+      case "Escape":
+        this.escape();
+        return true;
+      case "Delete":
+      case "Backspace":
+        this.deleteSelected();
+        return true;
+      case "j":
+        this.cycle(1);
+        return true;
+      case "k":
+        this.cycle(-1);
+        return true;
+      case "Enter":
+        this.act(shiftKey ? "toggle_review" : "review_next");
+        return true;
+      case "n":
+      case "]":
+        this.act("next");
+        return true;
+      case "p":
+      case "[":
+        this.act("prev");
+        return true;
+      case "h":
+        this.toggleBoxes();
+        return true;
+      case "l":
+        this.toggleChips();
+        return true;
+      case "f":
+        this.fit();
+        return true;
+      case "c":
+        this.centre();
+        return true;
+      case ",":
+      case "<":
+        this.scaleSelected(-(shiftKey ? SCALE_STEP_SHIFT_PX : SCALE_STEP_PX));
+        return true;
+      case ".":
+      case ">":
+        this.scaleSelected(shiftKey ? SCALE_STEP_SHIFT_PX : SCALE_STEP_PX);
+        return true;
+      case "+":
+      case "=":
+        if (this.selected.size) this.scaleSelected(SCALE_STEP_PX);
+        else this.zoomCentre(KEY_ZOOM_STEP);
+        return true;
+      case "-":
+      case "_":
+        if (this.selected.size) this.scaleSelected(-SCALE_STEP_PX);
+        else this.zoomCentre(1 / KEY_ZOOM_STEP);
+        return true;
+      case "?":
+        this.toggleHelp();
+        return true;
+      case "/":
+        this.filterEl.focus();
+        this.filterEl.select();
+        return true;
+      default:
+        return false;
+    }
+  }
+
+  filterKey(event) {
+    // In the label finder: Enter uses the first label it shows and gives the keys back to the editor; Esc clears it.
+    if (!finderKeyActs(event)) return; // other keys type (and an input method's Enter or Esc ends its word)
+    if (event.key === "Enter") {
+      const first = finderPick(this.filteredLabels(), this.labelFilter);
+      if (first) this.useLabel(first.name);
+      this.viewport.focus();
+    } else if (event.key === "Escape") {
+      this.filterEl.value = "";
+      this.labelFilter = "";
+      this.renderLegend();
+      this.viewport.focus();
+    }
+    event.preventDefault();
+    event.stopPropagation();
+  }
+
+  filteredLabels() {
+    // Every typed word must appear in the label's name, its icon's poe2db name or its other names (label.search).
+    const words = this.labelFilter.split(/\s+/).filter(Boolean);
+    return this.labels.filter((label) => {
+      const text = label.search || label.name.toLowerCase();
+      return words.every((word) => text.includes(word));
+    });
+  }
+
+  escape() {
+    if (this.drag) this.cancelDrag();
+    else if (!this.helpEl.hidden) this.toggleHelp();
+    else {
+      this.selected.clear();
+      this.renderAll();
+    }
+  }
+
+  // ---- edits ----------------------------------------------------------------------------------------------
+
+  select(id) {
+    this.selected.clear();
+    if (id) this.selected.add(id);
+  }
+
+  useLabel(name) {
+    // A box drag ends first (as an edit key does): the label goes on the boxes as they were, the ones sent
+    if (this.drag && this.drag.kind !== "pan") this.cancelDrag();
+    const boxes = this.selectedBoxes();
+    if (!boxes.length) {
+      this.currentLabel = name;
+      this.renderSide();
+      return;
+    }
+    const changing = relabelled(boxes, name);
+    if (!changing.length) return;
+    this.snapshot();
+    for (const box of changing) {
+      box.label = name;
+      this.markEdited(box);
+    }
+    this.currentLabel = name;
+    this.changed();
+    this.renderAll();
+  }
+
+  deleteSelected() {
+    // A box drag ends first (as useLabel), also from the inspector's Delete button: the undo step is the boxes as sent
+    if (this.drag && this.drag.kind !== "pan") this.cancelDrag();
+    if (!this.selected.size) return;
+    this.snapshot();
+    this.boxes = this.boxes.filter((box) => !this.selected.has(box.id));
+    this.selected.clear();
+    this.changed();
+    this.renderAll();
+  }
+
+  duplicate() {
+    const boxes = this.selectedBoxes();
+    if (!boxes.length) return;
+    this.snapshot();
+    this.selected.clear();
+    for (const box of boxes) {
+      const copy = {
+        ...box,
+        id: this.makeId(),
+        x: box.x + NEW_BOX_OFFSET,
+        y: box.y + NEW_BOX_OFFSET,
+        score: null,
+        source: MANUAL,
+      };
+      this.clampBox(copy);
+      this.boxes.push(copy);
+      this.selected.add(copy.id);
+    }
+    this.changed();
+    this.renderAll();
+  }
+
+  editSelected(edit, { snapshot = true } = {}) {
+    // Apply one edit to every selected box as one undo step. Only boxes whose geometry the edit really changes (after
+    // the clamp to the screenshot) are edited: a nudge against the edge, or a shrink at the 1 px floor, changes
+    // nothing, and no change is no undo step, no "manual" box and no autosave.
+    const moving = this.selectedBoxes().filter((box) => {
+      const trial = { ...box };
+      edit(trial);
+      this.clampBox(trial);
+      return geometryChanged(box, trial);
+    });
+    if (!moving.length) return false;
+    if (snapshot) this.snapshot();
+    for (const box of moving) {
+      edit(box);
+      this.clampBox(box);
+      this.markEdited(box);
+    }
+    this.changed();
+    this.renderAll();
+    return true;
+  }
+
+  nudge(key, step, resize) {
+    const dx = key === "ArrowLeft" ? -step : key === "ArrowRight" ? step : 0;
+    const dy = key === "ArrowUp" ? -step : key === "ArrowDown" ? step : 0;
+    this.editSelected((box) => {
+      if (resize) {
+        box.w += dx;
+        box.h += dy;
+      } else {
+        box.x += dx;
+        box.y += dy;
+      }
+    });
+  }
+
+  scaleSelected(step) {
+    // Grow (step > 0) or shrink every side of the selected boxes by step source px, so each keeps its centre:
+    // the classical map-node boxes are fixed squares, often a little large for the map node.
+    if (!this.selected.size) return;
+    const now = Date.now();
+    const selection = [...this.selected].sort().join(" ");
+    const newGesture = now - this.lastScale.at > SCALE_UNDO_MS || this.lastScale.selection !== selection;
+    const resize = (box) => {
+      const cx = box.x + box.w / 2;
+      const cy = box.y + box.h / 2;
+      box.w = scaledSide(box.w, step);
+      box.h = scaledSide(box.h, step);
+      box.x = cx - box.w / 2;
+      box.y = cy - box.h / 2;
+    };
+    // one wheel gesture is one undo step; the gesture is noted after the snapshot, which ends any earlier one
+    if (this.editSelected(resize, { snapshot: newGesture })) this.lastScale = { at: now, selection };
+  }
+
+  cycle(step) {
+    if (!this.boxes.length) return;
+    const order = [...this.boxes].sort((a, b) => a.y - b.y || a.x - b.x);
+    const current = order.findIndex((box) => this.selected.has(box.id));
+    const index = current < 0 ? (step > 0 ? 0 : order.length - 1) : (current + step + order.length) % order.length;
+    const box = order[index];
+    this.select(box.id);
+    this.reveal(box);
+    this.renderAll();
+  }
+
+  reveal(box) {
+    // Pan so the box is on screen (centred if it was off screen), keeping the zoom.
+    const { zoom, x, y } = this.view;
+    const width = this.viewport.clientWidth;
+    const height = this.viewport.clientHeight;
+    const left = box.x * zoom + x;
+    const top = box.y * zoom + y;
+    const margin = REVEAL_MARGIN_PX;
+    if (left < margin || top < margin || left + box.w * zoom > width - margin || top + box.h * zoom > height - margin) {
+      this.autoFit = false;
+      this.view = {
+        zoom,
+        x: width / 2 - (box.x + box.w / 2) * zoom,
+        y: height / 2 - (box.y + box.h / 2) * zoom,
+      };
+      this.applyView();
+    }
+  }
+
+  toggleBoxes() {
+    this.showBoxes = !this.showBoxes;
+    if (!this.showBoxes) this.selected.clear();
+    this.renderAll();
+  }
+
+  toggleChips() {
+    this.showAllChips = !this.showAllChips;
+    this.renderAll();
+  }
+
+  toggleHelp() {
+    const opening = this.helpEl.hidden;
+    this.helpEl.hidden = !opening;
+    this.helpBtn.setAttribute("aria-pressed", String(opening));
+    if (opening) {
+      // The focus goes into the card, and back to where it was when the card closes. The side panel is inert while it
+      // is open: no control behind the card can be pressed or reached with Tab.
+      const active = this.wrap.getRootNode().activeElement;
+      this.helpOpener = active && this.wrap.contains(active) ? active : this.viewport;
+      this.side.inert = true;
+      this.helpCloseBtn.focus({ preventScroll: true });
+    } else {
+      this.side.inert = false; // before the focus goes back: an inert button takes none
+      const back = this.helpOpener?.isConnected ? this.helpOpener : this.viewport;
+      this.helpOpener = null;
+      back.focus({ preventScroll: true });
+    }
+  }
+
+  boxNode(id) {
+    return id ? this.layer.querySelector(`[data-id="${CSS.escape(id)}"]`) : null;
+  }
+
+  setHover(id) {
+    if (this.hoverId === id) return;
+    this.boxNode(this.hoverId)?.classList.remove("hover");
+    this.hoverId = id;
+    this.boxNode(id)?.classList.add("hover");
+  }
+
+  // ---- rendering ------------------------------------------------------------------------------------------
+
+  renderAll({ keepDraft = false } = {}) {
+    this.applyView();
+    this.renderBoxes();
+    this.renderSide({ keepDraft });
+  }
+
+  renderBoxes() {
+    this.layer.replaceChildren();
+    this.layer.hidden = !this.showBoxes;
+    this.wrap.classList.toggle("ann-all-chips", this.showAllChips);
+    // Larger boxes first, so smaller ones (map nodes inside a tower box) are drawn on top.
+    const order = [...this.boxes].sort((a, b) => b.w * b.h - a.w * a.h);
+    for (const box of order) {
+      const node = el("div", "ann-box", this.layer);
+      node.dataset.id = box.id;
+      node.style.setProperty("--c", this.colors[box.label] ?? "#ffffff");
+      node.classList.toggle("selected", this.selected.has(box.id));
+      node.classList.toggle("hover", box.id === this.hoverId);
+      const chip = el("span", "ann-chip", node);
+      if (this.labelByName[box.label]?.picture) this.picture(chip, this.labelByName[box.label], "ann-chip-pic");
+      chip.append(box.label);
+      for (const handle of HANDLES) el("span", `ann-handle ${handle}`, node);
+      this.updateBoxNode(box, node);
+    }
+  }
+
+  updateBoxNode(box, node = this.boxNode(box.id)) {
+    // Geometry and source style of one box element (during a drag only the dragged boxes are updated).
+    if (!node) return;
+    Object.assign(node.style, { left: `${box.x}px`, top: `${box.y}px`, width: `${box.w}px`, height: `${box.h}px` });
+    node.classList.toggle("manual", box.source === MANUAL);
+    node.classList.toggle("guess", isGuess(this.guessSources, box));
+  }
+
+  renderSide({ keepDraft = false } = {}) {
+    const data = this.data;
+    if (!data) return;
+    this.positionEl.textContent = data.position ?? "";
+    this.prevBtn.disabled = !data.has_prev;
+    this.nextBtn.disabled = !data.has_next;
+    this.reviewState.textContent = data.reviewed ? "✓ Reviewed" : "Not reviewed yet";
+    this.reviewState.classList.toggle("ann-ok", Boolean(data.reviewed));
+    this.boxesBtn.setAttribute("aria-pressed", String(this.showBoxes));
+    this.chipsBtn.setAttribute("aria-pressed", String(this.showAllChips));
+    this.renderStatus();
+    this.renderLegend();
+    if (!(keepDraft && this.typingInInspector())) this.renderInspector();
+  }
+
+  typingInInspector() {
+    // Whether the focus is in one of the selected box's fields (X, Y, W, H): redrawing the panel would lose the draft.
+    const active = this.wrap.getRootNode().activeElement;
+    // the Label selector too: an autosave's answer must not take it from under the reviewer
+    return Boolean(active && ["INPUT", "SELECT"].includes(active.tagName) && this.inspectorEl.contains(active));
+  }
+
+  picture(parent, label, className) {
+    // The label's picture (an icon's art), or an empty slot of the same size so the names line up.
+    if (!label?.picture) return el("span", className, parent);
+    const img = el("img", className, parent);
+    img.src = label.picture;
+    img.alt = "";
+    img.draggable = false;
+    return img;
+  }
+
+  labelText(parent, name, label) {
+    // The label's name, with its icon's poe2db name under it.
+    const text = el("span", "ann-text", parent);
+    el("span", "ann-name", text).textContent = name;
+    if (label?.title) el("span", "ann-title", text).textContent = label.title;
+    return text;
+  }
+
+  renderLegend() {
+    const counts = {};
+    for (const box of this.boxes) counts[box.label] = (counts[box.label] ?? 0) + 1;
+    this.legendEl.replaceChildren();
+    const shown = this.filteredLabels();
+    for (const label of shown) {
+      const row = el("button", "ann-label", this.legendEl);
+      row.type = "button";
+      row.dataset.label = label.name;
+      const what = label.title ? `${label.name} (${label.title})` : label.name;
+      row.title = this.selected.size ? `Label the selected boxes ${what}` : `Draw ${what} boxes`;
+      row.setAttribute("aria-pressed", String(label.name === this.currentLabel));
+      el("span", "ann-key", row).textContent = label.hotkey || "·";
+      el("span", "ann-swatch", row).style.background = label.color;
+      this.picture(row, label, "ann-pic");
+      this.labelText(row, label.name, label);
+      el("span", "ann-count", row).textContent = String(counts[label.name] ?? 0);
+      row.addEventListener("click", (event) => {
+        this.useLabel(label.name);
+        // A keyboard press (detail 0) keeps the focus on its label: the list may have been drawn anew, so the
+        // focused button is gone and the focus would fall to the page, out of the editor.
+        if (event.detail === 0 && !row.isConnected) this.focusLabel(label.name);
+        this.backToCanvas(event);
+      });
+    }
+    if (!shown.length) el("p", "ann-muted", this.legendEl).textContent = "No label matches.";
+  }
+
+  focusLabel(name) {
+    [...this.legendEl.children].find((node) => node.dataset?.label === name)?.focus({ preventScroll: true });
+  }
+
+  renderStatus() {
+    if (!this.data) return;
+    const saved = (this.data.saved_seq ?? 0) >= this.seq;
+    const waiting = this.seq !== this.sentSeq;
+    const state = saved ? "saved" : waiting ? "editing…" : "saving…";
+    this.statusEl.textContent = `${this.boxes.length} boxes · ${state}`;
+    this.statusEl.classList.toggle("ann-ok", saved);
+  }
+
+  renderInspector() {
+    const panel = this.inspectorEl;
+    panel.replaceChildren();
+    const boxes = this.selectedBoxes();
+    if (!boxes.length) {
+      el("p", "ann-muted", panel).textContent =
+        `Click a box, or drag on the screenshot to draw a ${this.currentLabel} box.`;
+      return;
+    }
+    if (boxes.length > 1) {
+      el("p", "", panel).textContent = `${boxes.length} boxes selected. Press a number to label them.`;
+      this.button(panel, "Delete", "Delete selected (Del)", () => this.deleteSelected());
+      return;
+    }
+    const [box] = boxes;
+    const current = el("div", "ann-row ann-current", panel);
+    this.picture(current, this.labelByName[box.label], "ann-pic-large");
+    this.labelText(current, box.label, this.labelByName[box.label]);
+    const select = el("select", "ann-select", panel);
+    select.setAttribute("aria-label", "Label");
+    for (const label of this.labels) {
+      const option = el("option", "", select);
+      option.value = label.name;
+      const name = label.title ? `${label.name} — ${label.title}` : label.name;
+      option.textContent = label.hotkey ? `${label.hotkey}  ${name}` : name;
+    }
+    if (!this.colors[box.label]) {
+      const option = el("option", "", select);
+      option.value = option.textContent = box.label;
+    }
+    select.value = box.label;
+    select.addEventListener("change", () => {
+      this.useLabel(select.value);
+      // the panel was drawn anew: the focus goes to its new label list, so Tab and the arrows go on from there
+      if (!select.isConnected) this.inspectorEl.querySelector("select")?.focus({ preventScroll: true });
+    });
+    const rule = this.labelByName[box.label]?.rule;
+    if (rule) el("p", "ann-muted ann-rule", panel).textContent = rule;
+    const grid = el("div", "ann-grid", panel);
+    const inputs = {};
+    let sourceEl = null;
+    for (const field of ["x", "y", "w", "h"]) {
+      const label = el("label", "", grid);
+      el("span", "", label).textContent = field.toUpperCase();
+      const input = el("input", "", label);
+      input.type = "number";
+      input.step = "1";
+      input.value = String(round2(box[field]));
+      inputs[field] = input;
+      input.addEventListener("change", () => {
+        const value = coordinateValue(input.value);
+        if (value === null) {
+          input.value = String(round2(box[field])); // emptied or unreadable: the box stays as it was (0 is typed)
+          return;
+        }
+        // a box drag ends first (as useLabel): the typed value goes on the boxes as sent, and no later cancel of the
+        // drag puts the boxes from before it back over the edit
+        if (this.drag && this.drag.kind !== "pan") this.cancelDrag();
+        const target = this.byId(box.id);
+        if (!target) return;
+        this.snapshot();
+        target[field] = value;
+        this.clampBox(target);
+        this.markEdited(target);
+        this.changed();
+        // the fields stay (Tab has the next one in hand: drawing the panel anew lost it): their values follow the
+        // clamped box, the rest of the editor is drawn again
+        this.applyView();
+        this.renderBoxes();
+        this.renderSide({ keepDraft: true });
+        if (this.inspectorEl.contains(input)) {
+          for (const [name, node] of Object.entries(inputs)) node.value = String(round2(target[name]));
+          sourceEl.textContent = sourceText(target);
+        }
+      });
+    }
+    sourceEl = el("p", "ann-muted", panel);
+    sourceEl.textContent = sourceText(box);
+    this.button(panel, "Delete", "Delete selected (Del)", () => this.deleteSelected());
+  }
+}
+
+export default function (component) {
+  const { parentElement, data } = component;
+  let editor = INSTANCES.get(parentElement);
+  if (!editor) {
+    editor = new Annotator(parentElement);
+    INSTANCES.set(parentElement, editor);
+  }
+  editor.bind(component);
+  editor.update(data);
+  return () => editor.scheduleDestroy();
+}

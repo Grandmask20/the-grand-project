@@ -1,0 +1,667 @@
+"""The opt-in RF-DETR backend (grand_project/detect/rf_detr_model.py): how a checkpoint's classes come back to the
+program, tiled prediction (with a stand-in model), model loading, icon naming, reveal buttons and the path filter."""
+
+from __future__ import annotations
+
+import json
+from pathlib import Path
+from types import SimpleNamespace
+
+import cv2
+import numpy as np
+import pytest
+
+from grand_project import core
+from grand_project.detect import constants as K
+from grand_project.detect import rf_detr_model
+from grand_project.detect.rf_detr_model import class_families, family_detections
+
+
+def test_icons_are_named_by_the_classical_naming_step(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The model's icons are named as the classical detector names its own (badges.name_found_icons with the icon
+    model's pictures), without the rim finder's influence rule: the model's score is not the rim finder's."""
+    calls = []
+
+    def namer(img, icons, book, *, influence_min):
+        calls.append((icons, book, influence_min))
+        return [dict(icon, name="Delirium") for icon in icons]
+
+    book = {"names": ["Delirium"], "F": np.zeros((1, 4), np.float32)}
+    monkeypatch.setattr(rf_detr_model, "name_found_icons", namer)
+    monkeypatch.setattr(rf_detr_model, "naming_book", lambda: book)
+    found = [{"x": 50.0, "y": 50.0, "score": 0.4}]
+    assert rf_detr_model._name_icons(np.zeros((100, 100, 3), np.uint8), found)[0]["name"] == "Delirium"
+    assert calls == [(found, book, None)]
+
+
+def test_class_families_group_classes_by_name() -> None:
+    """Classes are matched by name, whatever their ids; a class of no family (a reviewer's own) is one of its own."""
+    labels = {0: "map_node", 1: "citadel_stone", 2: "map_node_grass", 3: "icon", 4: "custom"}
+    assert class_families(labels) == {
+        "node": [(0, "map_node"), (2, "map_node_grass")],
+        "citadel": [(1, "citadel_stone")],
+        "icon": [(3, "icon")],
+        "custom": [(4, "custom")],
+    }
+
+
+def test_sibling_classes_are_scored_together() -> None:
+    """A node unsure between two biomes is still one node: its family's score is the sum of its classes' scores, its
+    class the best one (each class alone is under the threshold)."""
+    families = class_families({0: "map_node", 1: "map_node_grass", 2: "map_node_mountain", 3: "icon"})
+    probs = np.array([[0.05, 0.25, 0.22, 0.01], [0.0, 0.02, 0.01, 0.9], [0.01, 0.1, 0.1, 0.02]])
+    boxes = np.array([[10, 10, 49, 49], [100, 10, 134, 44], [200, 10, 239, 49]], float)
+    found = family_detections(probs, boxes, families, threshold=0.35)
+    assert [(d["label"], d["family"], round(d["score"], 2)) for d in found] == [
+        ("map_node_grass", "node", 0.52),
+        ("icon", "icon", 0.9),
+    ]
+    assert family_detections(np.zeros((0, 4)), np.zeros((0, 4)), families, threshold=0.35) == []
+
+
+class _SquareFinder:
+    """A stand-in RF-DETR: in each tile it "detects" every white square, as a map node unsure between grass (0.3)
+    and mountain (0.25); the processor stand-in records the tiles it is given."""
+
+    QUERIES = 4
+
+    def __init__(self) -> None:
+        self.tiles: list[np.ndarray] = []
+
+    def processor(self, *, images, return_tensors):
+        import torch
+
+        self.tiles.extend(images)
+        return {"pixel_values": torch.from_numpy(np.stack(images))}
+
+    def __call__(self, pixel_values):
+        import torch
+
+        logits = torch.full((len(pixel_values), self.QUERIES, 4), -20.0)
+        boxes = torch.zeros((len(pixel_values), self.QUERIES, 4))
+        tile = K.RF_DETR_TILE
+        for b, image in enumerate(pixel_values.numpy()):
+            white = (image == 255).all(axis=-1).astype(np.uint8)
+            _count, _labels, stats, _centres = cv2.connectedComponentsWithStats(white, 8)
+            for q, (x, y, w, h, _area) in enumerate(stats[1 : self.QUERIES + 1]):
+                logits[b, q] = torch.tensor([-20.0, np.log(0.3 / 0.7), np.log(0.25 / 0.75), -20.0])
+                boxes[b, q] = torch.tensor([(x + w / 2) / tile, (y + h / 2) / tile, w / tile, h / tile])
+        return SimpleNamespace(logits=logits, pred_boxes=boxes)
+
+
+def test_tiles_find_each_object_once_in_screenshot_pixels() -> None:
+    """The HUD is painted over in what the model sees; a square cut by a tile's inner edge counts only from the tile
+    holding it whole; overlapping tiles' sightings of one square merge into one map node, in screenshot pixels."""
+    torch = pytest.importorskip("torch")
+    shot = np.full((1080, 1920, 3), 40, np.uint8)
+    shot[500:539, 1000:1039] = 255  # whole in two tiles (x 544, y 0 and 312)
+    shot[600:639, 750:789] = 255  # across the first tiles' right edge (768): whole only from x 544
+    model = _SquareFinder()
+    families = class_families({0: "map_node", 1: "map_node_grass", 2: "map_node_mountain", 3: "icon"})
+
+    found = rf_detr_model.predict_tiles(model, model.processor, shot, families, torch.device("cpu"), threshold=0.35)
+
+    assert sorted((d["label"], [round(v) for v in d["box"]]) for d in found) == [
+        ("map_node_grass", [750, 600, 789, 639]),
+        ("map_node_grass", [1000, 500, 1039, 539]),
+    ]
+    assert all(round(d["score"], 2) == 0.55 for d in found)
+    assert len(model.tiles) == 8
+    hud = core.hud_mask(1920, 1080) > 0
+    ys, xs = np.nonzero(hud)
+    x, y = int(xs[0]), int(ys[0])  # a HUD pixel; the tile holding it shows the HUD grey there
+    ox, oy = next(
+        (ox, oy) for ox, oy in rf_detr_model.T.tile_origins(1920, 1080) if ox <= x < ox + 768 and oy <= y < oy + 768
+    )
+    tile = model.tiles[rf_detr_model.T.tile_origins(1920, 1080).index((ox, oy))]
+    assert tuple(tile[y - oy, x - ox]) == K.RF_DETR_HUD_FILL[::-1]  # RGB
+
+
+def test_a_find_on_the_hud_is_dropped_before_the_duplicates(monkeypatch: pytest.MonkeyPatch) -> None:
+    """What lies on the HUD is HUD art, dropped in the tiled inference itself before the duplicates are: a higher-scored
+    box on the HUD overlapping a real one (centres on either side of the HUD's edge) never suppresses it, so the
+    program, training's scores and the pre-labels all see the real one (CodeRabbit)."""
+    torch = pytest.importorskip("torch")
+    tile = K.RF_DETR_TILE
+    top = 1080 - tile
+    monkeypatch.setattr(rf_detr_model.T, "tile_origins", lambda width, height: [(0, top)])
+    # column x = 500: the HUD's top edge is at y 930 (the mask is True below it)
+    hud_y, free_y = 934.0, 922.0
+    on_hud = core.on_hud_mask([(500.0, hud_y), (500.0, free_y)], 1920, 1080, pad=0)
+    assert list(on_hud) == [True, False]  # (the premise: the two centres lie on either side of the edge)
+
+    def model(pixel_values):
+        logits = torch.full((len(pixel_values), 2, 4), -20.0)
+        logits[:, 0, 1] = 5.0  # the HUD box: sure
+        logits[:, 1, 1] = 3.0  # the real one: less sure, so it is the one NMS would suppress with the HUD box in
+        hud = [500 / tile, (hud_y - top) / tile, 40 / tile, 40 / tile]
+        free = [500 / tile, (free_y - top) / tile, 40 / tile, 40 / tile]  # 12 px higher: IoU 0.54
+        boxes = torch.tensor([[hud, free]])
+        return SimpleNamespace(logits=logits, pred_boxes=boxes.repeat(len(pixel_values), 1, 1))
+
+    def processor(*, images, return_tensors):
+        return {"pixel_values": torch.from_numpy(np.stack(images))}
+
+    families = class_families({0: "map_node", 1: "map_node_grass", 2: "map_node_mountain", 3: "icon"})
+    shot = np.zeros((1080, 1920, 3), np.uint8)
+    found = rf_detr_model.predict_tiles(model, processor, shot, families, torch.device("cpu"), threshold=0.35)
+    assert [[round(v) for v in d["box"]] for d in found] == [[480, 902, 520, 942]]
+
+
+def test_a_family_past_the_cap_is_chosen_by_its_whole_sum() -> None:
+    """Two families both summing past 1: the larger sum wins (capped first, they tied and the first listed won:
+    CodeRabbit), and only the score reported is capped."""
+    families = class_families({0: "map_node", 1: "map_node_grass", 2: "citadel_stone", 3: "citadel_iron"})
+    assert list(families) == ["node", "citadel"] or list(families) == ["citadel", "node"]
+    probs = np.array([[0.6, 0.6, 0.8, 0.6], [0.9, 0.3, 0.1, 0.1]])  # node 1.2 / citadel 1.4; node 1.2 / citadel 0.2
+    found = rf_detr_model.family_detections(probs, np.zeros((2, 4)), families, 0.5)
+    assert [(d["family"], d["label"], d["score"]) for d in found] == [
+        ("citadel", "citadel_stone", 1.0),
+        ("node", "map_node", 1.0),
+    ]
+
+
+def test_a_find_in_the_padding_of_a_small_screenshot_is_dropped() -> None:
+    """A screenshot smaller than a tile is padded to one: a box the model puts wholly in the padding clamps to nothing
+    on the screenshot and is no detection."""
+    torch = pytest.importorskip("torch")
+
+    def model(pixel_values):
+        logits = torch.full((len(pixel_values), 1, 4), -20.0)
+        logits[:, 0, 1] = 5.0  # sure: a grass map node
+        tile = K.RF_DETR_TILE
+        boxes = torch.tensor([[[675 / tile, 625 / tile, 50 / tile, 50 / tile]]]).repeat(len(pixel_values), 1, 1)
+        return SimpleNamespace(logits=logits, pred_boxes=boxes)
+
+    def processor(*, images, return_tensors):
+        return {"pixel_values": torch.from_numpy(np.stack(images))}
+
+    families = class_families({0: "map_node", 1: "map_node_grass", 2: "map_node_mountain", 3: "icon"})
+    shot = np.full((500, 600, 3), 40, np.uint8)
+    assert rf_detr_model.predict_tiles(model, processor, shot, families, torch.device("cpu"), threshold=0.35) == []
+
+
+def test_a_missing_model_is_a_clear_error(tmp_path: Path, detector) -> None:
+    detector(rf_detr=True, model=str(tmp_path / "none"))
+    rf_detr_model.reset_rf_detr_runtime()
+    with pytest.raises(RuntimeError, match="does not exist"):
+        rf_detr_model._load_runtime()
+
+
+def _stub_loaders(
+    monkeypatch: pytest.MonkeyPatch,
+    detector,
+    transformers,
+    tmp_path: Path,
+    labels: dict[str, str],
+    classes: int | None = None,
+) -> None:
+    """A checkpoint folder with ``labels`` and stand-in transformers loaders (they must ask for safetensors); the
+    model's head has ``classes`` classes (default: one per label)."""
+    (tmp_path / "labels.json").write_text(json.dumps(labels))
+    config = SimpleNamespace(num_labels=len(labels) if classes is None else classes)
+    model = SimpleNamespace(config=config, to=lambda device: None, eval=lambda: None)
+
+    def load_model(path, **kwargs):
+        assert kwargs.get("use_safetensors") is True  # never a pickle (AGENTS.md, models)
+        return model
+
+    monkeypatch.setattr(transformers.AutoImageProcessor, "from_pretrained", lambda path: "processor")
+    monkeypatch.setattr(transformers.AutoModelForObjectDetection, "from_pretrained", load_model)
+    detector(rf_detr=True, model=str(tmp_path), device="cpu")
+    rf_detr_model.reset_rf_detr_runtime()
+
+
+def test_a_checkpoint_loads_its_own_label_map(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, detector) -> None:
+    """The checkpoint's saved label map (its labels.json) gives its classes' families, matched by name."""
+    pytest.importorskip("torch")
+    transformers = pytest.importorskip("transformers")
+    _stub_loaders(monkeypatch, detector, transformers, tmp_path, {"0": "citadel_stone", "1": "map_node", "2": "icon"})
+    try:
+        runtime = rf_detr_model._load_runtime()
+        assert runtime["families"] == {
+            "citadel": [(0, "citadel_stone")],
+            "node": [(1, "map_node")],
+            "icon": [(2, "icon")],
+        }
+        assert rf_detr_model._load_runtime() is runtime  # loaded once
+        assert str(runtime["device"]) == "cpu"
+    finally:
+        rf_detr_model.reset_rf_detr_runtime()
+
+
+@pytest.mark.parametrize(
+    ("labels", "classes"),
+    [
+        pytest.param({"0": "map_node", "1": "icon"}, 3, id="a class without a name"),
+        pytest.param({"0": "map_node", "3": "icon"}, 2, id="an id beyond the head"),
+    ],
+)
+def test_a_label_map_that_is_not_the_heads_classes_is_refused(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, detector, labels: dict[str, str], classes: int
+) -> None:
+    """Every output class needs exactly one name: an id past the head cannot be scored, a class left out would be
+    dropped unnoticed. The checkpoint's own order is kept (``test_a_checkpoint_loads_its_own_label_map``)."""
+    pytest.importorskip("torch")
+    transformers = pytest.importorskip("transformers")
+    _stub_loaders(monkeypatch, detector, transformers, tmp_path, labels, classes)
+    try:
+        with pytest.raises(RuntimeError, match="every class needs exactly one name"):
+            rf_detr_model._load_runtime()
+    finally:
+        rf_detr_model.reset_rf_detr_runtime()
+
+
+def test_the_loaded_model_keeps_the_digest_it_was_checked_against(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, detector
+) -> None:
+    """The runtime carries the digest its weights were checked against; a configured folder that is now another
+    checkpoint is refused rather than stamped with the loaded one's (CodeRabbit)."""
+    pytest.importorskip("torch")
+    transformers = pytest.importorskip("transformers")
+    _stub_loaders(monkeypatch, detector, transformers, tmp_path, {"0": "map_node", "1": "icon"})
+    other = tmp_path / "other"
+    other.mkdir()
+    (other / "labels.json").write_text(json.dumps({"0": "map_node"}))
+    try:
+        runtime = rf_detr_model._load_runtime()
+        assert rf_detr_model.runtime_digest() == runtime["digest"] == rf_detr_model.checkpoint_digest(tmp_path)
+        detector(rf_detr=True, model=str(other), device="cpu")  # (the loaded model stays: configure resets nothing)
+        with pytest.raises(RuntimeError, match="not the one loaded"):
+            rf_detr_model._load_runtime()
+    finally:
+        rf_detr_model.reset_rf_detr_runtime()
+
+
+def test_a_checkpoint_of_retired_classes_is_refused(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, detector) -> None:
+    """A checkpoint of an earlier label set would find its retired classes (City, locked stronghold) and silently drop
+    them: it is refused, naming them."""
+    pytest.importorskip("torch")
+    transformers = pytest.importorskip("transformers")
+    _stub_loaders(
+        monkeypatch, detector, transformers, tmp_path, {"0": "map_node", "1": "city", "2": "locked_stronghold"}
+    )
+    try:
+        with pytest.raises(RuntimeError, match="city, locked_stronghold"):
+            rf_detr_model._load_runtime()
+    finally:
+        rf_detr_model.reset_rf_detr_runtime()
+
+
+def _detect(monkeypatch, predictions: list[dict], size=(1080, 1920), names=None) -> dict:
+    """detect_rf_detr with stand-ins for the model and the icon namer (``names``: the name of each icon, in order)."""
+    monkeypatch.setattr(rf_detr_model, "_predict", lambda img: predictions)
+    given = iter(names or [])
+    monkeypatch.setattr(
+        rf_detr_model, "_name_icons", lambda img, found, book=None: [dict(icon, name=next(given)) for icon in found]
+    )
+    return rf_detr_model.detect_rf_detr(np.zeros((*size, 3), np.uint8))
+
+
+def test_citadels_halls_and_deadly_bosses_come_back_as_the_classical_landmarks(monkeypatch) -> None:
+    """A citadel is a typed City at its map node; a hall a Hall at the map node under its deadly-boss icon; a
+    deadly-boss icon over a map that is neither is a "Deadly boss map" (user); node classes carry their biome or
+    city; a Breach stronghold with no map node inside is locked."""
+    predictions = [
+        {"label": "map_node_vaal", "family": "node", "box": [480.0, 480.0, 520.0, 520.0], "score": 0.9},
+        {"label": "citadel_stone", "family": "citadel", "box": [460.0, 460.0, 540.0, 540.0], "score": 0.8},
+        {"label": "icon", "family": "icon", "box": [483.0, 459.0, 517.0, 493.0], "score": 0.9},
+        {"label": "map_node_grass", "family": "node", "box": [980.0, 680.0, 1020.0, 720.0], "score": 0.9},
+        {"label": "hall", "family": "hall", "box": [890.0, 600.0, 1020.0, 725.0], "score": 0.7},
+        {"label": "icon", "family": "icon", "box": [983.0, 659.0, 1017.0, 693.0], "score": 0.9},
+        {"label": "map_node_desert", "family": "node", "box": [1480.0, 280.0, 1520.0, 320.0], "score": 0.9},
+        {"label": "icon", "family": "icon", "box": [1483.0, 259.0, 1517.0, 293.0], "score": 0.8},
+        {"label": "breach_stronghold", "family": "stronghold", "box": [1200.0, 200.0, 1350.0, 350.0], "score": 0.6},
+    ]
+    result = _detect(monkeypatch, predictions, names=["MapBossSpecial"] * 3)
+    landmarks = sorted((lm["kind"], lm["x"], lm["y"], lm.get("city_type")) for lm in result["landmarks"])
+    assert landmarks == [
+        ("City", 500.0, 500.0, "Vaal"),
+        ("Deadly boss map", 1500.0, 300.0, None),
+        ("Hall", 1000.0, 700.0, None),
+        ("Locked stronghold", 1275.0, 275.0, None),
+    ]
+    nodes = {(n["x"], n["y"]): (n.get("biome"), n.get("city_type")) for n in result["nodes"]}
+    assert nodes == {
+        (500.0, 500.0): (None, "Vaal"),
+        (1000.0, 700.0): ("grass", None),
+        (1500.0, 300.0): ("desert", None),
+    }
+    assert sorted(i["name"] for i in result["icons"]) == ["MapBossSpecial"] * 3
+
+
+def test_a_deadly_boss_map_beside_a_hall_is_its_own(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A hall's box holds its wide structure, so a neighbouring map can lie inside it: that map's deadly-boss icon
+    still marks a deadly boss map; only the icon over the Hall's own map is the Hall's, whichever icon comes first."""
+    hall_icon = {"label": "icon", "family": "icon", "box": [983.0, 659.0, 1017.0, 693.0], "score": 0.9}
+    other_icon = {"label": "icon", "family": "icon", "box": [893.0, 599.0, 927.0, 633.0], "score": 0.9}
+    for icons in ([hall_icon, other_icon], [other_icon, hall_icon]):
+        predictions = [
+            {"label": "map_node_grass", "family": "node", "box": [980.0, 680.0, 1020.0, 720.0], "score": 0.9},
+            {"label": "hall", "family": "hall", "box": [890.0, 600.0, 1020.0, 725.0], "score": 0.7},
+            {"label": "map_node_grass", "family": "node", "box": [890.0, 620.0, 930.0, 660.0], "score": 0.9},
+            *icons,
+        ]
+        result = _detect(monkeypatch, predictions, names=["MapBossSpecial"] * 2)
+        assert sorted((lm["kind"], lm["x"], lm["y"]) for lm in result["landmarks"]) == [
+            ("Deadly boss map", 910.0, 640.0),
+            ("Hall", 1000.0, 700.0),
+        ]
+
+
+def test_a_citadel_is_a_city_at_the_map_node_inside_its_box(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The City is the map node inside the citadel box (nearest its middle), wherever in the box the model put it;
+    with no map node inside, the box's middle."""
+    predictions = [
+        {"label": "citadel_stone", "family": "citadel", "box": [460.0, 460.0, 540.0, 540.0], "score": 0.8},
+        {"label": "map_node_vaal", "family": "node", "box": [492.0, 495.0, 532.0, 535.0], "score": 0.9},  # (512, 515)
+        {"label": "map_node_vaal", "family": "node", "box": [580.0, 480.0, 620.0, 520.0], "score": 0.9},  # outside
+        {"label": "citadel_iron", "family": "citadel", "box": [1160.0, 460.0, 1240.0, 540.0], "score": 0.7},
+    ]
+    result = _detect(monkeypatch, predictions)
+    cities = sorted((lm["x"], lm["y"], lm["city_type"]) for lm in result["landmarks"] if lm["kind"] == "City")
+    assert cities == [(512.0, 515.0, "Vaal"), (1200.0, 500.0, "Ezomyte")]
+
+
+def test_left_out_icon_types_are_never_reported(monkeypatch: pytest.MonkeyPatch) -> None:
+    """User: Lost Tower and Checkpoint icons are no dataset labels; an icon the namer names so is dropped (the model
+    never learned them)."""
+    predictions = [
+        {"label": "icon", "family": "icon", "box": [100.0 + 100 * i, 100.0, 134.0 + 100 * i, 134.0], "score": 0.9}
+        for i in range(3)
+    ]
+    result = _detect(monkeypatch, predictions, names=["LostTower", "BreachHive", "Checkpoint"])
+    assert [i["name"] for i in result["icons"]] == ["BreachHive"]
+
+
+def test_reveal_buttons_are_found_by_the_model_and_named_by_their_symbol(monkeypatch: pytest.MonkeyPatch) -> None:
+    """User: the model finds every square reveal button as one class and the classical namer names its kind (searching
+    RF_DETR_BUTTON_SHIFT px around the model's middle): a ship button is an ExpeditionShip icon, a hand button makes
+    the Breach stronghold beside it locked (maps inside or not), a symbol not taught yet is not reported, and an icon
+    the model also reports on a button is that button."""
+    predictions = [
+        {"label": "reveal_button", "family": "button", "box": [266.0, 367.0, 334.0, 433.0], "score": 0.8},
+        {"label": "icon", "family": "icon", "box": [285.0, 385.0, 319.0, 419.0], "score": 0.5},  # on the ship button
+        {"label": "icon", "family": "icon", "box": [683.0, 383.0, 717.0, 417.0], "score": 0.9},
+        {"label": "reveal_button", "family": "button", "box": [1316.0, 367.0, 1384.0, 433.0], "score": 0.9},
+        {"label": "breach_stronghold", "family": "stronghold", "box": [1225.0, 175.0, 1375.0, 325.0], "score": 0.7},
+        {"label": "map_node_grass", "family": "node", "box": [1280.0, 230.0, 1320.0, 270.0], "score": 0.9},
+        {"label": "breach_stronghold", "family": "stronghold", "box": [425.0, 625.0, 575.0, 775.0], "score": 0.7},
+        {"label": "map_node_grass", "family": "node", "box": [480.0, 680.0, 520.0, 720.0], "score": 0.9},
+        {"label": "reveal_button", "family": "button", "box": [866.0, 667.0, 934.0, 733.0], "score": 0.6},
+    ]
+    margins = []
+
+    def name_button(img, x, y, margin):
+        margins.append(margin)
+        return {300.0: "ship", 1350.0: "lock", 900.0: "unknown"}[x], 0.9
+
+    monkeypatch.setattr(rf_detr_model, "name_button", name_button)
+    result = _detect(monkeypatch, predictions, names=["BreachHive"])
+    assert sorted((i["name"], i["x"], i["y"]) for i in result["icons"]) == [
+        ("BreachHive", 700.0, 400.0),
+        ("ExpeditionShip", 300.0, 400.0),
+    ]
+    assert sorted((lm["kind"], lm["x"], lm["y"]) for lm in result["landmarks"]) == [
+        ("Breach stronghold", 500.0, 700.0),  # maps inside, no hand button beside it
+        ("Locked stronghold", 1300.0, 250.0),  # its hand button 158 px away, though a map shows inside
+    ]
+    assert margins == [K.RF_DETR_BUTTON_SHIFT] * 3
+
+
+def test_rf_detr_tower_keeps_its_map_node(monkeypatch) -> None:
+    """As in the classical detector, a tower's map node stays in the graph flagged "tower" (paths reach it); another
+    map node on the same wide tower base is a duplicate and goes; a map node farther away stays."""
+    predictions = [
+        {"label": "map_node_grass", "family": "node", "box": [880.0, 480.0, 920.0, 520.0], "score": 0.9},
+        {"label": "map_node_grass", "family": "node", "box": [900.0, 485.0, 940.0, 525.0], "score": 0.6},
+        {"label": "map_node", "family": "node", "box": [1180.0, 480.0, 1220.0, 520.0], "score": 0.9},
+        {"label": "tower", "family": "tower", "box": [860.0, 285.0, 940.0, 505.0], "score": 0.8},
+    ]
+    result = _detect(monkeypatch, predictions)
+    assert sorted((n["x"], n["y"], bool(n.get("tower"))) for n in result["nodes"]) == [
+        (900.0, 500.0, True),
+        (1200.0, 500.0, False),
+    ]
+    assert [(lm["x"], lm["y"]) for lm in result["landmarks"] if lm["kind"] == "Tower"] == [(900.0, 505.0)]
+
+
+def test_two_towers_close_together_keep_a_map_node_each(monkeypatch) -> None:
+    """Two towers 40 px apart (closer than TOWER_NMS): each keeps its own map node; done tower by tower, the second
+    pruned the first one's base and then took over its own (CodeRabbit)."""
+    predictions = [
+        {"label": "map_node", "family": "node", "box": [880.0, 480.0, 920.0, 520.0], "score": 0.9},
+        {"label": "map_node", "family": "node", "box": [920.0, 480.0, 960.0, 520.0], "score": 0.9},
+        {"label": "tower", "family": "tower", "box": [880.0, 285.0, 920.0, 505.0], "score": 0.8},
+        {"label": "tower", "family": "tower", "box": [920.0, 285.0, 960.0, 505.0], "score": 0.7},
+    ]
+    result = _detect(monkeypatch, predictions)
+    assert sorted((n["x"], n["y"], bool(n.get("tower"))) for n in result["nodes"]) == [
+        (900.0, 500.0, True),
+        (940.0, 500.0, True),
+    ]
+
+
+def test_towers_take_the_pairing_that_places_most_of_them(monkeypatch) -> None:
+    """The first tower is closest to the first map node, but the second reaches only that one: each takes a base only
+    when the towers are paired as a whole (the closest pairs first left the second tower without one: CodeRabbit)."""
+    predictions = [
+        {"label": "map_node", "family": "node", "box": [880.0, 480.0, 920.0, 520.0], "score": 0.9},  # (900, 500)
+        {"label": "map_node", "family": "node", "box": [930.0, 480.0, 970.0, 520.0], "score": 0.9},  # (950, 500)
+        {"label": "tower", "family": "tower", "box": [885.0, 285.0, 925.0, 500.0], "score": 0.8},  # foot (905, 500)
+        {"label": "tower", "family": "tower", "box": [830.0, 285.0, 870.0, 500.0], "score": 0.7},  # foot (850, 500)
+    ]
+    result = _detect(monkeypatch, predictions)
+    assert sorted((n["x"], bool(n.get("tower"))) for n in result["nodes"]) == [(900.0, True), (950.0, True)]
+
+
+def test_a_tower_beside_only_a_citys_map_node_has_no_base(monkeypatch) -> None:
+    """The City's map node is the City's: not the base of a tower that stands within reach of it (it stays in the
+    graph, unflagged)."""
+    predictions = [
+        {"label": "map_node_vaal", "family": "node", "box": [880.0, 480.0, 920.0, 520.0], "score": 0.9},
+        {"label": "citadel_stone", "family": "citadel", "box": [860.0, 460.0, 940.0, 540.0], "score": 0.8},
+        {"label": "tower", "family": "tower", "box": [880.0, 285.0, 920.0, 505.0], "score": 0.8},
+    ]
+    result = _detect(monkeypatch, predictions)
+    assert [(n["x"], bool(n.get("tower"))) for n in result["nodes"]] == [(900.0, False)]
+    assert sorted(lm["kind"] for lm in result["landmarks"]) == ["City", "Tower"]
+
+
+def test_the_map_beside_a_tower_expedition_refuses_is_kept(monkeypatch) -> None:
+    """A tower under an Expedition icon is an ordinary ocean map: the map node beside it is no duplicate of a tower
+    base, so it stays for the path tracer (it was pruned before the Expedition rules ran: CodeRabbit)."""
+    predictions = [
+        {"label": "map_node_water", "family": "node", "box": [880.0, 480.0, 920.0, 520.0], "score": 0.9},
+        {"label": "map_node_water", "family": "node", "box": [900.0, 480.0, 940.0, 520.0], "score": 0.9},
+        {"label": "tower", "family": "tower", "box": [880.0, 285.0, 920.0, 505.0], "score": 0.8},
+        {"label": "icon", "family": "icon", "box": [883.0, 459.0, 917.0, 493.0], "score": 0.9},
+    ]
+    result = _detect(monkeypatch, predictions, names=[K.EXPEDITION])
+    assert sorted((n["x"], bool(n.get("tower"))) for n in result["nodes"]) == [(900.0, False), (920.0, False)]
+
+
+def test_a_tower_never_takes_a_city_map_node_beside_it_for_its_base(monkeypatch) -> None:
+    """A City's map node close to a tower's base is the City's, not a duplicate of the tower base: it stays, and so
+    does the City on it (CodeRabbit)."""
+    predictions = [
+        {"label": "map_node_grass", "family": "node", "box": [880.0, 480.0, 920.0, 520.0], "score": 0.9},
+        {"label": "map_node_vaal", "family": "node", "box": [905.0, 480.0, 945.0, 520.0], "score": 0.9},
+        {"label": "citadel_stone", "family": "citadel", "box": [912.0, 460.0, 990.0, 540.0], "score": 0.8},
+        {"label": "tower", "family": "tower", "box": [860.0, 285.0, 940.0, 505.0], "score": 0.8},
+    ]
+    result = _detect(monkeypatch, predictions)
+    assert sorted((n["x"], n["y"], bool(n.get("tower"))) for n in result["nodes"]) == [
+        (900.0, 500.0, True),
+        (925.0, 500.0, False),
+    ]
+    assert [(lm["x"], lm["y"]) for lm in result["landmarks"] if lm["kind"] == "City"] == [(925.0, 500.0)]
+
+
+def test_paths_are_filtered_by_the_classical_wall_mask(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Walls are no RF-DETR class: the classical wall mask decides which traced paths cross a fortress wall."""
+    predictions = [
+        {"label": "map_node_grass", "family": "node", "box": [480.0, 480.0, 520.0, 520.0], "score": 0.9},
+        {"label": "map_node_grass", "family": "node", "box": [780.0, 480.0, 820.0, 520.0], "score": 0.9},
+    ]
+    line = [[float(x), 500.0] for x in range(500, 801, 10)]
+    monkeypatch.setattr(rf_detr_model, "classical_path_dashes", lambda img: [])
+    monkeypatch.setattr(rf_detr_model, "trace_paths", lambda nodes, dashes, img: [{"a": 0, "b": 1, "line": line}])
+    monkeypatch.setattr(rf_detr_model, "fortress_walls", lambda img: np.zeros(img.shape[:2], np.uint8))
+    assert len(_detect(monkeypatch, predictions)["edges"]) == 1
+    walled = np.zeros((1080, 1920), np.uint8)
+    walled[400:600, 550:750] = 1  # the classical mask still decides
+    monkeypatch.setattr(rf_detr_model, "fortress_walls", lambda img: walled)
+    assert _detect(monkeypatch, predictions)["edges"] == []
+
+
+def test_a_hall_whose_icon_was_missed_is_at_the_map_node_inside_its_box(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Without its deadly-boss icon the Hall is still its map node (the one inside its box), not the box's middle."""
+    predictions = [
+        {"label": "map_node_grass", "family": "node", "box": [980.0, 680.0, 1020.0, 720.0], "score": 0.9},
+        {"label": "hall", "family": "hall", "box": [890.0, 600.0, 1020.0, 725.0], "score": 0.7},
+    ]
+    result = _detect(monkeypatch, predictions)
+    assert [(lm["kind"], lm["x"], lm["y"]) for lm in result["landmarks"]] == [("Hall", 1000.0, 700.0)]
+
+
+def test_the_expedition_rules_come_before_the_paths(monkeypatch: pytest.MonkeyPatch) -> None:
+    """As in the classical detector: a tower under an Expedition icon is an ordinary ocean map before the path
+    tracer looks at it (a tower's map takes paths from farther away)."""
+    predictions = [
+        {"label": "map_node_water", "family": "node", "box": [880.0, 480.0, 920.0, 520.0], "score": 0.9},
+        {"label": "tower", "family": "tower", "box": [860.0, 285.0, 940.0, 505.0], "score": 0.8},
+        {"label": "icon", "family": "icon", "box": [883.0, 459.0, 917.0, 493.0], "score": 0.9},
+    ]
+    traced: list[list[dict]] = []
+    monkeypatch.setattr(rf_detr_model, "trace_paths", lambda nodes, dashes, img: traced.append(nodes) or [])
+    result = _detect(monkeypatch, predictions, names=[K.EXPEDITION])
+    assert [bool(node.get("tower")) for node in traced[0]] == [False]
+    assert not any(lm["kind"] == "Tower" for lm in result["landmarks"])
+
+
+def test_the_loaded_checkpoint_is_the_one_the_detector_stamp_names(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, detector
+) -> None:
+    """The stamp's checkpoint digest is worked out once per process; a checkpoint swapped in after it (a training run
+    keeping a new best/) is refused at the load, so no detection of other weights is saved under the old stamp."""
+    pytest.importorskip("torch")
+    transformers = pytest.importorskip("transformers")
+    _stub_loaders(monkeypatch, detector, transformers, tmp_path, {"0": "map_node", "1": "icon"})
+    try:
+        stamp = rf_detr_model.checkpoint_digest(tmp_path)
+        assert rf_detr_model._load_runtime()["families"]  # the same files: loads
+        rf_detr_model._RUNTIME = None  # a later load in the same process, the digest kept
+        (tmp_path / "model.safetensors").write_bytes(b"other weights")
+        with pytest.raises(RuntimeError, match="changed since this process first read it"):
+            rf_detr_model._load_runtime()
+        assert rf_detr_model.checkpoint_digest(tmp_path) == stamp
+    finally:
+        rf_detr_model.reset_rf_detr_runtime()
+
+
+def test_labels_changed_after_they_were_read_are_refused(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, detector
+) -> None:
+    """labels.json is read before the checkpoint's digest is checked again: a label map swapped in after it was read
+    is caught (CodeRabbit)."""
+    pytest.importorskip("torch")
+    transformers = pytest.importorskip("transformers")
+    _stub_loaders(monkeypatch, detector, transformers, tmp_path, {"0": "map_node", "1": "icon"})
+    real = rf_detr_model._labels
+
+    def read_then_swapped(model_dir, model):
+        labels = real(model_dir, model)
+        (tmp_path / "labels.json").write_text('{"0": "map_node", "1": "tower"}', encoding="utf-8")
+        return labels
+
+    monkeypatch.setattr(rf_detr_model, "_labels", read_then_swapped)
+    try:
+        with pytest.raises(RuntimeError, match="changed since this process first read it"):
+            rf_detr_model._load_runtime()
+    finally:
+        rf_detr_model.reset_rf_detr_runtime()
+
+
+def test_a_folder_swapped_while_it_was_read_is_refused_even_with_the_same_files(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, detector
+) -> None:
+    """The weights, the training list and its partial marker must come from one generation of the folder: one swapped
+    for a copy while they were read (a new folder, the same bytes) is refused, never read as having no marker
+    (CodeRabbit)."""
+    import shutil
+
+    pytest.importorskip("torch")
+    transformers = pytest.importorskip("transformers")
+    model_dir = tmp_path / "best"
+    model_dir.mkdir()
+    _stub_loaders(monkeypatch, detector, transformers, model_dir, {"0": "map_node", "1": "icon"})
+    real = rf_detr_model._labels
+
+    def read_then_swapped(folder, model):
+        labels = real(folder, model)
+        shutil.copytree(model_dir, tmp_path / "next")
+        model_dir.rename(tmp_path / "previous")
+        (tmp_path / "next").rename(model_dir)  # a published new best/: another inode, the same files
+        return labels
+
+    monkeypatch.setattr(rf_detr_model, "_labels", read_then_swapped)
+    try:
+        with pytest.raises(RuntimeError, match="changed since this process first read it"):
+            rf_detr_model._load_runtime()
+    finally:
+        rf_detr_model.reset_rf_detr_runtime()
+
+
+@pytest.fixture
+def fake_hub(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> list[dict]:
+    """A stand-in ``huggingface_hub`` (no network): ``snapshot_download`` "downloads" a model with a training list
+    into a folder of its own and records how it was asked."""
+    import sys
+
+    calls: list[dict] = []
+
+    def snapshot_download(repo_id, *, revision=None, allow_patterns=None):
+        calls.append({"repo": repo_id, "revision": revision, "patterns": allow_patterns})
+        folder = tmp_path / "hub" / repo_id.replace("/", "--") / (revision or "main")
+        folder.mkdir(parents=True, exist_ok=True)
+        (folder / K.RF_DETR_TRAINED_ON).write_text("a.png\nb.png\n", encoding="utf-8")
+        return str(folder)
+
+    monkeypatch.setitem(sys.modules, "huggingface_hub", SimpleNamespace(snapshot_download=snapshot_download))
+    rf_detr_model.reset_rf_detr_runtime()
+    yield calls
+    rf_detr_model.reset_rf_detr_runtime()
+
+
+def test_a_hugging_face_model_id_is_downloaded_once_with_safe_files_only(fake_hub: list[dict], tmp_path: Path) -> None:
+    """``owner/name[@revision]`` is a Hub model: downloaded once per process (the stamp and the weights are of one
+    download), only safetensors and text files (no pickles: AGENTS.md); its training list reads as a folder's."""
+    folder = rf_detr_model.model_folder("someone/atlas-rf-detr@v2")
+    assert rf_detr_model.model_folder("someone/atlas-rf-detr@v2") == folder and len(fake_hub) == 1
+    assert fake_hub[0] == {"repo": "someone/atlas-rf-detr", "revision": "v2", "patterns": list(K.RF_DETR_HUB_FILES)}
+    assert rf_detr_model.trained_on("someone/atlas-rf-detr@v2") == {"a.png", "b.png"}
+    assert rf_detr_model.model_folder("someone/other").name == "main"  # no revision: the default branch
+
+
+def test_a_local_folder_is_never_taken_for_a_hub_id(fake_hub: list[dict], tmp_path: Path, monkeypatch) -> None:
+    """An existing folder is used as it is, even one named like an id; a path that is no id (absolute, relative with
+    more parts, a drive letter) is a folder that is not there (yet), never a download."""
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / "runs" / "best").mkdir(parents=True)
+    assert rf_detr_model.model_folder("runs/best") == Path("runs/best")
+    for path in (str(tmp_path / "missing"), "runs/rf-detr-small/best", "C:/models/best", "./a/b", "~/a"):
+        assert rf_detr_model.trained_on(path) is None
+    assert fake_hub == []
+
+
+def test_a_hub_model_that_cannot_be_downloaded_says_so(monkeypatch: pytest.MonkeyPatch) -> None:
+    import sys
+
+    def offline(repo_id, **kwargs):
+        raise OSError("no network")
+
+    monkeypatch.setitem(sys.modules, "huggingface_hub", SimpleNamespace(snapshot_download=offline))
+    rf_detr_model.reset_rf_detr_runtime()
+    with pytest.raises(RuntimeError, match="no local folder someone/model"):
+        rf_detr_model.model_folder("someone/model")

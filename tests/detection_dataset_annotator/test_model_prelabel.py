@@ -1,0 +1,365 @@
+"""Model pre-labels (tools/detection_dataset_annotator/model_prelabel.py): an RF-DETR checkpoint relabels the classical
+boxes, on unreviewed training screenshots only."""
+
+from __future__ import annotations
+
+from pathlib import Path
+from typing import Any
+
+import numpy as np
+import pytest
+
+from grand_project.detect import constants as DK
+from tools.detection_dataset_annotator import ReviewStore, image_key, model_prelabel
+from tools.detection_dataset_annotator import constants as K
+from tools.detection_dataset_annotator.model_prelabel import eligible, merge, model_annotations, snap
+
+
+def _box(label: str, x: float, y: float, size: float = 38.7, source: str = "classical", **fields: Any) -> dict:
+    return {"label": label, "bbox": [x - size / 2, y - size / 2, size, size], "source": source, **fields}
+
+
+def _listed(folder: Path) -> Path:
+    """A model folder that lists no training screenshot of the store (an empty ``RF_DETR_TRAINED_ON``)."""
+    folder.mkdir(exist_ok=True)
+    (folder / DK.RF_DETR_TRAINED_ON).write_text("", encoding="utf-8")
+    return folder
+
+
+def _model(label: str, x: float, y: float, size: float = 38.7) -> dict:
+    return _box(label, x, y, size, DK.RF_DETR_SOURCE_MODEL_GUESS, score=0.9)
+
+
+def test_model_boxes_are_snapped_to_the_box_rules() -> None:
+    """The box rules' sizes, centred on the model's middle (a tower standing on its bottom; a hall as found), and
+    scaled back to a 4K screenshot's pixels."""
+    found = [
+        {"label": "map_node_grass", "family": "node", "score": 0.9, "box": [98.0, 99.0, 132.0, 131.0]},
+        {"label": "tower", "family": "tower", "score": 0.8, "box": [500.0, 100.0, 560.0, 300.0]},
+        {"label": "hall", "family": "hall", "score": 0.7, "box": [800.0, 400.0, 900.0, 520.0]},
+    ]
+    node, tower, hall = model_annotations(found, (1920, 1080), (3840, 2160))
+    half = DK.RF_DETR_MAP_BOX / 2
+    assert node["bbox"] == pytest.approx(
+        [2 * (115 - half), 2 * (115 - half), 2 * DK.RF_DETR_MAP_BOX, 2 * DK.RF_DETR_MAP_BOX]
+    )
+    assert tower["bbox"][1] + tower["bbox"][3] == pytest.approx(600.0)  # standing on the model box's bottom (300)
+    assert hall["bbox"] == pytest.approx([1600.0, 800.0, 200.0, 240.0])
+    assert {box["source"] for box in (node, tower, hall)} == {DK.RF_DETR_SOURCE_MODEL_GUESS}
+    assert snap({"family": "icon", "box": [-50.0, -50.0, -10.0, -10.0]}, 1920, 1080) is None  # off the screenshot
+
+
+def test_the_model_relabels_the_classical_boxes() -> None:
+    """Each classical box takes the class of the model's box it matches (a changed one dotted); a hand truth's box
+    keeps its class, a box the model misses stays, and a box only the model found is not added."""
+    classical = [
+        _box("map_node_grass", 100, 100),  # the model agrees
+        _box("map_node_grass", 300, 300, source="biome_guess"),  # the model says Vaal city area
+        _box("map_node_ezomyte", 500, 500, source=K.ANNOTATOR_TRUTH_SOURCE),  # a hand truth: kept
+        _box("icon", 700, 700, 34),  # the model misses it: kept
+    ]
+    model = [
+        _model("map_node_grass", 102, 100),
+        _model("map_node_vaal", 300, 300),
+        _model("map_node_vaal", 500, 500),
+        _model("tower", 900, 100, 80),  # only the model has it
+    ]
+    relabelled = merge(classical, model)
+    assert [(b["label"], b["source"]) for b in relabelled] == [
+        ("map_node_grass", DK.RF_DETR_SOURCE_MODEL),
+        ("map_node_vaal", DK.RF_DETR_SOURCE_MODEL_GUESS),
+        ("map_node_ezomyte", K.ANNOTATOR_TRUTH_SOURCE),
+        ("icon", "classical"),
+    ]
+    assert relabelled[0]["bbox"] == classical[0]["bbox"]  # the classical box stays where it was
+
+
+def _item(split: str, *, reviewed: bool = False, source: str = "a.png", **fields: Any) -> dict[str, Any]:
+    return {"detected": True, "reviewed": reviewed, "split": split, "source": source, "annotations": [], **fields}
+
+
+def test_only_unreviewed_training_screenshots_get_model_pre_labels() -> None:
+    """Held-out screenshots never do (a review leaning on the model would score the model on its own answers), nor
+    reviewed ones, ones a reviewer drew in, ones pre-labelled already, ones a hand truth seeded (a truth-seeded round
+    trusts their boxes), or the model's own training screenshots."""
+    items = [
+        ("train", _item("train")),
+        ("validation", _item("validation")),
+        ("test", _item("test")),
+        ("reviewed", _item("train", reviewed=True)),
+        ("drawn", _item("train", annotations=[{"label": "icon", "source": K.ANNOTATOR_MANUAL_SOURCE}])),
+        ("done", _item("train", **{K.ANNOTATOR_PRELABEL_FIELD: {"source": "rf_detr"}})),
+        ("trained", _item("train", source="seen.png")),
+        ("seeded", _item("train", **{K.ANNOTATOR_TRUTH_MARK: "atlas_test_data/fr-atlas/truth.json"})),
+    ]
+    assert [key for key, _item in eligible(items, {"seen.png"})] == ["train"]
+
+
+def test_a_pass_pre_labels_the_training_screenshots_and_records_it(
+    tmp_path: Path, review_store: ReviewStore, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Each eligible screenshot gets the merged boxes as its new pre-labels and records the pass, a validation
+    screenshot is left alone, and one a reviewer edited while the model ran keeps the edit."""
+    folder = tmp_path / "shots"
+    folder.mkdir()
+    paths = [folder / f"{name}.png" for name in ("one", "two", "held", "busy")]
+    for index, path in enumerate(paths):
+        path.write_bytes(bytes([index]))
+    review_store.add_images(paths)
+    for path in paths:
+        result = {"width": 1920, "height": 1080, "annotations": [_box("map_node_grass", 300, 300)]}
+        review_store.record_detection(image_key(path), result, force=False)
+    keys = [image_key(path) for path in paths]
+    review_store.claim_splits({keys[0]: "train", keys[1]: "train", keys[2]: "validation", keys[3]: "train"})
+    found = [{"label": "map_node_vaal", "family": "node", "score": 0.9, "box": [281.0, 281.0, 319.0, 319.0]}]
+
+    def predict(detector, path, detected=None):
+        if path == paths[3]:  # the reviewer relabels this one while the model looks at it
+            review_store.save_review(keys[3], 1, annotations=[_box("map_node_water", 300, 300, id="b0")])
+        return found, (1920, 1080), (1920, 1080)
+
+    monkeypatch.setattr(model_prelabel, "predict", predict)
+    monkeypatch.setattr("grand_project.detect.rf_detr_model.load_detector", lambda model_dir: {})
+    model_dir = tmp_path / "model"
+    _listed(model_dir)
+    out = review_store.path.parent
+    assert model_prelabel.main(["--model", str(model_dir), "--output-dir", str(out)]) == 0
+    one, two, held, busy = (review_store.item(key) for key in keys)
+    assert [b["label"] for b in one["annotations"]] == ["map_node_vaal"]
+    assert review_store.prelabels(image_key(paths[0]))[0]["label"] == "map_node_vaal"  # the new snapshot
+    assert one[K.ANNOTATOR_PRELABEL_FIELD]["source"] == DK.RF_DETR_SOURCE_MODEL
+    assert [b["label"] for b in two["annotations"]] == ["map_node_vaal"]
+    assert two[K.ANNOTATOR_PRELABEL_FIELD]["source"] == DK.RF_DETR_SOURCE_MODEL
+    assert K.ANNOTATOR_PRELABEL_FIELD not in held
+    assert [b["label"] for b in busy["annotations"]] == ["map_node_water"]  # the review in progress is kept
+    assert K.ANNOTATOR_PRELABEL_FIELD not in busy and review_store.prelabels(keys[3])[0]["label"] == "map_node_grass"
+
+
+def test_without_a_store_nothing_is_eligible_and_nothing_is_made(tmp_path: Path, capsys) -> None:
+    out = tmp_path / "no-store"
+    _listed(tmp_path / "model")
+    assert model_prelabel.main(["--dry-run", "--output-dir", str(out), "--model", str(tmp_path / "model")]) == 0
+    assert "0 screenshots eligible" in capsys.readouterr().out and not out.exists()
+
+
+def test_a_screenshot_seeded_while_the_model_looked_keeps_the_truth(
+    tmp_path: Path, review_store: ReviewStore, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Truth seeding saved its boxes and mark while the model looked at the screenshot: the model's boxes, made from
+    the older ones, are not saved, and the screenshot gets no model mark."""
+    path = tmp_path / "one.png"
+    path.write_bytes(b"1")
+    review_store.add_images([path])
+    key = image_key(path)
+    result = {"width": 1920, "height": 1080, "annotations": [_box("map_node_grass", 300, 300)]}
+    review_store.record_detection(key, result, force=False)
+    review_store.claim_splits({key: "train"})
+    seeded = [_box("map_node_vaal", 300, 300, source=K.ANNOTATOR_TRUTH_SOURCE, id="b0")]
+
+    def predict(detector, path, detected=None):
+        mark = {K.ANNOTATOR_TRUTH_MARK: "truth.json"}
+        assert review_store.save_review(key, 1, annotations=seeded, extra=mark, prelabel=True, untouched=True)
+        return [], (1920, 1080), (1920, 1080)
+
+    monkeypatch.setattr(model_prelabel, "predict", predict)
+    monkeypatch.setattr("grand_project.detect.rf_detr_model.load_detector", lambda model_dir: {})
+    _listed(tmp_path / "model")
+    out = review_store.path.parent
+    assert model_prelabel.main(["--model", str(tmp_path / "model"), "--output-dir", str(out)]) == 0
+    item = review_store.item(key)
+    assert [(b["label"], b["source"]) for b in item["annotations"]] == [("map_node_vaal", K.ANNOTATOR_TRUTH_SOURCE)]
+    assert K.ANNOTATOR_PRELABEL_FIELD not in item
+
+
+def test_a_failed_model_pass_leaves_its_screenshots_eligible(
+    tmp_path: Path, review_store: ReviewStore, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A pass that fails saves nothing: its screenshots stay eligible, and the next pass pre-labels them."""
+    folder = tmp_path / "shots"
+    folder.mkdir()
+    paths = [folder / f"{index}.png" for index in range(2)]
+    for index, path in enumerate(paths):
+        path.write_bytes(bytes([index]))
+    review_store.add_images(paths)
+    for path in paths:
+        result = {"width": 1920, "height": 1080, "annotations": [_box("map_node_grass", 300, 300)]}
+        review_store.record_detection(image_key(path), result, force=False)
+    keys = [image_key(path) for path in paths]
+    review_store.claim_splits({key: "train" for key in keys})
+    monkeypatch.setattr("grand_project.detect.rf_detr_model.load_detector", lambda model_dir: {})
+
+    def broken(detector, path, detected=None):
+        raise RuntimeError("out of memory")
+
+    monkeypatch.setattr(model_prelabel, "predict", broken)
+    model_dir = tmp_path / "model"
+    _listed(model_dir)
+    out = review_store.path.parent
+    command = ["--model", str(model_dir), "--output-dir", str(out)]
+    with pytest.raises(RuntimeError, match="out of memory"):
+        model_prelabel.main(command)
+    assert all(K.ANNOTATOR_PRELABEL_FIELD not in review_store.item(key) for key in keys)  # still eligible
+
+    found = [{"label": "map_node_vaal", "family": "node", "score": 0.9, "box": [281.0, 281.0, 319.0, 319.0]}]
+    monkeypatch.setattr(
+        model_prelabel, "predict", lambda detector, path, detected=None: (found, (1920, 1080), (1920, 1080))
+    )
+    assert model_prelabel.main(command) == 0
+    for key in keys:
+        assert review_store.item(key)[K.ANNOTATOR_PRELABEL_FIELD]["source"] == DK.RF_DETR_SOURCE_MODEL
+        assert [b["label"] for b in review_store.item(key)["annotations"]] == ["map_node_vaal"]
+
+
+def test_a_limit_counts_the_screenshots_pre_labelled_not_the_ones_tried(
+    tmp_path: Path, review_store: ReviewStore, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """--limit 1: the first screenshot cannot be read (tried once, left eligible); the pass goes on to the next and
+    stops after the one saved (CodeRabbit)."""
+    folder = tmp_path / "shots"
+    folder.mkdir()
+    paths = [folder / f"{index}.png" for index in range(3)]
+    for index, path in enumerate(paths):
+        path.write_bytes(bytes([index]))
+    review_store.add_images(paths)
+    for path in paths:
+        result = {"width": 1920, "height": 1080, "annotations": [_box("map_node_grass", 300, 300)]}
+        review_store.record_detection(image_key(path), result, force=False)
+    keys = [image_key(path) for path in paths]
+    review_store.claim_splits({key: "train" for key in keys})
+    monkeypatch.setattr("grand_project.detect.rf_detr_model.load_detector", lambda model_dir: {})
+    tried = []
+    found = [{"label": "map_node_vaal", "family": "node", "score": 0.9, "box": [281.0, 281.0, 319.0, 319.0]}]
+
+    def predict(detector, path, detected=None):
+        tried.append(Path(path).name)
+        if Path(path).name == "0.png":
+            raise model_prelabel.UnreadableScreenshot("cannot be read")
+        return found, (1920, 1080), (1920, 1080)
+
+    monkeypatch.setattr(model_prelabel, "predict", predict)
+    _listed(tmp_path / "model")
+    out = review_store.path.parent
+    command = ["--model", str(tmp_path / "model"), "--output-dir", str(out), "--limit", "1"]
+    assert model_prelabel.main(command) == 0
+    assert tried == ["0.png", "1.png"]
+    assert [K.ANNOTATOR_PRELABEL_FIELD in review_store.item(key) for key in keys] == [False, True, False]
+
+
+def test_a_negative_limit_is_refused(tmp_path: Path) -> None:
+    with pytest.raises(SystemExit):
+        model_prelabel.main(["--dry-run", "--output-dir", str(tmp_path), "--limit", "-1"])
+
+
+def test_a_model_swapped_while_the_pass_ran_stops_it(
+    tmp_path: Path, review_store: ReviewStore, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The weights loaded must be the ones hashed and whose training screenshots were left out: a new best/ swapped in
+    meanwhile stops the pass before it saves anything."""
+    path = tmp_path / "a.png"
+    path.write_bytes(b"a")
+    review_store.add_images([path])
+    result = {"width": 1920, "height": 1080, "annotations": [_box("map_node_grass", 300, 300)]}
+    review_store.record_detection(image_key(path), result, force=False)
+    review_store.claim_splits({image_key(path): "train"})
+    model_dir = tmp_path / "model"
+    _listed(model_dir)
+    (model_dir / "model.safetensors").write_bytes(b"weights 1")
+    (model_dir / DK.RF_DETR_TRAINED_ON).write_text("", encoding="utf-8")  # (it trained on nothing in the store)
+
+    def swapped(folder):
+        (model_dir / "model.safetensors").write_bytes(b"weights 2")  # a training run kept a new best meanwhile
+        return {}
+
+    monkeypatch.setattr("grand_project.detect.rf_detr_model.load_detector", swapped)
+    monkeypatch.setattr(model_prelabel, "predict", lambda *a: pytest.fail("predicted with another model's weights"))
+    out = review_store.path.parent
+    with pytest.raises(SystemExit, match="changed while this pass ran"):
+        model_prelabel.main(["--model", str(model_dir), "--output-dir", str(out)])
+    assert K.ANNOTATOR_PRELABEL_FIELD not in review_store.item(image_key(path))
+
+
+def test_a_named_classical_icon_keeps_its_name_where_the_model_finds_its_icon() -> None:
+    """The model has one icon class: a named classical icon (named icons on) it agrees with keeps its name and is no
+    longer a guess; a class the model really changes is still taken (and checked first)."""
+    classical = [_box("icon_mapboss", 100, 100, 34), _box("map_node_grass", 400, 400)]
+    model = [_model("icon", 101, 100, 34), _model("map_node_desert", 400, 401)]
+    assert [(b["label"], b["source"]) for b in merge(classical, model)] == [
+        ("icon_mapboss", DK.RF_DETR_SOURCE_MODEL),
+        ("map_node_desert", DK.RF_DETR_SOURCE_MODEL_GUESS),
+    ]
+
+
+def test_a_dry_run_opens_the_store_read_only(tmp_path: Path, review_store: ReviewStore) -> None:
+    """A dry run changes nothing, not even the store's journal mode (a writable open sets WAL: CodeRabbit)."""
+    import sqlite3
+
+    path = tmp_path / "a.png"
+    path.write_bytes(b"a")
+    review_store.add_images([path])
+    review_store.record_detection(image_key(path), {"width": 1920, "height": 1080, "annotations": []}, force=False)
+    review_store.claim_splits({image_key(path): "train"})
+    review_store.close()
+    with sqlite3.connect(review_store.path) as db:
+        db.execute("PRAGMA journal_mode = DELETE")
+    out = review_store.path.parent
+    _listed(tmp_path / "model")
+    assert model_prelabel.main(["--dry-run", "--output-dir", str(out), "--model", str(tmp_path / "model")]) == 0
+    with sqlite3.connect(review_store.path) as db:
+        assert db.execute("PRAGMA journal_mode").fetchone()[0] == "delete"
+
+
+@pytest.mark.parametrize("now", ["other bytes", None])
+def test_a_screenshot_changed_or_unreadable_since_its_detection_gets_no_model_boxes(
+    now: str | None, tmp_path: Path, review_store: ReviewStore, monkeypatch: pytest.MonkeyPatch, capsys
+) -> None:
+    """A file that is not the bytes detected (replaced since, also by one of its size): its boxes and the model's
+    would frame two pictures; one that cannot be read: said, left eligible for the next pass, the pass goes on
+    (CodeRabbit). Checked on the read the model's prediction makes."""
+    from tools.detection_dataset_annotator import detection
+
+    path = tmp_path / "a.png"
+    path.write_bytes(b"a")
+    review_store.add_images([path])
+    key = image_key(path)
+    result = {"width": 1920, "height": 1080, K.ANNOTATOR_DETECTED_SHA: "detected bytes",
+              "annotations": [_box("map_node_grass", 300, 300)]}  # fmt: skip
+    review_store.record_detection(key, result, force=False)
+    review_store.claim_splits({key: "train"})
+    read = None if now is None else (np.zeros((1080, 1920, 3), np.uint8), now)
+    monkeypatch.setattr(detection, "read_with_digest", lambda path: read)
+    monkeypatch.setattr("grand_project.detect.rf_detr_model.load_detector", lambda model_dir: {})
+    monkeypatch.setattr(
+        "grand_project.detect.rf_detr_model.predict_tiles", lambda *a, **k: pytest.fail("predicted a changed file")
+    )
+    model_dir = tmp_path / "model"
+    _listed(model_dir)
+    out = review_store.path.parent
+    assert model_prelabel.main(["--model", str(model_dir), "--output-dir", str(out)]) == 0
+    said = capsys.readouterr().out
+    assert ("changed since its detection" if now else "Could not read image") in said and "(left)" in said
+    item = review_store.item(key)
+    assert [b["label"] for b in item["annotations"]] == ["map_node_grass"]
+    assert K.ANNOTATOR_PRELABEL_FIELD not in item  # still eligible
+
+
+def test_weights_without_a_list_of_their_training_screenshots_stop_the_pass(
+    tmp_path: Path, review_store: ReviewStore, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A missing list is not an empty one: nothing is known of what the model trained on, and its own training
+    screenshots would be pre-labelled with what they were trained to say. The pass stops before it saves anything
+    (CodeRabbit)."""
+    path = tmp_path / "a.png"
+    path.write_bytes(b"a")
+    review_store.add_images([path])
+    review_store.record_detection(
+        image_key(path), {"width": 1920, "height": 1080, "annotations": [_box("map_node_grass", 300, 300)]}, force=False
+    )
+    review_store.claim_splits({image_key(path): "train"})
+    model_dir = tmp_path / "model"
+    model_dir.mkdir()
+    (model_dir / "model.safetensors").write_bytes(b"weights")
+    out = review_store.path.parent
+    with pytest.raises(SystemExit, match="lists no training screenshots"):
+        model_prelabel.main(["--model", str(model_dir), "--output-dir", str(out)])
+    (model_dir / DK.RF_DETR_TRAINED_ON).write_text("", encoding="utf-8")  # an empty list is a record: no stop
+    assert model_prelabel.main(["--dry-run", "--model", str(model_dir), "--output-dir", str(out)]) == 0

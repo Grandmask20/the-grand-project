@@ -185,11 +185,13 @@ def edge_case(rng, K: Known):
     return None
 
 
-def test_waiting_islands_join_and_decoys_stay_out(crawl, rng, runs, seed, request, tmp_path):
+def test_waiting_islands_join_and_decoys_stay_out(crawl, rng, runs, seed, request, tmp_path, copy_cache):
     """Bridge, two-island and edge cases: islands join once connected, decoys never do."""
     cached = request.config.getoption("--cached")
     on_disk = {p.stem: p for p in crawl.folder.glob("*.png")}
-    cache = crawl.cache
+    # a copy of the saved detections: another detector (pytest --rf-detr) detects into it, not the committed atlas
+    cache = tmp_path / "cache"
+    copy_cache([path for name, path in on_disk.items() if name in crawl.pos], crawl.cache, cache)
     K = Known(crawl.atlas, on_disk, cache)
     print(f"{len(K.names)} screenshots ({'saved detections' if cached else 'detected as new'})")
     failed = []

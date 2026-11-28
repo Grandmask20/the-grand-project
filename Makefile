@@ -1,5 +1,5 @@
 ########## PROJECT RECIPES ##########
-.PHONY: install lint test test_all coverage evaluate_detector pr_precheck page page_test page_coverage e2e
+.PHONY: install install_training install_annotator annotate_dataset build_store export_dataset lint test test_all coverage evaluate_detector prepare_rf_detr_data train_rf_detr pr_precheck page page_test page_coverage e2e
 
 # GNU Make exposes OS=Windows_NT on Windows. On Unix-like systems, uname
 # distinguishes macOS (Darwin) from Linux; both use the same venv layout.
@@ -23,8 +23,41 @@ endif
 PYTHON ?= $(if $(wildcard $(VENV_PYTHON)),$(VENV_PYTHON),$(PYTHON_DEFAULT))
 RUFF ?= $(if $(filter windows,$(PLATFORM)),$(VENV_BIN)/ruff.exe,$(VENV_BIN)/ruff)
 
+# The training data is the dataset annotator's export (its screenshots, with the split ledger's splits):
+# make export_dataset (or the page's Export button) first. Reviewed screenshots train; a bootstrap round on the
+# truth-seeded ones too: make export_dataset EXPORT_OPTIONS=--unreviewed, then RF_DETR_OPTIONS=--truth-seeded.
+RF_DETR_OUTPUT_DIR ?= runs/rf-detr-small
+RF_DETR_DATASET_DIR ?= $(RF_DETR_OUTPUT_DIR)/dataset
+RF_DETR_OPTIONS ?=
+RF_DETR_ANNOTATOR_MANIFEST ?= tools/detection_dataset_annotator/detection-dataset/manifest.json
+EXPORT_OPTIONS ?=
+
 install:
 	$(PYTHON) -m pip install -e ".[dev]"
+
+install_training:
+	$(PYTHON) -m pip install -e ".[training]"
+
+# the Streamlit detection dataset annotator (tools/detection_dataset_annotator)
+install_annotator:
+	$(PYTHON) -m pip install -e ".[annotator]"
+
+annotate_dataset:
+	$(PYTHON) -m tools.detection_dataset_annotator
+
+# the annotator's store brought up to date in one run (discover, remove copies, detect, seed the biome truths)
+build_store:
+	$(PYTHON) -m tools.detection_dataset_annotator.build_store
+
+# the store as the RF-DETR dataset (the page's Export button); EXPORT_OPTIONS=--unreviewed for truth-seeded rounds
+export_dataset:
+	$(PYTHON) -m tools.detection_dataset_annotator.export $(EXPORT_OPTIONS)
+
+prepare_rf_detr_data:
+	$(PYTHON) -m tools.train_rf_detr --annotator-manifest "$(RF_DETR_ANNOTATOR_MANIFEST)" --output-dir "$(RF_DETR_OUTPUT_DIR)" --dataset-dir "$(RF_DETR_DATASET_DIR)" --dataset-only --overwrite-dataset $(RF_DETR_OPTIONS)
+
+train_rf_detr: prepare_rf_detr_data
+	$(PYTHON) -m tools.train_rf_detr --output-dir "$(RF_DETR_OUTPUT_DIR)" --dataset-dir "$(RF_DETR_DATASET_DIR)" --reuse-dataset $(RF_DETR_OPTIONS)
 
 lint:
 	$(RUFF) check grand_project tools tests --fix --config pyproject.toml

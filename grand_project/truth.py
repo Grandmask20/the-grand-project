@@ -649,7 +649,8 @@ def cmd_save(a) -> int:
                 B.append({"id": mid, "name": nm, "x": m["x"], "y": m["y"], "flags": ["from_map_tile"]})
     row_of = {nm: r for r, nm in key["rows"].items()}
     for bid, b in key["badges"].items():
-        name, fl = n["badges"].get(bid, (n["rows"].get(row_of[b["detector"]], b["detector"]), []))
+        # (a call no sheet row has: truth_key.json's B55 / B362 are ArcaneHordes, its rows still ArcaneOrProsperous)
+        name, fl = n["badges"].get(bid, (n["rows"].get(row_of.get(b["detector"]), b["detector"]), []))
         if name.lower() != "none":
             truth[b["shot"]]["badges"].append({"id": bid, "name": name, "x": b["x"], "y": b["y"], "flags": fl})
     res = {v.pop("name"): v for v in truth.values()}

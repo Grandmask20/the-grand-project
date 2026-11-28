@@ -3,13 +3,15 @@ import { merge } from "@/hooks/app/UseSettings";
 import { state } from "@/test/Fixtures";
 
 describe("merge", () => {
-	it("merges layers, style and page settings, and replaces the rest", () => {
+	it("merges layers, style, page and detector settings, and replaces the rest", () => {
 		const s = merge(state.settings, {
 			layers: { Removed: true },
 			style: { path_width: 3 },
 			ui: { background: "vector" },
+			detection: { workers: 2 },
 			near_only: true,
 		});
+		expect(s.detection).toEqual({ ...state.settings.detection, workers: 2 });
 		expect(s.layers).toMatchObject({ Terrain: true, Removed: true });
 		expect(s.style.path_width).toBe(3);
 		expect(s.style.path_style).toBe("solid");

@@ -98,7 +98,7 @@ export function usePreviewSettings() {
 
 /** Settings with a change applied (as the app does). */
 export function merge(s: UiSettings, c: SettingsChange): UiSettings {
-	const { style, ui, layers, ...rest } = c;
+	const { style, ui, layers, detection, ...rest } = c;
 	const { reset, ...changed } = style ?? {};
 	const nextStyle = (reset ? { ...s.style } : { ...s.style, ...changed }) as Style;
 	return {
@@ -107,5 +107,6 @@ export function merge(s: UiSettings, c: SettingsChange): UiSettings {
 		layers: { ...s.layers, ...(layers ?? {}) },
 		style: nextStyle,
 		ui: { ...s.ui, ...(ui ?? {}) },
+		detection: { ...s.detection, ...(detection ?? {}) },
 	};
 }

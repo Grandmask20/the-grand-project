@@ -43,6 +43,7 @@ describe("PagedTab", () => {
 		};
 		expect(home("auto")).toEqual(["atlases", "auto"]);
 		expect(home("route")).toEqual(["bookmarks", "route"]);
+		expect(home("experimental")).toEqual(["log", "experimental"]);
 		expect(home("find")).toEqual(["find", undefined]);
 	});
 });
