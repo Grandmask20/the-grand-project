@@ -238,3 +238,20 @@ def test_a_missing_store_is_named_and_not_made(tmp_path: Path, capsys) -> None:
     assert main(["--output-dir", str(out)]) == 1
     assert "no annotator store at" in capsys.readouterr().out
     assert not out.exists()
+
+
+def test_an_icon_the_naming_step_drops_never_takes_a_neighbours_name(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Ordinary results are their own input's (the same place): a rejected icon next to a named one stays
+    unidentified; a special template found at a place of its own names the icon near it (CodeRabbit)."""
+    monkeypatch.setattr(badges, "naming_book", lambda: {"names": [], "F": np.zeros((0, 0))})
+    icons = [{"name": "Unidentified", "x": 100.0, "y": 100.0}, {"name": "Unidentified", "x": 120.0, "y": 100.0},
+             {"name": "Unidentified", "x": 500.0, "y": 500.0}]  # fmt: skip
+
+    def naming(img, found, book, influence_min):
+        kept = {**found[1], "name": "Delirium"}  # the first (rejected) is dropped; the second is named
+        special = {"x": 503.0, "y": 500.0, "name": "Breach", "score": 1.0}  # a template's own centre, near the third
+        return [special, kept]
+
+    monkeypatch.setattr(badges, "name_found_icons", naming)
+    score_nodes.name_icons(np.zeros((1080, 1920, 3), np.uint8), icons)
+    assert [icon["name"] for icon in icons] == ["Unidentified", "Delirium", "Breach"]

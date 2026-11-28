@@ -52,9 +52,17 @@ def name_icons(img: np.ndarray, icons: list[dict[str, Any]]) -> None:
     if not unnamed:
         return
     named = name_found_icons(img, unnamed, naming_book(), influence_min=None)
+    # an ordinary result is its input's own (the same place); one a naming step dropped has none, and must not take a
+    # neighbour's name. Only the special templates (own rims) are found at a place of their own, and replace the icon
+    # near them
+    at = {(icon["x"], icon["y"]) for icon in unnamed}
+    ordinary = {(n["x"], n["y"]): n for n in named if (n["x"], n["y"]) in at}
+    special = [n for n in named if (n["x"], n["y"]) not in at]
     for icon in unnamed:
-        near = [n for n in named if np.hypot(n["x"] - icon["x"], n["y"] - icon["y"]) <= DK.BADGE_NMS]
-        best = min(near, key=lambda n: np.hypot(n["x"] - icon["x"], n["y"] - icon["y"]), default=None)
+        best = ordinary.get((icon["x"], icon["y"]))
+        if best is None:
+            near = [n for n in special if np.hypot(n["x"] - icon["x"], n["y"] - icon["y"]) <= DK.BADGE_NMS]
+            best = min(near, key=lambda n: np.hypot(n["x"] - icon["x"], n["y"] - icon["y"]), default=None)
         icon["name"] = best["name"] if best is not None else "Unidentified"
 
 

@@ -55,7 +55,8 @@ def test_files_rewritten_from_several_threads_at_once_are_never_read_half_writte
     reading = sys.platform != "win32"
     start = threading.Barrier(writers + reading)
     done = threading.Event()
-    seen: list[str] = []
+    reads: list[int] = []  # how many files were read (one entry per observation would hold a megabyte of text each)
+    torn: list[str] = []  # the beginning of each observation that was no whole text, as the evidence
     failed: list[BaseException] = []
 
     def write(w: int) -> None:
@@ -69,9 +70,17 @@ def test_files_rewritten_from_several_threads_at_once_are_never_read_half_writte
     def read() -> None:
         try:
             start.wait(5)
-            while not done.is_set():
+            count = 0
+            last = False
+            while not last:
+                last = done.is_set()  # one more read after the writers are done: the file is there by then
                 with contextlib.suppress(FileNotFoundError):  # (none written yet)
-                    seen.append(f.read_text())
+                    text = f.read_text()
+                    count += 1
+                    # checked as it is read: a whole text is one of the texts written, whichever it is
+                    if texts.get(text.split(":", 1)[0]) != text and len(torn) < 3:
+                        torn.append(text[:80])
+            reads.append(count)
         except BaseException as exc:  # a reader's error fails the test too (as a writer's)
             failed.append(exc)
 
@@ -91,7 +100,8 @@ def test_files_rewritten_from_several_threads_at_once_are_never_read_half_writte
     assert not (reader and reader.is_alive()), "the reader did not stop"
     assert not failed, failed
     assert f.read_text() in texts.values()
-    assert all(text == texts[text.split(":", 1)[0]] for text in seen), "a reader saw half a file"
+    assert not torn, f"a reader saw half a file: {torn}"
+    assert not reading or (reads and reads[0] > 0), "the reader never read"
     assert [p.name for p in tmp_path.iterdir()] == ["atlas.json"]  # no temporary file left
 
 

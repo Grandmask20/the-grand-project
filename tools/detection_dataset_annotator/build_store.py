@@ -139,10 +139,26 @@ def build(
 
 
 def _copy_store(source: Path, target: Path) -> None:
-    """A whole copy of a store file, whatever its layout (SQLite's online backup; the source is only read)."""
+    """A whole copy of a store file, whatever its layout (SQLite's online backup; the source is only read).
+
+    ``target`` is claimed exclusively first (as ``ReviewStore.backup`` does): SQLite would open a file that is there
+    and write over it, so a name taken since it was chosen is refused.
+
+    Raises:
+        FileExistsError: ``target`` exists.
+    """
+    with open(target, "xb"):
+        pass
     uri = f"{source.resolve().as_uri()}?mode=ro"
-    with contextlib.closing(sqlite3.connect(uri, uri=True)) as db, contextlib.closing(sqlite3.connect(target)) as copy:
-        db.backup(copy)
+    try:
+        with (
+            contextlib.closing(sqlite3.connect(uri, uri=True)) as db,
+            contextlib.closing(sqlite3.connect(target)) as copy,
+        ):
+            db.backup(copy)
+    except BaseException:
+        target.unlink(missing_ok=True)  # this call made it: no half a backup left under the name
+        raise
 
 
 def _upgrade(
@@ -163,8 +179,13 @@ def _upgrade(
         copied = upgrade_layout(copy)
         say(f"  a run would back it up and copy every row into the new layout ({_rows(copied)}); planned from that")
         return False, copy
-    backup = _backup_path(output_dir)
-    _copy_store(store_path, backup)
+    while True:
+        backup = _backup_path(output_dir)
+        try:
+            _copy_store(store_path, backup)
+            break
+        except FileExistsError:  # the name was taken since it was chosen: another one, that file left as it is
+            continue
     say(f"  backed up: {relative_source(backup)}")
     copied = upgrade_layout(store_path)
     say(f"  every row copied into the new layout ({_rows(copied)})")

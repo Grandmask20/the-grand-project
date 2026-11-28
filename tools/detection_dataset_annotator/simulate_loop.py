@@ -258,6 +258,29 @@ def held_out(
     return out
 
 
+def check_truth_digest(manifest: Mapping[str, Any], atlas: str, truth: Truth) -> None:
+    """Stop when a screenshot of the atlas this truth seeded was seeded from another version of the truth file than the
+    one loaded now (``ANNOTATOR_TRUTH_DIGEST``), or from one that kept no digest (seeded before it did): its boxes and
+    the maps the scores are made with would be of two truths. Seed it again with the truth (``truth_seed``) and export.
+
+    Raises:
+        SystemExit: naming the screenshots.
+    """
+    stale = [
+        str(row.get("source"))
+        for row in manifest.get("images", [])
+        if _posix(str(row.get("source", ""))).is_relative_to(_posix(atlas))
+        and row.get(K.ANNOTATOR_TRUTH_MARK)
+        and _posix(str(row[K.ANNOTATOR_TRUTH_MARK])) == _posix(truth.source)
+        and row.get(K.ANNOTATOR_TRUTH_DIGEST) != truth.digest
+    ]
+    if stale:
+        raise SystemExit(
+            f"{len(stale)} screenshots were seeded from another version of {truth.source} (or from one that kept no "
+            f"digest): {stale[:3]}: seed them again with the truth now (truth_seed) and export again"
+        )
+
+
 def train_round(
     args: argparse.Namespace,
     round_dir: Path,
@@ -463,7 +486,10 @@ def _score_splits(
             },
         }
     if shots and not any(split["screenshots"] for split in out.values()):
-        raise SystemExit("no held-out screenshot could be scored (every one changed since its detection): rerun them")
+        raise SystemExit(
+            "no held-out screenshot could be scored (each one is named above: unreadable, changed since its export or "
+            "detection, or with classical boxes of other bytes): rerun their detection or export again"
+        )
     return out
 
 
@@ -522,6 +548,7 @@ def main(argv: list[str] | None = None) -> int:
     manifest_sha = hashlib.sha256(manifest_bytes).hexdigest()
     manifest = json.loads(manifest_bytes)
     truth = Truth.load(resolve_path(args.truth))
+    check_truth_digest(manifest, args.atlas, truth)  # before anything is scored or trained
     shots = held_out(manifest, args.atlas, args.manifest.parent, truth.source)
     others = [
         str(row["source"])
@@ -598,6 +625,7 @@ def main(argv: list[str] | None = None) -> int:
 __all__ = [
     "check_manifest",
     "check_round",
+    "check_truth_digest",
     "city_area",
     "Baseline",
     "classical_boxes",

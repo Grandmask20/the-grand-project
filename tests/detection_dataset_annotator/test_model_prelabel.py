@@ -264,9 +264,14 @@ def test_the_store_and_the_ledger_are_read_under_the_ledgers_lock(
 
     monkeypatch.setattr(split_ledger, "_ledger_lock", lock)
     real_items = ReviewStore.items
-    monkeypatch.setattr(
-        ReviewStore, "items", lambda self, **k: seen.append(("items", held["now"])) or real_items(self, **k)
-    )
+
+    def items(self, **kwargs):
+        # a generator: the lock is looked at when the iteration begins, which is when the database is read (calling a
+        # generator function only makes the iterator)
+        seen.append(("items", held["now"]))
+        yield from real_items(self, **kwargs)
+
+    monkeypatch.setattr(ReviewStore, "items", items)
     monkeypatch.setattr(model_prelabel, "_blocks", lambda items: seen.append(("blocks", held["now"])) or {})
     out = review_store.path.parent
     assert model_prelabel.main(["--dry-run", "--output-dir", str(out), "--model", str(tmp_path / "model")]) == 0
@@ -383,6 +388,7 @@ def test_a_model_swapped_while_the_pass_ran_stops_it(
     model_dir = tmp_path / "model"
     model_dir.mkdir()
     (model_dir / "model.safetensors").write_bytes(b"weights 1")
+    (model_dir / DK.RF_DETR_TRAINED_ON).write_text("", encoding="utf-8")  # (it trained on nothing in the store)
 
     def swapped(folder):
         (model_dir / "model.safetensors").write_bytes(b"weights 2")  # a training run kept a new best meanwhile
@@ -459,3 +465,28 @@ def test_a_screenshot_changed_or_unreadable_since_its_detection_gets_no_model_bo
     item = review_store.item(key)
     assert [b["label"] for b in item["annotations"]] == ["map_node_grass"]
     assert K.ANNOTATOR_PRELABEL_FIELD not in item  # still eligible
+
+
+def test_weights_without_a_list_of_their_training_screenshots_stop_the_pass(
+    tmp_path: Path, review_store: ReviewStore, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A missing list is not an empty one: nothing is known of what the model trained on, and its own training
+    screenshots would be pre-labelled with what they were trained to say. The pass stops before it saves an arm
+    (CodeRabbit)."""
+    path = tmp_path / "a.png"
+    path.write_bytes(b"a")
+    review_store.add_images([path])
+    review_store.record_detection(
+        image_key(path), {"width": 1920, "height": 1080, "annotations": [_box("map_node_grass", 300, 300)]}, force=False
+    )
+    review_store.claim_splits({image_key(path): "train"})
+    monkeypatch.setattr(model_prelabel, "_blocks", lambda items: {key: key for key, _item in items})
+    model_dir = tmp_path / "model"
+    model_dir.mkdir()
+    (model_dir / "model.safetensors").write_bytes(b"weights")
+    out = review_store.path.parent
+    with pytest.raises(SystemExit, match="lists no training screenshots"):
+        model_prelabel.main(["--model", str(model_dir), "--output-dir", str(out), "--share", "1"])
+    assert review_store.prelabel_plan() == {}
+    (model_dir / DK.RF_DETR_TRAINED_ON).write_text("", encoding="utf-8")  # an empty list is a record: no stop
+    assert model_prelabel.main(["--dry-run", "--model", str(model_dir), "--output-dir", str(out)]) == 0

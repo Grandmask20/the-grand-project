@@ -64,7 +64,11 @@ def test_a_random_tile_is_native_scale_and_never_mirrored(rng: random.Random, ru
     for _ in range(runs(20)):
         tile, keep, kept = T.random_tile(image, boxes, [0], rng)
         assert tile.shape == (K.RF_DETR_TILE, K.RF_DETR_TILE, 3)
-        assert keep == [0] and kept[0][0] >= 0 and kept[0][0] + kept[0][2] <= K.RF_DETR_TILE + 1e-6  # (a cut box)
+        # the crop is random: it may miss the one box in every attempt (it is then a tile without boxes); a box it
+        # keeps lies in the tile
+        assert keep in ([], [0])
+        if keep:
+            assert kept[0][0] >= 0 and kept[0][0] + kept[0][2] <= K.RF_DETR_TILE + 1e-6  # (a cut box)
         assert tile[:, -10:].mean() > tile[:, :10].mean()
 
 
@@ -126,13 +130,21 @@ def test_brightness_and_contrast_change_and_the_hue_stays(
     image = np.zeros((K.RF_DETR_TILE, K.RF_DETR_TILE, 3), np.uint8)
     image[:] = (60, 140, 50)
     boxes = [[100.0, 100.0, 39.0, 39.0]]
-    changed, draws = 0, runs(20)
-    for _ in range(draws):
+    for _ in range(runs(20)):
         tile, _keep, _kept = T.random_tile(image, boxes, [0], rng)
         hue = cv2.cvtColor(tile[:1, :1], cv2.COLOR_RGB2HSV)[0, 0, 0]
         assert abs(int(hue) - int(cv2.cvtColor(image[:1, :1], cv2.COLOR_RGB2HSV)[0, 0, 0])) <= 2
-        changed += not np.array_equal(tile[0, 0], image[0, 0])
-    assert changed >= 0.75 * draws  # (measured: every one of 500 draws changed it)
+
+    class Fixed:
+        """A random source giving the largest change each range allows: the pixel must change, whatever the seed."""
+
+        def uniform(self, low: float, high: float) -> float:
+            return high
+
+    changed = T._brightness_contrast(image, Fixed())
+    assert not np.array_equal(changed[0, 0], image[0, 0])
+    same = int(cv2.cvtColor(image[:1, :1], cv2.COLOR_RGB2HSV)[0, 0, 0])
+    assert abs(int(cv2.cvtColor(changed[:1, :1], cv2.COLOR_RGB2HSV)[0, 0, 0]) - same) <= 2  # lighter, the same green
 
 
 def test_nms_of_many_boxes_is_the_pairwise_rule(rng: random.Random) -> None:

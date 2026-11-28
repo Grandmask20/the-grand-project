@@ -138,17 +138,18 @@ def assign_splits(
 
     rng = random.Random(seed)
     share = np.asarray(fractions, float)
-    # Bins from the quietest blocks to the busiest; in each, the blocks that have a split count first (each member
-    # in the split it keeps: a block's members can have different ones), then the others in random order, each to
-    # the split furthest below its share of screenshots so far: every split gets screenshots of every busyness, in its
-    # share, however few there are.
+    # Every screenshot that keeps its split counts from the first draw, whatever its bin (each member in the split it
+    # keeps: a block's members can have different ones): a bin drawn before the one a kept block lies in would
+    # otherwise fill splits that are already over their share. Then, bins from the quietest blocks to the busiest,
+    # the free blocks of each in random order, each to the split furthest below its share of screenshots so far: every
+    # split gets screenshots of every busyness, in its share, however few there are.
     have = np.zeros(len(names))
+    for g in range(len(groups)):
+        if not free[g]:
+            for key in members[g]:
+                have[own_split(key, g)] += 1
     for b in np.unique(bin_of):
         in_bin = [int(g) for g in np.nonzero(bin_of == b)[0]]
-        for g in in_bin:
-            if not free[g]:
-                for key in members[g]:
-                    have[own_split(key, g)] += 1
         todo = [g for g in in_bin if free[g]]
         rng.shuffle(todo)
         for g in todo:

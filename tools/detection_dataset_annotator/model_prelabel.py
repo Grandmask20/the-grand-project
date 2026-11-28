@@ -196,13 +196,17 @@ def predict(
     return found, (image.shape[1], image.shape[0]), (raw.shape[1], raw.shape[0])
 
 
-def checkpoint_state(model_dir: Path) -> tuple[str | None, frozenset[str]]:
+def checkpoint_state(model_dir: Path) -> tuple[str | None, frozenset[str] | None]:
     """What identifies a kept model's state: the SHA-256 of its weights (None without them) and the screenshots it
-    trained on (``trained_on``)."""
+    trained on (``trained_on``). None for those when the weights have no list of them (``RF_DETR_TRAINED_ON``): not
+    known, which is not the same as a list of none (an empty one is a record that it trained on nothing here)."""
     from .state import file_hash
 
     weights = model_dir / "model.safetensors"
-    return (file_hash(weights) if weights.is_file() else None), frozenset(trained_on(model_dir))
+    sha = file_hash(weights) if weights.is_file() else None
+    if sha is not None and not (model_dir / DK.RF_DETR_TRAINED_ON).is_file():
+        return sha, None
+    return sha, frozenset(trained_on(model_dir))
 
 
 def eligible(items: Iterable[tuple[str, Mapping[str, Any]]], skip: set[str]) -> list[tuple[str, Mapping[str, Any]]]:
@@ -301,6 +305,13 @@ def main(argv: list[str] | None = None) -> int:
     # the weights' hash and the screenshots they trained on, read once: the weights loaded later must be these
     checkpoint = checkpoint_state(model_dir)
     model_sha, trained = checkpoint
+    if trained is None:
+        # nothing is known of what it trained on: its own training screenshots would be taken for new ones, and
+        # pre-labelled with what they were trained to say
+        raise SystemExit(
+            f"{model_dir} lists no training screenshots ({DK.RF_DETR_TRAINED_ON}): train it again with "
+            "tools.train_rf_detr, which writes the list"
+        )
     round_name = f"{model_dir.parent.name}/{model_dir.name} {time.strftime('%Y-%m-%d %H:%M')}"
     store_path = resolve_path(args.output_dir) / K.ANNOTATOR_STORE_FILE
     if not store_path.is_file():  # opening it would create an empty store (and its folder)

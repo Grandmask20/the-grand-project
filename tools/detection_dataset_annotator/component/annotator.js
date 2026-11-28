@@ -213,6 +213,12 @@ export function keepUnmoved(boxes, before) {
   return moved;
 }
 
+// Whether an edit moved or resized a box: any of x, y, w, h differs by more than rounding (a clamp that undid the edit,
+// or a centre kept as x + w / 2 - w / 2, is no change). Exported for tests/detection_dataset_annotator.
+export function geometryChanged(before, after) {
+  return ["x", "y", "w", "h"].some((field) => Math.abs(before[field] - after[field]) > 1e-6);
+}
+
 // The source line under a box's fields: where the box came from, and its score.
 function sourceText(box) {
   const score = box.score == null ? "" : ` · score ${Number(box.score).toFixed(3)}`;
@@ -232,6 +238,8 @@ class Annotator {
     this.fitted = false;
     this.autoFit = true; // the view is the fitted one: a resize fits it again (the reviewer's zoom or pan stays)
     this.sentGoto = null; // the picker's target this editor saved its boxes for already
+    this.sentLeave = null; // the output folder this editor saved its boxes for already (the page's "leave" request)
+    this.refocus = false; // the canvas had the focus when an action locked the editor: it gets it back on the answer
     this.drag = null;
     this.refitPending = false; // a fit asked for during a box drag, done when it ends
     this.spaceDown = false;
@@ -288,6 +296,7 @@ class Annotator {
       this.pendingAction = null;
       this.leaving = false;
       this.wrap.inert = false;
+      this.restoreFocus();
     }
     this.data = data;
     this.labels = data.labels ?? [];
@@ -310,6 +319,7 @@ class Annotator {
       this.wheelSum = 0;
       this.fitted = false;
       this.sentGoto = null;
+      this.sentLeave = null;
       this.seq = 0;
       this.sentSeq = 0;
       this.activeMs = 0;
@@ -325,11 +335,19 @@ class Annotator {
     if (!this.fitted) this.fit();
     // An autosave's answer redraws the boxes, not a coordinate field being typed in (its draft and focus stay).
     this.renderAll({ keepDraft: !first });
-    // Another screenshot picked in the page's list: this editor saves its latest boxes and the page moves on with the
-    // save's answer (retired first, its unsaved edits were lost). After this call: Streamlit is still rendering.
-    if (data.goto && data.goto !== this.sentGoto) {
-      this.sentGoto = data.goto;
-      setTimeout(() => this.act("goto", { target: data.goto }), 0);
+    // Another screenshot picked in the page's list (or another output folder asked for): this editor saves its latest
+    // boxes and the page moves on with the save's answer (retired first, its unsaved edits were lost). Only when no
+    // action is waiting for its answer: a second action would take the first one's place, and the editor would never
+    // unlock for it (the request is sent with the answer that unlocks, in this same update). After this call:
+    // Streamlit is still rendering.
+    if (!this.pendingAction) {
+      if (data.goto && data.goto !== this.sentGoto) {
+        this.sentGoto = data.goto;
+        setTimeout(() => this.act("goto", { target: data.goto }), 0);
+      } else if (data.leave && data.leave !== this.sentLeave) {
+        this.sentLeave = data.leave;
+        setTimeout(() => this.act("leave", { target: data.leave }), 0);
+      }
     }
   }
 
@@ -412,6 +430,9 @@ class Annotator {
     // put back (an edit made after the boxes were sent was lost, or saved under the next screenshot); until the page
     // answers (update), the editor takes no edits (inert), so none can land after the boxes it sent.
     this.endBoxDrag();
+    // an inert editor drops the focus; it comes back to the canvas with the answer, if it was there and is nowhere else
+    const active = this.wrap.getRootNode().activeElement;
+    this.refocus = Boolean(active && this.viewport.contains(active));
     this.actionCount = (this.actionCount ?? 0) + 1;
     this.pendingAction = `${this.session}-${this.actionCount}`; // the page answers with it (data.action_done)
     this.leaving = true;
@@ -420,7 +441,19 @@ class Annotator {
     this.autosaveTimer = null;
     this.sentSeq = this.seq;
     this.statusEl.textContent = "Saving…";
-    this.setTriggerValue("action", { type, ...extra, ...this.payload(), action_id: this.pendingAction });
+    // the review flag on screen: a toggle flips this one, whatever another tab saved meanwhile
+    const shown_reviewed = Boolean(this.data.reviewed);
+    const message = { type, ...extra, ...this.payload(), shown_reviewed, action_id: this.pendingAction };
+    this.setTriggerValue("action", message);
+  }
+
+  restoreFocus() {
+    // After an action's answer: the canvas gets the focus back only if it had it when the action began and nothing else
+    // on the page has taken it since (an inert editor leaves it on the body).
+    const wanted = this.refocus;
+    this.refocus = false;
+    const active = this.wrap.getRootNode().activeElement;
+    if (wanted && (!active || active === document.body)) this.viewport.focus({ preventScroll: true });
   }
 
   // ---- DOM ------------------------------------------------------------------------------------------------
@@ -465,6 +498,7 @@ class Annotator {
     });
 
     const side = el("div", "ann-side", main);
+    this.side = side;
     const nav = el("div", "ann-row", side);
     this.prevBtn = this.button(nav, "◀ Prev", "Previous screenshot (P)", () => this.act("prev"));
     this.positionEl = el("span", "ann-position", nav);
@@ -997,10 +1031,15 @@ class Annotator {
       return;
     }
     if (!this.helpEl.hidden) {
-      // The shortcuts card is open: Esc or ? closes it, wherever the focus is in the editor; every other key keeps
-      // its own meaning (Tab, Enter on Close), so nothing is edited behind the card.
+      // The shortcuts card is open: Esc or ? closes it, wherever the focus is in the editor; Tab stays on the card (its
+      // Close button is its one control: the controls behind it are inert); every other key keeps its own meaning
+      // (Enter on Close), so nothing is edited behind the card.
       if (event.key === "Escape" || event.key === "?") {
         this.toggleHelp();
+        event.preventDefault();
+        event.stopPropagation();
+      } else if (event.key === "Tab") {
+        this.helpCloseBtn.focus({ preventScroll: true });
         event.preventDefault();
         event.stopPropagation();
       }
@@ -1227,17 +1266,25 @@ class Annotator {
   }
 
   editSelected(edit, { snapshot = true } = {}) {
-    // Apply one edit to every selected box as one undo step.
-    const boxes = this.selectedBoxes();
-    if (!boxes.length) return;
+    // Apply one edit to every selected box as one undo step. Only boxes whose geometry the edit really changes (after
+    // the clamp to the screenshot) are edited: a nudge against the edge, or a shrink at the 1 px floor, changes
+    // nothing, and no change is no undo step, no "manual" box and no autosave.
+    const moving = this.selectedBoxes().filter((box) => {
+      const trial = { ...box };
+      edit(trial);
+      this.clampBox(trial);
+      return geometryChanged(box, trial);
+    });
+    if (!moving.length) return false;
     if (snapshot) this.snapshot();
-    for (const box of boxes) {
+    for (const box of moving) {
       edit(box);
       this.clampBox(box);
       this.markEdited(box);
     }
     this.changed();
     this.renderAll();
+    return true;
   }
 
   nudge(key, step, resize) {
@@ -1269,8 +1316,8 @@ class Annotator {
       box.x = cx - box.w / 2;
       box.y = cy - box.h / 2;
     };
-    this.editSelected(resize, { snapshot: newGesture }); // one wheel gesture is one undo step
-    this.lastScale = { at: now, selection }; // after the snapshot, which ends any earlier gesture
+    // one wheel gesture is one undo step; the gesture is noted after the snapshot, which ends any earlier one
+    if (this.editSelected(resize, { snapshot: newGesture })) this.lastScale = { at: now, selection };
   }
 
   cycle(step) {
@@ -1319,11 +1366,14 @@ class Annotator {
     this.helpEl.hidden = !opening;
     this.helpBtn.setAttribute("aria-pressed", String(opening));
     if (opening) {
-      // The focus goes into the card, and back to where it was when the card closes.
+      // The focus goes into the card, and back to where it was when the card closes. The side panel is inert while it
+      // is open: no control behind the card can be pressed or reached with Tab.
       const active = this.wrap.getRootNode().activeElement;
       this.helpOpener = active && this.wrap.contains(active) ? active : this.viewport;
+      this.side.inert = true;
       this.helpCloseBtn.focus({ preventScroll: true });
     } else {
+      this.side.inert = false; // before the focus goes back: an inert button takes none
       const back = this.helpOpener?.isConnected ? this.helpOpener : this.viewport;
       this.helpOpener = null;
       back.focus({ preventScroll: true });

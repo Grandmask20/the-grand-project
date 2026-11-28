@@ -3,6 +3,7 @@ atlas's training blocks, and the gold / silver scoring of pre-label policies aga
 
 from __future__ import annotations
 
+import hashlib
 import json
 from pathlib import Path
 
@@ -279,6 +280,11 @@ def test_a_simulation_trains_each_round_on_from_the_last_and_scores_every_policy
         "screenshots": [{"name": n, "file": f"{n}.png", "w": 1920, "h": 1080, "M": [[1, 0, 0], [0, 1, 0]],
                          "horizon": None} for n in ("val", "tst")],
     }))  # fmt: skip
+    digest = hashlib.sha256(truth.read_bytes()).hexdigest()  # the truth's version the screenshots were seeded from
+    for row in rows:
+        if row.get(K.ANNOTATOR_TRUTH_MARK):
+            row[K.ANNOTATOR_TRUTH_DIGEST] = digest
+    manifest.write_text(json.dumps({"images": rows}), encoding="utf-8")
     args = ["--manifest", str(manifest), "--classical-store", str(review_store.path), "--rounds", "0;1",
             "--atlas", name, "--truth", str(truth), "--output-dir", str(out), "--epochs", "2"]  # fmt: skip
     assert simulate_loop.main(args) == 0
@@ -399,12 +405,16 @@ def test_without_held_out_screenshots_nothing_is_trained(
 
 def test_silver_node_finds_pair_by_place_alone() -> None:
     """A node the model found where the classical detector had one is no silver add or delete, whatever class it gave
-    it and however it moved within the node radius; one with nothing near is."""
+    it and however it moved within the node radius; a classical node it misses is an add (and, unlike a model node
+    with nothing near, no delete: the counts differ, so the two cannot be swapped unnoticed)."""
     classical = [_box("map_node_grass", 300, 300), _box("map_node_water", 700, 300)]
-    model = [_box("map_node_vaal", 310, 296), _box("map_node_grass", 1200, 300)]
+    model = [_box("map_node_vaal", 310, 296)]  # the grass node, found as another class and moved: a match
     finds = node_finds(model, classical, 1.0)
-    assert (finds.added, finds.deleted) == (1, 1)  # the water node missed, the node at 1200 is new
+    assert (finds.added, finds.deleted) == (1, 0)  # the water node missed: one add, nothing deleted
     assert score(model, [], classical)["silver"].added == 1
+    extra = [*model, _box("map_node_grass", 1200, 300)]  # a node of the model's own, with no classical node near
+    finds = node_finds(extra, classical, 1.0)
+    assert (finds.added, finds.deleted) == (1, 1)
 
 
 def test_a_held_out_file_changed_since_its_export_is_not_scored(monkeypatch: pytest.MonkeyPatch, capsys) -> None:
@@ -468,9 +478,11 @@ def test_a_round_revealing_another_truths_unreviewed_screenshot_stops_before_tra
                   Entry("sha-val", "validation", f"{name}#7", relative_source(shots["val"]))])  # fmt: skip
     truth = tmp_path / "truth.json"
     truth.write_text(json.dumps({"maps": [], "biomes": [], "screenshots": []}), encoding="utf-8")
+    digest = hashlib.sha256(truth.read_bytes()).hexdigest()
     rows = [
         {"source": relative_source(shots["val"]), "path": str(shots["val"]), "split": "validation",
-         K.ANNOTATOR_TRUTH_MARK: relative_source(truth), "annotations": [], K.ANNOTATOR_DETECTED_SHA: "sha-val"},
+         K.ANNOTATOR_TRUTH_MARK: relative_source(truth), K.ANNOTATOR_TRUTH_DIGEST: digest, "annotations": [],
+         K.ANNOTATOR_DETECTED_SHA: "sha-val"},
         {"source": relative_source(shots["a1"]), "path": str(shots["a1"]), "split": "train",
          K.ANNOTATOR_TRUTH_MARK: "other/states.json", "annotations": [], K.ANNOTATOR_DETECTED_SHA: "sha-a1"},
     ]  # fmt: skip
@@ -481,3 +493,28 @@ def test_a_round_revealing_another_truths_unreviewed_screenshot_stops_before_tra
     with pytest.raises(SystemExit, match="seeded by another truth"):
         simulate_loop.main(command)
     assert not (tmp_path / "run").exists()
+
+
+def test_screenshots_seeded_from_another_version_of_the_truth_stop_the_run(tmp_path: Path) -> None:
+    """The truth file may be edited after it seeded a screenshot: the boxes and the maps the scores are made with would
+    be of two truths. A mark with another digest, or none (seeded before digests were kept), stops the run, named
+    (CodeRabbit)."""
+    from tools.detection_dataset_annotator.simulate_loop import check_truth_digest
+    from tools.detection_dataset_annotator.truth_seed import Truth
+
+    truth_file = tmp_path / "truth.json"
+    truth_file.write_text(json.dumps({"maps": [], "biomes": [], "screenshots": []}), encoding="utf-8")
+    truth = Truth.load(truth_file)
+    mark = {K.ANNOTATOR_TRUTH_MARK: truth.source}
+    manifest = {"images": [
+        {"source": f"{ATLAS}/a.png", **mark, K.ANNOTATOR_TRUTH_DIGEST: truth.digest},
+        {"source": f"{ATLAS}/b.png", K.ANNOTATOR_TRUTH_MARK: "other/truth.json"},  # another truth's: not this check's
+        {"source": "atlas_test_data/roa-atlas/c.png", **mark},  # another atlas
+    ]}  # fmt: skip
+    check_truth_digest(manifest, ATLAS, truth)
+    manifest["images"][0][K.ANNOTATOR_TRUTH_DIGEST] = "0" * 64  # the truth was edited since
+    with pytest.raises(SystemExit, match="another version"):
+        check_truth_digest(manifest, ATLAS, truth)
+    del manifest["images"][0][K.ANNOTATOR_TRUTH_DIGEST]  # seeded before digests were kept
+    with pytest.raises(SystemExit, match="another version"):
+        check_truth_digest(manifest, ATLAS, truth)

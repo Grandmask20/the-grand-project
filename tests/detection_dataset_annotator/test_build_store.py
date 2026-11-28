@@ -241,3 +241,41 @@ def test_a_store_of_an_older_layout_is_brought_up_to_date_keeping_its_work(
     lines.clear()
     build_store.build(tmp_path / "out", truths=[], detect=False, say=lines.append)
     assert "  up to date" in lines
+
+
+def test_a_backup_name_taken_meanwhile_is_never_written_over(tmp_path: Path, old_store: dict[str, Path]) -> None:
+    """The layout upgrade's backup claims its file exclusively: a name a second run (or a person) took since the name
+    was chosen makes it choose another, and what is there is kept as it is (CodeRabbit)."""
+    store_file = tmp_path / "out" / K.ANNOTATOR_STORE_FILE
+    ReviewStore.open(store_file).close()
+    _older_layout(store_file)
+    names = []
+    real = build_store._backup_path
+
+    def taken_first(output_dir):
+        path = real(output_dir)
+        if not names:
+            path.write_bytes(b"someone else's backup")  # claimed between choosing the name and writing to it
+        names.append(path)
+        return path
+
+    build_store._backup_path = taken_first
+    try:
+        build_store.build(tmp_path / "out", truths=[], detect=False, say=lambda line: None)
+    finally:
+        build_store._backup_path = real
+    assert names[0].read_bytes() == b"someone else's backup"
+    assert len(names) == 2 and names[1].is_file() and names[1] != names[0]
+
+
+def test_a_store_that_is_not_there_is_not_made_by_the_layout_upgrade(tmp_path: Path) -> None:
+    """The upgrade reads the old store read-write but never creates it: a missing path raises, and no empty database is
+    left in its place (CodeRabbit)."""
+    import sqlite3
+
+    from tools.detection_dataset_annotator.store import upgrade_layout
+
+    missing = tmp_path / "none.sqlite3"
+    with pytest.raises(sqlite3.Error):
+        upgrade_layout(missing)
+    assert not missing.exists()

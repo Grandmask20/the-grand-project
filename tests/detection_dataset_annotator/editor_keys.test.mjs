@@ -9,6 +9,7 @@ import {
   coordinateValue,
   finderKeyActs,
   finderPick,
+  geometryChanged,
   isGuess,
   keepUnmoved,
   labelForKey,
@@ -146,4 +147,12 @@ test("a drag that ends where it began is no edit of that box", () => {
   const still = [{ ...before[0], source: "manual", score: null }];
   assert.equal(keepUnmoved(still, before), false); // nothing moved: no undo step, no autosave
   assert.equal(still[0].source, "classical");
+});
+
+test("an edit that leaves a box where it was is no change", () => {
+  const box = { x: 0, y: 10, w: 39, h: 39 };
+  assert.equal(geometryChanged(box, { ...box }), false);
+  assert.equal(geometryChanged(box, { ...box, x: 1e-9 }), false); // rounding of a kept centre
+  assert.equal(geometryChanged(box, { ...box, x: 1 }), true);
+  assert.equal(geometryChanged(box, { ...box, h: 38 }), true);
 });

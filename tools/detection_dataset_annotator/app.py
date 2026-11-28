@@ -222,6 +222,13 @@ def _action_target(kind: str, reviewed: bool, keys: list[str], image_key: str) -
     return None, (neighbour_key(keys, image_key, step) if step else None) or image_key
 
 
+def _use_output_folder(folder: str) -> None:
+    """Switch to another output folder (its own review store): what the sidebar staged, once the editor on screen has
+    saved."""
+    st.session_state[K.ANNOTATOR_SESSION_OUTPUT] = folder
+    st.session_state.pop(K.ANNOTATOR_SESSION_LEAVE, None)
+
+
 def _select(key: str) -> None:
     """Show a screenshot: the page's own and the list's choice (a move the list asked for is done)."""
     st.session_state[K.ANNOTATOR_SESSION_SELECTED] = key
@@ -261,7 +268,16 @@ def _on_action(store_path: Path, image_key: str, revision: int, editor_key: str,
     if isinstance(action, dict) and action.get("type") == "goto":
         picked = action.get("target")
         _save_action(store_path, image_key, revision, editor_key, keys, action)
+        newer = st.session_state.get(K.ANNOTATOR_SESSION_GOTO)
+        if newer is not None and newer != picked:
+            return  # another screenshot was picked meanwhile: that request stays, and the editor goes there next
         _select(picked if picked in keys else image_key)
+        return
+    if isinstance(action, dict) and action.get("type") == "leave":
+        target = action.get("target")
+        _save_action(store_path, image_key, revision, editor_key, keys, action)  # saved or not (reloaded): it was asked
+        if st.session_state.get(K.ANNOTATOR_SESSION_LEAVE) == target:
+            _use_output_folder(str(target))
         return
     target = _save_action(store_path, image_key, revision, editor_key, keys, action)
     if target is not None:
@@ -279,12 +295,16 @@ def _save_action(
             return None
         edited = _edited_annotations(item, editor_key, action)
         kind = str(action.get("type"))
-        reviewed, target = _action_target(kind, bool(item.get("reviewed")), keys, image_key)
+        # the flag the reviewer saw when pressing the key (the editor sends it), else the one stored now
+        shown = action.get("shown_reviewed")
+        displayed = bool(item.get("reviewed")) if shown is None else bool(shown)
+        reviewed, target = _action_target(kind, displayed, keys, image_key)
         log = _review_log(action, reviewed=reviewed)
         changes = edited is not None or reviewed is not None or log["review_s"] > 0
-        # a toggle is of the flag read here: saved only while it still is (another tab may have toggled it), so the
-        # queue moves by the flag saved; "Reviewed, next" sets it whatever it was
-        was = bool(item.get("reviewed")) if kind == "toggle_review" else None
+        # a toggle flips the flag that was on screen: saved only while the store still has it (another tab may have
+        # toggled it since, and the reviewer pressed the key to undo what they saw), so the queue moves by the flag
+        # saved; "Reviewed, next" sets it whatever it was
+        was = displayed if kind == "toggle_review" else None
         if changes and not store.save_review(
             image_key,
             revision,
@@ -370,6 +390,8 @@ def _render_editor(store: ReviewStore, key: str, keys: list[str], settings: Sett
         "action_done": st.session_state.get(_action_done_key(editor_key)),
         # a screenshot picked in the list: the editor saves its latest boxes and asks to go there (_on_action)
         "goto": goto if (goto := st.session_state.get(K.ANNOTATOR_SESSION_GOTO)) in keys and goto != key else None,
+        # a switch of the output folder asked for: the editor saves its latest boxes first ("leave", ``_on_action``)
+        "leave": st.session_state.get(K.ANNOTATOR_SESSION_LEAVE),
         "chip_px": K.ANNOTATOR_EDITOR_CHIP_PX,
         "autosave_ms": K.ANNOTATOR_EDITOR_AUTOSAVE_MS,
         "idle_ms": K.ANNOTATOR_IDLE_MS,
@@ -391,6 +413,30 @@ def _render_editor(store: ReviewStore, key: str, keys: list[str], settings: Sett
 # ---- page sections ---------------------------------------------------------------------------------------------
 
 
+def _output_folder_box() -> str:
+    """The sidebar's output-folder box; returns the folder in use.
+
+    Typing only stages another folder: using it retires the editor on screen (its review store is another), which
+    must first save its latest boxes, so a "Use this folder" button asks the editor to (its "leave" action,
+    ``_on_action``) and the switch happens on its answer; with no editor on screen it happens at once.
+    """
+    state = st.session_state
+    state.setdefault(K.ANNOTATOR_SESSION_OUTPUT, K.ANNOTATOR_DEFAULT_OUTPUT_DIR)
+    state.setdefault(K.ANNOTATOR_SESSION_OUTPUT_TEXT, state[K.ANNOTATOR_SESSION_OUTPUT])
+    typed = st.text_input("Output folder", key=K.ANNOTATOR_SESSION_OUTPUT_TEXT).strip()
+    if state.get(K.ANNOTATOR_SESSION_LEAVE) is not None and not state.get(K.ANNOTATOR_SESSION_MOUNTED_EDITOR):
+        _use_output_folder(str(state[K.ANNOTATOR_SESSION_LEAVE]))  # no editor to wait for any more
+    if typed and typed != state[K.ANNOTATOR_SESSION_OUTPUT]:
+        pending = state.get(K.ANNOTATOR_SESSION_LEAVE) is not None
+        if st.button("Use this folder", width="stretch", disabled=pending, help="Saves the open screenshot first"):
+            state[K.ANNOTATOR_SESSION_LEAVE] = typed
+            if not state.get(K.ANNOTATOR_SESSION_MOUNTED_EDITOR):
+                _use_output_folder(typed)
+            st.rerun()
+        st.caption(f"Still using `{state[K.ANNOTATOR_SESSION_OUTPUT]}`.")
+    return str(state[K.ANNOTATOR_SESSION_OUTPUT])
+
+
 def _sidebar() -> Settings:
     """The dataset settings in the sidebar."""
     with st.sidebar:
@@ -402,7 +448,7 @@ def _sidebar() -> Settings:
             height=100,
             help="Paths are recursive. Relative paths are resolved from the project folder.",
         )
-        output_text = st.text_input("Output folder", K.ANNOTATOR_DEFAULT_OUTPUT_DIR)
+        output_text = _output_folder_box()
         options = DetectionOptions(
             include_paths=st.checkbox(
                 "Include paths and path dashes",
@@ -467,11 +513,17 @@ def _run_detection(
         status.caption(f"Finished {Path(path).name}")
 
     with st.spinner("Running the classical detector…"):
-        completed, errors = detect_pending(
+        outcome = detect_pending(
             store, settings.options, keys=keys, force=force, max_workers=settings.max_workers, progress=progress
         )
+    completed, errors = outcome
+    skipped = (
+        f"; {outcome.skipped} not saved (edited, reviewed or detected meanwhile: what is there stands)"
+        if outcome.skipped
+        else ""
+    )
     st.session_state[K.ANNOTATOR_SESSION_NOTICE] = (
-        f"Processed {completed} screenshots; {errors} failed. Failed items remain retryable."
+        f"Processed {completed} screenshots; {errors} failed{skipped}. Failed items remain retryable."
     )
     st.rerun()
 

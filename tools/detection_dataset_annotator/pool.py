@@ -29,6 +29,7 @@ from grand_project import paths
 
 from . import constants as K
 from .state import DetectionOptions
+from .store import UnknownScreenshot
 
 if TYPE_CHECKING:
     from .store import ReviewStore
@@ -72,6 +73,31 @@ def _worker_env(threads: int) -> dict[str, str]:
     return {**os.environ, **limits}
 
 
+class Outcome(tuple):
+    """What ``detect_pending`` did: ``(completed, failed)`` (it compares and unpacks as that pair) and ``skipped``, the
+    results the store did not take because the screenshot had been edited, reviewed or detected meanwhile."""
+
+    skipped: int
+
+    def __new__(cls, completed: int, failed: int, skipped: int = 0) -> Outcome:
+        outcome = super().__new__(cls, (completed, failed))
+        outcome.skipped = skipped
+        return outcome
+
+
+def _run(coroutine: Any) -> None:
+    """Run the detection coroutine to its end in a loop of its own.
+
+    On Windows the loop must be a Proactor one, the only kind that starts subprocesses: Streamlit's server sets the
+    selector loop policy for itself, and ``asyncio.run`` in its script thread would follow that policy.
+    """
+    if sys.platform == "win32":
+        with asyncio.Runner(loop_factory=asyncio.ProactorEventLoop) as runner:
+            runner.run(coroutine)
+    else:
+        asyncio.run(coroutine)
+
+
 class _Interrupted(Exception):
     """The progress callback raised: stops the TaskGroup the ordinary way (see ``_Run._report``)."""
 
@@ -89,38 +115,39 @@ class _Run:
     errors: int = 0
     removed: int = 0
     """Screenshots taken out of the store (a rebuild removing copies) while they were being detected."""
+    skipped: int = 0
+    """Results the store did not take (the screenshot was edited, reviewed or detected meanwhile): finished, not
+    saved."""
     interrupt: BaseException | None = None
 
     def succeed(self, job: Job, result: dict[str, Any]) -> None:
         # The store raises the screenshot's revision: the editor remounts and shows these detections instead of
         # autosaving old boxes over them.
         try:
-            self.store.record_detection(job[0], result, force=self.force, generation=job[2])
-        except KeyError:
-            if not self._gone(job):
-                raise
+            saved = self.store.record_detection(job[0], result, force=self.force, generation=job[2])
+        except UnknownScreenshot:
+            self._gone(job)
             return
-        self.completed += 1
+        if saved:
+            self.completed += 1
+        else:  # edited, reviewed or detected by another run since it was queued: what is there stands
+            self.skipped += 1
         self._report(job)
 
     def fail(self, job: Job, error: str) -> None:
         try:
             self.store.record_failure(job[0], error, force=self.force, generation=job[2])
-        except KeyError:
-            if not self._gone(job):
-                raise
+        except UnknownScreenshot:
+            self._gone(job)
             return
         self.errors += 1
         self._report(job)
 
-    def _gone(self, job: Job) -> bool:
-        """Whether the job's screenshot left the store meanwhile (then it is skipped and counted); a KeyError for a
-        screenshot still there is no such case, and its caller raises it again."""
-        if self.store.item(job[0]) is not None:
-            return False
+    def _gone(self, job: Job) -> None:
+        """Count a screenshot that left the store meanwhile (the store said so inside its own write: a rebuild removed
+        it): skipped. Any other ``KeyError`` is a bug and goes on."""
         self.removed += 1
         self._report(job)
-        return True
 
     def fail_remaining(self, error: str) -> None:
         while self.pending:
@@ -130,7 +157,7 @@ class _Run:
         if not self.progress:
             return
         try:
-            self.progress(self.completed + self.errors + self.removed, self.total, job[1])
+            self.progress(self.completed + self.errors + self.removed + self.skipped, self.total, job[1])
         except BaseException as exc:
             # Streamlit's stop / rerun signals are BaseExceptions, which asyncio lets out of the event loop at once,
             # skipping the other workers' cleanup. Kept here and raised again once every worker is stopped.
@@ -297,7 +324,7 @@ def detect_pending(
     force: bool = False,
     max_workers: int | None = None,
     progress: Progress | None = None,
-) -> tuple[int, int]:
+) -> Outcome:
     """Detect the selected screenshots of the store in worker processes, saving each result as it arrives.
 
     Without ``keys`` every screenshot not detected yet runs. ``force`` reruns detected ones too and needs explicit
@@ -305,7 +332,8 @@ def detect_pending(
     screenshot's previous boxes and review flag. ``max_workers`` defaults to ``default_workers()``.
 
     Returns:
-        (completed, failed) screenshot counts.
+        (completed, failed) screenshot counts, with ``.skipped``: the results not saved because the screenshot was
+        edited, reviewed or detected meanwhile.
     """
     if max_workers is None:
         max_workers = default_workers()
@@ -317,9 +345,9 @@ def detect_pending(
     run.total = len(run.pending)
     store.set_settings(options)
     if not run.total:
-        return 0, 0
+        return Outcome(0, 0)
     try:
-        asyncio.run(_detect_all(run, options, min(max_workers, run.total)))
+        _run(_detect_all(run, options, min(max_workers, run.total)))
     except BaseExceptionGroup as group:
         # Raise the original exception, not the TaskGroup's wrapper: Streamlit must see its own stop / rerun signal,
         # and the caller a worker that could not start.
@@ -332,4 +360,4 @@ def detect_pending(
         run.progress = None
         run.fail_remaining(left)
         raise run.interrupt from None
-    return run.completed, run.errors
+    return Outcome(run.completed, run.errors, run.skipped)

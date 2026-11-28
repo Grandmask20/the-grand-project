@@ -49,7 +49,12 @@ from grand_project.detect.constants import (
 )
 from grand_project.detect.pipeline import detect_classical
 from grand_project.detect.rf_detr_cuda import prefer_pip_cuda_libraries
-from grand_project.detect.rf_detr_model import checkpoint_digest, detect_rf_detr, reset_rf_detr_runtime
+from grand_project.detect.rf_detr_model import (
+    checkpoint_digest,
+    detect_rf_detr,
+    folder_identity,
+    reset_rf_detr_runtime,
+)
 
 
 @dataclass(frozen=True)
@@ -280,8 +285,10 @@ def _add_landmark_metrics(
     """Match final landmarks by kind and position using the map-derived alignment shift."""
     predicted = _live_landmarks(folder, scorer_core, view_model)
     expected = _live_landmarks(reference, scorer_core, view_model)
-    shift = np.asarray(comparison.get("shift", [0.0, 0.0]), float)
-    hits = _landmark_hits(predicted, expected, shift, match_distance)
+    # no shift from the scorer (no map node to line the atlases up by) is no zero shift: the landmarks are counted and
+    # none is matched by place; an explicit [0, 0] is a real alignment
+    shift = comparison.get("shift")
+    hits = 0 if shift is None else _landmark_hits(predicted, expected, np.asarray(shift, float), match_distance)
     recall = hits / len(expected) if expected else 0.0
     comparison["landmarks"] = f"{hits} of {len(predicted)} match; found {hits} of {len(expected)} ({recall:.0%})"
     return comparison
@@ -426,6 +433,25 @@ def _parse_args() -> argparse.Namespace:
     return args
 
 
+def _copy_checkpoint(given: Path, model_dir: Path) -> None:
+    """Copy a checkpoint folder, which must be one published generation throughout: a training run publishes a new
+    ``best/`` by renaming a complete folder in (``train_rf_detr.swap_in``), so the folder's identity changes, and a copy
+    made across that would hold files of two models (or fail on the one removed). That copy is never scored.
+
+    Raises:
+        SystemExit: the folder was replaced while it was copied.
+    """
+    try:
+        before = folder_identity(given)
+        shutil.copytree(given, model_dir)
+        same = folder_identity(given) == before
+    except OSError:  # (the old generation is removed under the copy)
+        same = False
+    if not same:
+        shutil.rmtree(model_dir, ignore_errors=True)
+        raise SystemExit(f"{given} was replaced while it was copied (a training run kept a new best): run it again")
+
+
 def main() -> int:
     """Run both detector comparisons and return a process exit code."""
     prefer_pip_cuda_libraries()  # RF-DETR on CUDA needs PyTorch's own cuDNN, before torch loads (rf_detr_cuda)
@@ -437,7 +463,7 @@ def main() -> int:
         # one copy of the checkpoint for both phases: a best/ a training run swaps in meanwhile never mixes two models
         # into one report
         model_dir = Path(temporary) / given.name
-        shutil.copytree(given, model_dir)
+        _copy_checkpoint(given, model_dir)
         return _compare(args, given, model_dir)
 
 
