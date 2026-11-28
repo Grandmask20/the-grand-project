@@ -29,6 +29,16 @@ dev = [
     "pytest>=8",
     "ruff>=0.9",
 ]
+training = [
+    "accelerate>=1.1",  # transformers' Trainer runs on it
+    "datasets>=3.0",
+    "torch>=2.6",  # transformers' own floor: the Trainer's torch.load (optimizer, rng state on --resume) refuses older
+    "torchvision>=0.21",  # the torchvision of torch 2.6
+    "transformers>=5.23",  # RF-DETR (5.9+) and the Trainer hooks the trainer relies on (loss_is_scaled_for_ga, evaluate)
+]
+annotator = [
+    "streamlit>=1.53",
+]
 
 [build-system]
 requires = ["setuptools>=64", "setuptools-scm>=8.0", "wheel"]

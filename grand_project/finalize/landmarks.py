@@ -268,13 +268,32 @@ def _beam(img, x, y, spread=0):
     Returns:
         (blue pixel count, orange pixel count) of the best column; (0, 0) when too near the top.
     """
+    _cx, blue, orange = _beam_column(img, x, y, spread)
+    return blue, orange
+
+
+def _beam_column(img, x, y, spread=0) -> tuple[int, int, int]:
+    """Find the beam column of _beam: where it is, besides its blue / orange pixel counts.
+
+    The dataset's hall box uses where it is: the hall structure stands under its beam (detect/proposals.py).
+
+    Args:
+        img: the screenshot (BGR image).
+        x: x of the building in screen px.
+        y: y of the building in screen px.
+        spread: how far left / right to look for the beam column (screen px); 0 for just x.
+
+    Returns:
+        (x of the best column's middle, blue pixel count, orange pixel count); (round(x), 0, 0) when too near the
+        top or no column holds a beam pixel.
+    """
     h, w = img.shape[:2]
     # a building's own beam rises right above it; for a badge-only spot look only low down, so a
     # different Hall / City higher up the screen (whose beam is in the same column) doesn't count
     y0, y1 = int(max(0, y - (150 if spread else 330))), int(max(0, y - 40))
     if y1 - y0 < 40:
-        return 0, 0
-    best = (0, 0)
+        return int(round(x)), 0, 0
+    best = (int(round(x)), 0, 0)
     for cx in range(int(x - spread), int(x + spread) + 1, 20) if spread else [int(x)]:
         x0, x1 = max(0, cx - 22), min(w, cx + 22)
         if x1 <= x0:
@@ -283,25 +302,49 @@ def _beam(img, x, y, spread=0):
         H, S, V = hsv[..., 0], hsv[..., 1], hsv[..., 2]
         blue = int(((H >= 90) & (H <= 130) & (S >= 60) & (V >= 140)).sum())
         orange = int((((H <= 22) | (H >= 170)) & (S >= 110) & (V >= 150)).sum())
-        if blue + orange > sum(best):
-            best = (blue, orange)
+        if blue + orange > best[1] + best[2]:
+            best = (cx, blue, orange)
     return best
 
 
-def _settlements(atlas, maps, landmarks, icons) -> list[dict]:
+def _exclusive_at(icons, x, y) -> str | None:
+    """The exclusive map type (EXCLUSIVE) whose icon stands on the map at (x, y), or None.
+
+    Args:
+        icons: the merged icons (with "bx", "by": the map base under each, when known).
+        x: x of the map in atlas units.
+        y: y of the map in atlas units.
+
+    Returns:
+        The type of the first such icon within 30 units of the map, or None.
+    """
+    return next(
+        (
+            EXCLUSIVE[ic["name"]]
+            for ic in icons
+            if ic["name"] in EXCLUSIVE and math.hypot(ic.get("bx", ic["x"]) - x, ic.get("by", ic["y"]) - y) < 30
+        ),
+        None,
+    )
+
+
+def _settlements(atlas, maps, landmarks, icons, state_at) -> list[dict]:
     """Decide which City / Hall detections are kept and which kind each one is.
 
     Hall and City are the same kind of place with a special boss (user's rules): both have a Deadly Map Boss
-    icon (without one it is neither: removed, except a completed City, which keeps only its citadel); a City's
-    map stands on a brass barrel (always, user; beams vary: every type can show blue); a Hall has a normal map
-    base with the beam on a structure next to it. Nearby detections (within SETTLE_MERGE) are one building.
-    A map carrying another exclusive type's icon is neither, and the ocean / Expedition biome never has a City.
+    icon; without one it is neither (removed), unless its map is green (completed: the icon and beam are gone)
+    or red (failed). A City's map stands on a brass barrel (always, user; beams vary: every type can show blue);
+    a Hall has a normal map base with the beam on a structure next to it. Nearby detections (within
+    SETTLE_MERGE) are one building. A map carrying another exclusive type's icon is neither, and the ocean /
+    Expedition biome never has a City.
 
     Args:
         atlas: the core.Atlas (screenshots, map nodes, images).
         maps: list of (frame dict, atlas-to-screen homography) for every screenshot.
         landmarks: the landmark dicts so far (kind, x, y, n, conf, status ...).
         icons: the merged icons from _clean_icons.
+        state_at: callable (x, y) -> the state of the map node there, or None when no screenshot named it
+            (finalize.states.state_near).
 
     Returns:
         The landmarks: all non-City / Hall ones unchanged, plus one dict per building with kind, x, y, n,
@@ -342,20 +385,12 @@ def _settlements(atlas, maps, landmarks, icons) -> list[dict]:
     for b in buildings:
         near = sorted((math.hypot(ic["x"] - b["x"], ic["y"] - b["y"]), k) for k, ic in enumerate(deadly))
         badge = deadly[near[0][1]] if near and near[0][0] < SETTLE_BADGE else None
-        clash = None
         if badge is not None:  # its map carries another exclusive type's badge
-            bx0, by0 = badge.get("bx", badge["x"]), badge.get("by", badge["y"])
-            clash = next(
-                (
-                    EXCLUSIVE[ic["name"]]
-                    for ic in icons
-                    if ic["name"] in EXCLUSIVE
-                    and math.hypot(ic.get("bx", ic["x"]) - bx0, ic.get("by", ic["y"]) - by0) < 30
-                ),
-                None,
-            )
+            clash = _exclusive_at(icons, badge.get("bx", badge["x"]), badge.get("by", badge["y"]))
             if clash:
                 badge = None
+        else:  # a completed / failed one has no badge: its own map is checked all the same
+            clash = _exclusive_at(icons, b["x"], b["y"])
         barrel = False
         if badge is not None:
             # most of the screenshots that show it centrally must see the barrel: one view a few px off can look
@@ -380,11 +415,16 @@ def _settlements(atlas, maps, landmarks, icons) -> list[dict]:
                 bl, orr = _beam(im, sp[0, 0], sp[0, 1], b["spread"])
                 blue, orange, seen = blue + bl, orange + orr, seen + 1
         status = "kept"
-        if badge is None and not clash and b["detected"].get("City", 0) >= b["detected"].get("Hall", 0):
-            # a completed City loses its badge (and beam): a green map with only its citadel
-            kind, why = "City", "no Deadly Map Boss badge: completed city?"
+        state = state_at(b["x"], b["y"])
+        voted = "City" if b["detected"].get("City", 0) >= b["detected"].get("Hall", 0) else "Hall"
+        if badge is None and not clash and state in ("green", "red"):
+            # a completed City / Hall loses its badge (and beam): a green map with only its citadel / structure;
+            # a failed one is red
+            kind = voted
+            why = f"no Deadly Map Boss badge: {'completed' if state == 'green' else 'failed'} ({state} map)"
         elif badge is None:
-            kind, why = "Hall", f"its map is a {clash} map" if clash else "no Deadly Map Boss badge"
+            kind = voted
+            why = f"its map is a {clash} map" if clash else "no Deadly Map Boss badge and its map is not green or red"
             status = f"removed: {why} (not a Hall or City)"
         elif barrel:  # a City's map always stands on the barrel (user); every city type can have a blue beam
             kind, why = "City", "brass barrel map base"
@@ -409,3 +449,30 @@ def _settlements(atlas, maps, landmarks, icons) -> list[dict]:
             }
         )
     return keep
+
+
+def _recheck_settlements(landmarks, icons, gone, state_at) -> None:
+    """Apply _settlements' rule for a City / Hall without its Deadly Map Boss badge again, now that the icons over time
+    are known (finalize.icon_time): one kept for its badge whose every badge is gone must be on a green or red map
+    (user's rules: a City / Hall loses its badge when run), else it is removed as _settlements removes one.
+
+    Args:
+        landmarks: the landmarks from _settlements, changed in place.
+        icons: the merged icons _settlements was given.
+        gone: indices into icons left out over time (a newer screenshot shows them gone, or they never appear).
+        state_at: callable (x, y) -> the state of the map node there, or None (finalize.states.state_near).
+    """
+    for lm in landmarks:
+        if lm["kind"] not in ("City", "Hall") or lm["status"].startswith("removed"):
+            continue
+        # its own badge, as _settlements chose it: the nearest one (another map's badge nearby is not its)
+        near = sorted(
+            (math.hypot(ic["x"] - lm["x"], ic["y"] - lm["y"]), k)
+            for k, ic in enumerate(icons)
+            if ic["name"] == "MapBossSpecial"
+        )
+        if not near or near[0][0] >= SETTLE_BADGE or near[0][1] not in gone:
+            continue  # kept without a badge already (green / red), or its badge stays
+        if state_at(lm["x"], lm["y"]) in ("green", "red"):
+            continue
+        lm["status"] = "removed: its Deadly Map Boss badge is gone and its map is not green or red (not a Hall or City)"

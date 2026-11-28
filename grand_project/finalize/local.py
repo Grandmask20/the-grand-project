@@ -8,6 +8,7 @@ from grand_project import core
 
 from .check import finalize
 from .constants import CONTEXT_PAD, CORE_PAD, SETTLE_BADGE, SETTLE_MERGE
+from .states import state_stats
 from .traces import _log
 
 # every screenshot that sees the core is included)
@@ -177,6 +178,7 @@ def finalize_local(atlas, new_names: list[str], log=_log) -> dict:
             "paths_traced": sum(p.get("kind") == "traced" for p in paths),
             "icons_shown": len(icons),
             "local_updates": stats.get("local_updates", 0) + 1,
+            **state_stats(nodes),
         }
     )
     atlas.final = {"nodes": nodes, "paths": paths, "landmarks": landmarks, "icons": icons, "stats": stats}

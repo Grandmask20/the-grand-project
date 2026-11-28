@@ -3,7 +3,7 @@ import { describe, expect, it, vi } from "vitest";
 import { MapMenu } from "@/components/map/MapMenu";
 import type { ItemInfo } from "@/domain/map/ItemInfo";
 import { useAppStore } from "@/store/AppStore";
-import { meta, nodeInfo } from "@/test/Fixtures";
+import { meta, nodeInfo, state } from "@/test/Fixtures";
 import { renderWithApp } from "@/test/RenderWithApp";
 
 const graph = { nodes: [{ id: 12, x: 440, y: 200, icons: [], status: "" }], edges: [] };
@@ -64,6 +64,76 @@ describe("MapMenu", () => {
 		await waitFor(() =>
 			expect(calls.find((c) => c.path === "/api/settings")?.body).toMatchObject({ ui: { player: { node: 12 } } }),
 		);
+	});
+
+	it("on a map: route here from the nearest blue map, whatever your position", async () => {
+		// map #12 (grey) - 13 (grey) - 14 (blue)
+		const states = (s14: string) => ({
+			nodes: [
+				{ id: 12, x: 440, y: 200, icons: [], status: "", state: "grey" },
+				{ id: 13, x: 300, y: 200, icons: [], status: "", state: "grey" },
+				{ id: 14, x: 200, y: 200, icons: [], status: "", state: s14 },
+			],
+			edges: [
+				{ a: 12, b: 13 },
+				{ a: 13, b: 14 },
+			],
+		});
+		const routeFromNearest = async (g: unknown) => {
+			useAppStore.getState().setRoute(null);
+			const { user, calls, queryClient, unmount } = menu(nodeInfo, false, { "GET /api/graph": g });
+			await waitFor(() =>
+				expect(calls.some((c) => c.path === "/api/graph") && queryClient.isFetching() === 0).toBe(true),
+			);
+			await user.click(screen.getByRole("menuitem", { name: "Route here from nearest map" }));
+			const { route, tab, pages } = useAppStore.getState();
+			unmount();
+			return { route, tab, page: pages[tab] };
+		};
+		const found = await routeFromNearest(states("blue"));
+		expect(found.route).toMatchObject({ path: [14, 13, 12], at: 0 });
+		expect(found).toMatchObject({ tab: "bookmarks", page: "route" }); // the Route page
+		const none = await routeFromNearest(states("green"));
+		expect(none.route).toMatchObject({ path: [] });
+		expect(none.route?.message).toContain("No blue map leads to map #12");
+	});
+
+	it("on a map: route here from your map, never onto a map that can't be run again", async () => {
+		// you are on map #14 (blue) - 13 (grey) - 12
+		const states = (s12: string) => ({
+			nodes: [
+				{ id: 12, x: 440, y: 200, icons: [], status: "", state: s12 },
+				{ id: 13, x: 300, y: 200, icons: [], status: "", state: "grey" },
+				{ id: 14, x: 200, y: 200, icons: [], status: "", state: "blue" },
+			],
+			edges: [
+				{ a: 12, b: 13 },
+				{ a: 13, b: 14 },
+			],
+		});
+		const here = {
+			...state,
+			settings: { ...state.settings, ui: { player: { x: 200, y: 200, node: 14, atlas: state.atlas?.path } } },
+		};
+		const routeHere = async (g: unknown) => {
+			useAppStore.getState().setRoute(null);
+			const { user, calls, queryClient, unmount } = menu(nodeInfo, false, {
+				"GET /api/graph": g,
+				"GET /api/state": here,
+			});
+			await waitFor(() =>
+				expect(calls.some((c) => c.path === "/api/graph") && queryClient.isFetching() === 0).toBe(true),
+			);
+			await user.click(screen.getByRole("menuitem", { name: "Route here" }));
+			const { route } = useAppStore.getState();
+			unmount();
+			return route;
+		};
+		expect(await routeHere(states("grey"))).toMatchObject({ path: [14, 13, 12], at: 0 });
+		expect(await routeHere(states("green"))).toMatchObject({
+			path: [],
+			message: "Map #12 is green (cleared): it can't be run again.",
+		});
 	});
 
 	it("on a map: this map is a landmark", async () => {

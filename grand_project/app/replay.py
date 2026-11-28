@@ -17,7 +17,7 @@ from dataclasses import dataclass, field
 import cv2
 import numpy as np
 
-from grand_project.core import capture_time  # noqa: F401 (the replay's own name for it)
+from grand_project.core import capture_time, time_order  # noqa: F401 (the replay's own names for them)
 
 from .constants import (
     REPLAY_AREA_RES,
@@ -27,23 +27,6 @@ from .constants import (
     REPLAY_SESSION_GAP,
     REPLAY_SPIRAL_PITCH,
 )
-
-
-def time_order(times: list[float | None]) -> list[int]:
-    """Screenshot indices by when they were taken; ones without a time keep their place after the timed one before.
-
-    Args:
-        times: capture_time of each screenshot, in placement order.
-
-    Returns:
-        Indices into times.
-    """
-    last = float("-inf")
-    keys = []
-    for i, t in enumerate(times):  # untimed: right after the screenshot placed before it
-        last = t if t is not None else last
-        keys.append((last if t is None else t, t is None, i))
-    return [k[2] for k in sorted(keys)]
 
 
 def sessions(times: list[float | None], gap: float = REPLAY_SESSION_GAP) -> list[int]:

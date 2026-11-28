@@ -15,6 +15,8 @@ import math
 import cv2
 import numpy as np
 
+from grand_project.core import capture_time, time_order
+
 from . import replay as R
 from .atlaslock import atlas_edit
 from .constants import (
@@ -86,8 +88,8 @@ class ReplayMixin:
         key = (id(frames), len(frames))
         c = getattr(self, "_age_cache", None)
         if c is None or c[0] != key:
-            times = [R.capture_time(f) for f in frames]
-            order = R.time_order(times)
+            times = [capture_time(f) for f in frames]
+            order = time_order(times)
             rank = np.zeros(len(frames))
             rank[order] = np.linspace(0, 1, len(frames)) if len(frames) > 1 else 1.0
             c = self._age_cache = (key, (order, R.sessions(times), rank, times))

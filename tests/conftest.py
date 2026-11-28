@@ -4,6 +4,10 @@
     pytest -m slow                           the long ones (waiting islands, ~10 min)
     pytest -m ""                             everything
     pytest tests/test_drop_placement.py --runs 20 --seed 123      randomised tests: more runs / a fixed seed
+    pytest tests/detection_dataset_annotator one group: the dataset annotator (tests/rf_detr: the RF-DETR detector)
+
+Related tests are grouped in subpackages (``tests/detection_dataset_annotator``, ``tests/rf_detr``); a subpackage's
+own ``conftest.py`` holds the setup only its tests share, and every fixture here applies to them too.
 
 Markers (declared in pyproject.toml): `data` tests are skipped when the test screenshots are not there (Git LFS:
 git lfs pull --include="atlas_test_data/**", or set ATLAS_TEST_DATA).
@@ -22,6 +26,7 @@ import numpy as np
 import pytest
 
 from grand_project import paths as rc_paths
+from grand_project.detect import detector_config
 
 
 def pytest_addoption(parser):
@@ -34,6 +39,18 @@ def pytest_addoption(parser):
     g.addoption("--runs", type=int, default=None, help="randomised tests: how many runs (each test has a default)")
     g.addoption("--seed", type=int, default=None, help="randomised tests: the seed (default: a new one, printed)")
     g.addoption("--cached", action="store_true", help="test_waiting_islands: reuse the saved detections (quick)")
+    g.addoption("--rf-detr", action="store_true", help="use the optional fine-tuned RF-DETR backend")
+    g.addoption("--rf-detr-model", default="", help="--rf-detr's model: a folder or a Hugging Face id (default: best)")
+
+
+def pytest_configure(config):
+    """Enable the optional detector before tests call the live pipeline."""
+    if config.getoption("--rf-detr"):
+        model = config.getoption("--rf-detr-model").strip()
+        detector_config.configure(detector_config.DetectorConfig(rf_detr=True, model=model))
+        from grand_project.detect.rf_detr_cuda import prefer_pip_cuda_libraries
+
+        prefer_pip_cuda_libraries()  # restarts pytest once with PyTorch's own cuDNN first (Linux; rf_detr_cuda)
 
 
 def pytest_collection_modifyitems(config, items):
@@ -52,6 +69,55 @@ def pytest_collection_modifyitems(config, items):
 
 
 # ------------------------------------------------------------------ fixtures
+ANNOTATOR_DIR = rc_paths.ROOT / "tools" / "detection_dataset_annotator"
+"""The dataset annotator's folder: its review stores (``detection-dataset*/``, local data) and split ledger (git)."""
+
+
+def _annotator_files() -> dict[Path, str]:
+    """The reviewer's own annotator files by SHA-256: every review store below ``ANNOTATOR_DIR`` (its database,
+    its write-ahead log, its backups) and the split ledger. The ``-shm`` index is left out: any reader rewrites it."""
+    files = [path for path in ANNOTATOR_DIR.glob("detection-dataset*/*.sqlite3*") if not path.name.endswith("-shm")]
+    files.append(ANNOTATOR_DIR / "splits.csv")
+    out = {}
+    for path in files:
+        if path.is_file():
+            digest = hashlib.sha256()
+            with open(path, "rb") as handle:
+                for chunk in iter(lambda: handle.read(1 << 20), b""):
+                    digest.update(chunk)
+            out[path] = digest.hexdigest()
+    return out
+
+
+@pytest.fixture(scope="session", autouse=True)
+def annotator_files_unchanged():
+    """Fail the run when any test changed, made or removed a real review store or the split ledger: hand reviews
+    cannot be made again (``annotator_output_dir`` keeps every test in its own folder; this catches a leak)."""
+    before = _annotator_files()
+    yield
+    after = _annotator_files()
+    changed = sorted(str(path.relative_to(rc_paths.ROOT)) for path in before.keys() | after.keys()
+                     if before.get(path) != after.get(path))  # fmt: skip
+    if changed:
+        pytest.fail(
+            "the tests changed the annotator's own files (or the annotator page wrote them meanwhile: stop it while "
+            f"testing): {', '.join(changed)}",
+            pytrace=False,
+        )
+
+
+@pytest.fixture(autouse=True)
+def annotator_output_dir(tmp_path, monkeypatch) -> Path:
+    """Every test's own annotator output folder and split ledger (both read live from the annotator's constants):
+    a command or the page run without ``--output-dir`` never opens the reviewer's review store."""
+    from tools.detection_dataset_annotator import constants as annotator
+
+    out = tmp_path / "annotator-out"
+    monkeypatch.setattr(annotator, "ANNOTATOR_DEFAULT_OUTPUT_DIR", str(out))
+    monkeypatch.setattr(annotator, "ANNOTATOR_SPLIT_LEDGER", tmp_path / "ledger" / "splits.csv")
+    return out
+
+
 @pytest.fixture(autouse=True)
 def app_settings(tmp_path, monkeypatch) -> Path:
     """Every test keeps the app's settings in its own folder: the player's own settings are never touched."""
@@ -60,6 +126,19 @@ def app_settings(tmp_path, monkeypatch) -> Path:
     f = tmp_path / "app_settings.json"
     monkeypatch.setattr(settings, "SETTINGS", f)
     return f
+
+
+@pytest.fixture(autouse=True)
+def detector_kept(monkeypatch):
+    """Every test leaves the process's detector settings as it found them (the app's start sets its saved ones)."""
+    monkeypatch.setattr(detector_config, "_CONFIG", detector_config.current())
+
+
+@pytest.fixture
+def detector():
+    """Set this process's detector settings for one test: ``detector(rf_detr=True, model=...)``
+    (``detector_config.DetectorConfig``'s fields); ``detector_kept`` puts the ones before it back."""
+    return lambda **settings: detector_config.configure(detector_config.DetectorConfig(**settings))
 
 
 @pytest.fixture(scope="session")
@@ -109,7 +188,8 @@ def detection_cache_name(image: Path) -> str:
 
 @pytest.fixture
 def copy_cache():
-    """Copy screenshots' saved detections into a test atlas's cache folder (no detector run needed).
+    """Copy screenshots' saved detections into a test atlas's cache folder (no detector run needed); a screenshot
+    without one is skipped (``builder.extract_frame`` detects it into the copy).
 
     Returns:
         A function ``copy(images, src_cache, dst_cache)``.
@@ -119,7 +199,8 @@ def copy_cache():
         dst_cache.mkdir(parents=True, exist_ok=True)
         for im in images:
             name = detection_cache_name(im)
-            shutil.copy(Path(src_cache) / name, Path(dst_cache) / name)
+            if (Path(src_cache) / name).is_file():  # one never saved is detected anew into dst_cache when read
+                shutil.copy(Path(src_cache) / name, Path(dst_cache) / name)
 
     return copy
 

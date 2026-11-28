@@ -96,6 +96,35 @@ describe("saved routes", () => {
 		]);
 	});
 
+	it("map node states don't change routes you build by hand: added and rejoined over green and red maps", () => {
+		// 0 - 1 - 2 - 3 - 4 - 6, and 1 - 5 - 4 the short way; 2 is green, 3 red
+		const run = new RouteGraph({
+			nodes: [0, 1, 2, 3, 4, 5, 6].map((id) => ({
+				id,
+				x: id * 100,
+				y: 0,
+				icons: [],
+				status: "confirmed",
+				state: id === 2 ? "green" : id === 3 ? "red" : "blue",
+			})),
+			edges: [
+				{ a: 0, b: 1 },
+				{ a: 1, b: 2 },
+				{ a: 2, b: 3 },
+				{ a: 3, b: 4 },
+				{ a: 1, b: 5 },
+				{ a: 5, b: 4 },
+				{ a: 4, b: 6 },
+			],
+		});
+		expect(addMap([[0, 1, 5]], 3, run)).toEqual([
+			[0, 1, 5],
+			[1, 2, 3],
+		]);
+		// 5 taken off: 4 and 6 rejoin round it, through the green and red maps
+		expect(removeMap([[0, 1, 5, 4, 6]], 5, run)).toEqual([[0, 1, 2, 3, 4, 6]]);
+	});
+
 	it("your case: two maps added past the end, then the first two taken off one by one", () => {
 		const added = [[1, 2, 3, 5]];
 		const once = removeMap(added, 1);

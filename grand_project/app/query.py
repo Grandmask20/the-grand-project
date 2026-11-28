@@ -16,10 +16,31 @@ from grand_project import cities as atlas_cities
 from grand_project import core
 
 from .bookmarks import bm_group
-from .constants import BOOKMARK_PIN_R, ICON_ROW_DY, POTENTIAL_TYPES
+from .constants import BOOKMARK_PIN_R, ICON_ROW_DY, NODE_STATE_TEXT, POTENTIAL_TYPES
 from .icons import icon_aliases, icon_label, icon_name
+from .replay import session_label
 
 KINDS = ("node", "path", "landmark", "icon", "bookmark")
+
+
+def state_lines(n: dict) -> list[str]:
+    """A map node's state lines for its info (finalize.states): the state and when it was last seen, and sightings
+    that disagree (detection errors).
+
+    Args:
+        n: A checked map node (atlas.final["nodes"] item).
+
+    Returns:
+        The lines (none for a map no screenshot names the state of).
+    """
+    out = []
+    if n.get("state"):
+        out.append(
+            f"State: {NODE_STATE_TEXT.get(n['state'], n['state'])}, last seen {session_label(n.get('state_seen'))}"
+        )
+    if n.get("state_errors"):
+        out.append(f"{n['state_errors']} screenshot(s) disagree about its state (detection errors)")
+    return out
 
 
 class QueryMixin:
@@ -174,6 +195,7 @@ class QueryMixin:
                         n["abyss"], "Abyss chain"
                     )
                 )
+            lines += state_lines(n)
             if n.get("tower"):
                 lines.append("Tower foot (path endpoint)")
             if i in D.get("potential", {}):
@@ -708,13 +730,22 @@ class QueryMixin:
         """Return the map graph the page finds routes on: the maps shown and the paths between them.
 
         Returns:
-            {"nodes": [{"id", "x", "y", "icons", "status"}], "edges": [{"a", "b", "line"?}]}.
+            {"nodes": [{"id", "x", "y", "icons", "status", "state"}], "edges": [{"a", "b", "line"?}]}; "state" is
+            the map node's state (grey / blue / green / red, finalize.states; "" when no screenshot named it): routes
+            never run green or red maps.
         """
         fl = self._flags()
         N = self.V["nodes"]
         ok = [self.node_shown(n, fl) for n in N]
         nodes = [
-            {"id": i, "x": n["x"], "y": n["y"], "icons": sorted(set(n.get("icons") or [])), "status": n["status"]}
+            {
+                "id": i,
+                "x": n["x"],
+                "y": n["y"],
+                "icons": sorted(set(n.get("icons") or [])),
+                "status": n["status"],
+                "state": n.get("state") or "",
+            }
             for i, n in enumerate(N)
             if ok[i]
         ]

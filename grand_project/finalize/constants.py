@@ -209,10 +209,8 @@ ICON_DUP = 24.0  # same badge placed a few px apart by different screenshots
 SETTLE_MERGE = 90.0  # Hall / City detections this close are one building
 
 
-SETTLE_BADGE = 200.0  # a Hall / City has a Deadly Map Boss badge this close (crawl: 66 of 67
-
-
-# cities within 26; "Halls" with none within 350 were corruption / fog / forest)
+SETTLE_BADGE = 110.0  # a special-boss badge this close belongs to that building (crawl: 66 of 67 cities within 26;
+# "Halls" with none within 350 were corruption / fog / forest)
 
 
 # map types that never share a map (user's rule): hideout, city, corruption, cleansed, hall, deadly
@@ -236,7 +234,25 @@ EXCLUSIVE = {
 OCEAN_R, OCEAN_WATER = 350, 0.33  # water share within 350 px: ocean (Expedition) biome. 351 crawl cities: max 0.29
 
 
-SETTLE_BADGE = 110.0  # a special-boss badge this close belongs to that building
+# ---------------------------------------------------------------------------------- map node states over time
+# finalize/states.py: each map's state from its newest sightings, as long as the change from the older ones is
+# allowed (user's rules; its icons over time are finalize.icon_time's). Several steps can happen between two
+# far-apart sightings, so each state lists every state it can become: grey -> blue -> green, blue -> red (failed:
+# only cities and halls); green and red never change again.
+STATE_AFTER = {
+    "grey": ("grey", "blue", "green", "red"),
+    "blue": ("blue", "green", "red"),
+    "green": ("green",),
+    "red": ("red",),
+}
+# a change of state costs less than one sighting that disagrees, so one newest sighting can show a change (one map
+# is often run between two screenshots); each disagreeing sighting costs 1
+STATE_CHANGE_COST = 0.5
+# icons of the maps that can fail (turn red): the Deadly Map Boss (cities, halls) and Unique maps (a Unique map turned
+# red in the map_state_change screenshots, user's rule was cities and halls only)
+STATE_RED_ICONS = frozenset({"MapBossSpecial", "UniqueMap"})
+STATE_SETTLE_REACH = 30.0  # atlas units: a City / Hall's map node is this close to it (both stand on the node)
+STATE_LOG_MAX = 20  # map nodes whose sightings disagree that are logged by name (the rest are counted)
 
 
 # ---------------------------------------------------------------------------------- local update

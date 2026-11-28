@@ -33,6 +33,7 @@ from grand_project import core as core  # noqa: E402
 from grand_project import fileio as atlas_io  # noqa: E402
 from grand_project import finalize as atlas_finalize  # noqa: E402
 from grand_project import logs as atlas_log  # noqa: E402
+from grand_project.detect import detector_config  # noqa: E402
 
 _log = atlas_log.printer("builder")
 
@@ -58,6 +59,12 @@ def detector_stamp() -> str:
         import sqlite3
 
         from grand_project.detect.constants import BADGE_FINDER_FILE, CITY_BARREL_FILE, DB_PATH
+        from grand_project.detect.rf_detr_model import (
+            checkpoint_digest,
+            rf_detr_enabled,
+            rf_detr_model_path,
+            runtime_digest,
+        )
 
         h = hashlib.sha1()
         try:
@@ -75,6 +82,19 @@ def detector_stamp() -> str:
             h.update(b"no database")
         for f in (BADGE_FINDER_FILE, CITY_BARREL_FILE):
             h.update(f.read_bytes() if f.exists() else b"-")
+        if rf_detr_enabled():
+            h.update(b"rf-detr")
+            try:
+                rf_model = rf_detr_model_path()
+            except RuntimeError:  # a Hugging Face model id that could not be downloaded: no checkpoint
+                return h.hexdigest()[:12]
+            if not rf_model.is_dir():
+                # not kept: the checkpoint may appear later in this process (a training run finishing), and the
+                # detections made with it must carry its digest, not this stamp
+                return h.hexdigest()[:12]
+            # the checkpoint's contents, as the model loaded in this process is checked against (load_detector)
+            # the loaded weights' own digest when a model is loaded already (the checkpoint they are), else the folder's
+            h.update((runtime_digest() or checkpoint_digest(rf_model)).encode())
         _STAMP.append(h.hexdigest()[:12])
     return _STAMP[0]
 
@@ -150,6 +170,8 @@ def extract_frame(image_path: Path, cache_dir: Path) -> core.Frame:
     if img is None:
         raise ValueError(f"{image_path.name} is not a readable image (damaged or not fully written)")
     r = atlas_detect.detect(img)
+    book = atlas_detect.state_pictures()  # the names and their stamp from one set of pictures
+    states = atlas_detect.name_states(img, r["nodes"], book)  # named apart from finding: new pictures re-name it
     data = {
         "name": image_path.stem,
         "path": str(image_path.resolve()),
@@ -166,15 +188,16 @@ def extract_frame(image_path: Path, cache_dir: Path) -> core.Frame:
                 "x": float(n["x"]),
                 "y": float(n["y"]),
                 "score": float(n.get("score", 0.5)),
-                "state": "auto",
+                "state": state,
                 "source": n.get("source", "map finder"),
                 "hidden": bool(n.get("hidden")),
                 "unverified": False,
                 "tower": bool(n.get("tower")),
                 "icon": "",
             }
-            for n in r["nodes"]
+            for n, state in zip(r["nodes"], states, strict=True)
         ],
+        "states_from": book["stamp"],
         "edges": [
             {"a": int(e["a"]), "b": int(e["b"]), "conf": float(e["conf"]), "status": e["status"], "line": e["line"]}
             for e in r["edges"]
@@ -207,9 +230,6 @@ def extract_frame(image_path: Path, cache_dir: Path) -> core.Frame:
     cache_dir.mkdir(parents=True, exist_ok=True)
     atlas_io.write_text_atomic(cache, json.dumps(data))
     return core.Frame.from_json(data)
-
-
-DETECT_WORKERS = atlas_io.workers(4)  # new screenshots detected at once (each ~8 s alone; v1.01)
 
 
 def _program_version() -> str:
@@ -267,11 +287,17 @@ def is_cached(image_path: Path, cache_dir: Path) -> bool:
     return _fresh(cache_dir / f"{digest[:16]}_{atlas_detect.DETECTOR_ID}.json") is not None
 
 
+def _detect_pool(workers: int):
+    """A pool of detection workers that run this process's detector (spawned workers start with the default one)."""
+    return atlas_io.process_pool(workers, initializer=detector_config.configure, initargs=(detector_config.current(),))
+
+
 def detect_uncached(paths: list, cache_dir: Path, log=None, progress=None) -> dict:
     """Detect the screenshots not cached yet, several at a time (the viewer's batches).
 
-    Afterwards extract_frame reads each from the cache. Does nothing for fewer than 2 screenshots or when
-    DETECT_WORKERS < 2; when worker processes fail, the screenshots are left to be detected one at a time later.
+    Afterwards extract_frame reads each from the cache. Does nothing for fewer than 2 screenshots or when the detector
+    settings allow fewer than 2 workers (``detector_config``: Log > Experimental); when worker processes fail, the
+    screenshots are left to be detected one at a time later.
 
     Args:
         paths: Screenshot paths.
@@ -284,12 +310,13 @@ def detect_uncached(paths: list, cache_dir: Path, log=None, progress=None) -> di
         {path: error} for failures.
     """
     todo = [p for p in paths if not is_cached(Path(p), cache_dir)]
-    if len(todo) < 2 or DETECT_WORKERS < 2:
+    workers = atlas_io.workers(detector_config.current().workers)
+    if len(todo) < 2 or workers < 2:
         return {}
     cache_dir.mkdir(parents=True, exist_ok=True)
     errors = {}
     try:
-        with atlas_io.process_pool(min(DETECT_WORKERS, len(todo))) as ex:
+        with _detect_pool(min(workers, len(todo))) as ex:
             jobs = [ex.submit(_detect_one, (str(p), str(cache_dir))) for p in todo]
             for done, job in enumerate(as_completed(jobs), 1):
                 p, err = job.result()
@@ -454,10 +481,11 @@ def _detect_one(job):
         return image, repr(e)
 
 
-def detect_many(images: list, cache_dir: Path, workers: int = 1, log=_log) -> list:
+def detect_many(images: list, cache_dir: Path, workers: int = 1, log=_log) -> tuple[list, list[str]]:
     """Detect every screenshot (cached ones are instant), several at once when workers > 1.
 
-    Screenshots whose detection fails are logged and skipped.
+    Screenshots whose detection fails are logged and skipped, and named in the result: a run that detected nothing is
+    not one that placed nothing.
 
     Args:
         images: Screenshot paths.
@@ -466,30 +494,29 @@ def detect_many(images: list, cache_dir: Path, workers: int = 1, log=_log) -> li
         log: Function taking one line of text.
 
     Returns:
-        The Frames of the screenshots detected, in input order.
+        (the Frames of the screenshots detected, in input order; the names of those whose detection failed).
     """
     todo = [i for i in images]
     if workers > 1 and len(todo) > 1:
-        from concurrent.futures import as_completed
-
-        with atlas_io.process_pool(workers) as ex:
+        with _detect_pool(workers) as ex:
             futs = [ex.submit(_detect_one, (str(i), str(cache_dir))) for i in todo]
             for k, fu in enumerate(as_completed(futs), 1):
                 image, err = fu.result()
                 log(f"[{k}/{len(todo)}] {Path(image).name}" + (f"  FAILED: {err}" if err else ""))
-    frames = []
+    frames, failed = [], []
     for image in images:
         try:
             frame = extract_frame(Path(image), cache_dir)
         except Exception as e:
             log(f"skipped {Path(image).name}: detection failed ({e})")
+            failed.append(Path(image).name)
             continue
         log(
             f"detected {Path(image).name}: {int(frame.usable.sum())} usable nodes, {len(frame.edges)} paths, "
             f"{len(frame.landmarks)} landmarks"
         )
         frames.append(frame)
-    return frames
+    return frames, failed
 
 
 def cmd_add(args) -> int:
@@ -501,7 +528,8 @@ def cmd_add(args) -> int:
         args: Parsed arguments (atlas, image, workers).
 
     Returns:
-        Exit code 0.
+        Exit code 0; 1 when a screenshot could not be detected (what was placed is saved all the same), so a caller
+        tells a failed detection from a run that placed nothing.
 
     Raises:
         SystemExit: The detector database is missing.
@@ -509,6 +537,7 @@ def cmd_add(args) -> int:
     atlas_path = Path(args.atlas)
     atlas = core.Atlas.load(atlas_path) if atlas_path.exists() else core.Atlas()
     cache_dir = atlas_path.with_name(atlas_path.stem + "_frames")
+    atlas.frames_dir = cache_dir  # a new atlas too: the check reads the saved detections (paths, map node states)
     from grand_project import paths as rc_paths
 
     if not rc_paths.DATABASE.exists():
@@ -517,7 +546,7 @@ def cmd_add(args) -> int:
     images = []
     for i in args.image:  # a folder = all its screenshots, in name (= time) order
         images += core.screenshots_in(i) if Path(i).is_dir() else [Path(i)]
-    pending = detect_many(images, cache_dir, args.workers)
+    pending, failed = detect_many(images, cache_dir, args.workers)
     added, _ = place_frames(atlas, pending)
     if added:
         atlas.save(atlas_path)
@@ -528,6 +557,9 @@ def cmd_add(args) -> int:
         )
     else:
         print("\nnothing added; atlas unchanged")
+    if failed:
+        print(f"\n{len(failed)} screenshots could not be detected: {', '.join(failed)}")
+        return 1
     return 0
 
 
@@ -670,6 +702,7 @@ def main() -> int:
     a.add_argument(
         "--workers", type=int, default=1, help="detect this many screenshots at once (e.g. 6 on an 8+ core PC)"
     )
+    detector_config.add_arguments(a)
     a.set_defaults(func=cmd_add)
     fz = sub.add_parser("finalize", help="re-run the atlas-wide clean-up (nodes, icons, abyss, paths)")
     fz.add_argument("--atlas", required=True)
@@ -678,6 +711,12 @@ def main() -> int:
     i.add_argument("--atlas", required=True)
     i.set_defaults(func=cmd_info)
     args = ap.parse_args()
+    if args.cmd == "add":
+        detector_config.configure(detector_config.from_args(args, workers=args.workers))
+        if args.rf_detr:  # RF-DETR on CUDA needs PyTorch's own cuDNN, before torch loads (rf_detr_cuda)
+            from grand_project.detect.rf_detr_cuda import prefer_pip_cuda_libraries
+
+            prefer_pip_cuda_libraries()
     return args.func(args)
 
 

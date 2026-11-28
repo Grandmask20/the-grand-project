@@ -9,6 +9,11 @@ A small part of the author's own test set, so the tests and `atlas_detect.py sco
 | `screenshots/crawl/` | the first 110 screenshots of a crawl across the atlas, plus the small atlas's 5 |
 | `crawl_atlas/`, `small_atlas/` | finished atlases of those screenshots, with their cached detections |
 | `res_atlases/` | 3 screenshots at 8 resolution / render scales, as atlases; `score_atlases.py` + baseline |
+| `map_state_change/` | one area of the roa atlas before running maps (`pre-change/`), after (`post-change/`) and once per map run (`single-map/`), with the atlas of all three; map node states over time |
+
+Map node states checked by hand (`tools/node_state_sheet.py`) are in a `states.json` next to the screenshots:
+`map_state_change/*/` (the state namer's pictures come from these) and `screenshots/random_samples/`,
+`screenshots/ocean/` (only scored, never pictures).
 
 It is stored with Git LFS and is NOT downloaded by a normal clone (see `.lfsconfig`). To get it:
 

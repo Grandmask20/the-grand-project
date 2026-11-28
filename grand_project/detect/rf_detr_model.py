@@ -1,0 +1,594 @@
+"""Optional RF-DETR inference backend.
+
+The backend is deliberately opt-in. It loads the fine-tuned Transformers model only when the process's detector
+settings select it (``detector_config``: the app's Log > Experimental, the tools' ``--rf-detr``), and returns the
+same detector result shape as the classical pipeline. Torch and Transformers stay lazy imports so normal installs and
+offline tests do not need the training stack.
+
+The model sees the screenshot as it was trained: native-scale tiles with the game HUD painted over
+(``rf_detr_tiles.py``). Classes of one family (a map node is one of the node classes, a citadel one of three) are
+scored together: an object is found when its family's score (the sum of its classes' scores) clears the threshold,
+its class is the best one within the family, and duplicates are suppressed within the family across tiles. Classes
+are matched by name (the checkpoint's own label map), never by id.
+
+What the program gets back (as the classical detector reports it): every node class is a map node (with its
+``biome`` or ``city_type``); a citadel is a City with its type at the city's map node; a hall a Hall at its map node;
+a deadly-boss icon whose map is neither a citadel nor a hall a "Deadly boss map". The model finds every icon as the
+one ``icon`` class and the classical naming step names it (``badges.name_found_icons``), as it names the classical
+finder's icons; likewise every square reveal button as ``reveal_button``, named by its symbol
+(``cities.name_button``): a ship button is an ``ExpeditionShip`` icon, a hand button makes the Breach stronghold
+beside it locked (``landmarks.stronghold_kind``). Paths and fortress walls come from the classical finders.
+"""
+
+from __future__ import annotations
+
+import hashlib
+import json
+import os
+from pathlib import Path
+from typing import Any
+
+import cv2
+import numpy as np
+from scipy.optimize import linear_sum_assignment
+
+from grand_project import core
+from grand_project.cities import name_button
+
+from . import constants as K
+from . import labels as L
+from . import rf_detr_tiles as T
+from .badges import name_found_icons, naming_book
+from .detector_config import current
+from .landmarks import expedition_rules, stronghold_kind
+from .paths import path_dashes as classical_path_dashes
+from .paths import trace_paths
+from .walls import fortress_walls, wall_share
+
+_RUNTIME: dict[str, Any] | None = None
+_DIGESTS: dict[str, str] = {}
+"""Model folder -> its checkpoint digest, worked out once per process (``checkpoint_digest``)."""
+_FOLDERS: dict[str, Path] = {}
+"""Model reference -> its folder, resolved once per process (``model_folder``: a Hub id is downloaded once)."""
+
+
+def rf_detr_enabled() -> bool:
+    """Return whether this process's detector settings select the optional RF-DETR detector."""
+    return current().rf_detr
+
+
+def _hub_id(ref: str) -> tuple[str, str | None] | None:
+    """``owner/name`` or ``owner/name@revision`` as (repo id, revision), else None (a path)."""
+    repo, _, revision = ref.partition("@")
+    parts = repo.split("/")
+    # (a drive letter, a backslash or a leading ".", "~", "/" is a path; Hub ids hold none of them)
+    if any(c in ref for c in ":\\") or ref.startswith((".", "~", "/")) or len(parts) != 2 or not all(parts):
+        return None
+    return repo, revision or None
+
+
+def model_folder(ref: str | Path) -> Path:
+    """The folder of a fine-tuned model: a local folder as it is, else a Hugging Face model id (``owner/name``,
+    optionally ``@revision``) downloaded into the Hugging Face cache (only ``RF_DETR_HUB_FILES``). Worked out once per
+    process, so the detector stamp and the loaded weights are of the same download; a reference that is neither (a
+    folder not there yet) is returned as the path it names.
+
+    Raises:
+        RuntimeError: the id's model could not be downloaded (and is not in the cache).
+    """
+    key = str(ref)
+    if key not in _FOLDERS:
+        path = Path(key).expanduser()
+        hub = None if path.is_dir() else _hub_id(key)
+        if hub is None:
+            return path  # (not kept: it may appear later, a training run finishing)
+        from huggingface_hub import snapshot_download
+
+        repo, revision = hub
+        try:
+            folder = snapshot_download(repo, revision=revision, allow_patterns=list(K.RF_DETR_HUB_FILES))
+        except Exception as exc:
+            raise RuntimeError(
+                f"no local folder {key}, and no Hugging Face model of that id downloaded: {exc}"
+            ) from exc
+        _FOLDERS[key] = Path(folder)
+    return _FOLDERS[key]
+
+
+def rf_detr_model_path() -> Path:
+    """Return the configured fine-tuned model's folder (the detector settings' ``model``: a folder or a Hugging Face
+    model id, ``model_folder``; else ``RF_DETR_DEFAULT_MODEL_DIR``)."""
+    return model_folder(current().model or K.RF_DETR_DEFAULT_MODEL_DIR)
+
+
+def trained_on(model: str | Path) -> set[str] | None:
+    """The screenshots (project-relative paths) a kept model trained on, as its ``RF_DETR_TRAINED_ON`` lists them;
+    None when it has no such list (not known, which is not a list of none).
+
+    Args:
+        model: its folder or Hugging Face model id (``model_folder``).
+    """
+    listed = model_folder(model) / K.RF_DETR_TRAINED_ON
+    if not listed.is_file():
+        return None
+    return {line.strip() for line in listed.read_text(encoding="utf-8").splitlines() if line.strip()}
+
+
+def reset_rf_detr_runtime() -> None:
+    """Forget a loaded model, the checkpoint digests and the resolved model folders; useful when a test swaps the
+    model path or feature flag."""
+    global _RUNTIME
+    _RUNTIME = None
+    _DIGESTS.clear()
+    _FOLDERS.clear()
+
+
+def _hash_checkpoint(model_dir: Path) -> str:
+    """Each file's name and contents, not its place or time: the same checkpoint copied or swapped in again has the
+    same digest; other weights under the same name and time do not (CodeRabbit)."""
+    h = hashlib.sha1()
+    for f in sorted(Path(model_dir).iterdir()):
+        if f.is_file():
+            h.update(f"{f.name}:".encode())
+            with open(f, "rb") as fh:
+                for chunk in iter(lambda: fh.read(1 << 20), b""):
+                    h.update(chunk)
+    return h.hexdigest()
+
+
+def folder_identity(model_dir: Path) -> tuple[int, int]:
+    """Which generation of a checkpoint folder this is: its device and inode, as configured (symlinks followed).
+
+    A training run publishes a new ``best/`` by renaming a complete folder into place (``train_rf_detr.swap_in``), so
+    a new generation is a new inode; a reader that sees the same identity before and after reading several files read
+    them all from one generation, never half of one and half of the next.
+
+    Raises:
+        OSError: the folder is not there (swapped out just now).
+    """
+    status = os.stat(model_dir)
+    return status.st_dev, status.st_ino
+
+
+def checkpoint_digest(model_dir: Path) -> str:
+    """The digest of a checkpoint folder's files, worked out once per process: the detector stamp
+    (``builder.detector_stamp``) and the model ``load_detector`` loads are the same checkpoint state.
+
+    Kept by the folder as configured, not by where a symlink points now: a link moved to other weights later keeps
+    the digest first read, so ``load_detector``'s check refuses those weights instead of stamping them anew
+    (CodeRabbit)."""
+    key = str(Path(model_dir).absolute())
+    if key not in _DIGESTS:
+        _DIGESTS[key] = _hash_checkpoint(Path(model_dir))
+    return _DIGESTS[key]
+
+
+def _device(torch):
+    """Select the configured device (the detector settings'), "auto" preferring the same accelerators as the
+    trainer."""
+    value = current().device
+    if value == "auto":
+        value = "cuda" if torch.cuda.is_available() else "mps" if torch.backends.mps.is_available() else "cpu"
+    return torch.device(value)
+
+
+def _labels(model_dir: Path, model) -> dict[int, str]:
+    """Read the saved label map (``labels.json``, which the trainer writes beside the weights).
+
+    Raises:
+        RuntimeError: there is none, or its ids are not exactly the model head's classes (0 .. num_labels - 1): an id
+            beyond the head cannot be scored, a class left out would be silently dropped.
+    """
+    label_file = model_dir / "labels.json"
+    if not label_file.is_file():
+        raise RuntimeError(f"the RF-DETR model in {model_dir} has no labels.json: train it with tools.train_rf_detr")
+    raw = json.loads(label_file.read_text(encoding="utf-8"))
+    labels = {int(index): str(name) for index, name in raw.items()}
+    classes = int(model.config.num_labels)
+    if sorted(labels) != list(range(classes)):
+        raise RuntimeError(
+            f"the RF-DETR model in {model_dir} has {classes} classes, its label map names ids {sorted(labels)}: "
+            "every class needs exactly one name"
+        )
+    return labels
+
+
+def class_families(labels: dict[int, str]) -> dict[str, list[tuple[int, str]]]:
+    """A checkpoint's classes grouped by family.
+
+    Args:
+        labels: class id -> name, as the checkpoint saved them.
+
+    Returns:
+        family -> [(class id, name)]; a class of no family (a reviewer's own label) is a family of its own.
+    """
+    out: dict[str, list[tuple[int, str]]] = {}
+    for index, name in sorted(labels.items()):
+        out.setdefault(L.family(name) or name, []).append((index, name))
+    return out
+
+
+def load_detector(model_dir: Path) -> dict[str, Any]:
+    """Load a fine-tuned checkpoint folder: its processor, model (eval mode, on the configured device) and class
+    families.
+
+    Raises:
+        RuntimeError: the folder is missing, cannot be loaded, or has classes the labels no longer have.
+    """
+    if not model_dir.is_dir():
+        raise RuntimeError(
+            f"RF-DETR is enabled but its model directory does not exist: {model_dir}. "
+            "Run  make train_rf_detr  or choose another model (Log > Experimental, --rf-detr-model)."
+        )
+    expected = checkpoint_digest(model_dir)
+    try:
+        generation = folder_identity(model_dir)
+    except OSError as exc:
+        raise RuntimeError(f"the RF-DETR model in {model_dir} is not there any more: start the program again") from exc
+    try:
+        import torch
+        from transformers import AutoImageProcessor, AutoModelForObjectDetection
+
+        processor = AutoImageProcessor.from_pretrained(model_dir)
+        # safetensors only: a pickled checkpoint can run code when loaded (AGENTS.md, models)
+        model = AutoModelForObjectDetection.from_pretrained(model_dir, use_safetensors=True)
+    except Exception as exc:
+        raise RuntimeError(f"could not load the RF-DETR model from {model_dir}: {exc}") from exc
+    labels = _labels(model_dir, model)
+    # the files as loaded, labels.json too, must be the ones the detector stamp names (a training run swapping a new
+    # best/ in meanwhile would give detections of other weights under the old stamp): the digest from before the load,
+    # checked after everything was read
+    try:
+        same_generation = folder_identity(model_dir) == generation
+        same_files = same_generation and _hash_checkpoint(model_dir) == expected
+    except OSError:
+        same_files = False
+    if not same_files:
+        raise RuntimeError(
+            f"the RF-DETR model in {model_dir} changed since this process first read it: start the program again"
+        )
+    unknown = sorted(name for name in labels.values() if not L.known(name))
+    if unknown:
+        # a checkpoint of an earlier label set: its retired classes (city, locked_stronghold, ...) would be found and
+        # silently dropped, so the program would lose those objects
+        raise RuntimeError(
+            f"the RF-DETR model in {model_dir} has classes the labels no longer have ({', '.join(unknown)}): "
+            "train it again on a new export"
+        )
+    device = _device(torch)
+    model.to(device)
+    model.eval()
+    return {
+        "processor": processor,
+        "model": model,
+        "device": device,
+        "families": class_families(labels),
+        "digest": expected,  # the checkpoint state these weights are (the detector stamp's)
+    }
+
+
+def _load_runtime() -> dict[str, Any]:
+    """Load the configured model once (``load_detector``), failing clearly when the feature flag is misconfigured."""
+    global _RUNTIME
+    if _RUNTIME is None:
+        _RUNTIME = load_detector(rf_detr_model_path())
+    elif _RUNTIME.get("digest") not in (None, checkpoint_digest(rf_detr_model_path())):
+        # the configured model is another checkpoint than the one loaded (the setting changed): its detections would
+        # carry a stamp of other weights
+        raise RuntimeError("the configured RF-DETR model is not the one loaded: start the program again")
+    return _RUNTIME
+
+
+def runtime_digest() -> str | None:
+    """The checkpoint digest of the loaded model (None before one is loaded)."""
+    return None if _RUNTIME is None else _RUNTIME.get("digest")
+
+
+def family_detections(
+    probs: np.ndarray, boxes: np.ndarray, families: dict[str, list[tuple[int, str]]], threshold: float
+) -> list[dict[str, Any]]:
+    """Turn one tile's query outputs into detections, scoring each family's classes together.
+
+    Args:
+        probs: (queries, classes) sigmoid class scores.
+        boxes: (queries, 4) ``[x0, y0, x1, y1]`` boxes in tile px.
+        families: ``class_families`` of the checkpoint.
+        threshold: the family score a detection needs.
+
+    Returns:
+        Detections {"label", "family", "score", "box"}: per query the family with the highest score (the sum of its
+        classes' scores, at most 1) when it reaches ``threshold``, labelled with its best class.
+    """
+    if not len(probs) or not families:
+        return []
+    names = list(families)
+    # the family is chosen by its uncapped sum (capped first, two families past 1 tied and the first won: CodeRabbit);
+    # only the score reported is capped
+    raw = np.stack([probs[:, [i for i, _n in families[f]]].sum(axis=1) for f in names], axis=1)
+    best = raw.argmax(axis=1)
+    chosen = raw[np.arange(len(raw)), best].clip(max=1.0)
+    out = []
+    for query in np.nonzero(chosen >= threshold)[0]:
+        name = names[int(best[query])]
+        members = families[name]
+        index = int(np.argmax(probs[query, [i for i, _n in members]]))
+        out.append(
+            {
+                "label": members[index][1],
+                "family": name,
+                "score": float(chosen[query]),
+                "box": [float(v) for v in boxes[query]],
+            }
+        )
+    return out
+
+
+def predict_tiles(
+    model, processor, img: np.ndarray, families: dict[str, list[tuple[int, str]]], device, *, threshold: float
+) -> list[dict[str, Any]]:
+    """Run a model over a screenshot's tiles and merge what it finds, as training showed it the screenshots.
+
+    Args:
+        model: the RF-DETR model (eval mode).
+        processor: its image processor (size: one tile).
+        img: the screenshot (BGR) as the detector reads it (1080p).
+        families: ``class_families`` of the model's classes.
+        device: the model's torch device.
+        threshold: the family score a detection needs.
+
+    Returns:
+        Detections {"label", "family", "score", "box" ``[x0, y0, x1, y1]`` in screenshot px}, one per object.
+    """
+    import torch
+
+    height, width = img.shape[:2]
+    prepared = T.pad_to_tile(T.fill_hud(img, rgb=False), rgb=False)
+    tile = K.RF_DETR_TILE
+    origins = T.tile_origins(prepared.shape[1], prepared.shape[0])
+    detections: list[dict[str, Any]] = []
+    for start in range(0, len(origins), K.RF_DETR_INFER_BATCH):
+        batch = origins[start : start + K.RF_DETR_INFER_BATCH]
+        tiles = [cv2.cvtColor(prepared[y : y + tile, x : x + tile], cv2.COLOR_BGR2RGB) for x, y in batch]
+        inputs = processor(images=tiles, return_tensors="pt")
+        inputs = {key: value.to(device) if torch.is_tensor(value) else value for key, value in inputs.items()}
+        with torch.inference_mode():
+            outputs = model(**inputs)
+        probs = outputs.logits.sigmoid().float().cpu().numpy()
+        centre = outputs.pred_boxes.float().cpu().numpy() * tile  # (cx, cy, w, h) of the tile, in tile px
+        corners = np.concatenate([centre[..., :2] - centre[..., 2:] / 2, centre[..., :2] + centre[..., 2:] / 2], -1)
+        for (x, y), tile_probs, tile_boxes in zip(batch, probs, corners, strict=True):
+            for det in family_detections(tile_probs, tile_boxes, families, threshold):
+                if T.cut_by_inner_edge(det["box"], (x, y), (prepared.shape[1], prepared.shape[0])):
+                    continue
+                x0, y0, x1, y1 = det["box"]
+                box = [max(0.0, x0 + x), max(0.0, y0 + y), min(float(width), x1 + x), min(float(height), y1 + y)]
+                if box[2] <= box[0] or box[3] <= box[1]:
+                    continue  # all in the padding of a screenshot smaller than a tile: nothing of it is on it
+                det["box"] = box
+                detections.append(det)
+    # what lies on the HUD is HUD art, dropped before the duplicates are: so the program, the training's scores and the
+    # pre-labels see the same detections (and HUD art never suppresses a real object beside it)
+    centres = np.asarray([_centre(d["box"]) for d in detections], float).reshape(-1, 2)
+    on_hud = core.on_hud_mask(centres, width, height, pad=0) if len(centres) else np.zeros(0, bool)
+    detections = [d for d, hidden in zip(detections, on_hud, strict=True) if not hidden]
+    return T.nms(detections, K.RF_DETR_FAMILY_NMS_IOU)
+
+
+def _predict(img: np.ndarray) -> list[dict[str, Any]]:
+    """Run the loaded model over a screenshot's tiles (``predict_tiles``)."""
+    runtime = _load_runtime()
+    return predict_tiles(
+        runtime["model"],
+        runtime["processor"],
+        img,
+        runtime["families"],
+        runtime["device"],
+        threshold=K.RF_DETR_SCORE_THRESHOLD,
+    )
+
+
+def _centre(box: list[float]) -> tuple[float, float]:
+    """Return the centre of an ``xyxy`` box."""
+    return (box[0] + box[2]) / 2, (box[1] + box[3]) / 2
+
+
+def _inside(box: list[float], x: float, y: float) -> bool:
+    """Whether a point lies in an ``xyxy`` box."""
+    return box[0] <= x <= box[2] and box[1] <= y <= box[3]
+
+
+def _name_icons(img: np.ndarray, found: list[dict[str, Any]], book: dict | None = None) -> list[dict[str, Any]]:
+    """Name the model's icons with the classical detector's naming step (``badges.name_found_icons``: the stored
+    pictures and the icon model's, the whole-icon templates of the icons with their own rim, the Expedition rule).
+
+    The model's score is not the rim finder's probability, so the rim finder's influence rule (``INFLUENCE_MIN``) is
+    left out: the model learned from reviewed boxes that terrain circles are no icons. ``book``: the icon model's
+    labelled pictures to name with (default ``naming_book()``; a score passes one without the scored screenshot's).
+    """
+    return name_found_icons(img, found, naming_book() if book is None else book, influence_min=None)
+
+
+def _boss_node(nodes: list[dict], x: float, y: float) -> dict | None:
+    """The map node under a deadly-boss icon at (x, y): ``RF_DETR_BOSS_ROW`` below it, ``RF_DETR_BOSS_DX`` aside."""
+    low, high = K.RF_DETR_BOSS_ROW
+    near = [n for n in nodes if low <= n["y"] - y <= high and abs(n["x"] - x) <= K.RF_DETR_BOSS_DX]
+    return min(near, key=lambda n: abs(n["x"] - x) + abs(n["y"] - y - K.ROW_DY), default=None)
+
+
+def hall_node(box: list[float], nodes: list[dict], bosses: list[dict]) -> dict | None:
+    """The map node a hall's box stands for: the one inside it under a deadly-boss icon, else (the icon missed) the
+    one inside it nearest the box's middle, else None.
+
+    Of several maps under deadly-boss icons inside the box (a neighbour inside a wide structure's box), the one nearest
+    the box's bottom edge: the hall's structure rises above its map node (``RF_DETR_HALL_STRUCTURE_DY``). Ties go to
+    the one nearest the box's middle, so the order of the icons never matters.
+
+    Args:
+        box: the hall's ``xyxy`` box (its map node and structure).
+        nodes: map node dicts with "x", "y".
+        bosses: the deadly-boss icons ("MapBossSpecial"), dicts with "x", "y".
+    """
+    inside = [n for n in nodes if _inside(box, n["x"], n["y"])]
+    cx, cy = _centre(box)
+    bossed = [node for boss in bosses if (node := _boss_node(inside, boss["x"], boss["y"])) is not None]
+    if bossed:
+        return min(bossed, key=lambda n: (box[3] - n["y"], np.hypot(n["x"] - cx, n["y"] - cy), n["x"], n["y"]))
+    return min(inside, key=lambda n: np.hypot(n["x"] - cx, n["y"] - cy), default=None)
+
+
+def detect_rf_detr(img: np.ndarray, book: dict | None = None) -> dict:
+    """Detect one screenshot with RF-DETR and return the classical detector's result shape.
+
+    Args:
+        img: the screenshot (BGR, 1080p as the detector reads it).
+        book: the labelled icon pictures to name icons with (``_name_icons``; default the icon model's).
+    """
+    detections = _predict(img)  # (off the HUD: predict_tiles)
+    h, w = img.shape[:2]
+    by_family: dict[str, list[dict[str, Any]]] = {}
+    for d in detections:
+        by_family.setdefault(d["family"], []).append(d)
+
+    nodes = []
+    for item in by_family.get("node", []):
+        x, y = _centre(item["box"])
+        node = {"x": round(x, 1), "y": round(y, 1), "score": round(item["score"], 3), "source": "rf-detr"}
+        if biome := L.biome(item["label"]):
+            node["biome"] = biome
+        if city := L.city_type(item["label"]):
+            node["city_type"] = city
+        nodes.append(node)
+
+    # The reveal buttons (a locked stronghold's hand, the Expedition ship ...): the model finds them, the classical
+    # namer names them by their symbol (user), searching a little wider around the model's middle.
+    buttons = []
+    for item in by_family.get("button", []):
+        x, y = _centre(item["box"])
+        kind, _symbol = name_button(img, x, y, margin=K.RF_DETR_BUTTON_SHIFT)
+        buttons.append({"kind": kind, "x": round(x, 1), "y": round(y, 1), "score": round(item["score"], 3)})
+    button_boxes = [item["box"] for item in by_family.get("button", [])]
+
+    found = []
+    for item in by_family.get("icon", []):
+        x, y = _centre(item["box"])
+        if any(_inside(box, x, y) for box in button_boxes):
+            continue  # an icon the model also reports on a reveal button is that button
+        found.append({"x": round(x, 1), "y": round(y, 1), "score": round(item["score"], 3), "source": "rf-detr"})
+    # icon types that are no icon labels: the detector does not report them as icons
+    icons = [icon for icon in _name_icons(img, found, book) if icon["name"] not in K.RF_DETR_ICON_EXCLUDED]
+    # a ship button is reported as the classical detector reports it (landmarks.ship_markers): an ExpeditionShip icon
+    icons.extend(
+        {"name": K.RF_DETR_BUTTON_ICONS[b["kind"]], "x": b["x"], "y": b["y"], "score": b["score"], "source": "rf-detr"}
+        for b in buttons
+        if b["kind"] in K.RF_DETR_BUTTON_ICONS
+    )
+    locks = [(b["x"], b["y"]) for b in buttons if b["kind"] == "lock"]
+
+    landmarks: list[dict[str, Any]] = []
+    own: list[dict] = []  # the map nodes the Cities and Halls are
+    unplaced: list[list[float]] = []  # the boxes of the Cities and Halls with no map node found for them
+    for item in by_family.get("citadel", []):
+        # the City is its map node (as the classical detector reports it): the one inside the box nearest its middle
+        cx, cy = _centre(item["box"])
+        inside = [n for n in nodes if _inside(item["box"], n["x"], n["y"])]
+        node = min(inside, key=lambda n: np.hypot(n["x"] - cx, n["y"] - cy), default=None)
+        if node is not None:
+            own.append(node)
+        else:
+            unplaced.append(item["box"])
+        x, y = (node["x"], node["y"]) if node else (cx, cy)
+        landmark = {"kind": "City", "x": round(x, 1), "y": round(y, 1), "score": round(item["score"], 3)}
+        if city := L.city_type(item["label"]):
+            landmark["city_type"] = city
+        landmarks.append(landmark)
+    bosses = [i for i in icons if i["name"] == "MapBossSpecial"]
+    for item in by_family.get("hall", []):
+        # the Hall is its map node (as the classical detector reports it)
+        node = hall_node(item["box"], nodes, bosses)
+        if node is not None:
+            own.append(node)
+        else:
+            unplaced.append(item["box"])
+        x, y = (node["x"], node["y"]) if node else _centre(item["box"])
+        landmarks.append({"kind": "Hall", "x": round(x, 1), "y": round(y, 1), "score": round(item["score"], 3)})
+    for item in by_family.get("stronghold", []):
+        # one structure, locked or open: a hand reveal button beside it (or no map node inside) makes it locked, as
+        # in the classical detector
+        x, y = _centre(item["box"])
+        kind, _why = stronghold_kind(x, y, locks, nodes)
+        landmarks.append({"kind": kind, "x": round(x, 1), "y": round(y, 1), "score": round(item["score"], 3)})
+    # a deadly-boss icon over a map that is neither a citadel nor a hall marks a deadly boss map (user)
+    places = [d["box"] for d in [*by_family.get("citadel", []), *by_family.get("hall", [])]]
+    for boss in bosses:
+        node = _boss_node(nodes, boss["x"], boss["y"])
+        if node is not None and any(node is mine for mine in own):
+            continue  # the City's or Hall's own map
+        x, y = (node["x"], node["y"]) if node else (boss["x"], boss["y"] + K.ROW_DY)
+        # a map beside a City or Hall inside its box (a hall's structure is wide) is a deadly boss map of its own;
+        # the box alone decides for a City or Hall with no map node found, or an icon over no map node found
+        if any(_inside(box, x, y) for box in (places if node is None else unplaced)):
+            continue
+        landmarks.append({"kind": "Deadly boss map", "x": round(x, 1), "y": round(y, 1), "score": boss["score"]})
+
+    # Tower boxes stand on the map node; the bottom of the predicted box is that point.
+    feet = [((item["box"][0] + item["box"][2]) / 2, item["box"][3]) for item in by_family.get("tower", [])]
+    for (x, y), item in zip(feet, by_family.get("tower", []), strict=True):
+        landmarks.append({"kind": "Tower", "x": round(x, 1), "y": round(y, 1), "score": round(item["score"], 3)})
+    # Each tower's map node first, one apiece, and only then the pruning: done tower by tower, a later tower pruned an
+    # earlier one's base or took it over (CodeRabbit). The pairing is the one with the most towers placed, then the
+    # least distance in all: taking the closest pairs first could leave a tower without a base that another pairing
+    # gives every tower. As in the classical detector (landmarks_from): a tower's map node stays in the graph, flagged,
+    # so paths still reach it (trace_paths) and expedition_rules can unflag it. A City's or Hall's map node is never a
+    # tower's base (its landmark stands on it) and stays whatever is beside it.
+    own_at = {n for n, node in enumerate(nodes) if any(node is mine for mine in own)}
+    free = [n for n in range(len(nodes)) if n not in own_at]
+    if feet and free:
+        gap = np.hypot(
+            np.array([[nodes[n]["x"] - x for n in free] for x, _y in feet]),
+            np.array([[nodes[n]["y"] - y for n in free] for _x, y in feet]),
+        )
+        in_reach = gap <= K.RF_DETR_TOWER_NODE_REACH
+        # out of reach costs more than all the pairs in reach together: the most pairs first, then the closest
+        never = (min(gap.shape) + 1) * K.RF_DETR_TOWER_NODE_REACH + 1.0
+        for t, c in zip(*linear_sum_assignment(np.where(in_reach, gap, never)), strict=True):
+            if in_reach[t, c]:
+                nodes[free[int(c)]]["tower"] = True
+    # the Expedition rules first, as in the classical detector: they clear the tower flags the path tracer reads, and
+    # a tower they refuse is an ordinary ocean map whose neighbours are no duplicates of its base
+    nodes, icons, landmarks = expedition_rules(nodes, icons, landmarks)  # (the same nodes, in the same order)
+    bases = [node for node in nodes if node.get("tower")]
+    nodes = [
+        node
+        for n, node in enumerate(nodes)
+        if node.get("tower")
+        or n in own_at
+        or all(np.hypot(node["x"] - base["x"], node["y"] - base["y"]) > K.TOWER_NMS for base in bases)
+    ]
+    edges = trace_paths(nodes, classical_path_dashes(img), img)
+    # the classical wall mask decides, as in the classical detector (walls are no RF-DETR class)
+    wall = fortress_walls(img)
+    edges = [edge for edge in edges if wall_share(edge["line"], wall) < K.WALL_CROSS]
+    return {
+        "width": w,
+        "height": h,
+        "nodes": nodes,
+        "landmarks": landmarks,
+        "icons": icons,
+        "edges": edges,
+    }
+
+
+__all__ = [
+    "checkpoint_digest",
+    "class_families",
+    "detect_rf_detr",
+    "family_detections",
+    "folder_identity",
+    "hall_node",
+    "load_detector",
+    "predict_tiles",
+    "reset_rf_detr_runtime",
+    "rf_detr_enabled",
+    "rf_detr_model_path",
+    "trained_on",
+]

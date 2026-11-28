@@ -15,6 +15,7 @@ from .constants import (
     NOT_ON_EXPEDITION,
     ROW_DY,
     STRONGHOLD_EMPTY,
+    STRONGHOLD_LOCK_REACH,
     TOWER_BADGES,
     TOWER_MIN,
     TOWER_NMS,
@@ -141,7 +142,7 @@ def landmarks_from(
     Towers: visible map nodes with p >= TOWER_MIN, best first, dropping other map nodes within TOWER_NMS px.
     Deadly Map Boss rows (not a tower's badges) become City / Hall / deadly boss map (deadly_kind). Completed
     (green) cities have no badge and no beam left, but still stand on the barrel. Breach strongholds are locked
-    when a hand badge is within 200 px or no map node is inside (STRONGHOLD_EMPTY).
+    when a hand badge is near or no map node is inside (stronghold_kind).
 
     Args:
         img: BGR screenshot (1080p).
@@ -201,18 +202,31 @@ def landmarks_from(
             )
     locks = __import__("grand_project.cities", fromlist=["cities"]).locks_in(img)
     for x, y in old["strongholds"]:
-        hand = any(np.hypot(x - a, y - b) < 200 for a, b in locks)
-        empty = not any(np.hypot(x - n["x"], y - n["y"]) < STRONGHOLD_EMPTY for n in vis)
-        kind = "Locked stronghold" if hand or empty else "Breach stronghold"
-        out.append(
-            {
-                "kind": kind,
-                "x": float(x),
-                "y": float(y),
-                "why": "hand badge" if hand else "no maps inside" if empty else "purple structure",
-            }
-        )
+        kind, why = stronghold_kind(x, y, locks, vis)
+        out.append({"kind": kind, "x": float(x), "y": float(y), "why": why})
     return out, nodes
+
+
+def stronghold_kind(x: float, y: float, locks: list[tuple[float, float]], nodes: list[dict]) -> tuple[str, str]:
+    """Whether the Breach stronghold structure at (x, y) is locked or open.
+
+    The structure looks the same either way: it is locked when the hand (lock) reveal button stands within
+    STRONGHOLD_LOCK_REACH px, or when no map node is inside (STRONGHOLD_EMPTY: only ground shows). The classical and
+    the RF-DETR detector both decide it here.
+
+    Args:
+        x: the structure's middle x in screen px.
+        y: the structure's middle y in screen px.
+        locks: (x, y) of the hand reveal buttons in screen px.
+        nodes: the visible map nodes, dicts with "x", "y".
+
+    Returns:
+        (kind, why): kind "Locked stronghold" or "Breach stronghold"; why a short reason.
+    """
+    hand = any(np.hypot(x - a, y - b) < STRONGHOLD_LOCK_REACH for a, b in locks)
+    empty = not any(np.hypot(x - n["x"], y - n["y"]) < STRONGHOLD_EMPTY for n in nodes)
+    kind = "Locked stronghold" if hand or empty else "Breach stronghold"
+    return kind, "hand badge" if hand else "no maps inside" if empty else "purple structure"
 
 
 def find_landmarks(img: np.ndarray, model, nodes: list[dict], icons: list[dict]) -> tuple[list, list]:

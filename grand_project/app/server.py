@@ -52,7 +52,8 @@ from .events import StaleAtlas, sse
 from .icons import icon_png
 from .library import list_dir, thumb_file
 from .replay_data import spread_colours
-from .session import AtlasSession
+from .session import AtlasSession, detection_meta, saved_detector
+from .settings import load_settings
 
 LOG = atlas_log.get("app")
 
@@ -421,7 +422,8 @@ class Handler(BaseHTTPRequestHandler):
     @route("GET", "/api/hello")
     def get_hello(self, q) -> None:
         """Which program answers here (a second start finds the copy already running: running_app)."""
-        self._json({"app": HELLO_APP, "version": VERSION, "root": str(rc_paths.ROOT.resolve())})
+        root = str(rc_paths.ROOT.resolve())
+        self._json({"app": HELLO_APP, "version": VERSION, "root": root})
 
     @route("GET", "/api/meta")
     def get_meta(self, q) -> None:
@@ -1091,6 +1093,7 @@ def meta() -> dict:
         "debug": bool(rc_paths.DEBUG),
         "colours": {
             "node": {k: bgr_hex(v) for k, v in C.NODE_COL.items()},
+            "node_state": {k: bgr_hex(v) for k, v in C.NODE_STATE_COL.items()},
             "path_multi": bgr_hex(C.PATH_MULTI),
             "path_single": bgr_hex(C.PATH_SINGLE),
             "path_abyss": bgr_hex(C.PATH_ABYSS),
@@ -1136,6 +1139,7 @@ def meta() -> dict:
         "bookmark_pin": C.BOOKMARK_PIN_R,
         "icon_row_dy": C.ICON_ROW_DY,
         "bookmark_ats": list(C.BOOKMARK_ATS),
+        "detection": detection_meta(),
     }
 
 
@@ -1458,17 +1462,28 @@ def shown_version() -> str:
 def main(argv: list[str] | None = None) -> int:
     """Start the app: open the atlas (the one given, else the last one), serve the page and open the browser.
 
+    The detector is the saved settings' (Log > Experimental: ``detector_config``, set once here, so a change applies
+    after a restart). With the optional RF-DETR detector on, the process restarts itself once after reading its
+    arguments, with PyTorch's CUDA libraries first (``rf_detr_cuda``), and goes on with the same
+    arguments: ``argv`` when given, else its own command line.
+
     Args:
         argv: Command line (default: sys.argv).
 
     Returns:
         Exit code.
     """
+    from grand_project.detect import detector_config
+    from grand_project.detect.rf_detr_cuda import prefer_pip_cuda_libraries
+
     ap = argparse.ArgumentParser(prog="python -m grand_project", description="The Grand Project atlas app.")
     ap.add_argument("atlas", nargs="?", help="atlas .json file to open (default: the last one)")
     ap.add_argument("--port", type=int, default=APP_PORT, help=f"first port to try (default {APP_PORT}; 0: any)")
     ap.add_argument("--no-browser", action="store_true", help="don't open the browser")
     args = ap.parse_args(argv)
+    detector_config.configure(saved_detector(load_settings()))
+    if detector_config.current().rf_detr:  # RF-DETR on CUDA needs PyTorch's own cuDNN, before torch loads
+        prefer_pip_cuda_libraries(argv)
     if args.port:
         outcome = reuse_running(args.port, args.atlas, not args.no_browser)
         if outcome != START:  # already running: its page, not a second copy writing the same atlas (user)

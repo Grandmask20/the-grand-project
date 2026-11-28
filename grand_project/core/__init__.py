@@ -57,6 +57,7 @@ from .frame import (  # noqa: F401
     _hud_cache,
     atlas_files,
     capture_time,
+    detector_size,
     hud_mask,
     is_atlas_output,
     is_full_window,
@@ -67,7 +68,9 @@ from .frame import (  # noqa: F401
     png_bytes,
     read_screenshot,
     row_bases,
+    scale_screenshot,
     screenshots_in,
+    time_order,
     write_png,
 )
 from .geometry import (  # noqa: F401

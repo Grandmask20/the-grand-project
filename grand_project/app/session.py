@@ -14,16 +14,20 @@ spot), debug (debug marks), replay (timelapse plan, colour by).
 from __future__ import annotations
 
 import math
+import os
 import threading
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 
 import numpy as np
 
 from grand_project import cities as atlas_cities
 from grand_project import core
+from grand_project import fileio as atlas_io
 from grand_project import finalize as atlas_finalize
 from grand_project import logs as atlas_log
+from grand_project.detect import constants as DK
+from grand_project.detect import detector_config
 
 from .adding import AddingMixin
 from .atlaslock import AtlasLock, atlas_switch
@@ -172,6 +176,8 @@ class AtlasSession(
             "recheck_update": {g: bool(_recheck_ticks(s).get(g, True)) for g in RECHECK_GROUPS},
             # the Re-check prompt's slim down (for every atlas): the copies of screenshots in dump removed
             "recheck_slim": bool(s.get("recheck_slim", False)),
+            # the detector (Log > Experimental): saved now, applied when the app starts (detection_meta's "active")
+            "detection": saved_detector(s).to_dict(),
         }
 
     def set_ui_settings(self, changes: dict) -> dict:
@@ -197,6 +203,16 @@ class AtlasSession(
             The flags before the change (_flags), for the tile check.
         """
         s = self.settings
+        if isinstance(changes.get("detection"), dict):  # (checked first: a refused change changes nothing)
+            detector = saved_detector({"detection": {**s.get("detection", {}), **changes["detection"]}})
+            missing = detector_config.rf_detr_missing()
+            if detector.rf_detr and missing:
+                raise ValueError(f"RF-DETR needs {missing}, which is not installed (a developer install has it)")
+            s["detection"] = detector.to_dict()
+            changes = {
+                **changes,
+                "detection": {k: s["detection"][k] for k in changes["detection"] if k in s["detection"]},
+            }
         before = self._flags()
         hidden_before = set(s.get("icon_hidden", []))
         for k in ("layers", "style", "replay", "ui"):
@@ -639,7 +655,38 @@ _WORDS = {
     "bookmark_at": "bookmarks sit on the",
     "age_tint": "colour by",
     "side_width": "side panel width",
+    "rf_detr": "RF-DETR detection",
+    "model": "RF-DETR model",
+    "device": "RF-DETR device",
+    "workers": "detection workers",
 }
+
+
+def max_detect_workers() -> int:
+    """The most screenshots detected at once this computer allows (one core is left for the window)."""
+    return atlas_io.workers(os.cpu_count() or 1)
+
+
+def saved_detector(s: dict) -> detector_config.DetectorConfig:
+    """The detector the settings hold (Log > Experimental), its worker count within this computer's cores."""
+    return _within_cores(detector_config.DetectorConfig.from_dict(s.get("detection") or {}))
+
+
+def _within_cores(detector: detector_config.DetectorConfig) -> detector_config.DetectorConfig:
+    """``detector`` with no more workers than this computer allows (as many as detect at once: fileio.workers)."""
+    return replace(detector, workers=min(detector.workers, max_detect_workers()))
+
+
+def detection_meta() -> dict:
+    """What the Experimental tab offers: the detector this run uses ("active", the settings it started with), the
+    package RF-DETR misses (None: it can run), the most workers, the devices and the default model."""
+    return {
+        "active": _within_cores(detector_config.current()).to_dict(),
+        "rf_detr_missing": detector_config.rf_detr_missing(),
+        "max_workers": max_detect_workers(),
+        "devices": list(DK.RF_DETR_DEVICES),
+        "default_model": str(DK.RF_DETR_DEFAULT_MODEL_DIR),
+    }
 
 
 def _say(v) -> str:
@@ -688,6 +735,9 @@ def settings_change_text(changes: dict, hidden_before: set) -> str:
             parts += [f"{kk} layer {_say(vv)}" for kk, vv in v.items()]
         elif k == "style" and isinstance(v, dict) and v.get("reset"):
             parts.append("styles reset")
+        elif k == "detection" and isinstance(v, dict):
+            said = [f"{_WORDS.get(kk, kk)} {_say(vv) if vv != '' else 'default'}" for kk, vv in v.items()]
+            parts.append(", ".join(said) + " (applies after a restart)")
         elif isinstance(v, dict):
             for kk, vv in v.items():
                 if kk == "player":  # (I'm here)

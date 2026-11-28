@@ -119,3 +119,26 @@ test("the log tells what happened", async ({ page }) => {
 	await page.getByRole("tab", { name: "Log" }).click();
 	await expect(page.getByText(/opened atlas e2e/).first()).toBeVisible();
 });
+
+test("Experimental: a detector setting is saved for the next start", async ({ page }) => {
+	await open(page);
+	await sideTab(page, "Log").click();
+	await page.getByRole("tab", { name: "Experimental" }).click();
+	const box = page.getByRole("spinbutton", { name: "Max workers" });
+	test.skip(Number(await box.getAttribute("max")) < 2, "one core for detection: no other worker count to choose");
+	const before = await box.inputValue();
+	const wanted = before === "1" ? "2" : "1"; // (a change, whatever this computer's cores allow)
+	await box.fill(wanted);
+	await box.press("Enter");
+	await expect(page.getByRole("status")).toHaveText(/restart the app to apply/);
+	type Detection = { detection: { workers: number } };
+	await expect.poll(async () => (await api<Detection>(page, "/api/settings")).detection.workers).toBe(Number(wanted));
+	const log = (await api<{ log: string[] }>(page, "/api/state")).log;
+	expect(log.some((l) => /detection workers \d+ \(applies after a restart\)/.test(l))).toBe(true);
+	// (put back: the other tests share the app's settings)
+	const back = await page.request.patch("/api/settings", {
+		data: { detection: { workers: Number(before) } },
+		headers: { "X-Grand": "1" }, // (as the page sends a change)
+	});
+	expect(back.ok()).toBe(true);
+});

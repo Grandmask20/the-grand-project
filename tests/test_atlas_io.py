@@ -3,6 +3,7 @@
 import json
 import os
 
+import numpy as np
 import pytest
 
 from grand_project import builder, core
@@ -119,3 +120,24 @@ def test_a_screenshot_put_back_after_being_missing_is_read_again(tmp_path):
     cv2.imwrite(str(shot), np.full((1080, 1920, 3), 90, np.uint8))
     img = atlas.image(str(shot))  # (a kept None was returned until the cache dropped it: CodeRabbit)
     assert img is not None and img.shape == (1080, 1920, 3)
+
+
+def test_the_detector_size_is_what_scale_screenshot_gives() -> None:
+    """1440p and 4K windows to 1080p; 1080p, an ultrawide 1080p screenshot and a crop as they are."""
+    for width, height in [(1920, 1080), (2560, 1440), (3840, 2160), (2560, 1080), (1280, 720), (800, 600)]:
+        scaled = core.scale_screenshot(np.zeros((height, width, 3), np.uint8))
+        assert core.detector_size(width, height) == (scaled.shape[1], scaled.shape[0])
+
+
+def test_capture_time_comes_from_the_steam_name(tmp_path) -> None:
+    t1 = core.capture_time({"name": "2694490_20261115193515_1", "path": "/nowhere"})
+    t2 = core.capture_time({"name": "2694490_20261115193535_2", "path": "/nowhere"})
+    assert t1 is not None and t2 - t1 == 20
+    assert core.capture_time({"name": "Screenshot_12", "path": "/nowhere/x.png"}) is None
+    shot = tmp_path / "Screenshot_12.png"
+    shot.write_bytes(b"")
+    assert core.capture_time({"name": "Screenshot_12", "path": str(shot)}) == shot.stat().st_mtime
+
+
+def test_untimed_screenshots_stay_after_the_one_placed_before_them() -> None:
+    assert core.time_order([30.0, None, 10.0, 20.0]) == [2, 3, 0, 1]

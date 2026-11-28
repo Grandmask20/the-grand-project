@@ -72,11 +72,43 @@ def feature(c: np.ndarray) -> np.ndarray:
     Returns:
         1-D float32 vector.
     """
-    c = cv2.GaussianBlur(c, (0, 0), 1.5)  # tolerate a pixel or two of misalignment
-    v = c[_MASK].astype(np.float32)  # colour inside the rim
+    return _vector(cv2.GaussianBlur(c, (0, 0), 1.5))  # blurred: tolerate a pixel or two of misalignment
+
+
+def _vector(blurred: np.ndarray) -> np.ndarray:
+    """feature's pattern vector of an already blurred crop."""
+    v = blurred[_MASK].astype(np.float32)  # colour inside the rim
     v -= v.mean(axis=0)
     n = np.linalg.norm(v)
     return (v / n).ravel() if n > 1e-6 else v.ravel()
+
+
+def shift_dists(img: np.ndarray, x: float, y: float, F: np.ndarray) -> tuple[np.ndarray, np.ndarray] | None:
+    """Compare the crop at a point with every picture, keeping each picture's best of the +-SHIFT px shifts.
+
+    The icon namer (badges.name_badge) and the map node state namer (detect.node_states) both use it.
+
+    Args:
+        img: BGR screenshot (1080p px).
+        x: Centre x, px.
+        y: Centre y, px.
+        F: (n, d) picture features (see feature).
+
+    Returns:
+        ((n,) float32 distances, 1 - correlation, and the unshifted (SIZE, SIZE, 3) crop), or None when the crop
+        would reach past the image edge.
+    """
+    big = crop(img, x, y, SIZE + 2 * SHIFT)
+    if big is None:
+        return None
+    # blurred once: the blur reaches 5 px and the compared disc (RADIUS) stays 6 px inside every shifted crop, so
+    # the disc's pixels are exactly what feature gives each crop
+    soft = cv2.GaussianBlur(big, (0, 0), 1.5)
+    shifted = np.stack(
+        [_vector(soft[dy : dy + SIZE, dx : dx + SIZE]) for dy in range(2 * SHIFT + 1) for dx in range(2 * SHIFT + 1)]
+    )
+    d = (1 - (F @ shifted.T).max(axis=1)).astype(np.float32) if len(F) else np.zeros(0, np.float32)
+    return d, big[SHIFT : SHIFT + SIZE, SHIFT : SHIFT + SIZE]
 
 
 def bright_colour(c: np.ndarray) -> np.ndarray:

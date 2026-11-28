@@ -29,6 +29,7 @@ export function LayersDock() {
 	const legend: [string, string][] = [
 		["map: 2+ shots / icon", styleColour(st, "map_col", meta.colours.node.confirmed)],
 		["map: 1 shot", meta.colours.node.single],
+		...Object.entries(meta.colours.node_state).map(([k, c]) => [`map: ${k}`, c] as [string, string]),
 		["path", styleColour(st, "path_col", meta.colours.path_multi)],
 		["path: 1 shot", styleColour(st, "path_col1", meta.colours.path_single)],
 		["abyss chain", meta.colours.path_abyss],

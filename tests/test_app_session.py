@@ -7,6 +7,7 @@ and the saved atlases are checked through the session, as the page uses them.
 import base64
 import json
 import threading
+import time
 from pathlib import Path
 
 import cv2
@@ -91,6 +92,22 @@ def test_vector_tiles_hold_the_maps_where_they_are(session, tmp_path):
     assert session.filter_version == v + 1 and list(points(session, "removed")) == [15]
     session.set_ui_settings({"ui": {"background": "vector"}, "layers": {"Labels": False}})  # page-only: same tiles
     assert session.filter_version == v + 1
+
+
+def test_a_maps_state_is_in_its_tiles_and_its_details(session, tmp_path):
+    """The check's state (finalize.states) reaches the map tiles' data and the map's details."""
+    path, _pts, _img = make_atlas(tmp_path)
+    session.open_atlas(path)
+    seen = time.mktime((2026, 11, 21, 20, 25, 0, 0, 0, -1))
+    with session._lock:
+        session.atlas.final["nodes"][3].update(state="green", state_seen=seen, state_errors=2)
+    session.rebuild_model()
+    maps = points(session, "maps")
+    assert maps[3][2]["state"] == "green" and maps[1][2]["state"] == ""
+    lines = session.info("node", 3)["lines"]
+    assert "State: green (cleared), last seen 21 Nov 20:25" in lines
+    assert "2 screenshot(s) disagree about its state (detection errors)" in lines
+    assert not [line for line in session.info("node", 1)["lines"] if line.startswith("State")]
 
 
 class Job:
@@ -544,6 +561,39 @@ def test_a_bookmark_made_on_a_landmark_is_its_maps_bookmark(session, tmp_path):
 def test_a_retired_setting_sent_by_an_older_page_is_brought_up_to_date(session):
     session.set_ui_settings({"layers": {"Doubtful": True}})
     assert session.settings["layers"]["Doubtful"] is False
+
+
+def test_the_detector_settings_are_saved_within_range_for_the_next_start(session, monkeypatch):
+    """Log > Experimental: kept for the next start (this run's detector is unchanged), the workers within the cores,
+    an unknown device "auto"; RF-DETR is refused where its packages are missing, and the refusal changes nothing."""
+    from grand_project.app import session as session_module
+    from grand_project.detect import detector_config
+
+    assert (
+        session.ui_settings()["detection"]
+        == detector_config.DetectorConfig(workers=min(4, session_module.max_detect_workers())).to_dict()
+    )
+    monkeypatch.setattr(detector_config, "rf_detr_missing", lambda: None)
+    got = session.set_ui_settings({"detection": {"rf_detr": True, "workers": 10_000, "device": "tpu"}})["detection"]
+    assert got == {"rf_detr": True, "model": "", "device": "auto", "workers": session_module.max_detect_workers()}
+    assert session.settings["detection"] == got and detector_config.current() == detector_config.DetectorConfig()
+    said = f"detection workers {got['workers']}, RF-DETR device auto (applies after a restart)"
+    assert session.events.log_lines[-1].endswith(said)  # (what was kept, not what was sent)
+    session.set_ui_settings({"detection": {"model": " me/model "}})
+    assert session.ui_settings()["detection"]["model"] == "me/model"  # (merged: RF-DETR stays on)
+    assert session.ui_settings()["detection"]["rf_detr"] is True
+    session.set_ui_settings({"detection": {"rf_detr": False}})
+    monkeypatch.setattr(detector_config, "rf_detr_missing", lambda: "torch")
+    with pytest.raises(ValueError, match="needs torch"):
+        session.set_ui_settings({"detection": {"rf_detr": True}, "near_only": True})
+    assert session.settings["detection"]["rf_detr"] is False and not session.settings.get("near_only")
+
+
+def test_a_detector_change_reads_in_words_in_the_log():
+    from grand_project.app.session import settings_change_text
+
+    text = settings_change_text({"detection": {"rf_detr": True, "model": "", "workers": 2}}, set())
+    assert text == "RF-DETR detection on, RF-DETR model default, detection workers 2 (applies after a restart)"
 
 
 def test_one_job_ending_forgets_only_its_own_logged_steps(session):

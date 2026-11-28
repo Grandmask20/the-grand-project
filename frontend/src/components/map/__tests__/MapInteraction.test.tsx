@@ -142,6 +142,44 @@ describe("MapInteraction", () => {
 		await waitFor(() => expect(String(useAppStore.getState().error)).toContain("link cancelled"));
 	});
 
+	it("Route: only over maps that can still be run (a green or red map neither ends nor carries it)", async () => {
+		// 13 - 12 straight, and 13 - 14 - 12 round; the click lands on map #12
+		const states = (s12: string, s14: string) => ({
+			nodes: [
+				{ id: 12, x: 440, y: 200, icons: [], status: "", state: s12 },
+				{ id: 13, x: 0, y: 0, icons: [], status: "", state: "green" }, // the start: whatever its state
+				{ id: 14, x: 200, y: 100, icons: [], status: "", state: s14 },
+			],
+			edges: [
+				{ a: 13, b: 14 },
+				{ a: 14, b: 12 },
+			],
+		});
+		const route = async (g: unknown) => {
+			const { fm, unmount } = setup({ "GET /api/graph": g });
+			act(() => {
+				useAppStore.getState().setRouteDraft(null);
+				useAppStore.getState().showError(null);
+				useAppStore.getState().setMode({ kind: "route", from: 13 });
+			});
+			act(() => fm.fire("click", at(440, 200)));
+			await waitFor(() => expect(useAppStore.getState().mode.kind).toBe("normal"));
+			await waitFor(() =>
+				expect(useAppStore.getState().routeDraft !== null || useAppStore.getState().error !== null).toBe(true),
+			);
+			const out = { draft: useAppStore.getState().routeDraft, error: String(useAppStore.getState().error) };
+			unmount();
+			return out;
+		};
+		expect((await route(states("blue", "grey"))).draft).toEqual([13, 14, 12]);
+		const green = await route(states("green", "grey"));
+		expect(green.draft).toBeNull();
+		expect(green.error).toContain("Map #12 is green (cleared): it can't be run again.");
+		const blocked = await route(states("blue", "red"));
+		expect(blocked.draft).toBeNull();
+		expect(blocked.error).toContain("over maps that can still be run");
+	});
+
 	it("a double-click zooms in one step; on a screenshot placed by hand, places it", async () => {
 		const { fm, calls } = setup({ "POST /api/place": { ok: true } });
 		act(() => fm.fire("dblclick", at(0, 0)));

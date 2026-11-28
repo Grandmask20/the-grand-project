@@ -95,7 +95,8 @@ from .constants import (
     WALL_MAP,
 )
 from .icon_time import icons_over_time
-from .landmarks import _clean_icons, _guessed, _one_map, _settlements
+from .landmarks import _clean_icons, _guessed, _one_map, _recheck_settlements, _settlements
+from .states import fit_nodes, state_near, state_stats
 from .traces import (
     _along,
     _bypasses_two,
@@ -177,7 +178,9 @@ def _finalize(atlas, log=_log) -> dict:
     screenshots could see its spot vs. found it (ghosts, the gap rule, maps on the fortress wall removed);
     3. Abyss chains along the river; 4. paths from the saved traces of every screenshot, seams and straight
     gold links, chosen under the selection rules (no crossings, at most MAX_EXITS exits, sector rule);
-    5. map nodes nobody can corroborate; 6. landmarks (Halls / Cities) and which icons to show.
+    5. map nodes nobody can corroborate; 6. each map node's state (grey / blue / green / red) over time
+    (finalize.states: the newest sightings, where the change from older ones is allowed); 7. landmarks (Halls /
+    Cities) and which icons to show (icons over time: finalize.icon_time).
 
     Args:
         atlas: the core.Atlas with placed screenshots (frames), merged nodes, icons and landmarks (atlas units).
@@ -185,8 +188,9 @@ def _finalize(atlas, log=_log) -> dict:
 
     Returns:
         The new atlas.final dict: "nodes" (list of dicts with id, x, y, status, seen, could, frames, tower,
-        origin, icons, abyss, why), "paths" (list of dicts with a, b, kind, frames, seen_in, both_ends, abyss,
-        score and, for traced paths, ends_in, confirm, deny, dashes, line), "landmarks", "icons" and "stats".
+        origin, icons, abyss, why, state, state_seen, state_errors), "paths" (list of dicts with a, b,
+        kind, frames, seen_in, both_ends, abyss, score and, for traced paths, ends_in, confirm, deny, dashes, line),
+        "landmarks", "icons" and "stats".
     """
     maps = _maps(atlas)
     maps_by = {f["name"]: (f, Hi) for f, Hi in maps}
@@ -1549,8 +1553,12 @@ def _finalize(atlas, log=_log) -> dict:
             status[i] = "removed"
             removed_why[i] = "no badge and no path reaches it"
 
-    # ---- 6. landmarks: Halls / Cities by beam colour, then the seen / could-see test
-    landmarks = _settlements(atlas, maps, landmarks, icons)
+    # ---- 6. each map's state over time: from its newest sightings, as long as the change from the older ones is
+    # allowed (user's rules)
+    fits = fit_nodes(atlas, maps_by, nodes, status, icons, log)
+
+    # ---- 7. landmarks: Halls / Cities by their icon, barrel and beam, then the seen / could-see test
+    landmarks = _settlements(atlas, maps, landmarks, icons, lambda x, y: state_near(fits, nodes, x, y))
     for lm in landmarks:
         if lm["status"] != "kept" or lm.get("beam"):
             continue
@@ -1599,9 +1607,12 @@ def _finalize(atlas, log=_log) -> dict:
     for nd in nodes:
         nd["icons"] = [k for k in nd["icons"] if k not in over_time]
     dup_badge |= over_time
+    # a City / Hall kept for its badge, the badge now gone: as _settlements judges one without (green or red map)
+    _recheck_settlements(landmarks, icons, over_time, lambda x, y: state_near(fits, nodes, x, y))
 
     out_nodes = []
     for i, nd in enumerate(nodes):
+        fit = fits.get(i, {})
         out_nodes.append(
             {
                 "id": i,
@@ -1616,6 +1627,9 @@ def _finalize(atlas, log=_log) -> dict:
                 "icons": [icons[k]["name"] for k in nd["icons"]],
                 "abyss": nd.get("abyss", ""),
                 "why": removed_why.get(i, ""),
+                "state": fit.get("state"),
+                "state_seen": fit.get("seen"),
+                "state_errors": fit.get("errors", 0),
             }
         )
     out_paths = []
@@ -1653,6 +1667,7 @@ def _finalize(atlas, log=_log) -> dict:
         "paths_traced": sum(p["kind"] == "traced" for p in out_paths),
         "abyss_chains": len(chains),
         "landmarks_removed": sum(lm["status"].startswith("removed") for lm in landmarks),
+        **state_stats(out_nodes),
     }
     # the special-boss crest marks a Hall / City boss next to the building, otherwise a deadly
     # map boss (e.g. the red spiky trees)

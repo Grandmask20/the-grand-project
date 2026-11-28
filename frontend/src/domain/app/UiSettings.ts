@@ -14,6 +14,20 @@ export interface UiSettings {
 	recheck_update?: Record<string, boolean>;
 	/** The Re-check prompt's slim down, for every atlas: the copies of screenshots in dump removed at its end. */
 	recheck_slim?: boolean;
+	/** The detector (Log > Experimental): saved now, used from the app's next start (`Meta.detection.active`). */
+	detection: DetectionSettings;
+}
+
+/** Which detector finds the maps, and how many screenshots it detects at once. */
+export interface DetectionSettings {
+	/** The optional RF-DETR model instead of the classical detector. */
+	rf_detr: boolean;
+	/** Its model: a folder or a Hugging Face id owner/name[@revision]; "" is the default one. */
+	model: string;
+	/** Its torch device (`Meta.detection.devices`). */
+	device: string;
+	/** Screenshots detected at once (worker processes). */
+	workers: number;
 }
 
 /** Settings only the page uses, kept with the others. */
@@ -33,7 +47,8 @@ export interface PageSettings {
 
 export type Background = "picture" | "vector" | "none";
 
-export type SettingsChange = Partial<Omit<UiSettings, "style" | "ui">> & {
+export type SettingsChange = Partial<Omit<UiSettings, "style" | "ui" | "detection">> & {
 	style?: Partial<Style> & { reset?: boolean };
 	ui?: Partial<PageSettings>;
+	detection?: Partial<DetectionSettings>;
 };
