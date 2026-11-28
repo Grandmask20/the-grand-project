@@ -25,6 +25,7 @@ from grand_project import core
 from grand_project import finalize as atlas_finalize
 from grand_project import logs as atlas_log
 
+from . import constants as K
 from .adding import AddingMixin
 from .atlaslock import AtlasLock, atlas_switch
 from .bookmarks import BookmarksMixin
@@ -33,7 +34,6 @@ from .constants import (
     LANDMARK_NODE_REACH_STRONGHOLD,
     POTENTIAL_TYPES,
     RECHECK_GROUPS,
-    SHUTDOWN_WAIT,
     STYLE_DEFAULT,
     VERSION,
 )
@@ -460,11 +460,11 @@ class AtlasSession(
         self._drop_queued_jobs()
         if n := self.events.end_questions():
             self.events.log(f"closing: {n} open question(s) answered No")
-        done = self.wait_idle(timeout=SHUTDOWN_WAIT)
+        done = self.wait_idle(timeout=K.SHUTDOWN_WAIT)  # (read live: a test makes it short)
         if not done:
             LOG.warning("closing while a job still runs: cut off")
             self.events.log(
-                f"closing: the work still running after {SHUTDOWN_WAIT:.0f} s was cut off; what it had not saved yet "
+                f"closing: the work still running after {K.SHUTDOWN_WAIT:.0f} s was cut off; what it had not saved yet "
                 "is lost (the atlas is saved as it is now)"
             )
         self.save()

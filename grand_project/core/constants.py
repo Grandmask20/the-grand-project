@@ -158,3 +158,12 @@ OWNER_SCREEN_STEP = 16  # screen px per cell of a screenshot's centrality templa
 # counts for none of them, so the thin strip an older near-repeat alone shows there doesn't keep it. 48 px: 2.5% of a
 # 1920 px screen
 OWNER_NEWER_MARGIN = 48.0
+
+
+# worker processes (fileio.process_pool: detecting many screenshots at once, the atlas-wide check's path tracing)
+# Each worker's thread pools (OpenCV, OpenMP, BLAS) are limited to its share of the CPU: the CPUs divided
+# among the workers. Uncapped, every worker started one thread per CPU (the map and tower models' predict, OpenCV),
+# and 4 workers detecting 16 screenshots took 4.33 s per screenshot instead of 1.63 s capped (22-thread Ryzen 9 7900X,
+# screenshots/crawl, 2026-11-27); 1, 2 or 5 threads per worker made no difference once capped.
+POOL_THREAD_ENV_VARS = ("OMP_NUM_THREADS", "OPENBLAS_NUM_THREADS", "MKL_NUM_THREADS")
+"""Thread limits set in each worker for libraries it loads later (they read them when they start)."""

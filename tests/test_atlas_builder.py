@@ -1,6 +1,7 @@
 """Offline checks for the atlas builder core (no screenshots or detector needed).  pytest tests/test_atlas_builder.py"""
 
 import json
+import threading
 from pathlib import Path
 
 import cv2
@@ -119,3 +120,97 @@ def test_duplicate_screenshot_ignored(tmp_path):
     at = C.Atlas()
     at.add_frame(f)
     assert not at.add_frame(f).ok and len(at.frames) == 1
+
+
+# ------------------------------------------------------------------ screenshots detected at once (detect_uncached)
+
+
+@pytest.fixture
+def quick_detector(monkeypatch):
+    """detect_uncached on threads (a stand-in for its worker processes) with a stand-in detector: what it hands back,
+    not what it finds. Returns the list of screenshot names the detector was run on."""
+    from concurrent.futures import ThreadPoolExecutor
+
+    from grand_project import builder
+    from grand_project import detect as atlas_detect
+
+    calls: list[str] = []
+    monkeypatch.setattr(builder, "DETECT_WORKERS", 4)  # (1 on a 2-CPU runner: nothing would run at once)
+    monkeypatch.setattr(builder.atlas_io, "process_pool", lambda n: ThreadPoolExecutor(n))
+
+    def detect(img):
+        calls.append(img.shape)
+        if img.shape[0] == 13:  # the "bad" screenshot
+            raise RuntimeError("the detector crashed")
+        return {"nodes": [], "edges": [], "landmarks": [], "icons": []}
+
+    monkeypatch.setattr(atlas_detect, "detect", detect)
+    monkeypatch.setattr(atlas_detect, "dash_record", lambda img: {})
+    return calls
+
+
+def shot(folder: Path, name: str, height: int = 20, value: int = 0) -> Path:
+    p = folder / name
+    cv2.imwrite(str(p), np.full((height, 30, 3), value, np.uint8))
+    return p
+
+
+def test_screenshots_detected_at_once_report_each_failure_and_every_step(tmp_path, quick_detector):
+    from grand_project import builder
+
+    shots = [shot(tmp_path, f"{k}.png", value=k) for k in range(3)] + [shot(tmp_path, "bad.png", height=13)]
+    steps: list[tuple[int, int]] = []
+    errors = builder.detect_uncached(shots, tmp_path / "f", progress=lambda d, t: steps.append((d, t)))
+    assert list(errors) == [str(shots[3])] and "the detector crashed" in errors[str(shots[3])]
+    assert steps == [(k, 4) for k in range(1, 5)]  # each screenshot once, whichever finished first
+    assert len(list((tmp_path / "f").glob("*.json"))) == 3  # (no cache for the failed one)
+
+
+def test_screenshots_already_detected_are_not_detected_again(tmp_path, quick_detector):
+    from grand_project import builder
+
+    shots = [shot(tmp_path, f"{k}.png", value=k) for k in range(3)]
+    builder.extract_frame(shots[0], tmp_path / "f")
+    quick_detector.clear()
+    assert builder.detect_uncached(shots, tmp_path / "f") == {}
+    assert len(quick_detector) == 2
+    quick_detector.clear()
+    assert builder.detect_uncached(shots, tmp_path / "f") == {} and quick_detector == []  # all cached: no pool
+
+
+def test_no_worker_processes_leaves_the_screenshots_to_be_detected_one_at_a_time(tmp_path, quick_detector, monkeypatch):
+    from grand_project import builder
+
+    def no_pool(n):
+        raise OSError("can't start a process")
+
+    monkeypatch.setattr(builder.atlas_io, "process_pool", no_pool)
+    lines: list[str] = []
+    shots = [shot(tmp_path, f"{k}.png", value=k) for k in range(2)]
+    assert builder.detect_uncached(shots, tmp_path / "f", log=lines.append) == {}
+    assert lines == ["parallel detection failed (can't start a process); detecting one at a time"]
+    assert [builder.extract_frame(p, tmp_path / "f").name for p in shots] == ["0", "1"]
+
+
+def test_one_picture_saved_twice_and_detected_at_once_leaves_one_whole_cache(tmp_path, quick_detector, monkeypatch):
+    # two copies of a screenshot (same bytes, so the same cache file) detected by two workers at the same moment
+    from grand_project import builder
+    from grand_project import detect as atlas_detect
+
+    real = atlas_detect.detect
+    together = threading.Barrier(2)
+
+    def detect(img):
+        together.wait(5)  # both are between reading the picture and writing its cache
+        return real(img)
+
+    monkeypatch.setattr(atlas_detect, "detect", detect)
+    first = shot(tmp_path, "copy 1.png", value=7)
+    second = tmp_path / "copy 2.png"
+    second.write_bytes(first.read_bytes())
+    assert builder.detect_uncached([first, second], tmp_path / "f") == {}
+    caches = list((tmp_path / "f").glob("*.json"))
+    assert len(caches) == 1 and json.loads(caches[0].read_text())["sha256"]
+    assert not [p for p in (tmp_path / "f").iterdir() if p.suffix != ".json"]  # (no temporary file left)
+    frames = [builder.extract_frame(p, tmp_path / "f") for p in (first, second)]
+    assert [Path(f.path).name for f in frames] == ["copy 1.png", "copy 2.png"]  # each its own path

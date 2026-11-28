@@ -431,3 +431,72 @@ def test_the_start_line_names_the_release_in_a_player_release(tmp_path, monkeypa
     assert srv.shown_version() == "release 1.3.1"
     monkeypatch.setattr(rc_paths, "CHANNEL", "internal")
     assert srv.shown_version() == f"v{srv.VERSION}"
+
+
+# ------------------------------------------------------------------ uploads arriving at once
+
+
+def test_pictures_uploaded_at_once_under_one_name_each_keep_their_own_file(tmp_path, runs):
+    # the free name was checked, then written: two pictures dropped together under one name could both find it free
+    # and the second overwrote the first (one screenshot lost, both answered with the same path)
+    old = S.sys.getswitchinterval()
+    S.sys.setswitchinterval(1e-6)  # threads switch as often as they can: the race shows up in a few rounds
+    try:
+        for r in range(runs(20)):
+            folder = tmp_path / str(r)
+            folder.mkdir()
+            pictures = [bytes([k]) * (1 + k) for k in range(8)]
+            start = threading.Barrier(len(pictures))
+            saved: dict[int, Path] = {}
+
+            def upload(k: int, folder=folder, start=start, saved=saved, pictures=pictures) -> None:
+                start.wait(5)
+                saved[k] = S.save_upload(folder, "shot.png", pictures[k])
+
+            threads = [threading.Thread(target=upload, args=(k,)) for k in range(len(pictures))]
+            for t in threads:
+                t.start()
+            for t in threads:
+                t.join(10)
+            assert len(set(saved.values())) == len(pictures), f"round {r}: two pictures were given one file"
+            for k, path in saved.items():
+                assert path.read_bytes() == pictures[k], f"round {r}: a picture was overwritten"
+    finally:
+        S.sys.setswitchinterval(old)
+
+
+def test_the_same_picture_uploaded_again_keeps_its_file(tmp_path):
+    first = S.save_upload(tmp_path, "shot.png", b"one")
+    other = S.save_upload(tmp_path, "shot.png", b"two")
+    assert S.save_upload(tmp_path, "shot.png", b"one") == first != other
+    assert sorted(p.read_bytes() for p in tmp_path.iterdir()) == [b"one", b"two"]
+
+
+def test_an_upload_for_the_atlas_switched_away_while_it_came_in_is_refused(app, tmp_path):
+    import http.client
+
+    srv, _pts = app
+    (tmp_path / "b").mkdir()
+    b, _pts_b, _img = make_atlas(tmp_path / "b")
+    a_folder = srv.session.path.parent
+    before = {p.name for p in a_folder.iterdir()} | {p.name for p in b.parent.iterdir()}
+    data = b"\x89PNG" + b"x" * 1000
+    conn = http.client.HTTPConnection(srv.server_address[0], srv.server_address[1], timeout=10)
+    conn.putrequest("POST", "/api/upload")
+    for k, v in {
+        "X-Grand": "1",
+        "X-Filename": "late.png",
+        "Content-Type": "application/octet-stream",
+        "Content-Length": str(len(data)),
+        S.GEN_HEADER: str(srv.session.generation),  # made for atlas A
+    }.items():
+        conn.putheader(k, v)
+    conn.endheaders()
+    conn.send(data[:100])
+    srv.session.open_atlas(b)  # B opens while the picture is still coming in
+    conn.send(data[100:])
+    res = conn.getresponse()
+    assert res.status == 409 and json.loads(res.read())["stale"]
+    conn.close()
+    after = {p.name for p in a_folder.iterdir()} | {p.name for p in b.parent.iterdir()}
+    assert after == before  # saved in neither atlas's folder
