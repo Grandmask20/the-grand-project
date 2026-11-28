@@ -2,20 +2,23 @@
 
 from __future__ import annotations
 
+import contextlib
 import sys
 import time
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
+import cv2
 import numpy as np
 
 from grand_project import core
 
-from .badges import find_badges
-from .constants import MAP, WALL_CROSS
-from .landmarks import expedition_rules, find_landmarks, ship_markers
+from .badges import find_badges, special_icons
+from .constants import DETECT_PREFETCH_THREADS, MAP, WALL_CROSS
+from .landmarks import expedition_rules, find_landmarks, old_landmarks, ship_markers, square_buttons
 from .maps import _nms, map_candidates, map_features
 from .models import _models, load_model
-from .paths import maps_from_paths, path_dashes, path_features, trace_paths
+from .paths import amber_dashes, maps_from_paths, path_dashes, path_features, trace_paths
 from .walls import fortress_walls, wall_share
 
 
@@ -38,6 +41,33 @@ def find_maps(img: np.ndarray, model) -> tuple[list[dict], np.ndarray, np.ndarra
     return _nms(pts, prob), pts, prob[:, MAP]
 
 
+@contextlib.contextmanager
+def _prefetch(img: np.ndarray):
+    """Work out the screenshot's image-only stages on helper threads while the detection goes on.
+
+    The dashes, the special icons, the landmark rules, the fortress walls and the square buttons read nothing but
+    the screenshot, and are mostly OpenCV, which runs beside Python: a single detection used one core of the several
+    its worker may use. Each is remembered per image (cache._per_image), so when the detection reaches it, it takes
+    the result (or waits for it): the same functions on the same screenshot, so the same results. Threads: at most
+    the process's OpenCV share less one (a capped worker stays within its share); none with a share of 1.
+
+    Args:
+        img: BGR screenshot (1080p).
+
+    Yields:
+        Nothing; the helper threads are done when the block ends.
+    """
+    threads = min(DETECT_PREFETCH_THREADS, cv2.getNumThreads() - 1)
+    if threads < 1:
+        yield
+        return
+    with ThreadPoolExecutor(threads, thread_name_prefix="detect") as ex:
+        # in the order the detection needs them (the map finder reads the dashes first)
+        for stage in (path_dashes, special_icons, old_landmarks, fortress_walls, amber_dashes, square_buttons):
+            ex.submit(stage, img)  # (an error is raised again where the detection asks for that stage)
+        yield
+
+
 def detect(img: np.ndarray) -> dict:
     """Live mode: everything built so far for one screenshot (same shape as the old detector's result).
 
@@ -58,6 +88,12 @@ def detect(img: np.ndarray) -> dict:
             _models[k] = load_model(k)
             if _models[k] is None:
                 raise RuntimeError(f"no {k} model in the DB yet: run  python -m grand_project.detect train")
+    with _prefetch(img):
+        return _stages(img)
+
+
+def _stages(img: np.ndarray) -> dict:
+    """The detector's stages in order (see detect)."""
     nodes, mp, mprob = find_maps(img, _models["maps"])
     icons, more = find_badges(img, _models["badges"], nodes, mp, mprob)
     lms, nodes = find_landmarks(img, _models["towers"], nodes + more, icons)

@@ -223,7 +223,7 @@ def test_a_screenshot_whose_worker_process_failed_is_detected_again_here(session
     shots = [Path("good.png"), Path("bad.png")]
     detected: list[str] = []
 
-    def fake_uncached(paths, cache_dir, log=None, progress=None):
+    def fake_uncached(paths, cache_dir, log=None, progress=None, pool=None):
         for k in range(1, len(paths) + 1):
             progress(k, len(paths))
         return {str(shots[1]): "RuntimeError('worker died')"}
@@ -244,7 +244,7 @@ def test_a_screenshot_whose_worker_process_failed_is_detected_again_here(session
 
 def test_a_screenshot_that_cannot_be_detected_at_all_is_reported_failed(session, monkeypatch):
     shots = [Path("good.png"), Path("broken.png")]
-    monkeypatch.setattr(builder, "detect_uncached", lambda paths, cache_dir, log=None, progress=None: {})
+    monkeypatch.setattr(builder, "detect_uncached", lambda paths, cache_dir, log=None, progress=None, pool=None: {})
 
     def extract(p, cache_dir):
         if p.name == "broken.png":
@@ -255,3 +255,63 @@ def test_a_screenshot_that_cannot_be_detected_at_all_is_reported_failed(session,
     frames, failed = session._detect(shots, "detecting")
     assert len(frames) == 1 and failed == ["broken.png"]
     assert any("broken.png: detection failed" in line for line in session.events.log_lines)
+
+
+# ------------------------------------------------------------------ the session's warm detection pool
+
+
+class PoolRecorder:
+    """Stands in for builder.WarmPool: records how it is closed."""
+
+    def __init__(self):
+        self.closed: list[bool] = []
+
+    def close(self, wait: bool = True) -> None:
+        self.closed.append(wait)
+
+
+def test_one_screenshot_goes_to_the_session_s_worker_processes_too(two, monkeypatch):
+    s = AtlasSession(settings={}, worker=True)
+    try:
+        s.open_atlas(two[0])
+        assert isinstance(s._detect_pool, builder.WarmPool) and not s._detect_pool.running()  # (none started yet)
+        handed: list = []
+
+        def uncached(paths, cache_dir, log=None, progress=None, pool=None):
+            handed.append(([p.name for p in paths], pool))
+            return {}
+
+        monkeypatch.setattr(builder, "detect_uncached", uncached)
+        monkeypatch.setattr(builder, "extract_frame", lambda p, d: SimpleNamespace(usable=np.ones(1, bool), icons=[]))
+        frames, failed = s._detect([Path("one.png")], "detecting")
+        assert handed == [(["one.png"], s._detect_pool)] and len(frames) == 1 and failed == []
+    finally:
+        s.shutdown()
+
+
+def test_closing_closes_the_worker_processes_and_stops_them_when_a_job_is_cut_off(two, monkeypatch):
+    s = AtlasSession(settings={}, worker=True)
+    s.open_atlas(two[0])
+    pool = s._detect_pool = PoolRecorder()
+    assert s.shutdown() is True and pool.closed == [True]  # idle: they end by themselves
+
+    s = AtlasSession(settings={}, worker=True)
+    monkeypatch.setattr(s, "detector_ready", lambda: None)
+    s.open_atlas(two[0])
+    pool = s._detect_pool = PoolRecorder()
+    jobs = HeldJobs()
+    monkeypatch.setattr(s, "run_job", jobs(s))
+    monkeypatch.setattr(K, "SHUTDOWN_WAIT", 0.3)
+    s.add_screenshots(["long.png"])
+    assert jobs.started.wait(10)
+    try:
+        assert s.shutdown() is False and pool.closed == [False]  # cut off: stopped, not waited for
+    finally:
+        jobs.release.set()
+
+
+def test_a_session_without_its_worker_has_no_pool_and_detects_one_screenshot_itself(session, monkeypatch):
+    assert session._detect_pool is None
+    monkeypatch.setattr(builder, "detect_uncached", lambda *a, **k: pytest.fail("one screenshot sent to a pool"))
+    monkeypatch.setattr(builder, "extract_frame", lambda p, d: SimpleNamespace(usable=np.ones(1, bool), icons=[]))
+    assert len(session._detect([Path("one.png")], "detecting")[0]) == 1
