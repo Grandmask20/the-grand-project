@@ -11,6 +11,7 @@ import { AutoAddTab } from "@/components/adding/AutoAddTab";
 import { AtlasesTab } from "@/components/atlases/AtlasesTab";
 import { BookmarksTab } from "@/components/bookmarks/BookmarksTab";
 import { DebugTab } from "@/components/debug/DebugTab";
+import { ExperimentalTab } from "@/components/experimental/ExperimentalTab";
 import { FindTab } from "@/components/find/FindTab";
 import { PagedTab } from "@/components/layout/PagedTab";
 import { LogTab } from "@/components/log/LogTab";
@@ -148,6 +149,7 @@ export function SidePanel({ debug }: { debug: boolean }) {
 							pages={[
 								["log", "Log", <LogTab key="l" />],
 								...(debug ? [["debug", "Debug", <DebugTab key="d" />] as [string, string, ReactNode]] : []),
+								["experimental", "Experimental", <ExperimentalTab key="e" />],
 							]}
 						/>
 					</TabsContent>

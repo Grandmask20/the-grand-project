@@ -378,7 +378,7 @@ def _held_out(trained: set[str] | None, shots) -> bool | None:
 def cmd_score_rf_detr() -> int:
     """Command `python -m grand_project.detect score_rf_detr`: the RF-DETR detector on the hand-labelled screenshots.
 
-    The model is GRAND_PROJECT_RF_DETR_MODEL's, else runs/rf-detr-small/best. The truth screenshots are pinned to the
+    The model is --rf-detr-model's, else runs/rf-detr-small/best. The truth screenshots are pinned to the
     annotator's test split, so a `tools.train_rf_detr` run never trains on them itself; a model gone on from another
     (`--init-from`) may still have learned them in that ancestor's run. The score is called held-out only when the
     model's own list of training screenshots (RF_DETR_TRAINED_ON, ancestors' included) confirms it, beside `score`'s

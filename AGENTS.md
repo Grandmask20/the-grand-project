@@ -75,6 +75,9 @@ README's developer section). `tools/` are developer helpers
   `rf_detr_cuda.prefer_pip_cuda_libraries()` first (Linux: PyTorch's cuDNN before a system one). Validation and test
   screenshots never get model pre-labels; a training round checks its manifest against the split ledger. A model is
   a folder or a Hugging Face id (`rf_detr_model.model_folder`: downloaded once, safetensors and text files only).
+  Which detector runs is one setting per process (`detect.detector_config`), never the environment: the app sets its
+  saved one as it starts (Log > Experimental: a change applies at the next start), the tools their `--rf-detr` flags,
+  and detection workers get their parent's through `fileio.process_pool`'s initializer.
   Paths and fortress walls are no dataset labels: the classical tracer and wall mask find them for both detectors.
 - **App**: requests are answered on their own threads; the session changes the atlas only under its lock, and
   long work runs on the session's worker (or a background thread) and reports through `Events` (log, progress,

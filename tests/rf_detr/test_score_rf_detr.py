@@ -15,7 +15,7 @@ from grand_project.detect import rf_detr_model, training
 
 
 def test_the_hand_truth_scores_the_rf_detr_detector(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, detector, capsys: pytest.CaptureFixture
 ) -> None:
     """Its outputs go through the truth's scorer, Expedition ship markers left out as the classical score does."""
     shot = tmp_path / "shot.png"
@@ -24,7 +24,7 @@ def test_the_hand_truth_scores_the_rf_detr_detector(
                           "landmarks": [], "badges": []}}  # fmt: skip
     monkeypatch.setattr(training, "_truth_screenshots", lambda: (truth, {"shot.png": shot}))
     monkeypatch.setattr(training, "TRUTH", tmp_path / "truth.json")
-    monkeypatch.setenv(K.RF_DETR_MODEL_ENV, str(tmp_path / "model"))
+    detector(rf_detr=True, model=str(tmp_path / "model"))
     found = {
         "nodes": [{"x": 101.0, "y": 99.0}, {"x": 900.0, "y": 500.0}],  # one right, one false
         "icons": [{"name": "ExpeditionShip", "x": 5.0, "y": 5.0}],
@@ -56,7 +56,7 @@ def test_the_hand_truth_scores_the_rf_detr_detector(
 
 
 def test_each_screenshot_names_its_icons_without_its_own_pictures(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, detector
 ) -> None:
     """The stored icon model's book holds every truth screenshot's labelled pictures: the score names a screenshot's
     icons with the other screenshots' pictures only (leave-one-out, as ``score``), whatever the stored model holds."""
@@ -70,7 +70,7 @@ def test_each_screenshot_names_its_icons_without_its_own_pictures(
                        "badges": [{"x": 500.0, "y": 500.0, "name": icon}]}  # fmt: skip
     monkeypatch.setattr(training, "_truth_screenshots", lambda: (truth, where))
     monkeypatch.setattr(training, "TRUTH", tmp_path / "truth.json")
-    monkeypatch.setenv(K.RF_DETR_MODEL_ENV, str(tmp_path / "model"))
+    detector(rf_detr=True, model=str(tmp_path / "model"))
     books = []
 
     def detect(img: np.ndarray, book=None) -> dict:
@@ -82,14 +82,14 @@ def test_each_screenshot_names_its_icons_without_its_own_pictures(
     assert books == [["Breach"], ["Delirium"]]
 
 
-def _one_shot(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
+def _one_shot(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, detector) -> Path:
     """One hand-labelled 1080p screenshot (no maps) and a detector that finds nothing; the model folder in tmp_path."""
     shot = tmp_path / "shot.png"
     cv2.imwrite(str(shot), np.zeros((1080, 1920, 3), np.uint8))
     truth = {"shot.png": {"maps": [], "maybe": [], "not_maps": [], "landmarks": [], "badges": []}}
     monkeypatch.setattr(training, "_truth_screenshots", lambda: (truth, {"shot.png": shot}))
     monkeypatch.setattr(training, "TRUTH", tmp_path / "truth.json")
-    monkeypatch.setenv(K.RF_DETR_MODEL_ENV, str(tmp_path / "model"))
+    detector(rf_detr=True, model=str(tmp_path / "model"))
     empty = {"nodes": [], "icons": [], "landmarks": [], "edges": []}
     monkeypatch.setattr(rf_detr_model, "detect_rf_detr", lambda img, book=None: dict(empty))
     (tmp_path / "model").mkdir()
@@ -105,10 +105,10 @@ def _one_shot(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     ],
 )
 def test_the_score_is_held_out_only_when_the_model_says_so(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture, listed, header: str
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, detector, capsys: pytest.CaptureFixture, listed, header: str
 ) -> None:
     """The model's own list of training screenshots (RF_DETR_TRAINED_ON) decides; without one it is not known."""
-    shot = _one_shot(tmp_path, monkeypatch)
+    shot = _one_shot(tmp_path, monkeypatch, detector)
     if listed is not None:
         names = [training._project_name(shot.with_name(name)) for name in listed]
         (tmp_path / "model" / K.RF_DETR_TRAINED_ON).write_text("".join(f"{n}\n" for n in names), encoding="utf-8")
@@ -125,10 +125,10 @@ def test_no_truth_scores_nothing(tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 
 
 def test_screenshots_are_read_as_the_program_reads_them(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, detector, capsys
 ) -> None:
     """A 4K screenshot is scaled to 1080p (its truth is in 1080p px); one that cannot be read is named and left out."""
-    shot = _one_shot(tmp_path, monkeypatch)
+    shot = _one_shot(tmp_path, monkeypatch, detector)
     cv2.imwrite(str(shot), np.zeros((2160, 3840, 3), np.uint8))
     seen = []
 
@@ -144,9 +144,11 @@ def test_screenshots_are_read_as_the_program_reads_them(
     assert f"cannot read {shot}" in capsys.readouterr().out
 
 
-def test_no_readable_truth_screenshot_scores_nothing(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys) -> None:
+def test_no_readable_truth_screenshot_scores_nothing(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, detector, capsys
+) -> None:
     """Every truth screenshot unreadable: no empty score, and the last score's outputs stay."""
-    shot = _one_shot(tmp_path, monkeypatch)
+    shot = _one_shot(tmp_path, monkeypatch, detector)
     shot.write_bytes(b"not a picture")
     last = tmp_path / "last_score_outputs_rf_detr.json"
     last.write_text("{}", encoding="utf-8")

@@ -98,8 +98,9 @@ def detect_classical(img: np.ndarray, *, found_maps: tuple[list[dict], np.ndarra
 
 
 def detect(img: np.ndarray) -> dict:
-    """Live mode: one screenshot with the configured detector, the classical one unless ``GRAND_PROJECT_USE_RF_DETR``
-    selects the optional RF-DETR model; both return the same ``nodes``, ``icons``, ``landmarks`` and ``edges``."""
+    """Live mode: one screenshot with the configured detector, the classical one unless the detector settings select
+    the optional RF-DETR model (``detector_config``); both return the same ``nodes``, ``icons``, ``landmarks`` and
+    ``edges``."""
     return detect_rf_detr(img) if rf_detr_enabled() else detect_classical(img)
 
 

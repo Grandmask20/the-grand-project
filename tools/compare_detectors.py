@@ -25,7 +25,6 @@ from __future__ import annotations
 import argparse
 import importlib.util
 import json
-import os
 import re
 import shutil
 import statistics
@@ -42,12 +41,8 @@ import numpy as np
 
 from grand_project import core
 from grand_project import paths as project_paths
-from grand_project.detect.constants import (
-    RF_DETR_DEFAULT_MODEL_DIR,
-    RF_DETR_DEVICE_ENV,
-    RF_DETR_MODEL_ENV,
-    RF_DETR_USE_ENV,
-)
+from grand_project.detect import detector_config
+from grand_project.detect.constants import RF_DETR_DEFAULT_MODEL_DIR, RF_DETR_DEVICES
 from grand_project.detect.pipeline import detect_classical
 from grand_project.detect.rf_detr_cuda import prefer_pip_cuda_libraries
 from grand_project.detect.rf_detr_model import (
@@ -67,27 +62,22 @@ class Backend:
     detect: Callable[[np.ndarray], dict[str, Any]]
 
 
+def _backend_config(backend: Backend, model_dir: Path, device: str) -> detector_config.DetectorConfig:
+    """The detector settings that run ``backend`` (the copied checkpoint, on ``device``, for RF-DETR)."""
+    if backend.name != "RF-DETR":
+        return detector_config.DetectorConfig()
+    return detector_config.DetectorConfig(rf_detr=True, model=str(model_dir), device=device)
+
+
 @contextmanager
-def _backend_environment(backend: Backend, model_dir: Path, device: str) -> Iterator[None]:
-    """Set only the detector environment inherited by atlas-builder subprocesses."""
-    names = (RF_DETR_USE_ENV, RF_DETR_MODEL_ENV, RF_DETR_DEVICE_ENV)
-    old = {name: os.environ.get(name) for name in names}
+def _using(config: detector_config.DetectorConfig) -> Iterator[None]:
+    """Run this process with ``config``'s detector, the one before it afterwards."""
+    before = detector_config.current()
+    detector_config.configure(config)
     try:
-        os.environ.pop(RF_DETR_USE_ENV, None)
-        if backend.name == "RF-DETR":
-            os.environ[RF_DETR_USE_ENV] = "1"
-            os.environ[RF_DETR_MODEL_ENV] = str(model_dir)
-            if device != "auto":
-                os.environ[RF_DETR_DEVICE_ENV] = device
-            else:
-                os.environ.pop(RF_DETR_DEVICE_ENV, None)
         yield
     finally:
-        for name, value in old.items():
-            if value is None:
-                os.environ.pop(name, None)
-            else:
-                os.environ[name] = value
+        detector_config.configure(before)
 
 
 SCORER = project_paths.ROOT / "atlas_test_data" / "res_atlases" / "score_atlases.py"
@@ -163,23 +153,23 @@ def _rebuild_accuracy(
             _copy_atlas_input(source, destination, include_cache=False)
             run_folders.append(destination)
 
-        with _backend_environment(backend, model_dir, device):
-            for folder in run_folders:
-                print(f"  {backend.name}: rebuilding {folder.name} ...", flush=True)
-                try:
-                    placed = scorer.rebuild(folder)
-                except subprocess.CalledProcessError as failed:
-                    # the builder exits 1 when a screenshot could not be detected: no score for a broken backend
-                    output = (failed.stdout or b"") + (failed.stderr or b"")
-                    if isinstance(output, bytes):
-                        output = output.decode("utf-8", "replace")
-                    tail = "\n".join(output.strip().splitlines()[-10:])
-                    raise SystemExit(f"{backend.name}: rebuilding {folder.name} failed:\n{tail}") from failed
-                if placed is False:
-                    # the builder ran without error and placed nothing (the scorer says so): an empty atlas. A missing
-                    # file or program is an error, never scored as empty
-                    print(f"    {backend.name}: no screenshots placed in {folder.name}; scoring it as empty")
-                    _write_empty_atlas(folder)
+        builder_args = detector_config.cli_args(_backend_config(backend, model_dir, device))
+        for folder in run_folders:
+            print(f"  {backend.name}: rebuilding {folder.name} ...", flush=True)
+            try:
+                placed = scorer.rebuild(folder, builder_args)
+            except subprocess.CalledProcessError as failed:
+                # the builder exits 1 when a screenshot could not be detected: no score for a broken backend
+                output = (failed.stdout or b"") + (failed.stderr or b"")
+                if isinstance(output, bytes):
+                    output = output.decode("utf-8", "replace")
+                tail = "\n".join(output.strip().splitlines()[-10:])
+                raise SystemExit(f"{backend.name}: rebuilding {folder.name} failed:\n{tail}") from failed
+            if placed is False:
+                # the builder ran without error and placed nothing (the scorer says so): an empty atlas. A missing
+                # file or program is an error, never scored as empty
+                print(f"    {backend.name}: no screenshots placed in {folder.name}; scoring it as empty")
+                _write_empty_atlas(folder)
 
         scorer_core, view_model = scorer._import()
         reference_numbers = scorer.numbers(reference, scorer_core, view_model)
@@ -344,7 +334,7 @@ def _benchmark_speed(
     first = core.read_screenshot(image_paths[0])
     if first is None:
         raise ValueError(f"could not read benchmark screenshot: {image_paths[0]}")
-    with _backend_environment(backend, model_dir, device):
+    with _using(_backend_config(backend, model_dir, device)):
         started = time.perf_counter()  # (nothing to wait for before the model is loaded)
         backend.detect(first)
         device = _model_device(backend)
@@ -425,7 +415,7 @@ def _parse_args() -> argparse.Namespace:
         default=str(RF_DETR_DEFAULT_MODEL_DIR),
         help="the RF-DETR model folder, or its Hugging Face id (owner/name[@revision])",
     )
-    parser.add_argument("--device", choices=("auto", "cpu", "cuda", "mps"), default="auto")
+    parser.add_argument("--device", choices=RF_DETR_DEVICES, default="auto")
     parser.add_argument("--max-images", type=int, help="speed benchmark limit; default is every roa-atlas screenshot")
     parser.add_argument("--atlas", dest="atlas_names", action="append", help="accuracy atlas name; may be repeated")
     parser.add_argument("--accuracy-only", action="store_true")

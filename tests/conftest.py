@@ -17,7 +17,6 @@ from __future__ import annotations
 
 import hashlib
 import json
-import os
 import random
 import shutil
 from pathlib import Path
@@ -27,7 +26,7 @@ import numpy as np
 import pytest
 
 from grand_project import paths as rc_paths
-from grand_project.detect.constants import RF_DETR_USE_ENV
+from grand_project.detect import detector_config
 
 
 def pytest_addoption(parser):
@@ -40,17 +39,15 @@ def pytest_addoption(parser):
     g.addoption("--runs", type=int, default=None, help="randomised tests: how many runs (each test has a default)")
     g.addoption("--seed", type=int, default=None, help="randomised tests: the seed (default: a new one, printed)")
     g.addoption("--cached", action="store_true", help="test_waiting_islands: reuse the saved detections (quick)")
-    g.addoption(
-        "--rf-detr",
-        action="store_true",
-        help="use the optional fine-tuned RF-DETR backend (set GRAND_PROJECT_RF_DETR_MODEL if needed)",
-    )
+    g.addoption("--rf-detr", action="store_true", help="use the optional fine-tuned RF-DETR backend")
+    g.addoption("--rf-detr-model", default="", help="--rf-detr's model: a folder or a Hugging Face id (default: best)")
 
 
 def pytest_configure(config):
-    """Enable the optional detector before tests import or call the live pipeline."""
+    """Enable the optional detector before tests call the live pipeline."""
     if config.getoption("--rf-detr"):
-        os.environ[RF_DETR_USE_ENV] = "1"
+        model = config.getoption("--rf-detr-model").strip()
+        detector_config.configure(detector_config.DetectorConfig(rf_detr=True, model=model))
         from grand_project.detect.rf_detr_cuda import prefer_pip_cuda_libraries
 
         prefer_pip_cuda_libraries()  # restarts pytest once with PyTorch's own cuDNN first (Linux; rf_detr_cuda)
@@ -129,6 +126,19 @@ def app_settings(tmp_path, monkeypatch) -> Path:
     f = tmp_path / "app_settings.json"
     monkeypatch.setattr(settings, "SETTINGS", f)
     return f
+
+
+@pytest.fixture(autouse=True)
+def detector_kept(monkeypatch):
+    """Every test leaves the process's detector settings as it found them (the app's start sets its saved ones)."""
+    monkeypatch.setattr(detector_config, "_CONFIG", detector_config.current())
+
+
+@pytest.fixture
+def detector():
+    """Set this process's detector settings for one test: ``detector(rf_detr=True, model=...)``
+    (``detector_config.DetectorConfig``'s fields); ``detector_kept`` puts the ones before it back."""
+    return lambda **settings: detector_config.configure(detector_config.DetectorConfig(**settings))
 
 
 @pytest.fixture(scope="session")

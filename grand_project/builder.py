@@ -33,6 +33,7 @@ from grand_project import core as core  # noqa: E402
 from grand_project import fileio as atlas_io  # noqa: E402
 from grand_project import finalize as atlas_finalize  # noqa: E402
 from grand_project import logs as atlas_log  # noqa: E402
+from grand_project.detect import detector_config  # noqa: E402
 
 _log = atlas_log.printer("builder")
 
@@ -231,9 +232,6 @@ def extract_frame(image_path: Path, cache_dir: Path) -> core.Frame:
     return core.Frame.from_json(data)
 
 
-DETECT_WORKERS = atlas_io.workers(4)  # new screenshots detected at once (each ~8 s alone; v1.01)
-
-
 def _program_version() -> str:
     from grand_project import __version__
 
@@ -289,11 +287,17 @@ def is_cached(image_path: Path, cache_dir: Path) -> bool:
     return _fresh(cache_dir / f"{digest[:16]}_{atlas_detect.DETECTOR_ID}.json") is not None
 
 
+def _detect_pool(workers: int):
+    """A pool of detection workers that run this process's detector (spawned workers start with the default one)."""
+    return atlas_io.process_pool(workers, initializer=detector_config.configure, initargs=(detector_config.current(),))
+
+
 def detect_uncached(paths: list, cache_dir: Path, log=None, progress=None) -> dict:
     """Detect the screenshots not cached yet, several at a time (the viewer's batches).
 
-    Afterwards extract_frame reads each from the cache. Does nothing for fewer than 2 screenshots or when
-    DETECT_WORKERS < 2; when worker processes fail, the screenshots are left to be detected one at a time later.
+    Afterwards extract_frame reads each from the cache. Does nothing for fewer than 2 screenshots or when the detector
+    settings allow fewer than 2 workers (``detector_config``: Log > Experimental); when worker processes fail, the
+    screenshots are left to be detected one at a time later.
 
     Args:
         paths: Screenshot paths.
@@ -306,12 +310,13 @@ def detect_uncached(paths: list, cache_dir: Path, log=None, progress=None) -> di
         {path: error} for failures.
     """
     todo = [p for p in paths if not is_cached(Path(p), cache_dir)]
-    if len(todo) < 2 or DETECT_WORKERS < 2:
+    workers = atlas_io.workers(detector_config.current().workers)
+    if len(todo) < 2 or workers < 2:
         return {}
     cache_dir.mkdir(parents=True, exist_ok=True)
     errors = {}
     try:
-        with atlas_io.process_pool(min(DETECT_WORKERS, len(todo))) as ex:
+        with _detect_pool(min(workers, len(todo))) as ex:
             jobs = [ex.submit(_detect_one, (str(p), str(cache_dir))) for p in todo]
             for done, job in enumerate(as_completed(jobs), 1):
                 p, err = job.result()
@@ -493,9 +498,7 @@ def detect_many(images: list, cache_dir: Path, workers: int = 1, log=_log) -> tu
     """
     todo = [i for i in images]
     if workers > 1 and len(todo) > 1:
-        from concurrent.futures import as_completed
-
-        with atlas_io.process_pool(workers) as ex:
+        with _detect_pool(workers) as ex:
             futs = [ex.submit(_detect_one, (str(i), str(cache_dir))) for i in todo]
             for k, fu in enumerate(as_completed(futs), 1):
                 image, err = fu.result()
@@ -699,6 +702,7 @@ def main() -> int:
     a.add_argument(
         "--workers", type=int, default=1, help="detect this many screenshots at once (e.g. 6 on an 8+ core PC)"
     )
+    detector_config.add_arguments(a)
     a.set_defaults(func=cmd_add)
     fz = sub.add_parser("finalize", help="re-run the atlas-wide clean-up (nodes, icons, abyss, paths)")
     fz.add_argument("--atlas", required=True)
@@ -707,6 +711,12 @@ def main() -> int:
     i.add_argument("--atlas", required=True)
     i.set_defaults(func=cmd_info)
     args = ap.parse_args()
+    if args.cmd == "add":
+        detector_config.configure(detector_config.from_args(args, workers=args.workers))
+        if args.rf_detr:  # RF-DETR on CUDA needs PyTorch's own cuDNN, before torch loads (rf_detr_cuda)
+            from grand_project.detect.rf_detr_cuda import prefer_pip_cuda_libraries
+
+            prefer_pip_cuda_libraries()
     return args.func(args)
 
 

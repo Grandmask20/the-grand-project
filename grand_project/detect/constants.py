@@ -14,9 +14,12 @@ HERE = Path(__file__).resolve().parent
 RF_DETR_MODEL_NAME = "Roboflow/rf-detr-small"  # the pre-trained checkpoint fine-tuned (transformers' RfDetr port)
 RF_DETR_MODEL_REVISION = "3bdc465063270f99769da5a1b4c00c68bd2d439d"  # its Hub commit (2026-05-20): a run is
 # reproducible and never picks up a changed upload
-RF_DETR_USE_ENV = "GRAND_PROJECT_USE_RF_DETR"  # set to 1/true/on to select the optional RF-DETR backend
-RF_DETR_MODEL_ENV = "GRAND_PROJECT_RF_DETR_MODEL"  # optional model directory override for program/tests
-RF_DETR_DEVICE_ENV = "GRAND_PROJECT_RF_DETR_DEVICE"  # optional torch device override, e.g. cpu or cuda
+RF_DETR_DEVICES = ("auto", "cuda", "mps", "cpu")  # the torch devices the detector may be set to (detector_config);
+# auto: CUDA, else Apple's MPS, else the CPU (as the trainer picks)
+RF_DETR_PACKAGES = ("torch", "transformers", "huggingface_hub")  # what RF-DETR needs installed (the player release
+# ships none of them: the Experimental tab then greys it out)
+DETECT_WORKERS_DEFAULT = 4  # new screenshots detected at once in worker processes (each ~8 s alone; v1.01), at most
+# one fewer than the cores (fileio.workers); a setting (Log > Experimental)
 # set by tools.train_rf_detr when it restarts itself with the pip CUDA libraries first on LD_LIBRARY_PATH (the
 # dynamic linker reads it only at process start), so it restarts at most once
 RF_DETR_CUDA_REEXEC_ENV = "GRAND_PROJECT_RF_DETR_CUDA_REEXEC"

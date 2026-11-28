@@ -181,15 +181,20 @@ def test_a_find_in_the_padding_of_a_small_screenshot_is_dropped() -> None:
     assert rf_detr_model.predict_tiles(model, processor, shot, families, torch.device("cpu"), threshold=0.35) == []
 
 
-def test_a_missing_model_is_a_clear_error(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setenv(K.RF_DETR_MODEL_ENV, str(tmp_path / "none"))
+def test_a_missing_model_is_a_clear_error(tmp_path: Path, detector) -> None:
+    detector(rf_detr=True, model=str(tmp_path / "none"))
     rf_detr_model.reset_rf_detr_runtime()
     with pytest.raises(RuntimeError, match="does not exist"):
         rf_detr_model._load_runtime()
 
 
 def _stub_loaders(
-    monkeypatch: pytest.MonkeyPatch, transformers, tmp_path: Path, labels: dict[str, str], classes: int | None = None
+    monkeypatch: pytest.MonkeyPatch,
+    detector,
+    transformers,
+    tmp_path: Path,
+    labels: dict[str, str],
+    classes: int | None = None,
 ) -> None:
     """A checkpoint folder with ``labels`` and stand-in transformers loaders (they must ask for safetensors); the
     model's head has ``classes`` classes (default: one per label)."""
@@ -203,16 +208,15 @@ def _stub_loaders(
 
     monkeypatch.setattr(transformers.AutoImageProcessor, "from_pretrained", lambda path: "processor")
     monkeypatch.setattr(transformers.AutoModelForObjectDetection, "from_pretrained", load_model)
-    monkeypatch.setenv(K.RF_DETR_MODEL_ENV, str(tmp_path))
-    monkeypatch.setenv(K.RF_DETR_DEVICE_ENV, "cpu")
+    detector(rf_detr=True, model=str(tmp_path), device="cpu")
     rf_detr_model.reset_rf_detr_runtime()
 
 
-def test_a_checkpoint_loads_its_own_label_map(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_a_checkpoint_loads_its_own_label_map(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, detector) -> None:
     """The checkpoint's saved label map (its labels.json) gives its classes' families, matched by name."""
     pytest.importorskip("torch")
     transformers = pytest.importorskip("transformers")
-    _stub_loaders(monkeypatch, transformers, tmp_path, {"0": "citadel_stone", "1": "map_node", "2": "icon"})
+    _stub_loaders(monkeypatch, detector, transformers, tmp_path, {"0": "citadel_stone", "1": "map_node", "2": "icon"})
     try:
         runtime = rf_detr_model._load_runtime()
         assert runtime["families"] == {
@@ -234,13 +238,13 @@ def test_a_checkpoint_loads_its_own_label_map(tmp_path: Path, monkeypatch: pytes
     ],
 )
 def test_a_label_map_that_is_not_the_heads_classes_is_refused(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, labels: dict[str, str], classes: int
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, detector, labels: dict[str, str], classes: int
 ) -> None:
     """Every output class needs exactly one name: an id past the head cannot be scored, a class left out would be
     dropped unnoticed. The checkpoint's own order is kept (``test_a_checkpoint_loads_its_own_label_map``)."""
     pytest.importorskip("torch")
     transformers = pytest.importorskip("transformers")
-    _stub_loaders(monkeypatch, transformers, tmp_path, labels, classes)
+    _stub_loaders(monkeypatch, detector, transformers, tmp_path, labels, classes)
     try:
         with pytest.raises(RuntimeError, match="every class needs exactly one name"):
             rf_detr_model._load_runtime()
@@ -249,32 +253,34 @@ def test_a_label_map_that_is_not_the_heads_classes_is_refused(
 
 
 def test_the_loaded_model_keeps_the_digest_it_was_checked_against(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, detector
 ) -> None:
     """The runtime carries the digest its weights were checked against; a configured folder that is now another
     checkpoint is refused rather than stamped with the loaded one's (CodeRabbit)."""
     pytest.importorskip("torch")
     transformers = pytest.importorskip("transformers")
-    _stub_loaders(monkeypatch, transformers, tmp_path, {"0": "map_node", "1": "icon"})
+    _stub_loaders(monkeypatch, detector, transformers, tmp_path, {"0": "map_node", "1": "icon"})
     other = tmp_path / "other"
     other.mkdir()
     (other / "labels.json").write_text(json.dumps({"0": "map_node"}))
     try:
         runtime = rf_detr_model._load_runtime()
         assert rf_detr_model.runtime_digest() == runtime["digest"] == rf_detr_model.checkpoint_digest(tmp_path)
-        monkeypatch.setenv(K.RF_DETR_MODEL_ENV, str(other))
+        detector(rf_detr=True, model=str(other), device="cpu")  # (the loaded model stays: configure resets nothing)
         with pytest.raises(RuntimeError, match="not the one loaded"):
             rf_detr_model._load_runtime()
     finally:
         rf_detr_model.reset_rf_detr_runtime()
 
 
-def test_a_checkpoint_of_retired_classes_is_refused(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_a_checkpoint_of_retired_classes_is_refused(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, detector) -> None:
     """A checkpoint of an earlier label set would find its retired classes (City, locked stronghold) and silently drop
     them: it is refused, naming them."""
     pytest.importorskip("torch")
     transformers = pytest.importorskip("transformers")
-    _stub_loaders(monkeypatch, transformers, tmp_path, {"0": "map_node", "1": "city", "2": "locked_stronghold"})
+    _stub_loaders(
+        monkeypatch, detector, transformers, tmp_path, {"0": "map_node", "1": "city", "2": "locked_stronghold"}
+    )
     try:
         with pytest.raises(RuntimeError, match="city, locked_stronghold"):
             rf_detr_model._load_runtime()
@@ -535,13 +541,13 @@ def test_the_expedition_rules_come_before_the_paths(monkeypatch: pytest.MonkeyPa
 
 
 def test_the_loaded_checkpoint_is_the_one_the_detector_stamp_names(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, detector
 ) -> None:
     """The stamp's checkpoint digest is worked out once per process; a checkpoint swapped in after it (a training run
     keeping a new best/) is refused at the load, so no detection of other weights is saved under the old stamp."""
     pytest.importorskip("torch")
     transformers = pytest.importorskip("transformers")
-    _stub_loaders(monkeypatch, transformers, tmp_path, {"0": "map_node", "1": "icon"})
+    _stub_loaders(monkeypatch, detector, transformers, tmp_path, {"0": "map_node", "1": "icon"})
     try:
         stamp = rf_detr_model.checkpoint_digest(tmp_path)
         assert rf_detr_model._load_runtime()["families"]  # the same files: loads
@@ -554,12 +560,14 @@ def test_the_loaded_checkpoint_is_the_one_the_detector_stamp_names(
         rf_detr_model.reset_rf_detr_runtime()
 
 
-def test_labels_changed_after_they_were_read_are_refused(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_labels_changed_after_they_were_read_are_refused(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, detector
+) -> None:
     """labels.json is read before the checkpoint's digest is checked again: a label map swapped in after it was read
     is caught (CodeRabbit)."""
     pytest.importorskip("torch")
     transformers = pytest.importorskip("transformers")
-    _stub_loaders(monkeypatch, transformers, tmp_path, {"0": "map_node", "1": "icon"})
+    _stub_loaders(monkeypatch, detector, transformers, tmp_path, {"0": "map_node", "1": "icon"})
     real = rf_detr_model._labels
 
     def read_then_swapped(model_dir, model):
@@ -576,7 +584,7 @@ def test_labels_changed_after_they_were_read_are_refused(tmp_path: Path, monkeyp
 
 
 def test_a_folder_swapped_while_it_was_read_is_refused_even_with_the_same_files(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, detector
 ) -> None:
     """The weights, the training list and its partial marker must come from one generation of the folder: one swapped
     for a copy while they were read (a new folder, the same bytes) is refused, never read as having no marker
@@ -587,7 +595,7 @@ def test_a_folder_swapped_while_it_was_read_is_refused_even_with_the_same_files(
     transformers = pytest.importorskip("transformers")
     model_dir = tmp_path / "best"
     model_dir.mkdir()
-    _stub_loaders(monkeypatch, transformers, model_dir, {"0": "map_node", "1": "icon"})
+    _stub_loaders(monkeypatch, detector, transformers, model_dir, {"0": "map_node", "1": "icon"})
     real = rf_detr_model._labels
 
     def read_then_swapped(folder, model):

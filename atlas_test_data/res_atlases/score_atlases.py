@@ -27,6 +27,7 @@ import subprocess
 import sys
 import tempfile
 from collections import Counter
+from collections.abc import Sequence
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
@@ -72,8 +73,12 @@ def atlases() -> list[Path]:
     return sorted(found, key=lambda p: (ORDER.index(p.name) if p.name in ORDER else len(ORDER), p.name))
 
 
-def rebuild(folder: Path) -> bool:
+def rebuild(folder: Path, builder_args: Sequence[str] = ()) -> bool:
     """Rebuild one atlas from its screenshots with this checkout's detector (in a temp copy, then copied back).
+
+    Args:
+        folder: The atlas folder.
+        builder_args: More options of the builder's add (the detector: ``--rf-detr --rf-detr-model ...``).
 
     Returns:
         False when the builder ran without error and placed no screenshot (it saves no atlas then), else True.
@@ -84,7 +89,8 @@ def rebuild(folder: Path) -> bool:
         work.mkdir()
         for s in shots:
             shutil.copy2(s, work / s.name)
-        cmd = [sys.executable, "-m", "grand_project.builder", "add", "--atlas", str(work / "atlas.json"), "--image"]
+        cmd = [sys.executable, "-m", "grand_project.builder", "add", *builder_args, "--atlas", str(work / "atlas.json")]
+        cmd.append("--image")
         root = program_root()  # the rebuild uses the same checkout as the scoring (review)
         env = {**os.environ, "PYTHONPATH": os.pathsep.join(filter(None, [str(root), os.environ.get("PYTHONPATH")]))}
         subprocess.run(cmd + [str(work / s.name) for s in shots], check=True, capture_output=True, cwd=root, env=env)
