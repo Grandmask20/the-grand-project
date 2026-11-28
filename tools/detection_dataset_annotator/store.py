@@ -280,7 +280,9 @@ def upgrade_layout(path: Path, target: Path | None = None) -> dict[str, int]:
     with contextlib.closing(sqlite3.connect(str(path), isolation_level=None)) as old:
         old.execute("PRAGMA wal_checkpoint(TRUNCATE)")
     copied: dict[str, int] = {}
-    with contextlib.closing(sqlite3.connect(str(staging), isolation_level=None)) as db:
+    # uri=True: ATTACH reads a "file:...?mode=ro" name as a URI only on a URI-enabled connection (Linux builds have it
+    # on by default, the Windows and macOS ones do not); a plain staging path still opens as a path
+    with contextlib.closing(sqlite3.connect(str(staging), uri=True, isolation_level=None)) as db:
         db.execute("BEGIN")
         for statement in _SCHEMA:
             db.execute(statement)
