@@ -42,9 +42,18 @@ def test_a_result_asked_for_while_another_thread_works_it_out_is_worked_out_once
     assert got["helper"] is got["detection"] and not got["detection"].flags.writeable
 
 
-def test_an_error_reaches_every_caller_waiting_and_is_not_kept():
-    started, release = threading.Event(), threading.Event()
+def test_an_error_reaches_every_caller_waiting_and_is_not_kept(monkeypatch):
+    started, release, waiting = threading.Event(), threading.Event(), threading.Event()
     calls: list[int] = []
+
+    class Watched(cache.Future):
+        """The cache's Future, saying when a second caller waits on it."""
+
+        def result(self, timeout=None):
+            waiting.set()
+            return super().result(timeout)
+
+    monkeypatch.setattr(cache, "Future", Watched)
 
     @cache._per_image
     def failing(img):
@@ -69,7 +78,7 @@ def test_an_error_reaches_every_caller_waiting_and_is_not_kept():
     assert started.wait(10)
     second = threading.Thread(target=ask)
     second.start()
-    second.join(0.3)
+    assert waiting.wait(10)  # the second caller waits on the first one's result, not working it out itself
     release.set()
     first.join(10)
     second.join(10)

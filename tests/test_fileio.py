@@ -55,30 +55,53 @@ def test_files_rewritten_from_several_threads_at_once_are_never_read_half_writte
     reading = sys.platform != "win32"
     start = threading.Barrier(writers + reading)
     done = threading.Event()
-    seen: list[str] = []
+    reads: list[int] = []  # how many files were read (one entry per observation would hold a megabyte of text each)
+    torn: list[str] = []  # the beginning of each observation that was no whole text, as the evidence
+    failed: list[BaseException] = []
 
     def write(w: int) -> None:
-        start.wait(5)
-        for i in range(each):
-            fileio.write_text_atomic(f, texts[f"{w}-{i}"])
+        try:
+            start.wait(5)
+            for i in range(each):
+                fileio.write_text_atomic(f, texts[f"{w}-{i}"])
+        except BaseException as exc:  # a writer's error fails the test, not only its thread
+            failed.append(exc)
 
     def read() -> None:
-        start.wait(5)
-        while not done.is_set():
-            with contextlib.suppress(FileNotFoundError):  # (none written yet)
-                seen.append(f.read_text())
+        try:
+            start.wait(5)
+            count = 0
+            last = False
+            while not last:
+                last = done.is_set()  # one more read after the writers are done: the file is there by then
+                with contextlib.suppress(FileNotFoundError):  # (none written yet)
+                    text = f.read_text()
+                    count += 1
+                    # checked as it is read: a whole text is one of the texts written, whichever it is
+                    if texts.get(text.split(":", 1)[0]) != text and len(torn) < 3:
+                        torn.append(text[:80])
+            reads.append(count)
+        except BaseException as exc:  # a reader's error fails the test too (as a writer's)
+            failed.append(exc)
 
     threads = [threading.Thread(target=write, args=(w,)) for w in range(writers)]
     reader = threading.Thread(target=read) if reading else None
     for t in threads + ([reader] if reader else []):
         t.start()
-    for t in threads:
-        t.join(30)
-    done.set()
-    if reader:
-        reader.join(10)
+    try:
+        for t in threads:
+            t.join(30)
+            assert not t.is_alive(), "a writer did not finish"
+        assert not failed, failed
+    finally:  # the reader stops however the writers ended
+        done.set()
+        if reader:
+            reader.join(10)
+    assert not (reader and reader.is_alive()), "the reader did not stop"
+    assert not failed, failed
     assert f.read_text() in texts.values()
-    assert all(text == texts[text.split(":", 1)[0]] for text in seen), "a reader saw half a file"
+    assert not torn, f"a reader saw half a file: {torn}"
+    assert not reading or (reads and reads[0] > 0), "the reader never read"
     assert [p.name for p in tmp_path.iterdir()] == ["atlas.json"]  # no temporary file left
 
 
@@ -99,18 +122,23 @@ def test_process_pool_starts_its_workers_fresh():
 
 
 def _thread_limits() -> tuple[int, int, str | None]:
-    """What a worker process may use (run in it): OpenCV's threads, the largest OpenMP / BLAS pool, OMP_NUM_THREADS."""
+    """What a worker process may use (run in it): its share (and OpenCV's threads, but on macOS, whose GCD backend
+    reports the CPU count whatever it was told), the largest OpenMP / BLAS pool, OMP_NUM_THREADS."""
     import cv2
     from threadpoolctl import threadpool_info
 
-    return cv2.getNumThreads(), max(p["num_threads"] for p in threadpool_info()), os.environ.get("OMP_NUM_THREADS")
+    share = fileio.thread_share()
+    if sys.platform != "darwin":
+        assert cv2.getNumThreads() == share
+    return share, max(p["num_threads"] for p in threadpool_info()), os.environ.get("OMP_NUM_THREADS")
 
 
-def test_each_worker_process_uses_only_its_share_of_the_cpu():
+def test_each_worker_process_uses_only_its_share_of_the_cpu(monkeypatch):
     # uncapped, every worker started one thread per CPU: 4 workers detected 2.7x slower (core.constants)
-    with fileio.process_pool(2, threads=1) as pool:
+    monkeypatch.setattr(fileio.os, "cpu_count", lambda: 2)  # (the share is worked out here, the workers get it)
+    with fileio.process_pool(2) as pool:
         assert pool.submit(_thread_limits).result(timeout=120) == (1, 1, "1")
-    with fileio.process_pool(1, threads=2) as pool:
+    with fileio.process_pool(1) as pool:
         assert pool.submit(_thread_limits).result(timeout=120) == (2, 2, "2")
 
 

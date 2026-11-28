@@ -63,7 +63,8 @@ def detector_stamp() -> str:
 
         h = hashlib.sha1()
         try:
-            c = sqlite3.connect(f"file:{DB_PATH.as_posix()}?mode=ro", uri=True)
+            # as_uri percent-encodes the path: a raw "#" or "?" in it would end the path early and drop "mode=ro"
+            c = sqlite3.connect(f"{Path(DB_PATH).resolve().as_uri()}?mode=ro", uri=True)
             # what the rows hold, not their names and counts: a model trained again under the same name and time,
             # or an icon picture replaced in place, kept the stamp, so the old detections stayed (GPT audit)
             for row in c.execute("SELECT name, info, blob FROM detector_models ORDER BY name"):
@@ -292,6 +293,7 @@ class WarmPool:
         self._ex = None
         self._users = 0
         self._timer: threading.Timer | None = None
+        self._timer_gen = 0  # the armed timer's number: a cancelled timer already running is told apart by it
         self._closed = False
 
     @contextlib.contextmanager
@@ -310,6 +312,7 @@ class WarmPool:
             if self._timer is not None:
                 self._timer.cancel()
                 self._timer = None
+            self._timer_gen += 1  # a timer whose cancel came too late (its thread waits for the lock) does nothing
             if self._ex is None:
                 self._ex = atlas_io.process_pool(self.workers)
             ex = self._ex
@@ -323,7 +326,9 @@ class WarmPool:
             with self._lock:
                 self._users -= 1
                 if not self._users and self._ex is not None and not self._closed:
-                    self._timer = threading.Timer(self.idle_s, self._idle, args=(ex,))
+                    # the executor held now: a job that dropped a broken one may end after another started anew
+                    self._timer_gen += 1
+                    self._timer = threading.Timer(self.idle_s, self._idle, args=(self._ex, self._timer_gen))
                     self._timer.daemon = True
                     self._timer.start()
 
@@ -340,10 +345,11 @@ class WarmPool:
             self._ex = None
         _stop(ex)
 
-    def _idle(self, ex) -> None:
-        """Close the processes after idle_s without a job (the timer's thread)."""
+    def _idle(self, ex, gen: int) -> None:
+        """Close the processes after idle_s without a job (the timer's thread); ``gen`` is the timer's number."""
         with self._lock:
-            if self._ex is not ex or self._users:  # (a job came meanwhile)
+            # a job came meanwhile, or this timer was cancelled after it fired and another was armed since
+            if gen != self._timer_gen or self._ex is not ex or self._users:
                 return
             self._ex, self._timer = None, None
         ex.shutdown(wait=True)
@@ -559,9 +565,12 @@ def _detect_one(job):
         (screenshot path, None) or (screenshot path, repr of the error).
     """
     image, cache_dir, stamp = job
-    if detector_stamp() != stamp:  # (a warm worker started after the database changed, or the caller before)
-        return image, f"detector changed (this worker's {detector_stamp()}, the caller's {stamp})"
     try:
+        # inside the try: a stamp that cannot be worked out (the database) is this screenshot's error, not the
+        # batch's
+        mine = detector_stamp()
+        if mine != stamp:  # (a warm worker started after the database changed, or the caller before)
+            return image, f"detector changed (this worker's {mine}, the caller's {stamp})"
         extract_frame(Path(image), Path(cache_dir))
         return image, None
     except Exception as e:  # one bad screenshot must not stop the batch

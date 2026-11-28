@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import sqlite3
 from datetime import datetime
+from pathlib import Path
 
 from .constants import DB_PATH
 
@@ -122,7 +123,8 @@ def load_model(name: str):
     Raises:
         UnsafeModel: The stored archive is not a trusted detector model (see safe_model_loads).
     """
-    c = sqlite3.connect(f"file:{DB_PATH.as_posix()}?mode=ro", uri=True)
+    # as_uri percent-encodes the path: a raw "#" or "?" in it would end the path early and drop "mode=ro"
+    c = sqlite3.connect(f"{Path(DB_PATH).resolve().as_uri()}?mode=ro", uri=True)
     try:
         row = c.execute("SELECT blob FROM detector_models WHERE name = ?", (name,)).fetchone()
     except sqlite3.OperationalError:

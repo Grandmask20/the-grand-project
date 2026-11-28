@@ -76,7 +76,7 @@ def test_the_workers_are_kept_while_any_job_still_uses_them():
         with p.use() as ex:
             pids(ex, 1)
             holding.set()
-            release.wait(10)
+            release.wait()  # (set by the finally below)
 
     t = threading.Thread(target=long_job)
     t.start()
@@ -91,6 +91,37 @@ def test_the_workers_are_kept_while_any_job_still_uses_them():
         t.join(10)
     assert wait_until(lambda: not p.running())  # the last job's end does
     p.close(wait=False)
+
+
+def test_the_workers_started_anew_close_when_the_last_job_of_the_broken_ones_ends():
+    """A job still holding a dropped executor ends last: the idle clock is for the executor held now (CodeRabbit)."""
+    p = builder.WarmPool(1, idle_s=0.2)
+    try:
+        holder = p.use()
+        old = holder.__enter__()  # a job of the first executor, still running
+        with pytest.raises(RuntimeError), p.use():
+            raise RuntimeError("a worker died")  # another job of it breaks it: dropped
+        with p.use() as ex:
+            assert ex is not old and pids(ex, 1)  # started anew
+        assert p.running()  # (the first job still runs)
+        holder.__exit__(None, None, None)
+        assert wait_until(lambda: not p.running())
+    finally:
+        p.close(wait=False)
+
+
+def test_a_cancelled_timer_that_already_fired_closes_nothing(pool):
+    """A timer whose cancel came after it fired (its thread waiting for the lock) must not close the executor a
+    later timer now keeps warm (CodeRabbit)."""
+    with pool.use() as ex:
+        pids(ex, 1)
+    late = pool._timer_gen  # the first job's timer, about to be cancelled too late
+    with pool.use():
+        pass  # a second job: cancels it and arms a new one
+    pool._idle(ex, late)  # the late callback gets the lock now
+    assert pool.running() and pool._ex is ex
+    pool._idle(ex, pool._timer_gen)  # the timer armed now still closes it
+    assert not pool.running()
 
 
 def test_a_dead_worker_is_replaced_by_the_next_job(pool):

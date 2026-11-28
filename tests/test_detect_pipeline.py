@@ -6,18 +6,15 @@ import pytest
 
 from grand_project.detect import pipeline
 
-
 STAGES = ("path_dashes", "special_icons", "old_landmarks", "fortress_walls", "amber_dashes", "square_buttons")
 
 
 @pytest.fixture
-def cv2_threads():
-    """Set OpenCV's thread share for one test (the prefetch follows it), put back afterwards."""
-    import cv2
+def cv2_threads(monkeypatch: pytest.MonkeyPatch):
+    """Set the process's thread share for one test (the prefetch follows it, ``fileio.thread_share``)."""
+    from grand_project import fileio
 
-    before = cv2.getNumThreads()
-    yield cv2.setNumThreads
-    cv2.setNumThreads(before)
+    return lambda threads: monkeypatch.setattr(fileio, "_SHARE", threads)
 
 
 def test_the_image_only_stages_are_worked_out_on_helper_threads(monkeypatch, cv2_threads) -> None:

@@ -472,6 +472,71 @@ def test_the_same_picture_uploaded_again_keeps_its_file(tmp_path):
     assert sorted(p.read_bytes() for p in tmp_path.iterdir()) == [b"one", b"two"]
 
 
+def test_an_upload_that_fails_as_its_file_closes_leaves_no_cut_off_picture(tmp_path, monkeypatch):
+    """A full disk can fail the close (its flush) as well as the write: the file this upload made is removed, a
+    picture already there under the name is kept (CodeRabbit)."""
+    real = open
+
+    class FailingClose:
+        def __init__(self, f):
+            self.f = f
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *exc):
+            self.f.close()
+            raise OSError("disk full")
+
+        def write(self, data):
+            return self.f.write(data)
+
+    (tmp_path / "shot.png").write_bytes(b"one")
+    monkeypatch.setattr(S, "open", lambda path, mode: FailingClose(real(path, mode)), raising=False)
+    with pytest.raises(OSError, match="disk full"):
+        S.save_upload(tmp_path, "shot.png", b"two")
+    assert [(p.name, p.read_bytes()) for p in tmp_path.iterdir()] == [("shot.png", b"one")]
+
+
+def test_a_second_drop_waits_until_the_first_writer_has_closed_its_file(tmp_path, monkeypatch):
+    """The same picture dropped twice: the second gets the file only once the first upload closed it (it found it
+    whole while the writer was still open, whose close could still fail and remove it: CodeRabbit)."""
+    import threading
+
+    real = open
+    writing, release = threading.Event(), threading.Event()
+
+    class SlowClose:
+        def __init__(self, f):
+            self.f = f
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *exc):
+            writing.set()
+            release.wait(5)
+            self.f.close()
+
+        def write(self, data):
+            self.f.write(data)
+            self.f.flush()  # the bytes are in the file: a reader would take it for whole
+
+    monkeypatch.setattr(S, "open", lambda path, mode: SlowClose(real(path, mode)), raising=False)
+    got = {}
+    first = threading.Thread(target=lambda: got.setdefault("first", S.save_upload(tmp_path, "shot.png", b"one")))
+    first.start()
+    assert writing.wait(5)
+    second = threading.Thread(target=lambda: got.setdefault("second", S.save_upload(tmp_path, "shot.png", b"one")))
+    second.start()
+    second.join(0.3)
+    assert second.is_alive()  # waits for the first writer
+    release.set()
+    first.join(5)
+    second.join(5)
+    assert got["first"] == got["second"] == tmp_path / "shot.png"
+
+
 def test_an_upload_for_the_atlas_switched_away_while_it_came_in_is_refused(app, tmp_path):
     import http.client
 

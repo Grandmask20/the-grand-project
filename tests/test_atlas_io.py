@@ -2,11 +2,13 @@
 
 import json
 import os
+import sqlite3
 
 import pytest
 
 from grand_project import builder, core
 from grand_project import fileio as atlas_io
+from grand_project.detect import constants as detect_constants
 
 
 def test_atomic_write_replaces_and_leaves_no_temp_files(tmp_path):
@@ -119,3 +121,27 @@ def test_a_screenshot_put_back_after_being_missing_is_read_again(tmp_path):
     cv2.imwrite(str(shot), np.full((1080, 1920, 3), 90, np.uint8))
     img = atlas.image(str(shot))  # (a kept None was returned until the cache dropped it: CodeRabbit)
     assert img is not None and img.shape == (1080, 1920, 3)
+
+
+def test_the_detector_stamp_reads_a_database_whose_path_has_a_hash(tmp_path, monkeypatch) -> None:
+    """The database's path has a "#": its read-only URI must still open it, so a renamed icon picture changes the
+    stamp (the "no database" stamp would stay the same)."""
+    db = tmp_path / "refs #1.sqlite3"
+    c = sqlite3.connect(db)
+    c.execute("CREATE TABLE detector_models (name TEXT, info TEXT, blob BLOB)")
+    c.execute("CREATE TABLE badge_refs (id INTEGER PRIMARY KEY, name TEXT, png BLOB)")
+    c.execute("INSERT INTO badge_refs (name) VALUES ('Breach')")
+    c.commit()
+    c.close()
+    monkeypatch.setattr(detect_constants, "DB_PATH", db)
+
+    def stamp() -> str:
+        monkeypatch.setattr(builder, "_STAMP", [])  # worked out once per process: again here
+        return builder.detector_stamp()
+
+    before = stamp()
+    c = sqlite3.connect(db)
+    c.execute("UPDATE badge_refs SET name = 'Abyss'")
+    c.commit()
+    c.close()
+    assert stamp() != before
