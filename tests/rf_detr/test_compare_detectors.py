@@ -66,7 +66,7 @@ def test_a_rebuild_whose_detection_failed_stops_the_comparison(tmp_path: Path) -
     folder = tmp_path / "res_1080_100"
     folder.mkdir()
 
-    def rebuild(work: Path) -> None:
+    def rebuild(work: Path, builder_args) -> None:
         raise subprocess.CalledProcessError(1, ["builder"], output=b"1 screenshots could not be detected: a.png")
 
     scorer = SimpleNamespace(REFERENCE="ref", rebuild=rebuild)
@@ -103,7 +103,7 @@ def test_only_the_scorers_own_no_placement_is_scored_as_an_empty_atlas(
     folder.mkdir()
     backend = compare_detectors.Backend("classical", lambda img: {})
 
-    def missing(work: Path) -> bool:
+    def missing(work: Path, builder_args) -> bool:
         raise FileNotFoundError("python")
 
     with pytest.raises(FileNotFoundError):
@@ -111,7 +111,7 @@ def test_only_the_scorers_own_no_placement_is_scored_as_an_empty_atlas(
             backend, tmp_path, [folder], tmp_path / "model", "cpu", SimpleNamespace(REFERENCE="ref", rebuild=missing)
         )
     written = []
-    scorer = SimpleNamespace(REFERENCE="ref", rebuild=lambda work: False, _import=lambda: (None, None))
+    scorer = SimpleNamespace(REFERENCE="ref", rebuild=lambda work, builder_args: False, _import=lambda: (None, None))
     monkeypatch.setattr(compare_detectors, "_write_empty_atlas", lambda work: written.append(work.name))
     with pytest.raises(AttributeError):  # (the stand-in scorer has no numbers(): it stops after the rebuilds)
         compare_detectors._rebuild_accuracy(backend, tmp_path, [folder], tmp_path / "model", "cpu", scorer)

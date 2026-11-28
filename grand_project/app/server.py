@@ -52,7 +52,8 @@ from .events import StaleAtlas, sse
 from .icons import icon_png
 from .library import list_dir, thumb_file
 from .replay_data import spread_colours
-from .session import AtlasSession
+from .session import AtlasSession, detection_meta, saved_detector
+from .settings import load_settings
 
 LOG = atlas_log.get("app")
 
@@ -420,12 +421,9 @@ class Handler(BaseHTTPRequestHandler):
 
     @route("GET", "/api/hello")
     def get_hello(self, q) -> None:
-        """Which program answers here and with which detector (a second start finds the copy already running:
-        running_app)."""
-        from grand_project.detect.rf_detr_model import rf_detr_enabled
-
+        """Which program answers here (a second start finds the copy already running: running_app)."""
         root = str(rc_paths.ROOT.resolve())
-        self._json({"app": HELLO_APP, "version": VERSION, "root": root, "rf_detr": rf_detr_enabled()})
+        self._json({"app": HELLO_APP, "version": VERSION, "root": root})
 
     @route("GET", "/api/meta")
     def get_meta(self, q) -> None:
@@ -1140,6 +1138,7 @@ def meta() -> dict:
         "bookmark_pin": C.BOOKMARK_PIN_R,
         "icon_row_dy": C.ICON_ROW_DY,
         "bookmark_ats": list(C.BOOKMARK_ATS),
+        "detection": detection_meta(),
     }
 
 
@@ -1296,7 +1295,7 @@ def _stopped(host: str, port: int) -> bool:
         return False
 
 
-def running_app(port: int, host: str = APP_HOST, root: Path | None = None) -> tuple[str, str, bool] | None:
+def running_app(port: int, host: str = APP_HOST, root: Path | None = None) -> tuple[str, str] | None:
     """Find this program's own copy already running on one of the ports it would take.
 
     Starting it again (a double-click on the launcher, which shows no window on Windows) started a second copy on
@@ -1308,7 +1307,7 @@ def running_app(port: int, host: str = APP_HOST, root: Path | None = None) -> tu
         root: The program folder a running copy must be in (default: this one's).
 
     Returns:
-        (the running copy's URL, its version, whether it runs the RF-DETR detector), or None.
+        (the running copy's URL, its version), or None.
     """
     want = str((root or rc_paths.ROOT).resolve())
     for p in range(port, port + APP_PORT_TRIES):
@@ -1318,7 +1317,7 @@ def running_app(port: int, host: str = APP_HOST, root: Path | None = None) -> tu
         url = f"http://{host}:{p}/"
         hello = _local(url + "api/hello")
         if hello and hello.get("app") == HELLO_APP and hello.get("root") == want:
-            return url, str(hello.get("version", "")), bool(hello.get("rf_detr"))
+            return url, str(hello.get("version", ""))
     return None
 
 
@@ -1344,7 +1343,7 @@ def reuse_running(port: int, atlas: str | None, browser: bool) -> str:
     found = running_app(port)
     if not found:
         return START
-    url, version, rf_detr = found
+    url, version = found
     if version != VERSION:
         _say("Another version of the app is running: closing it to start this one")
         _local(url + "api/quit", {})
@@ -1360,17 +1359,6 @@ def reuse_running(port: int, atlas: str | None, browser: bool) -> str:
         _say(f"The older copy at {url} is still closing: start the app again in a moment.")
         return FAILED
     _say(f"The Grand Project is already running: {url}")
-    from grand_project.detect.rf_detr_model import rf_detr_enabled
-
-    if rf_detr != rf_detr_enabled():
-        # the running copy keeps its own detector: this start's GRAND_PROJECT_USE_RF_DETR is not applied (CodeRabbit)
-        detector = "RF-DETR" if rf_detr else "classical"
-        note = (
-            f"The running copy uses the {detector} detector: this start's GRAND_PROJECT_USE_RF_DETR was not applied "
-            "(quit it and start again to switch)."
-        )
-        LOG.warning(note)
-        _say(note)
     if browser:
         webbrowser.open(url)
     if atlas and _local(url + "api/atlas/open", {"path": str(Path(atlas).resolve()), "background": True}) is None:
@@ -1473,8 +1461,9 @@ def shown_version() -> str:
 def main(argv: list[str] | None = None) -> int:
     """Start the app: open the atlas (the one given, else the last one), serve the page and open the browser.
 
-    With the optional RF-DETR detector on (``GRAND_PROJECT_USE_RF_DETR``), the process restarts itself once after
-    reading its arguments, with PyTorch's CUDA libraries first (``rf_detr_cuda``), and goes on with the same
+    The detector is the saved settings' (Log > Experimental: ``detector_config``, set once here, so a change applies
+    after a restart). With the optional RF-DETR detector on, the process restarts itself once after reading its
+    arguments, with PyTorch's CUDA libraries first (``rf_detr_cuda``), and goes on with the same
     arguments: ``argv`` when given, else its own command line.
 
     Args:
@@ -1483,15 +1472,16 @@ def main(argv: list[str] | None = None) -> int:
     Returns:
         Exit code.
     """
+    from grand_project.detect import detector_config
     from grand_project.detect.rf_detr_cuda import prefer_pip_cuda_libraries
-    from grand_project.detect.rf_detr_model import rf_detr_enabled
 
     ap = argparse.ArgumentParser(prog="python -m grand_project", description="The Grand Project atlas app.")
     ap.add_argument("atlas", nargs="?", help="atlas .json file to open (default: the last one)")
     ap.add_argument("--port", type=int, default=APP_PORT, help=f"first port to try (default {APP_PORT}; 0: any)")
     ap.add_argument("--no-browser", action="store_true", help="don't open the browser")
     args = ap.parse_args(argv)
-    if rf_detr_enabled():  # the optional RF-DETR detector on CUDA needs PyTorch's own cuDNN, before torch loads
+    detector_config.configure(saved_detector(load_settings()))
+    if detector_config.current().rf_detr:  # RF-DETR on CUDA needs PyTorch's own cuDNN, before torch loads
         prefer_pip_cuda_libraries(argv)
     if args.port:
         outcome = reuse_running(args.port, args.atlas, not args.no_browser)

@@ -1,9 +1,9 @@
 """Optional RF-DETR inference backend.
 
-The backend is deliberately opt-in. It loads the fine-tuned Transformers model only when
-``GRAND_PROJECT_USE_RF_DETR=1`` (or ``true`` / ``on``) is present, and returns the same detector result shape as the
-classical pipeline. Torch and Transformers stay lazy imports so normal installs and offline tests do not need the
-training stack.
+The backend is deliberately opt-in. It loads the fine-tuned Transformers model only when the process's detector
+settings select it (``detector_config``: the app's Log > Experimental, the tools' ``--rf-detr``), and returns the
+same detector result shape as the classical pipeline. Torch and Transformers stay lazy imports so normal installs and
+offline tests do not need the training stack.
 
 The model sees the screenshot as it was trained: native-scale tiles with the game HUD painted over
 (``rf_detr_tiles.py``). Classes of one family (a map node is one of the node classes, a citadel one of three) are
@@ -39,6 +39,7 @@ from . import constants as K
 from . import labels as L
 from . import rf_detr_tiles as T
 from .badges import name_found_icons, naming_book
+from .detector_config import current
 from .landmarks import expedition_rules, stronghold_kind
 from .paths import path_dashes as classical_path_dashes
 from .paths import trace_paths
@@ -52,8 +53,8 @@ _FOLDERS: dict[str, Path] = {}
 
 
 def rf_detr_enabled() -> bool:
-    """Return whether the optional RF-DETR detector was explicitly enabled."""
-    return os.environ.get(K.RF_DETR_USE_ENV, "").strip().lower() in {"1", "true", "yes", "on"}
+    """Return whether this process's detector settings select the optional RF-DETR detector."""
+    return current().rf_detr
 
 
 def _hub_id(ref: str) -> tuple[str, str | None] | None:
@@ -95,9 +96,9 @@ def model_folder(ref: str | Path) -> Path:
 
 
 def rf_detr_model_path() -> Path:
-    """Return the configured fine-tuned model's folder (``GRAND_PROJECT_RF_DETR_MODEL``: a folder or a Hugging Face
-    model id, ``model_folder``)."""
-    return model_folder(os.environ.get(K.RF_DETR_MODEL_ENV) or K.RF_DETR_DEFAULT_MODEL_DIR)
+    """Return the configured fine-tuned model's folder (the detector settings' ``model``: a folder or a Hugging Face
+    model id, ``model_folder``; else ``RF_DETR_DEFAULT_MODEL_DIR``)."""
+    return model_folder(current().model or K.RF_DETR_DEFAULT_MODEL_DIR)
 
 
 def trained_on(model: str | Path) -> set[str] | None:
@@ -163,8 +164,9 @@ def checkpoint_digest(model_dir: Path) -> str:
 
 
 def _device(torch):
-    """Select the configured device, preferring the same accelerators as the trainer."""
-    value = os.environ.get(K.RF_DETR_DEVICE_ENV, "auto").strip().lower()
+    """Select the configured device (the detector settings'), "auto" preferring the same accelerators as the
+    trainer."""
+    value = current().device
     if value == "auto":
         value = "cuda" if torch.cuda.is_available() else "mps" if torch.backends.mps.is_available() else "cpu"
     return torch.device(value)
@@ -216,7 +218,7 @@ def load_detector(model_dir: Path) -> dict[str, Any]:
     if not model_dir.is_dir():
         raise RuntimeError(
             f"RF-DETR is enabled but its model directory does not exist: {model_dir}. "
-            "Run  make train_rf_detr  or set GRAND_PROJECT_RF_DETR_MODEL."
+            "Run  make train_rf_detr  or choose another model (Log > Experimental, --rf-detr-model)."
         )
     expected = checkpoint_digest(model_dir)
     try:

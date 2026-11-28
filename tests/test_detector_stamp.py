@@ -54,15 +54,14 @@ def test_a_replaced_screenshot_is_hashed_again(tmp_path):
     assert builder.file_digest(f) != d1
 
 
-def _rf_detr_stamp(monkeypatch, folder):
-    monkeypatch.setenv(constants.RF_DETR_USE_ENV, "1")
-    monkeypatch.setenv(constants.RF_DETR_MODEL_ENV, str(folder))
+def _rf_detr_stamp(monkeypatch, detector, folder):
+    detector(rf_detr=True, model=str(folder))
     monkeypatch.setattr(builder, "_STAMP", [])
     rf_detr_model.reset_rf_detr_runtime()  # the checkpoint digest too: both are worked out once per process
     return builder.detector_stamp()
 
 
-def test_the_rf_detr_stamp_follows_the_model_files_contents(tmp_path, monkeypatch):
+def test_the_rf_detr_stamp_follows_the_model_files_contents(tmp_path, monkeypatch, detector):
     """The same checkpoint copied elsewhere or touched keeps its stamp (its cached detections stay); other weights in
     a file of the same name, size and time do not (CodeRabbit)."""
     first, copy = tmp_path / "best", tmp_path / "copy"
@@ -71,12 +70,12 @@ def test_the_rf_detr_stamp_follows_the_model_files_contents(tmp_path, monkeypatc
         (folder / "model.safetensors").write_bytes(b"weights 1")
         (folder / "labels.json").write_text("{}")
     os.utime(copy / "model.safetensors", ns=(1, 10**18))
-    stamp = _rf_detr_stamp(monkeypatch, first)
-    assert _rf_detr_stamp(monkeypatch, copy) == stamp
+    stamp = _rf_detr_stamp(monkeypatch, detector, first)
+    assert _rf_detr_stamp(monkeypatch, detector, copy) == stamp
     st = (first / "model.safetensors").stat()
     (first / "model.safetensors").write_bytes(b"weights 2")  # the same size
     os.utime(first / "model.safetensors", ns=(st.st_atime_ns, st.st_mtime_ns))  # and the same time
-    assert _rf_detr_stamp(monkeypatch, first) != stamp
+    assert _rf_detr_stamp(monkeypatch, detector, first) != stamp
 
 
 def test_a_screenshot_that_cannot_be_detected_fails_the_add(tmp_path, monkeypatch, capsys):
@@ -96,11 +95,11 @@ def test_a_screenshot_that_cannot_be_detected_fails_the_add(tmp_path, monkeypatc
     assert not (tmp_path / "atlas.json").exists()
 
 
-def test_an_rf_detr_stamp_without_its_checkpoint_is_worked_out_again(tmp_path, monkeypatch):
+def test_an_rf_detr_stamp_without_its_checkpoint_is_worked_out_again(tmp_path, monkeypatch, detector):
     """With RF-DETR on and no checkpoint folder yet, the stamp is not kept: once the folder appears in this process
     (a training run finishing), the stamp names its contents (CodeRabbit)."""
     folder = tmp_path / "best"
-    before = _rf_detr_stamp(monkeypatch, folder)
+    before = _rf_detr_stamp(monkeypatch, detector, folder)
     assert builder._STAMP == []
     folder.mkdir()
     (folder / "model.safetensors").write_bytes(b"weights")

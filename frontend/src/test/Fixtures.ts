@@ -55,6 +55,7 @@ export const state: AppState = {
 		style: { ...style },
 		replay: {},
 		ui: {},
+		detection: { rf_detr: false, model: "", device: "auto", workers: 4 },
 	},
 	map: null,
 };
@@ -117,6 +118,13 @@ export const meta: Meta = {
 	bookmark_pin: 11,
 	icon_row_dy: 24,
 	bookmark_ats: ["icon", "map node"],
+	detection: {
+		active: { rf_detr: false, model: "", device: "auto", workers: 4 },
+		rf_detr_missing: null,
+		max_workers: 7,
+		devices: ["auto", "cuda", "mps", "cpu"],
+		default_model: "runs/rf-detr-small/best",
+	},
 };
 
 export const types: TypeList = {

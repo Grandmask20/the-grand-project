@@ -102,15 +102,23 @@ def workers(wanted: int) -> int:
     return max(1, min(wanted, (os.cpu_count() or 2) - 1))
 
 
-def process_pool(max_workers: int):
+def process_pool(max_workers: int, initializer=None, initargs: tuple = ()):
     """Create a process pool whose workers are started fresh ("spawn"; see the module docstring).
 
     Args:
         max_workers: Number of worker processes.
+        initializer: Called with ``initargs`` first in each worker (a fresh worker has none of its parent's
+            settings, e.g. the detector's: ``detector_config.configure``).
+        initargs: Its arguments.
 
     Returns:
         A concurrent.futures.ProcessPoolExecutor.
     """
     from concurrent.futures import ProcessPoolExecutor
 
-    return ProcessPoolExecutor(max_workers=max_workers, mp_context=multiprocessing.get_context("spawn"))
+    return ProcessPoolExecutor(
+        max_workers=max_workers,
+        mp_context=multiprocessing.get_context("spawn"),
+        initializer=initializer,
+        initargs=initargs,
+    )
