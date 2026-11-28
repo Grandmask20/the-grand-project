@@ -55,27 +55,26 @@ def test_4k_screenshots_are_read_as_1080p() -> None:
     assert image.shape[:2] == (1080, 1920) and boxes == [[50.0, 100.0, 34.0, 34.0]]
 
 
-def test_a_random_tile_is_native_scale_and_never_mirrored() -> None:
+def test_a_random_tile_is_native_scale_and_never_mirrored(rng: random.Random, runs) -> None:
     """User: the atlas has a fixed camera, so training never mirrors it (flips are off): a screenshot growing
     brighter to the right gives tiles growing brighter to the right, blurred or scaled as they may be."""
     ramp = np.tile(np.linspace(0, 255, 1920, dtype=np.float32), (1080, 1)).astype(np.uint8)
     image = np.dstack([ramp] * 3)
     boxes = [[900.0, 500.0, 39.0, 39.0]]
-    rng = random.Random(4)
-    for _ in range(20):
+    for _ in range(runs(20)):
         tile, keep, kept = T.random_tile(image, boxes, [0], rng)
         assert tile.shape == (K.RF_DETR_TILE, K.RF_DETR_TILE, 3)
-        assert keep == [0] and kept[0][0] >= 0 and kept[0][0] + kept[0][2] <= K.RF_DETR_TILE
+        assert keep == [0] and kept[0][0] >= 0 and kept[0][0] + kept[0][2] <= K.RF_DETR_TILE + 1e-6  # (a cut box)
         assert tile[:, -10:].mean() > tile[:, :10].mean()
 
 
-def test_rare_classes_repeat_their_screenshots() -> None:
+def test_rare_classes_repeat_their_screenshots(rng: random.Random) -> None:
     """LVIS repeat-factor sampling: a class on few screenshots repeats them; common ones do not."""
     categories = [[0]] * 98 + [[0, 1]] * 2  # class 1 on 2% of the screenshots
     factors = T.repeat_factors(categories, threshold=0.1)
     assert factors[0] == 1.0 and factors[-1] == pytest.approx((0.1 / 0.02) ** 0.5)
     assert T.rare_classes(categories, threshold=0.1) == {1}
-    drawn = T.epoch_indices(factors, 4, random.Random(1))
+    drawn = T.epoch_indices(factors, 4, rng)
     assert drawn.count(0) == 4 and drawn.count(99) in (8, 9)
 
 
@@ -100,24 +99,26 @@ def test_backbone_norms_embeddings_biases_and_layer_scales_take_no_weight_decay(
         assert not T.backbone_weight_decay(backbone + name), name
 
 
-def test_an_epoch_always_draws_its_length() -> None:
+def test_an_epoch_always_draws_its_length(rng: random.Random, runs) -> None:
     """The Trainer sizes an epoch by the sampler's length: the fractions of the repeat factors never change it."""
     factors = [1.0, 1.25, 1.5, 2.6]
-    for seed in range(50):
-        drawn = T.epoch_indices(factors, 3, random.Random(seed))
+    for _ in range(runs(50)):
+        drawn = T.epoch_indices(factors, 3, rng)
         assert len(drawn) == T.epoch_length(factors, 3) == round(3 * sum(factors))
         assert drawn.count(0) == 3 and drawn.count(3) in (7, 8)  # 7.8: its whole 7, maybe one more
 
 
-def test_an_image_gets_one_extra_draw_at_most() -> None:
+def test_an_image_gets_one_extra_draw_at_most(rng: random.Random, runs) -> None:
     """Fractions 0.9 and 0.6 round up to two extra draws: each image gets one (systematic sampling with a step under
     0.9 could give the first both)."""
-    for seed in range(50):
-        drawn = T.epoch_indices([1.9, 1.6], 1, random.Random(seed))
+    for _ in range(runs(50)):
+        drawn = T.epoch_indices([1.9, 1.6], 1, rng)
         assert sorted(drawn) == [0, 0, 1, 1]
 
 
-def test_brightness_and_contrast_change_and_the_hue_stays(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_brightness_and_contrast_change_and_the_hue_stays(
+    monkeypatch: pytest.MonkeyPatch, rng: random.Random, runs
+) -> None:
     """The reference's small-dataset brightness and contrast: a grass-green tile stays green (the hue tells the
     biome), only lighter or darker."""
     monkeypatch.setattr(K, "RF_DETR_AUGMENT_PHOTO_PROBABILITY", 1.0)
@@ -125,18 +126,17 @@ def test_brightness_and_contrast_change_and_the_hue_stays(monkeypatch: pytest.Mo
     image = np.zeros((K.RF_DETR_TILE, K.RF_DETR_TILE, 3), np.uint8)
     image[:] = (60, 140, 50)
     boxes = [[100.0, 100.0, 39.0, 39.0]]
-    changed = 0
-    for seed in range(20):
-        tile, _keep, _kept = T.random_tile(image, boxes, [0], random.Random(seed))
+    changed, draws = 0, runs(20)
+    for _ in range(draws):
+        tile, _keep, _kept = T.random_tile(image, boxes, [0], rng)
         hue = cv2.cvtColor(tile[:1, :1], cv2.COLOR_RGB2HSV)[0, 0, 0]
         assert abs(int(hue) - int(cv2.cvtColor(image[:1, :1], cv2.COLOR_RGB2HSV)[0, 0, 0])) <= 2
         changed += not np.array_equal(tile[0, 0], image[0, 0])
-    assert changed >= 15
+    assert changed >= 0.75 * draws  # (measured: every one of 500 draws changed it)
 
 
-def test_nms_of_many_boxes_is_the_pairwise_rule() -> None:
+def test_nms_of_many_boxes_is_the_pairwise_rule(rng: random.Random) -> None:
     """The vectorised NMS keeps what the pairwise rule keeps (a weak model's thousands of boxes take milliseconds)."""
-    rng = random.Random(4)
     detections = []
     for _ in range(400):
         x, y = rng.uniform(0, 300), rng.uniform(0, 300)

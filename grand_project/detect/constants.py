@@ -89,6 +89,7 @@ RF_DETR_REPEAT_THRESHOLD = 0.1  # LVIS repeat-factor sampling: a class on fewer 
 # the best of them, and duplicates are suppressed within the family (across tiles too).
 RF_DETR_FAMILY_NMS_IOU = 0.50  # overlap: one object predicted twice within a family (two tiles, two classes)
 RF_DETR_INFER_BATCH = 8  # tiles per forward pass (a 1080p screenshot has 8)
+RF_DETR_DATASET_WRITE_BATCH = 32  # screenshots a dataset build holds in memory before writing them (~3 MB each)
 RF_DETR_BOSS_ROW = (10.0, 45.0)  # px: a deadly-boss icon's map node is this far below it (the row is ROW_DY = 24
 # above the map; the res atlases' larger icons sat 26-36 above it)
 RF_DETR_BOSS_DX = 30.0  # px: and at most this far left or right of it (the icon is the middle one of its row)

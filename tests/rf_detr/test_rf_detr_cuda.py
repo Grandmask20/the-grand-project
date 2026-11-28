@@ -77,3 +77,19 @@ def test_the_environments_own_libraries_come_before_a_system_wheels(tmp_path: Pa
         str(env / "nvidia" / "cudnn" / "lib"),
         str(system / "nvidia" / "cudnn" / "lib"),
     ]
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="a ':' in a folder name is a POSIX case")
+def test_a_wheel_folder_the_linker_would_split_is_named_not_restarted(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """glibc splits LD_LIBRARY_PATH at ':' and ';': such a folder is never searched, so no restart claims it is."""
+    site = tmp_path / "env:a"
+    for name in ("cudnn", "cu13"):
+        (site / "nvidia" / name / "lib").mkdir(parents=True)
+    monkeypatch.setattr(sys, "path", [str(site)])
+    monkeypatch.setattr(sys, "platform", "linux")
+    monkeypatch.delenv(K.RF_DETR_CUDA_REEXEC_ENV, raising=False)
+    monkeypatch.setattr(rf_detr_cuda.os, "execve", lambda *a: pytest.fail("restarted"))
+    rf_detr_cuda.prefer_pip_cuda_libraries()
+    assert "cannot search it" in capsys.readouterr().err

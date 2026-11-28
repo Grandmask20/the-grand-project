@@ -60,7 +60,12 @@ def detector_stamp() -> str:
         import sqlite3
 
         from grand_project.detect.constants import BADGE_FINDER_FILE, CITY_BARREL_FILE, DB_PATH
-        from grand_project.detect.rf_detr_model import checkpoint_digest, rf_detr_enabled, rf_detr_model_path
+        from grand_project.detect.rf_detr_model import (
+            checkpoint_digest,
+            rf_detr_enabled,
+            rf_detr_model_path,
+            runtime_digest,
+        )
 
         h = hashlib.sha1()
         try:
@@ -87,7 +92,8 @@ def detector_stamp() -> str:
                 # detections made with it must carry its digest, not this stamp
                 return h.hexdigest()[:12]
             # the checkpoint's contents, as the model loaded in this process is checked against (load_detector)
-            h.update(checkpoint_digest(rf_model).encode())
+            # the loaded weights' own digest when a model is loaded already (the checkpoint they are), else the folder's
+            h.update((runtime_digest() or checkpoint_digest(rf_model)).encode())
         _STAMP.append(h.hexdigest()[:12])
     return _STAMP[0]
 
@@ -303,6 +309,7 @@ class WarmPool:
         self._ex = None
         self._users = 0
         self._timer: threading.Timer | None = None
+        self._timer_gen = 0  # the armed timer's number: a cancelled timer already running is told apart by it
         self._closed = False
 
     @contextlib.contextmanager
@@ -321,6 +328,7 @@ class WarmPool:
             if self._timer is not None:
                 self._timer.cancel()
                 self._timer = None
+            self._timer_gen += 1  # a timer whose cancel came too late (its thread waits for the lock) does nothing
             if self._ex is None:
                 self._ex = atlas_io.process_pool(self.workers)
             ex = self._ex
@@ -335,7 +343,8 @@ class WarmPool:
                 self._users -= 1
                 if not self._users and self._ex is not None and not self._closed:
                     # the executor held now: a job that dropped a broken one may end after another started anew
-                    self._timer = threading.Timer(self.idle_s, self._idle, args=(self._ex,))
+                    self._timer_gen += 1
+                    self._timer = threading.Timer(self.idle_s, self._idle, args=(self._ex, self._timer_gen))
                     self._timer.daemon = True
                     self._timer.start()
 
@@ -352,10 +361,11 @@ class WarmPool:
             self._ex = None
         _stop(ex)
 
-    def _idle(self, ex) -> None:
-        """Close the processes after idle_s without a job (the timer's thread)."""
+    def _idle(self, ex, gen: int) -> None:
+        """Close the processes after idle_s without a job (the timer's thread); ``gen`` is the timer's number."""
         with self._lock:
-            if self._ex is not ex or self._users:  # (a job came meanwhile)
+            # a job came meanwhile, or this timer was cancelled after it fired and another was armed since
+            if gen != self._timer_gen or self._ex is not ex or self._users:
                 return
             self._ex, self._timer = None, None
         ex.shutdown(wait=True)

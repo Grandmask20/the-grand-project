@@ -976,6 +976,14 @@ def main(argv: list[str] | None = None) -> int:
         # before the dataset: under torchrun it starts the processes' group, which the dataset's build waits on
         training_args = training_arguments(args, checkpoints)
         check_parallel(training_args)
+        if not args.resume and checkpoints.is_dir() and any(checkpoints.glob("checkpoint-*")):
+            # a fresh run among an earlier run's checkpoints: the Trainer's best-model and pruning would take them for
+            # its own; refused before the dataset is built, which would replace the one those checkpoints name
+            # (--reuse-dataset with another --output-dir keeps it)
+            raise SystemExit(
+                f"{checkpoints} holds an earlier run's checkpoints: go on from them with --resume, or train into a "
+                "new --output-dir"
+            )
     dataset, label_map, dataset_dir = dataset_main_first(args, training_args)
     if args.train_subset is not None:
         dataset = train_subset(dataset, args.train_subset)
@@ -991,22 +999,20 @@ def main(argv: list[str] | None = None) -> int:
     resume_from = last_complete_checkpoint(checkpoints) if args.resume else None
     if args.resume and resume_from is None:  # before a model is downloaded or loaded
         raise SystemExit(f"--resume: no checkpoint (with its EMA) in {checkpoints}")
-    if not args.resume and checkpoints.is_dir() and any(checkpoints.glob("checkpoint-*")):
-        # a fresh run among an earlier run's checkpoints: the Trainer's best-model and pruning would take them for its
-        # own (the dataset may be reused all the same: --reuse-dataset)
-        raise SystemExit(
-            f"{checkpoints} holds an earlier run's checkpoints: go on from them with --resume, or train into a new "
-            "--output-dir"
-        )
     run_sources = sorted(set(dataset["train"]["source"]))  # this run's training screenshots (after --train-subset)
     run_dataset = dataset_id(dataset_dir)
     if resume_from is not None:
         check_resume_labels(resume_from, label_map)
         check_resume_sources(resume_from, run_sources, run_dataset)
-    inherited, partial = ancestry(args.init_from)
+    # a resumed run's ancestry is its checkpoint's (what the weights it goes on with learned), whatever --init-from
+    # says now; a fresh run's is the model it starts from
+    inherited, partial = ancestry(resume_from if resume_from is not None else args.init_from)
     base = args.init_from or K.RF_DETR_MODEL_NAME
-    processor = load_processor(base)
-    model = load_model(base, label_map)
+    # resumed: the processor and the model from the checkpoint itself (the Trainer then restores its weights), never
+    # a download or an --init-from folder that may have changed since
+    source = resume_from or base
+    processor = load_processor(source)
+    model = load_model(source, label_map)
 
     categories = [list(objects["category"]) for objects in dataset["train"]["objects"]]
     sampler = RepeatFactorSampler(repeat_factors(categories), args.tiles_per_image, args.seed)

@@ -86,10 +86,13 @@ class FakeDetr(torch.nn.Module):
     @classmethod
     def from_pretrained(cls, name, **kwargs):
         labels = Path(name, "labels.json")
-        model = cls(len(json.loads(labels.read_text())) if labels.is_file() else 91)
         weights = Path(name, "model.safetensors")
-        if weights.is_file():  # a folder this stand-in saved: its weights, as a real model loads them
-            model.load_state_dict(load_file(str(weights)))
+        if weights.is_file():  # a folder this stand-in saved (a checkpoint too): its weights, as a real model loads
+            state = load_file(str(weights))
+            model = cls(len(state["class_embed.bias"]))
+            model.load_state_dict(state)
+        else:
+            model = cls(len(json.loads(labels.read_text())) if labels.is_file() else 91)
         return model
 
     def save_pretrained(self, path, **kwargs) -> None:
@@ -126,7 +129,7 @@ def _export(tmp_path: Path, splits: list[str] = SPLITS) -> Path:
             shot[y : y + 39, x + index : x + index + 39] = 255
             boxes.append({"label": "map_node_grass", "bbox": [x + index, y, 39, 39], "source": "manual"})
         path = tmp_path / f"shot{index}.png"
-        cv2.imwrite(str(path), shot)
+        path.write_bytes(cv2.imencode(".png", shot)[1].tobytes())  # (cv2.imwrite fails on some non-ASCII paths)
         images.append({"image_id": index, "path": str(path), "source": path.name, "width": 1920, "height": 1080,
                        "split": split, "reviewed": True, "annotations": boxes})  # fmt: skip
     manifest = tmp_path / "manifest.json"
@@ -271,6 +274,52 @@ def test_a_screenshot_replaced_after_the_ledger_check_is_not_built(tmp_path: Pat
         check(record, "0" * 64)
     with pytest.raises(SystemExit, match="is train in the split ledger"):
         check(Record(0, shot, "a.png", "annotator_reviewed", "g", 1, 1, (), "test"), file_hash(shot))
+
+
+def test_a_screenshot_replaced_between_the_ledger_check_and_the_build_is_refused(
+    tmp_path: Path, fakes, ledger, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The ledger check passes, then a valid PNG replaces a screenshot before the build reads it: the build checks the
+    bytes it reads and stops, and no dataset is published (CodeRabbit)."""
+    manifest = _export(tmp_path)
+    _freeze(manifest, ledger)
+    check = T._check_ledger
+
+    def check_then_replace(data, base):
+        sha = check(data, base)
+        shot = tmp_path / "shot0.png"
+        image = cv2.imdecode(np.fromfile(str(shot), np.uint8), cv2.IMREAD_COLOR)
+        shot.write_bytes(cv2.imencode(".png", 255 - image)[1].tobytes())
+        return sha
+
+    monkeypatch.setattr(T, "_check_ledger", check_then_replace)
+    out = tmp_path / "run"
+    with pytest.raises(SystemExit, match="changed since the ledger check"):
+        T.main(["--annotator-manifest", str(manifest), "--output-dir", str(out), "--dataset-only"])
+    assert not (out / "dataset").exists()  # (a cut-off build's dataset.partial is never loaded)
+
+
+def test_a_resumed_run_keeps_its_checkpoints_ancestry(
+    tmp_path: Path, fakes, ledger, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """--resume takes what the weights learned from the checkpoint it goes on from, not from the --init-from folder as
+    it is now: a run begun from a model without a list stays partial though that folder lists everything now
+    (CodeRabbit)."""
+    earlier = tmp_path / "earlier"
+    earlier.mkdir()
+    (earlier / "labels.json").write_text(json.dumps(LABELS))
+    manifest = _export(tmp_path)
+    _freeze(manifest, ledger)
+    out = tmp_path / "run"
+    args = ["--annotator-manifest", str(manifest), "--output-dir", str(out), "--tiles-per-image", "1",
+            "--batch-size", "2", "--grad-accum", "1", "--device", "cpu", "--workers", "0",
+            "--init-from", str(earlier)]  # fmt: skip
+    assert T.main([*args, "--epochs", "1"]) == 0
+    (earlier / K.RF_DETR_TRAINED_ON).write_text("shot0.png\n")  # the folder lists something now
+    # (the stand-in model's checkpoints have no config.json to compare classes with: test_resume_refuses_... does)
+    monkeypatch.setattr(T, "check_resume_labels", lambda checkpoint, labels: None)
+    assert T.main([*args, "--epochs", "2", "--resume"]) == 0
+    assert (out / "best" / K.RF_DETR_TRAINED_ON_PARTIAL).is_file()
 
 
 def test_the_ledger_stops_a_manifest_that_moved_a_screenshot(tmp_path: Path, fakes, ledger) -> None:

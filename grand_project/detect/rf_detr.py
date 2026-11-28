@@ -17,12 +17,14 @@ tests work without the optional training stack.
 
 from __future__ import annotations
 
+import gc
 import hashlib
 import json
 import math
 import random
 import shutil
-from collections.abc import Callable
+import tempfile
+from collections.abc import Callable, Iterator
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -113,20 +115,26 @@ def load_annotator_manifest(
     labels = {str(index): str(name) for index, name in data.get("labels", {}).items()}
     if not labels:
         raise ValueError(f"Annotator manifest has no labels: {manifest_path}")
-    label_names = [labels[str(index)] for index in range(len(labels))]
-    unknown = sorted(name for name in label_names if not L.known(name))
+    exported = [labels[str(index)] for index in range(len(labels))]
+    admitted = []
+    for item in data.get("images", []):
+        seeded = truth_seeded and not item.get("reviewed") and bool(item.get("truth"))
+        if item.get("reviewed") or seeded:  # unreviewed classical boxes would teach the classical detector's mistakes
+            admitted.append((item, seeded))
+    # the classes the admitted screenshots use: a retired label only a left-out screenshot carries is no class
+    used = {str(raw.get("label", "")) for item, _seeded in admitted for raw in item.get("annotations", [])}
+    unknown = sorted(name for name in exported if not L.known(name) and name in used)
     if unknown:
         # checked before training: a model with these classes would be refused at inference (load_detector)
         raise ValueError(
             f"{manifest_path} has classes the labels do not have ({', '.join(unknown)}): relabel or rerun those "
             "screenshots in the annotator and export again"
         )
+    # the manifest's order kept, numbered again without the unknown classes nothing admitted uses
+    label_names = [name for name in exported if L.known(name)]
     name_to_id = {name: index for index, name in enumerate(label_names)}
     records: list[Record] = []
-    for item in data.get("images", []):
-        seeded = truth_seeded and not item.get("reviewed") and bool(item.get("truth"))
-        if not (item.get("reviewed") or seeded):
-            continue  # unreviewed classical boxes would teach the classical detector's mistakes
+    for item, seeded in admitted:
         image_path = Path(str(item.get("path", "")))
         if not image_path.is_absolute():
             image_path = manifest_path.parent / image_path
@@ -214,18 +222,18 @@ def _features(label_names: list[str]):
     )
 
 
-def _rows(records: list[Record], check_bytes: Callable[[Record, str], None] | None = None) -> list[dict[str, Any]]:
-    """Convert records to the Hugging Face object-detection schema, each screenshot's bytes read once and embedded
-    (training never reads the file again: what was checked is what it trains on), after ``check_bytes(record, their
-    SHA-256)`` (it raises to stop the build)."""
-    rows = []
+def _rows(records: list[Record], check_bytes: Callable[[Record, str], None] | None = None) -> Iterator[dict[str, Any]]:
+    """The records in the Hugging Face object-detection schema, one at a time (a split's screenshots are never all in
+    memory), each screenshot's bytes read once and embedded (training never reads the file again: what was checked is
+    what it trains on), after ``check_bytes(record, their SHA-256)`` (it raises to stop the build)."""
     for record in records:
         data = Path(record.path).read_bytes()
         if check_bytes is not None:
             check_bytes(record, hashlib.sha256(data).hexdigest())
-        rows.append(
+        yield (
             {
-                "image": {"bytes": data, "path": str(record.path)},
+                # no path: given an existing file, datasets keeps only the path and reads the file again when saving
+                "image": {"bytes": data, "path": None},
                 "image_id": record.image_id,
                 "source": record.source,
                 "source_type": record.source_type,
@@ -242,7 +250,19 @@ def _rows(records: list[Record], check_bytes: Callable[[Record, str], None] | No
                 "annotation_sources": [str(a["provenance"]) for a in record.annotations],
             }
         )
-    return rows
+
+
+def _write_split(records: list[Record], features, path: Path, check_bytes) -> Any:
+    """One split written to an Arrow file ``RF_DETR_DATASET_WRITE_BATCH`` screenshots at a time, and read back
+    memory-mapped: the bytes ``check_bytes`` saw go into the file as they are."""
+    from datasets import Dataset
+    from datasets.arrow_writer import ArrowWriter
+
+    with ArrowWriter(features=features, path=str(path), writer_batch_size=K.RF_DETR_DATASET_WRITE_BATCH) as writer:
+        for row in _rows(records, check_bytes):
+            writer.write(features.encode_example(row))
+        writer.finalize()
+    return Dataset.from_file(str(path))
 
 
 def build_dataset(
@@ -269,25 +289,34 @@ def build_dataset(
 
     splits = records_by_split(records)
     features = _features([label_map[str(index)] for index in range(len(label_map))])
-    # an empty split (no test screenshot yet) from empty columns: from_list([]) has no columns to match the features
+    final = None
+    if output_dir is not None:
+        final = Path(output_dir)
+        if final.exists() and any(final.iterdir()):
+            raise FileExistsError(f"dataset output directory is not empty: {final}")
+        output_dir = final.with_name(f"{final.name}.partial")
+        if output_dir.exists():
+            shutil.rmtree(output_dir)  # a build cut off before
+        output_dir.mkdir(parents=True)
+        scratch = output_dir / "rows"
+        scratch.mkdir()
+    else:
+        scratch = Path(tempfile.mkdtemp(prefix="grand-project-dataset-"))  # the returned dataset maps its files
+    # an empty split (no test screenshot yet) from empty columns: no file to match the features
     dataset = DatasetDict(
         {
-            split: Dataset.from_list(_rows(chosen, check_bytes), features=features)
+            split: _write_split(chosen, features, scratch / f"{split}.arrow", check_bytes)
             if chosen
             else Dataset.from_dict({name: [] for name in features}, features=features)
             for split, chosen in splits.items()
         }
     )
     if output_dir is not None:
-        output_dir = Path(output_dir)
-        if output_dir.exists() and any(output_dir.iterdir()):
-            raise FileExistsError(f"dataset output directory is not empty: {output_dir}")
-        final, output_dir = output_dir, output_dir.with_name(f"{output_dir.name}.partial")
-        if output_dir.exists():
-            shutil.rmtree(output_dir)  # a build cut off before
-        output_dir.mkdir(parents=True)
         # an empty split (no test screenshot yet) is not saved: datasets cannot load an empty one back (load_dataset)
         DatasetDict({split: rows for split, rows in dataset.items() if len(rows)}).save_to_disk(str(output_dir))
+        del dataset
+        gc.collect()  # the scratch files' maps closed (Windows keeps a mapped file)
+        shutil.rmtree(scratch)
         (output_dir / "labels.json").write_text(json.dumps(label_map, indent=2) + "\n", encoding="utf-8")
         kinds: dict[str, dict[str, int]] = {}
         for split, chosen in splits.items():
@@ -312,6 +341,7 @@ def build_dataset(
         if final.exists():
             final.rmdir()  # (empty: checked above)
         output_dir.rename(final)
+        return load_dataset(final)
     return dataset
 
 

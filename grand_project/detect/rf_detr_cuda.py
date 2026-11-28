@@ -56,6 +56,17 @@ def prefer_pip_cuda_libraries(argv: list[str] | None = None) -> None:
     entries = _library_dirs()
     if not entries:
         return
+    # glibc splits LD_LIBRARY_PATH at ":" and ";": a wheel folder holding either is never searched, so restarting
+    # would only claim a set-up that did not happen (CodeRabbit). Real POSIX only: tests faking Linux on Windows use
+    # drive-letter folders
+    split = [entry for entry in entries if os.name == "posix" and (":" in entry or ";" in entry)]
+    if split:
+        print(
+            f"PyTorch's CUDA libraries are in a folder whose path holds ':' or ';' ({split[0]}): the dynamic linker "
+            "cannot search it. Move the Python environment to a path without them; RF-DETR on CUDA may fail.",
+            file=sys.stderr,
+        )
+        return
     sep = K.RF_DETR_CUDA_PATH_SEPARATOR
     first = sep.join(entries)
     existing = os.environ.get("LD_LIBRARY_PATH", "")

@@ -72,8 +72,12 @@ def atlases() -> list[Path]:
     return sorted(found, key=lambda p: (ORDER.index(p.name) if p.name in ORDER else len(ORDER), p.name))
 
 
-def rebuild(folder: Path) -> None:
-    """Rebuild one atlas from its screenshots with this checkout's detector (in a temp copy, then copied back)."""
+def rebuild(folder: Path) -> bool:
+    """Rebuild one atlas from its screenshots with this checkout's detector (in a temp copy, then copied back).
+
+    Returns:
+        False when the builder ran without error and placed no screenshot (it saves no atlas then), else True.
+    """
     shots = sorted(p for p in folder.glob("*.png") if p.name[:1].isdigit())
     with tempfile.TemporaryDirectory() as tmp:
         work = Path(tmp) / folder.name
@@ -84,6 +88,8 @@ def rebuild(folder: Path) -> None:
         root = program_root()  # the rebuild uses the same checkout as the scoring (review)
         env = {**os.environ, "PYTHONPATH": os.pathsep.join(filter(None, [str(root), os.environ.get("PYTHONPATH")]))}
         subprocess.run(cmd + [str(work / s.name) for s in shots], check=True, capture_output=True, cwd=root, env=env)
+        if not (work / "atlas.json").is_file():
+            return False  # nothing placed: no atlas to copy back
         d = json.loads((work / "atlas.json").read_text(encoding="utf-8"))
         for f in d["frames"]:  # bare names (the screenshots sit next to the atlas), not the temp folder's paths
             f["path"] = Path(f["path"]).name
@@ -93,6 +99,7 @@ def rebuild(folder: Path) -> None:
                 shutil.rmtree(folder / d)
             if (work / d).exists():
                 shutil.copytree(work / d, folder / d)
+    return True
 
 
 def numbers(folder: Path, core, view_model) -> dict:

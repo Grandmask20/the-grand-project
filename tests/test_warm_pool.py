@@ -110,6 +110,20 @@ def test_the_workers_started_anew_close_when_the_last_job_of_the_broken_ones_end
         p.close(wait=False)
 
 
+def test_a_cancelled_timer_that_already_fired_closes_nothing(pool):
+    """A timer whose cancel came after it fired (its thread waiting for the lock) must not close the executor a
+    later timer now keeps warm (CodeRabbit)."""
+    with pool.use() as ex:
+        pids(ex, 1)
+    late = pool._timer_gen  # the first job's timer, about to be cancelled too late
+    with pool.use():
+        pass  # a second job: cancels it and arms a new one
+    pool._idle(ex, late)  # the late callback gets the lock now
+    assert pool.running() and pool._ex is ex
+    pool._idle(ex, pool._timer_gen)  # the timer armed now still closes it
+    assert not pool.running()
+
+
 def test_a_dead_worker_is_replaced_by_the_next_job(pool):
     with pool.use() as ex:
         pids(ex, 1)
