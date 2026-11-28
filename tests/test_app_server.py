@@ -272,16 +272,19 @@ def test_an_older_running_copy_is_closed_for_the_update(monkeypatch):
 def test_the_start_runs_the_saved_detector(app_settings, monkeypatch):
     """The detector is the saved settings' (Log > Experimental), set as the app starts; only RF-DETR restarts the
     process with PyTorch's CUDA libraries first."""
+    from grand_project.app.session import saved_detector
     from grand_project.detect import detector_config, rf_detr_cuda
 
     restarted = []
     monkeypatch.setattr(rf_detr_cuda, "prefer_pip_cuda_libraries", lambda argv: restarted.append(argv))
     monkeypatch.setattr(S, "reuse_running", lambda port, atlas, browser: S.HANDED)  # (no server started)
     assert S.main(["--port", "1"]) == 0
-    assert detector_config.current() == detector_config.DetectorConfig() and restarted == []  # nothing saved
-    app_settings.write_text(json.dumps({"detection": {"rf_detr": True, "model": "me/model", "device": "cpu"}}))
+    # (the workers are within this computer's cores, as the app keeps them: a 4-core CI runner has 3 of the default 4)
+    assert detector_config.current() == saved_detector({}) and restarted == []  # nothing saved
+    saved = {"detection": {"rf_detr": True, "model": "me/model", "device": "cpu"}}
+    app_settings.write_text(json.dumps(saved))
     assert S.main(["--port", "1"]) == 0
-    assert detector_config.current() == detector_config.DetectorConfig(rf_detr=True, model="me/model", device="cpu")
+    assert detector_config.current() == saved_detector(saved) and detector_config.current().rf_detr
     assert restarted == [["--port", "1"]]
 
 
