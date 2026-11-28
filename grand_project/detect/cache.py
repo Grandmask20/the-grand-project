@@ -2,30 +2,20 @@
 
 from __future__ import annotations
 
-import copy
-import threading
-from concurrent.futures import Future
-
 import numpy as np
 
-from .constants import DETECT_PER_IMAGE_KEEP
-
-_PER_IMAGE: dict = {}  # (function, id(image)) -> (weak ref to the image, Future of the result)
-# taken only to look up, add or drop entries, never while a result is worked out: the detection's own thread and its
-# helpers (pipeline._prefetch) ask for the same results at once
-_LOCK = threading.Lock()
+_PER_IMAGE: dict = {}  # (function, id(image)) -> (weak ref to the image, result)
 
 
 def _per_image(fn):
-    """Decorator: remember fn(img) for the last few images (DETECT_PER_IMAGE_KEEP entries).
+    """Decorator: remember fn(img) for the last few images (up to 12 entries).
 
-    One detection asks for the same dashes / walls up to 3x (v1.03). Arrays are made read-only so no caller can
-    change the shared copy; lists and dicts (of dicts) are handed out as copies. The cache key is the image's id,
-    checked through a weak reference so a new image at a reused id is not mistaken for the old one. Thread-safe: a
-    caller asking while another thread works it out waits for that result instead of working it out again.
+    One detection asks for the same dashes / walls up to 3x (v1.03). Results are made read-only so no caller can
+    change the shared copy. The cache key is the image's id, checked through a weak reference so a new image at a
+    reused id is not mistaken for the old one.
 
     Args:
-        fn: Function taking one screenshot array and returning an array, a tuple of arrays, or a list / dict.
+        fn: Function taking one screenshot array and returning an array or a tuple of arrays.
 
     Returns:
         The wrapped function with the same signature.
@@ -49,46 +39,27 @@ def _per_image(fn):
                 _freeze(x)
         return r
 
-    def _out(r):
-        """The caller's copy of a shared result: lists and dicts copied, frozen arrays as they are."""
-        return copy.deepcopy(r) if isinstance(r, (list, dict)) else r
-
     @functools.wraps(fn)
     def wrapper(img):
-        """Return the cached fn(img), working it out on a miss (or waiting for the thread working it out).
+        """Return the cached fn(img), computing and storing it on a miss.
 
         Args:
             img: Screenshot array passed to fn.
 
         Returns:
-            fn(img), read-only (arrays) or a copy (lists, dicts).
+            fn(img), read-only.
         """
         key = (fn.__name__, id(img))
+        hit = _PER_IMAGE.get(key)
+        if hit is not None and hit[0]() is img:
+            return hit[1]
+        r = _freeze(fn(img))
         try:
-            ref = weakref.ref(img)
+            _PER_IMAGE[key] = (weakref.ref(img), r)
         except TypeError:
-            return _out(_freeze(fn(img)))
-        with _LOCK:
-            hit = _PER_IMAGE.get(key)
-            if hit is not None and hit[0]() is img:
-                pending = hit[1]
-            else:
-                pending = None
-                mine: Future = Future()
-                _PER_IMAGE[key] = (ref, mine)
-                while len(_PER_IMAGE) > DETECT_PER_IMAGE_KEEP:
-                    _PER_IMAGE.pop(next(iter(_PER_IMAGE)))
-        if pending is not None:
-            return _out(pending.result())
-        try:
-            r = _freeze(fn(img))
-        except BaseException as e:
-            mine.set_exception(e)  # (a thread waiting for it gets the error too)
-            with _LOCK:
-                if _PER_IMAGE.get(key, (None, None))[1] is mine:
-                    del _PER_IMAGE[key]  # not kept: the next ask tries again
-            raise
-        mine.set_result(r)
-        return _out(r)
+            return r
+        while len(_PER_IMAGE) > 12:
+            _PER_IMAGE.pop(next(iter(_PER_IMAGE)))
+        return r
 
     return wrapper

@@ -18,7 +18,6 @@ from .constants import (
     PATH_BEND_MAX,
     PATH_BEND_SMOOTH,
     PATH_END_RESCUE,
-    PATH_FEATURE_REACH,
     PATH_JUMP,
     PATH_LAT,
     PATH_LEAVE_ANGLE,
@@ -84,18 +83,9 @@ def path_features(pts, dashes: np.ndarray) -> np.ndarray:
     Returns:
         (n, 6) float32 array.
     """
-    from scipy.spatial import cKDTree
-
     F = []
-    # each spot's dashes within reach of its rings, looked up in a tree (every dash against every spot was ~2,500 x
-    # ~2,000 distances); the counts below don't depend on the dashes' order
-    near = (
-        cKDTree(dashes).query_ball_point(np.asarray(pts, float).reshape(-1, 2), PATH_FEATURE_REACH)
-        if len(dashes)
-        else None
-    )
-    for i, (x, y) in enumerate(pts):
-        v = dashes[near[i]] - (x, y) if len(dashes) else np.zeros((0, 2))
+    for x, y in pts:
+        v = dashes - (x, y) if len(dashes) else np.zeros((0, 2))
         d = np.hypot(v[:, 0], v[:, 1])
         f = [float(((d >= a) & (d < b)).sum()) for a, b in ((0, 10), (10, 20), (20, 32), (32, 48))]
         sel = (d >= 12) & (d < 45)
@@ -141,16 +131,6 @@ def _walks_raw(nodes: list[dict], dashes: np.ndarray, loose: list | None = None)
     nbr = [np.array(x, int) for x in tree.query_ball_point(dashes, PATH_JUMP)]
     nvec = [dashes[k] - dashes[i] for i, k in enumerate(nbr)]
     nlen = [np.hypot(v[:, 0], v[:, 1]) for v in nvec]
-    # each dash's neighbours a step can go to (2 px or more away), in the same order, and which are within PATH_STEP:
-    # worked out once per dash instead of at every step of every walk through it
-    far = [Ls >= 2 for Ls in nlen]
-    nbr, nvec, nlen = (
-        [K[f] for K, f in zip(nbr, far, strict=True)],
-        [V[f] for V, f in zip(nvec, far, strict=True)],
-        [L[f] for L, f in zip(nlen, far, strict=True)],
-    )
-    nvx, nvy = [V[:, 0].copy() for V in nvec], [V[:, 1].copy() for V in nvec]
-    reach = [(Ls <= PATH_STEP, Ls <= PATH_JUMP) for Ls in nlen]
     cos_max = np.cos(np.radians(PATH_MAX_ANG))
     in_walk = np.zeros(len(dashes), bool)
     out = []
@@ -168,33 +148,28 @@ def _walks_raw(nodes: list[dict], dashes: np.ndarray, loose: list | None = None)
             end = None
             for _ in range(PATH_MAX_STEPS):
                 best = None
-                K, Ls = nbr[cur], nlen[cur]
-                free = ~in_walk[K]
-                for within, tol in zip(reach[cur], (1.0, 0.7), strict=True):  # PATH_STEP, then PATH_JUMP
-                    m = free & within
+                K, V, Ls = nbr[cur], nvec[cur], nlen[cur]
+                free = ~in_walk[K] & (Ls >= 2)
+                for R, tol in ((PATH_STEP, 1.0), (PATH_JUMP, 0.7)):
+                    m = free & (Ls <= R)
                     if not m.any():
                         continue
-                    k_, L_, vx, vy = K[m], Ls[m], nvx[cur][m], nvy[cur][m]
+                    k_, v_, L_ = K[m], V[m], Ls[m]
                     ang = w * L_ / 2  # heading the curve predicts over each step
                     ca, sa = np.cos(ang), np.sin(ang)
                     ex, ey = d[0] * ca - d[1] * sa, d[0] * sa + d[1] * ca
-                    fwd = vx * ex + vy * ey
-                    lat = np.abs(ex * vy - ey * vx)
+                    fwd = v_[:, 0] * ex + v_[:, 1] * ey
+                    lat = np.abs(ex * v_[:, 1] - ey * v_[:, 0])
                     ok = (fwd > 0) & (fwd >= L_ * cos_max) & (lat <= (PATH_LAT[0] + PATH_LAT[1] * L_) * tol)
                     if ok.any():
                         cost = np.where(ok, L_ + 3.0 * lat, np.inf)
                         j = int(np.argmin(cost))
-                        best = (float(cost[j]), int(k_[j]), nvec[cur][m][j] / L_[j], float(L_[j]))
+                        best = (float(cost[j]), int(k_[j]), v_[j] / L_[j], float(L_[j]))
                         break
                 q = dashes[best[1]] if best else p + d * PATH_STEP  # last stretch: towards a map just ahead
                 # first map on the way: the segment p -> q passes a map's ring
                 seg = q - p
-                reach_maps = float(np.hypot(*seg)) + rmax
-                # the map tree is asked only when a map other than the start is that close (most steps are far
-                # from every map): asked, it answers as before, in its own order
-                close = np.hypot(N[:, 0] - p[0], N[:, 1] - p[1]) <= reach_maps + 1.0
-                close[a] = False
-                near = np.array(mtree.query_ball_point(p, reach_maps), int) if close.any() else np.zeros(0, int)
+                near = np.array(mtree.query_ball_point(p, float(np.hypot(*seg)) + rmax), int)
                 near = near[near != a]
                 if len(near):
                     Nn = N[near]
@@ -219,8 +194,8 @@ def _walks_raw(nodes: list[dict], dashes: np.ndarray, loose: list | None = None)
                     break
                 _, k, u, L = best
                 turn = float(np.arctan2(d[0] * u[1] - d[1] * u[0], d @ u))  # heading change this step
-                w = (1 - PATH_BEND_SMOOTH) * w + PATH_BEND_SMOOTH * min(  # (np.clip's maximum, then minimum)
-                    max(2 * turn / max(L, 1.0), -PATH_BEND_MAX), PATH_BEND_MAX
+                w = (1 - PATH_BEND_SMOOTH) * w + PATH_BEND_SMOOTH * float(
+                    np.clip(2 * turn / max(L, 1.0), -PATH_BEND_MAX, PATH_BEND_MAX)
                 )
                 d = u.copy()
                 p = dashes[k]

@@ -7,7 +7,6 @@ import numpy as np
 
 from . import citybase
 from .badges import badge_rows
-from .cache import _per_image
 from .constants import (
     CITY_P,
     EXP_REACH,
@@ -73,23 +72,6 @@ def tower_features(img: np.ndarray, pts, old_towers: list) -> np.ndarray:
     return np.asarray(F, np.float32).reshape(len(F), -1)
 
 
-@_per_image
-def square_buttons(img: np.ndarray) -> list[dict]:
-    """The screenshot's square framed buttons (cities.square_buttons), found once: the locked strongholds' hands
-    (landmarks_from) and the Expedition ships (ship_markers) are both read from them.
-
-    Args:
-        img: BGR screenshot (1080p).
-
-    Returns:
-        Buttons as cities.square_buttons gives them (a copy).
-    """
-    from grand_project import cities as atlas_cities
-
-    return atlas_cities.square_buttons(img)
-
-
-@_per_image
 def old_landmarks(img: np.ndarray) -> dict:
     """The hand-made landmark rules (atlas_towers): towers and purple Breach strongholds.
 
@@ -218,7 +200,7 @@ def landmarks_from(
             out.append(
                 {"kind": "City", "x": round(float(x), 1), "y": round(float(y), 1), "why": "brass barrel map base"}
             )
-    locks = [(b["x"], b["y"]) for b in square_buttons(img) if b["kind"] == "lock"]  # (cities.locks_in)
+    locks = __import__("grand_project.cities", fromlist=["cities"]).locks_in(img)
     for x, y in old["strongholds"]:
         kind, why = stronghold_kind(x, y, locks, vis)
         out.append({"kind": kind, "x": float(x), "y": float(y), "why": why})
@@ -335,8 +317,10 @@ def ship_markers(img: np.ndarray) -> list[dict]:
     Returns:
         Icons as dicts {"name": "ExpeditionShip", "x", "y", "score", "source": "square button"}.
     """
+    from grand_project import cities as atlas_cities
+
     return [
         {"name": "ExpeditionShip", "x": int(b["x"]), "y": int(b["y"]), "score": b["symbol"], "source": "square button"}
-        for b in square_buttons(img)
+        for b in atlas_cities.square_buttons(img)
         if b["kind"] == "ship"
     ]
