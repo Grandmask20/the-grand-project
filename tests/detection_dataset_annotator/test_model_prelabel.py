@@ -242,6 +242,37 @@ def test_a_limited_pass_draws_the_arms_of_every_eligible_block(
     assert drawn == [sorted(image_key(path) for path in paths)]  # all four drawn; the pass does one
 
 
+def test_the_store_and_the_ledger_are_read_under_the_ledgers_lock(
+    tmp_path: Path, review_store: ReviewStore, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """An export claims splits in the store and then writes their ledger rows, under the ledger's lock: the pass reads
+    both under it too, so it never sees a training split whose block is not written yet (CodeRabbit)."""
+    import contextlib
+
+    from tools.detection_dataset_annotator import split_ledger
+
+    seen = []
+    held = {"now": False}
+
+    @contextlib.contextmanager
+    def lock(path=None):
+        held["now"] = True
+        try:
+            yield
+        finally:
+            held["now"] = False
+
+    monkeypatch.setattr(split_ledger, "_ledger_lock", lock)
+    real_items = ReviewStore.items
+    monkeypatch.setattr(
+        ReviewStore, "items", lambda self, **k: seen.append(("items", held["now"])) or real_items(self, **k)
+    )
+    monkeypatch.setattr(model_prelabel, "_blocks", lambda items: seen.append(("blocks", held["now"])) or {})
+    out = review_store.path.parent
+    assert model_prelabel.main(["--dry-run", "--output-dir", str(out), "--model", str(tmp_path / "model")]) == 0
+    assert seen[:2] == [("items", True), ("blocks", True)]
+
+
 def test_a_failed_model_pass_keeps_its_blocks_in_the_models_arm(
     tmp_path: Path, review_store: ReviewStore, monkeypatch: pytest.MonkeyPatch
 ) -> None:

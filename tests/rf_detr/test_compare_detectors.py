@@ -8,7 +8,7 @@ import numpy as np
 import pytest
 
 from tools import compare_detectors
-from tools.compare_detectors import _f1, _landmark_hits, _normalise_accuracy, _parse_match
+from tools.compare_detectors import _landmark_hits, _normalise_accuracy, _parse_match
 
 
 def test_parse_match_returns_precision_recall_and_f1() -> None:
@@ -18,7 +18,7 @@ def test_parse_match_returns_precision_recall_and_f1() -> None:
     assert result["reference"] == 20
     assert result["precision"] == 10 / 12
     assert result["recall"] == 0.5
-    assert result["f1"] == _f1(10 / 12, 0.5)
+    assert result["f1"] == pytest.approx(0.625)
 
 
 def test_parse_match_handles_empty_summary() -> None:

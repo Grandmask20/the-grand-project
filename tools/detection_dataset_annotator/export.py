@@ -61,12 +61,8 @@ class ExportResult:
     """Screenshots left out: their file is not the one their boxes were detected on (rerun their detection)."""
 
 
-def _exported_annotation(annotation: dict[str, Any], label_ids: dict[str, int]) -> dict[str, Any] | None:
-    """One annotation as exported (under its detector class), or None when its label is unknown, retired or its box
-    invalid."""
-    label = export_class(str(annotation.get("label", "")).strip())
-    if label not in label_ids:
-        return None
+def _export_bbox(annotation: dict[str, Any]) -> tuple[float, float, float, float] | None:
+    """An annotation's box as exported (x, y, w, h rounded to 0.01 px), or None when it is no box to export."""
     try:
         values = [float(value) for value in annotation["bbox"]]
         x, y, width, height = values
@@ -77,6 +73,17 @@ def _exported_annotation(annotation: dict[str, Any], label_ids: dict[str, int]) 
     x, y, width, height = (round(value, 2) for value in values)
     if width <= 0 or height <= 0:  # after rounding: a box this thin would be exported as zero
         return None
+    return x, y, width, height
+
+
+def _exported_annotation(annotation: dict[str, Any], label_ids: dict[str, int]) -> dict[str, Any] | None:
+    """One annotation as exported (under its detector class), or None when its label is unknown, retired or its box
+    invalid."""
+    label = export_class(str(annotation.get("label", "")).strip())
+    bbox = _export_bbox(annotation)
+    if label not in label_ids or bbox is None:
+        return None
+    x, y, width, height = bbox
     return {
         "category_id": label_ids[label],
         "bbox": [x, y, width, height],
@@ -179,10 +186,12 @@ def export_dataset(store: ReviewStore, output_dir: Path, *, reviewed_only: bool 
         if size is None:
             continue
         chosen.append((key, item, path, size))
+    # the classes of the boxes exported: one left out (no box to export) gives the manifest no class of its own
     labels = dataset_classes(
         str(annotation.get("label", "")).strip()
         for _key, item, _path, _size in chosen
         for annotation in item.get("annotations", [])
+        if _export_bbox(annotation) is not None
     )
     label_ids = {label: index for index, label in enumerate(labels)}
     image_rows: list[dict[str, Any]] = []

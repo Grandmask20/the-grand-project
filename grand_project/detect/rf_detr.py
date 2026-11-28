@@ -17,9 +17,12 @@ tests work without the optional training stack.
 
 from __future__ import annotations
 
+import hashlib
 import json
 import math
 import random
+import shutil
+from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -211,13 +214,18 @@ def _features(label_names: list[str]):
     )
 
 
-def _rows(records: list[Record]) -> list[dict[str, Any]]:
-    """Convert records to the Hugging Face object-detection schema."""
+def _rows(records: list[Record], check_bytes: Callable[[Record, str], None] | None = None) -> list[dict[str, Any]]:
+    """Convert records to the Hugging Face object-detection schema, each screenshot's bytes read once and embedded
+    (training never reads the file again: what was checked is what it trains on), after ``check_bytes(record, their
+    SHA-256)`` (it raises to stop the build)."""
     rows = []
     for record in records:
+        data = Path(record.path).read_bytes()
+        if check_bytes is not None:
+            check_bytes(record, hashlib.sha256(data).hexdigest())
         rows.append(
             {
-                "image": str(record.path),
+                "image": {"bytes": data, "path": str(record.path)},
                 "image_id": record.image_id,
                 "source": record.source,
                 "source_type": record.source_type,
@@ -243,11 +251,15 @@ def build_dataset(
     label_map: dict[str, str],
     output_dir: Path | None = None,
     provenance: dict[str, Any] | None = None,
+    check_bytes: Callable[[Record, str], None] | None = None,
 ) -> Any:
     """Create a ``DatasetDict`` (train, validation, test, as the records' splits say) and optionally save it.
 
-    The saved folder holds ``labels.json`` and ``metadata.json``: the screenshots per split and kind (reviewed,
-    truth-seeded), the tile, and ``provenance`` (the manifest's and the ledger's SHA-256: which data a model saw).
+    The saved folder holds the screenshots' bytes (``_rows``; ``check_bytes`` sees each one's SHA-256 first),
+    ``labels.json`` and ``metadata.json``: the screenshots per split and kind (reviewed, truth-seeded), the tile, and
+    ``provenance`` (the manifest's and the ledger's SHA-256: which data a model saw). All three are written to
+    ``<output_dir>.partial`` and the folder takes its name only once they are: a folder at ``output_dir`` is always a
+    whole dataset (a build cut off leaves none to reuse).
 
     Raises:
         ValueError: no training or no validation screenshot.
@@ -260,7 +272,7 @@ def build_dataset(
     # an empty split (no test screenshot yet) from empty columns: from_list([]) has no columns to match the features
     dataset = DatasetDict(
         {
-            split: Dataset.from_list(_rows(chosen), features=features)
+            split: Dataset.from_list(_rows(chosen, check_bytes), features=features)
             if chosen
             else Dataset.from_dict({name: [] for name in features}, features=features)
             for split, chosen in splits.items()
@@ -270,8 +282,12 @@ def build_dataset(
         output_dir = Path(output_dir)
         if output_dir.exists() and any(output_dir.iterdir()):
             raise FileExistsError(f"dataset output directory is not empty: {output_dir}")
-        output_dir.mkdir(parents=True, exist_ok=True)
-        dataset.save_to_disk(str(output_dir))
+        final, output_dir = output_dir, output_dir.with_name(f"{output_dir.name}.partial")
+        if output_dir.exists():
+            shutil.rmtree(output_dir)  # a build cut off before
+        output_dir.mkdir(parents=True)
+        # an empty split (no test screenshot yet) is not saved: datasets cannot load an empty one back (load_dataset)
+        DatasetDict({split: rows for split, rows in dataset.items() if len(rows)}).save_to_disk(str(output_dir))
         (output_dir / "labels.json").write_text(json.dumps(label_map, indent=2) + "\n", encoding="utf-8")
         kinds: dict[str, dict[str, int]] = {}
         for split, chosen in splits.items():
@@ -293,7 +309,21 @@ def build_dataset(
             + "\n",
             encoding="utf-8",
         )
+        if final.exists():
+            final.rmdir()  # (empty: checked above)
+        output_dir.rename(final)
     return dataset
+
+
+def load_dataset(folder: Path) -> Any:
+    """A dataset ``build_dataset`` saved, every split there (one saved without screenshots comes back empty, with the
+    others' features)."""
+    from datasets import Dataset, DatasetDict, load_from_disk
+
+    saved = load_from_disk(str(folder))
+    features = next(iter(saved.values())).features
+    empty = Dataset.from_dict({name: [] for name in features}, features=features)
+    return DatasetDict({split: saved.get(split, empty) for split in K.RF_DETR_SPLITS})
 
 
 class TileTransform:
@@ -359,6 +389,7 @@ def tile_transform(processor, *, train: bool, seed: int = 1337, rare: frozenset[
 
 __all__ = [
     "Record",
+    "load_dataset",
     "TileTransform",
     "build_dataset",
     "load_annotator_manifest",

@@ -165,7 +165,7 @@ ANNOTATOR_MANUAL_SOURCE = "manual"
 
 ANNOTATOR_CITY_GUESS_SOURCE = RF_DETR_SOURCE_CITY_GUESS
 """Annotation source of a citadel whose city type is an unsure look-alike guess (``cities.screenshot_city_types``:
-margin under ``CITY_LOOK_SURE`` or a window cut off by the screenshot edge)."""
+margin under ``detect.constants.CITY_LOOK_SURE`` or a window cut off by the screenshot edge)."""
 
 ANNOTATOR_GUESS_SOURCES = RF_DETR_GUESS_SOURCES
 """Sources of guessed boxes (an unsure city type, biome or city area): the editor draws them dotted and the queue
@@ -317,8 +317,7 @@ ANNOTATOR_TRUTH_FILES = (paths.TEST_DATA / "fr-atlas" / "truth.json",)
 ANNOTATOR_DETECTED_SHA = "sha256"
 """The field (in a screenshot's detection result, kept in its ``extra``) holding the SHA-256 of the bytes its boxes were
 detected on (``detection.read_with_digest``): a file replaced since, even by one of its size, is no longer the
-picture they frame (``state.changed_since_detection``); its detection is rerun first. ``build_store`` records it for
-detections made before it was kept."""
+picture they frame (``state.changed_since_detection``); its detection is rerun first."""
 
 ANNOTATOR_TRUTH_MARK = "truth"
 """The field (in a screenshot's ``extra``, and the export's manifest) naming the biome truth that seeded it: the truth
@@ -358,6 +357,9 @@ side per map node: a fifth of a 1080p screenshot's height already reaches past e
 ANNOTATOR_UNASSIGNED_ARM = "unassigned"
 """The effort report's arm of a review no pre-label pass assigned an arm (reviewed before the A/B loop): its own row,
 never counted in the classical control arm."""
+
+ANNOTATOR_EDIT_KINDS = ("kept", "relabelled", "moved", "deleted", "added")
+"""What a review can do to a box (``effort.Edits``' fields, in this order: the report's columns and the fit's)."""
 
 ANNOTATOR_EFFORT_SECONDS = {"kept": 0.3, "relabelled": 1.5, "moved": 3.0, "deleted": 1.0, "added": 5.0}
 """Estimated seconds a reviewer spends per box by what the review did to it (a kept box still has to be checked).

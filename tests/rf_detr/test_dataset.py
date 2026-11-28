@@ -234,3 +234,39 @@ def test_the_dataset_keeps_the_annotators_splits(tmp_path: Path) -> None:
         build_dataset(records, label_map=labels, output_dir=out)
     no_test = build_dataset(records[:2], label_map=labels)  # no test screenshot yet: an empty test split
     assert len(no_test["test"]) == 0 and no_test["test"].features == no_test["train"].features
+
+
+def test_the_dataset_holds_the_bytes_it_checked_and_appears_only_whole(tmp_path: Path) -> None:
+    """Each screenshot is read once: its SHA-256 goes to ``check_bytes`` and its bytes into the dataset (a file replaced
+    later changes nothing trained on). The folder is built as ``<name>.partial`` and named once whole: a build stopped
+    by the check leaves no dataset to reuse (CodeRabbit)."""
+    pytest.importorskip("datasets")
+    import hashlib
+
+    from grand_project.detect.rf_detr import build_dataset, load_dataset
+
+    for name in ("a", "b"):
+        Image.new("RGB", (64, 36), (20, 120, 20)).save(tmp_path / f"{name}.png")
+    records = [
+        Record(0, tmp_path / "a.png", "a", "annotator_reviewed", "g", 64, 36, (), "train"),
+        Record(1, tmp_path / "b.png", "b", "annotator_reviewed", "g", 64, 36, (), "validation"),
+    ]
+    labels = {"0": "map_node_grass"}
+    seen = {}
+    out = tmp_path / "dataset"
+    build_dataset(
+        records, label_map=labels, output_dir=out, check_bytes=lambda r, digest: seen.setdefault(r.source, digest)
+    )
+    assert seen == {n: hashlib.sha256((tmp_path / f"{n}.png").read_bytes()).hexdigest() for n in ("a", "b")}
+    assert not (tmp_path / "dataset.partial").exists()
+    (tmp_path / "a.png").write_bytes(b"replaced")
+    saved = load_dataset(out)
+    assert saved["train"][0]["image"].size == (64, 36)  # the bytes checked, not the file now
+    assert len(saved["test"]) == 0  # (none: an empty split comes back empty)
+
+    def refuse(record, digest):
+        raise SystemExit("changed")
+
+    with pytest.raises(SystemExit):
+        build_dataset(records, label_map=labels, output_dir=tmp_path / "other", check_bytes=refuse)
+    assert not (tmp_path / "other").exists()

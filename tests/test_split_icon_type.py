@@ -109,7 +109,7 @@ def test_a_split_name_survives_a_save_whose_notes_say_the_old_type(tmp_path: Pat
     }
     (tmp_path / "truth_key.json").write_text(json.dumps(key), encoding="utf-8")
     labels = tmp_path / "labels.txt"
-    labels.write_text("", encoding="utf-8")
+    labels.write_text("badges\nB1 ArcaneOrProsperous\n", encoding="utf-8")  # a single correction to the old type
     assert truth.cmd_save(SimpleNamespace(out=str(tmp_path), labels=str(labels))) == 0
     saved = json.loads((tmp_path / "truth.json").read_text(encoding="utf-8"))
     assert [b["name"] for b in saved["shot1.png"]["badges"]] == ["ArcaneHordes", "ArcaneOrProsperous"]
@@ -190,3 +190,51 @@ def test_a_note_may_name_a_type_a_split_created(tmp_path: Path) -> None:
     assert truth.cmd_save(SimpleNamespace(out=str(tmp_path), labels=str(labels))) == 0
     saved = json.loads((tmp_path / "truth.json").read_text(encoding="utf-8"))
     assert [b["name"] for b in saved["shot1.png"]["badges"]] == ["Breach", "ArcaneHordes"]
+
+
+def test_a_note_may_name_a_type_a_split_renamed_away(tmp_path: Path) -> None:
+    """An explicit badge note naming the old type is read (it is no row's name any more), and that badge alone takes
+    the split's name for it (CodeRabbit)."""
+    import json
+    from types import SimpleNamespace
+
+    from grand_project import truth
+
+    badge = {"shot": "S1", "x": 100, "y": 100, "detector": "Other"}
+    key = {
+        "shots": {"S1": {"name": "shot1.png"}},
+        "maps": {},
+        "landmarks": {},
+        "badges": {"B1": {**badge, "renamed": {"OldType": "NewType"}}, "B2": badge},
+        "rows": {"R1": "Other"},
+    }
+    (tmp_path / "truth_key.json").write_text(json.dumps(key), encoding="utf-8")
+    labels = tmp_path / "labels.txt"
+    labels.write_text("badges\nB1 OldType\n", encoding="utf-8")
+    assert truth.cmd_save(SimpleNamespace(out=str(tmp_path), labels=str(labels))) == 0
+    saved = json.loads((tmp_path / "truth.json").read_text(encoding="utf-8"))
+    assert [b["name"] for b in saved["shot1.png"]["badges"]] == ["NewType", "Other"]
+
+
+def test_a_truth_icon_named_in_a_map_note_stops_the_split(tmp_path: Path, monkeypatch) -> None:
+    """An icon the truth took from a map note (no badge row in truth_key.json) would get its old name back at the
+    next ``truth save``: the split stops before anything is written and says how to rename it (CodeRabbit)."""
+    import json
+
+    import pytest
+
+    truth = tmp_path / "truth.json"
+    truth.write_text(json.dumps({"s.png": {"badges": [{"id": "A12", "name": "Old", "x": 100, "y": 100}]}}))
+    key_file = tmp_path / "truth_key.json"
+    key_file.write_text(json.dumps({"badges": {"B1": {"detector": "Old"}}}))
+    before = truth.read_bytes(), key_file.read_bytes()
+    match = S.Match("truth A12", None, "New", [0.1], False)
+    monkeypatch.setattr(S, "art_features", lambda name: np.zeros((1, 1), np.float32))
+    monkeypatch.setattr(S, "stored_pictures", lambda *a: [])
+    monkeypatch.setattr(S, "book_pictures", lambda *a: (None, []))
+    monkeypatch.setattr(S, "truth_pictures", lambda *a: [(truth, "s.png", 0, match, ("A12", "Old", 100, 100))])
+    monkeypatch.setattr(S, "sheet", lambda *a: None)
+    monkeypatch.setattr(S.models, "save_model", lambda *a, **k: pytest.fail("a database was written"))
+    with pytest.raises(SystemExit, match="rename them in labels.txt"):
+        S.main(["Old", "New", "--sheet", str(tmp_path / "sheet.png")])
+    assert (truth.read_bytes(), key_file.read_bytes()) == before

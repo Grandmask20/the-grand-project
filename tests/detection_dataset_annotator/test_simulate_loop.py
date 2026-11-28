@@ -221,8 +221,8 @@ def test_a_simulation_trains_each_round_on_from_the_last_and_scores_every_policy
          "width": 1920, "height": 1080, "annotations": [_box("map_node_vaal", 300, 300)]}
         for n, split in (("val", "validation"), ("tst", "test"))
     ]  # fmt: skip
-    rows += [{"source": relative_source(shots[n]), "path": str(shots[n]), "split": "train", "annotations": []}
-             for n in ("a1", "a2")]  # fmt: skip
+    rows += [{"source": relative_source(shots[n]), "path": str(shots[n]), "split": "train", "reviewed": True,
+              "annotations": []} for n in ("a1", "a2")]  # fmt: skip
     manifest = tmp_path / "manifest.json"
     manifest.write_text(json.dumps({"images": rows}), encoding="utf-8")
 
@@ -272,6 +272,15 @@ def test_a_simulation_trains_each_round_on_from_the_last_and_scores_every_policy
         assert scores["screenshots"] == 1
         assert scores["classical"]["gold"]["relabelled"] == 1.0 and scores["relabel"]["gold"]["edits"] == 0.0
     assert "## Round 2: 2 training screenshots" in (out / "report.md").read_text()
+
+    # a revealed screenshot the trainer would not train on (neither reviewed nor truth-seeded) stops the run before
+    # any dataset is built (CodeRabbit)
+    rows[-1]["reviewed"] = False
+    manifest.write_text(json.dumps({"images": rows}), encoding="utf-8")
+    commands.clear()
+    with pytest.raises(ValueError, match="no training screenshot of the manifest"):
+        simulate_loop.main([*args[:-4], "--output-dir", str(tmp_path / "sim2"), "--epochs", "2"])
+    assert commands == []
 
 
 def test_gold_counts_only_nodes_the_truth_has_a_map_for_and_silver_is_against_classical() -> None:
@@ -389,3 +398,21 @@ def test_a_held_out_file_of_another_size_than_exported_is_not_scored(monkeypatch
     assert scores["test"]["screenshots"] == 1 and scores["test"]["classical"]["gold"]["edits"] == 0
     report = simulate_loop.report_markdown([{"round": 1, "train_screenshots": 1, "scores": scores}])
     assert "no screenshot scored" in report
+
+
+def test_a_held_out_screenshot_that_cannot_be_read_is_left_out(monkeypatch: pytest.MonkeyPatch, capsys) -> None:
+    """One file unreadable: named and left out, the others scored (it stopped the whole round: CodeRabbit)."""
+    from tools.detection_dataset_annotator.model_prelabel import UnreadableScreenshot
+
+    gone = {"source": "a.png", "path": "a.png", "width": 1920, "height": 1080, "annotations": []}
+    good = {**gone, "source": "b.png", "path": "b.png"}
+
+    def predict(detector, path):
+        if path.name == "a.png":
+            raise UnreadableScreenshot(f"Could not read image: {path}")
+        return [], (1920, 1080), (1920, 1080)
+
+    monkeypatch.setattr(simulate_loop, "predict", predict)
+    scores = simulate_loop._score_splits({}, {"validation": [gone, good]}, {"b.png": []}, None)
+    assert scores["validation"]["screenshots"] == 1
+    assert "a.png: cannot be read" in capsys.readouterr().out

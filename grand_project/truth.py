@@ -498,8 +498,9 @@ def parse_notes(path: Path, key: dict) -> dict:
         flags)}, rows: {row id: name}, unclear: lines it could not read}.
     """
     known = set(key["rows"].values()) | {w[1] for w in BADGE_WORDS}
-    # the types a split created (tools/split_icon_type): a note may name one
-    known |= {new for b in key.get("badges", {}).values() for new in b.get("renamed", {}).values()}
+    # the types a split renamed (tools/split_icon_type), old and new: a note may name either (the old one is then
+    # translated for its own badge only, in cmd_save)
+    known |= {name for b in key.get("badges", {}).values() for pair in b.get("renamed", {}).items() for name in pair}
     maps, lms, badges, rows, unclear = {}, {}, {}, {}, []
     section = "maps"
     for raw in path.read_text(encoding="utf-8").splitlines():

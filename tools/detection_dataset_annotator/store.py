@@ -424,13 +424,17 @@ class ReviewStore:
             FileExistsError: ``target`` exists.
         """
         target.parent.mkdir(parents=True, exist_ok=True)
-        if target.exists():
-            raise FileExistsError(target)
-        copy = sqlite3.connect(str(target))
+        with open(target, "xb"):  # claimed in one step: a backup of the same name at once raises, never shares it
+            pass
         try:
-            self._db.backup(copy)
-        finally:
-            copy.close()
+            copy = sqlite3.connect(str(target))
+            try:
+                self._db.backup(copy)
+            finally:
+                copy.close()
+        except BaseException:
+            target.unlink(missing_ok=True)  # this call made it: no half a backup left under the name
+            raise
 
     def queue(self) -> list[QueueEntry]:
         """Every screenshot in queue order, without boxes."""

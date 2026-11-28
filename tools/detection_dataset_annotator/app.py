@@ -630,7 +630,10 @@ def _page(store: ReviewStore, settings: Settings) -> None:
     if notice := st.session_state.pop(K.ANNOTATOR_SESSION_NOTICE, None):
         st.toast(notice)
 
-    shown = [entry for entry in queue if not settings.hide_reviewed or not entry.reviewed]
+    # the screenshot on screen stays in the queue until the editor moves on (which saves its boxes first): hiding the
+    # reviewed ones (the checkbox ticked) retired its editor with edits not saved yet (CodeRabbit)
+    current = st.session_state.get(K.ANNOTATOR_SESSION_SELECTED)
+    shown = [entry for entry in queue if not settings.hide_reviewed or not entry.reviewed or entry.key == current]
     if settings.guesses_first:
         shown.sort(key=lambda entry: -entry.guesses)  # stable: equal counts keep the queue's order
     keys = [entry.key for entry in shown]

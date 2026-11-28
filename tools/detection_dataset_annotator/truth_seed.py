@@ -336,15 +336,10 @@ def _ambiguous(paths: Sequence[Path]) -> bool:
     return len({identity(path) for path in paths}) > 1
 
 
-def seed_store(
-    store: ReviewStore, truth: Truth, *, dry_run: bool = False, recorded: Mapping[str, str] | None = None
-) -> tuple[Counter[str], int, int]:
+def seed_store(store: ReviewStore, truth: Truth, *, dry_run: bool = False) -> tuple[Counter[str], int, int]:
     """Seed every unreviewed store screenshot the truth places, and mark each one (``ANNOTATOR_TRUTH_MARK``, in its
     ``extra``), changed or not: the truth vouches for its city areas either way, so a truth-seeded training round
     (``train_rf_detr --truth-seeded``) can take it. Changed boxes are the screenshot's new pre-labels.
-
-    ``recorded``: image key -> the detected bytes' SHA-256 a dry run of ``build_store`` would have recorded first, for
-    screenshots without one yet (so the dry run counts what the run would seed).
 
     Returns:
         (what was done, screenshots changed, screenshots the truth places).
@@ -387,8 +382,6 @@ def seed_store(
             done["skipped: unreadable screenshot (not marked)"] += 1  # seeded on a later run, once it can be read
             continue
         raw, digest = read
-        if recorded and K.ANNOTATOR_DETECTED_SHA not in item and key in recorded:
-            item = {**item, K.ANNOTATOR_DETECTED_SHA: recorded[key]}
         if changed_since_detection(item, digest):
             # not the bytes its boxes were detected on (replaced since, maybe by one of its size): rerun its detection
             done["skipped: changed since its detection: rerun its detection"] += 1

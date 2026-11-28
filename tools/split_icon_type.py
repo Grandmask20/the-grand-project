@@ -298,6 +298,19 @@ def main(argv: list[str] | None = None) -> int:
     ]
     if changed:
         raise SystemExit(f"truth icons changed while the split ran ({', '.join(changed[:5])}): nothing written")
+    # an icon named on a map tile (an Expedition ship marker) has no row of its own in truth_key.json: the truth's
+    # save rebuilds its name from the map note, so a new name given here would not last
+    keys = {tf: json.loads(read[k].decode("utf-8")) for tf in fresh if (k := tf.parent / "truth_key.json") in read}
+    from_notes = [
+        f"{tf.parent.name} {shot} {identity[0]}"
+        for tf, shot, _i, _m, identity in truth
+        if tf in keys and identity[0] not in keys[tf].get("badges", {})
+    ]
+    if from_notes:
+        raise SystemExit(
+            f"truth icons named in map notes ({', '.join(from_notes[:5])}): rename them in labels.txt and run "
+            "`python -m grand_project.truth save`, or split with --no-truth; nothing written"
+        )
     _unchanged(read, list(read))  # and nothing saved since the reread, before the databases change
     for db, rows in stored.items():
         if rows:

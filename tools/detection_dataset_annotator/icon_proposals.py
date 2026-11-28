@@ -370,11 +370,16 @@ def hidden_nodes(
                 low, high = K.ANNOTATOR_ICON_ROW_DY
                 below = spots[:, 1] - row_y
                 reach |= (np.abs(spots[:, 0] - x) <= K.ANNOTATOR_ICON_CENTRED) & (below >= low) & (below <= high)
-            nearest = int(np.argmin(np.where(reach, distance, np.inf)))
-            snapped = float(spots[nearest, 0]), float(spots[nearest, 1])
-            # a snap that lands beside a visible map node, not clear or off the screen keeps the estimate
-            if reach[nearest] and clear(*snapped, others) and not beside_visible(*snapped) and on_screen(*snapped):
-                x, y = snapped
+            # the nearest spot it may snap to (a nearer one beside a visible map node, not clear or off the screen
+            # hid one farther that would do: CodeRabbit); none: the estimate stays
+            usable = [
+                i
+                for i in np.nonzero(reach)[0]
+                if clear(*spots[i], others) and not beside_visible(*spots[i]) and on_screen(*spots[i])
+            ]
+            if usable:
+                nearest = min(usable, key=lambda i: distance[i])
+                x, y = float(spots[nearest, 0]), float(spots[nearest, 1])
         if not on_screen(x, y):
             continue
         node = {"x": round(x, 1), "y": round(y, 1), "hidden": True, "source": "icon row", "proposal": True}

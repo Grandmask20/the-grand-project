@@ -278,6 +278,7 @@ def _blocks(items: Sequence[tuple[str, Mapping[str, Any]]]) -> dict[str, str]:
 
 def main(argv: list[str] | None = None) -> int:
     """Pre-label the eligible training screenshots: a share of their blocks by the model, the rest classical."""
+    from .split_ledger import _ledger_lock
     from .state import resolve_path
     from .store import ReviewStore
 
@@ -307,9 +308,13 @@ def main(argv: list[str] | None = None) -> int:
         return 0
     # a dry run reads the store only: no journal change, no plan written
     with ReviewStore.open(store_path, read_only=args.dry_run) as store:
-        every = list(store.items())
+        # the store and the ledger read in one step under the ledger's lock: an export settling splits claims them in
+        # the store first and writes the ledger rows after (both under the lock), so a screenshot read between the
+        # two had a training split but no block yet, and took one of its own (CodeRabbit)
+        with _ledger_lock():
+            every = list(store.items())
+            blocks = _blocks(every)
         todo = eligible(every, set(trained))
-        blocks = _blocks(every)
         # every eligible block is drawn, whatever --limit leaves for later: the share is of all of them, not of a pass.
         # A block keeps the arm planned for it before (a pass that failed or stopped) or an earlier pass gave it.
         given = {**store.prelabel_plan(), **recorded_arms(every, blocks)}

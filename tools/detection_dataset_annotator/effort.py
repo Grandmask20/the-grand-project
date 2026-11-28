@@ -19,7 +19,6 @@ edit to the timer (non-negative least squares).
 from __future__ import annotations
 
 import argparse
-import json
 import statistics
 from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import asdict, dataclass, field
@@ -34,9 +33,9 @@ from grand_project.detect import constants as DK
 from grand_project.detect.labels import family as label_family
 
 from . import constants as K
+from .state import write_json_atomic
 
-EDIT_KINDS = ("kept", "relabelled", "moved", "deleted", "added")
-"""What a review can do to a box (``Edits``' fields)."""
+EDIT_KINDS = K.ANNOTATOR_EDIT_KINDS
 
 
 @dataclass
@@ -342,7 +341,7 @@ def main(argv: list[str] | None = None) -> int:
                 for row in rows
             ],
         }
-        args.json.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
+        write_json_atomic(args.json, payload)  # whole or not at all: a reader sees the last report or this one
     return 0 if rows else 1
 
 

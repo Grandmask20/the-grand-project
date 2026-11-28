@@ -251,6 +251,21 @@ def test_the_undo_memory_keeps_the_detectors_version(monkeypatch: pytest.MonkeyP
     assert session[app._known_key("editor")]["b0"] == detected
 
 
+def test_hiding_reviewed_screenshots_keeps_the_one_on_screen(page) -> None:
+    """A reviewed screenshot in the editor stays while "Hide reviewed screenshots" is ticked: the editor is not retired
+    by the filter (its edits since the last autosave were lost: CodeRabbit); the others reviewed are hidden."""
+    at, store, keys = page({"name": "a.png", "reviewed": True}, {"name": "b.png", "reviewed": True}, {"name": "c.png"})
+    with store:
+        next(c for c in at.sidebar.checkbox if c.label == "Hide reviewed screenshots").uncheck().run()
+        at.session_state[K.ANNOTATOR_SESSION_SELECTED] = keys[0]  # a.png on screen
+        at.run()
+        next(c for c in at.sidebar.checkbox if c.label == "Hide reviewed screenshots").check().run()
+        assert not at.exception
+        assert at.session_state[K.ANNOTATOR_SESSION_SELECTED] == keys[0]
+        names = [Path(o.split(" · ")[0].split(" ", 1)[1]).name for o in at.selectbox[0].options]
+        assert names == ["a.png", "c.png"]  # a.png (on screen) and c.png
+
+
 def test_a_screenshot_picked_in_the_list_waits_for_the_editor_s_save(page) -> None:
     """With an editor on screen, picking another screenshot asks the editor to save its latest boxes and go there
     (retired at once, its edits since the last autosave were lost: CodeRabbit); the page stays until it answers."""

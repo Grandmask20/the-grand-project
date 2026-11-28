@@ -76,13 +76,15 @@ def test_files_rewritten_from_several_threads_at_once_are_never_read_half_writte
     reader = threading.Thread(target=read) if reading else None
     for t in threads + ([reader] if reader else []):
         t.start()
-    for t in threads:
-        t.join(30)
-        assert not t.is_alive(), "a writer did not finish"
-    assert not failed, failed
-    done.set()
-    if reader:
-        reader.join(10)
+    try:
+        for t in threads:
+            t.join(30)
+            assert not t.is_alive(), "a writer did not finish"
+        assert not failed, failed
+    finally:  # the reader stops however the writers ended
+        done.set()
+        if reader:
+            reader.join(10)
     assert f.read_text() in texts.values()
     assert all(text == texts[text.split(":", 1)[0]] for text in seen), "a reader saw half a file"
     assert [p.name for p in tmp_path.iterdir()] == ["atlas.json"]  # no temporary file left

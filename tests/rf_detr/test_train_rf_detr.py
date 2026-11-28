@@ -217,6 +217,60 @@ def test_a_run_gone_on_from_a_model_lists_what_that_one_trained_on_too(tmp_path:
     assert T.main(args) == 0
     listed = (out / "best" / K.RF_DETR_TRAINED_ON).read_text().split()
     assert listed == ["older/shot.png", "shot0.png", "shot1.png", "shot2.png"]
+    assert not (out / "best" / K.RF_DETR_TRAINED_ON_PARTIAL).exists()
+    # each checkpoint lists the same (a pre-label pass with a checkpoint skips the earlier model's screenshots too),
+    # and this run's own apart, for --resume
+    checkpoint = next((out / "checkpoints").glob("checkpoint-*"))
+    assert (checkpoint / K.RF_DETR_TRAINED_ON).read_text().split() == listed
+    assert (checkpoint / K.RF_DETR_RUN_SOURCES).read_text().split() == ["shot0.png", "shot1.png", "shot2.png"]
+
+
+def test_a_model_gone_on_from_one_without_a_list_is_marked_partial(tmp_path: Path, fakes, ledger) -> None:
+    """--init-from a model that lists no training screenshots: what it learned is not known, so the kept model is
+    marked partial (a held-out check then says unknown, never held out)."""
+    earlier = tmp_path / "earlier"
+    earlier.mkdir()
+    (earlier / "labels.json").write_text(json.dumps(LABELS))
+    manifest = _export(tmp_path)
+    _freeze(manifest, ledger)
+    out = tmp_path / "run"
+    args = ["--annotator-manifest", str(manifest), "--output-dir", str(out), "--epochs", "1",
+            "--tiles-per-image", "1", "--batch-size", "2", "--grad-accum", "1", "--device", "cpu",
+            "--workers", "0", "--init-from", str(earlier)]  # fmt: skip
+    assert T.main(args) == 0
+    assert (out / "best" / K.RF_DETR_TRAINED_ON_PARTIAL).is_file()
+    assert T.ancestry(out / "best") == ({"shot0.png", "shot1.png", "shot2.png"}, True)
+
+
+def test_a_fresh_run_never_goes_on_among_an_earlier_runs_checkpoints(tmp_path: Path, fakes, ledger) -> None:
+    """Without --resume, checkpoints already in the output folder stop the run before any training (the Trainer's best
+    model and pruning would take them for its own: CodeRabbit)."""
+    manifest = _export(tmp_path)
+    _freeze(manifest, ledger)
+    out = tmp_path / "run"
+    (out / "checkpoints" / "checkpoint-4").mkdir(parents=True)
+    args = ["--annotator-manifest", str(manifest), "--output-dir", str(out), "--epochs", "1",
+            "--tiles-per-image", "1", "--batch-size", "2", "--grad-accum", "1", "--device", "cpu",
+            "--workers", "0"]  # fmt: skip
+    with pytest.raises(SystemExit, match="--resume"):
+        T.main(args)
+    assert not (out / "best").exists()
+
+
+def test_a_screenshot_replaced_after_the_ledger_check_is_not_built(tmp_path: Path, ledger) -> None:
+    """The bytes read into the dataset must be ones the ledger keeps with the screenshot's split."""
+    from grand_project.detect.rf_detr import Record
+
+    shot = tmp_path / "a.png"
+    shot.write_bytes(b"picture")
+    write_ledger([Entry(file_hash(shot), "train", "", "a.png")], ledger)
+    check = T._ledger_bytes()
+    record = Record(0, shot, "a.png", "annotator_reviewed", "g", 1, 1, (), "train")
+    check(record, file_hash(shot))
+    with pytest.raises(SystemExit, match="is not in the split ledger"):
+        check(record, "0" * 64)
+    with pytest.raises(SystemExit, match="is train in the split ledger"):
+        check(Record(0, shot, "a.png", "annotator_reviewed", "g", 1, 1, (), "test"), file_hash(shot))
 
 
 def test_the_ledger_stops_a_manifest_that_moved_a_screenshot(tmp_path: Path, fakes, ledger) -> None:
@@ -634,6 +688,7 @@ def test_only_the_global_main_process_writes_a_checkpoints_extras(tmp_path: Path
     for callback in (members, ema):
         callback.on_save(args, SimpleNamespace(global_step=1, is_world_process_zero=True), None)
     assert (tmp_path / "checkpoint-1" / K.RF_DETR_TRAINED_ON).read_text() == "a.png\nb.png\n"
+    assert (tmp_path / "checkpoint-1" / K.RF_DETR_RUN_SOURCES).read_text() == "a.png\nb.png\n"
     assert (tmp_path / "checkpoint-1" / K.RF_DETR_DATASET_ID).read_text() == "data-id"
     assert T.ema_complete(tmp_path / "checkpoint-1")
 
@@ -645,7 +700,7 @@ def test_resume_refuses_a_checkpoint_of_other_screenshots(tmp_path: Path) -> Non
     checkpoint.mkdir()
     with pytest.raises(SystemExit, match="it lists none"):
         T.check_resume_sources(checkpoint, ["a.png"], "data")
-    (checkpoint / K.RF_DETR_TRAINED_ON).write_text("a.png\nb.png\n")
+    (checkpoint / K.RF_DETR_RUN_SOURCES).write_text("a.png\nb.png\n")
     (checkpoint / K.RF_DETR_DATASET_ID).write_text("data")
     T.check_resume_sources(checkpoint, ["b.png", "a.png"], "data")
     with pytest.raises(SystemExit, match="--init-from"):
@@ -656,7 +711,7 @@ def test_resume_refuses_a_checkpoint_of_another_dataset_of_the_same_screenshots(
     """Another export's boxes on the same screenshots: the dataset's identity differs (CodeRabbit)."""
     checkpoint = tmp_path / "checkpoint-3"
     checkpoint.mkdir()
-    (checkpoint / K.RF_DETR_TRAINED_ON).write_text("a.png\n")
+    (checkpoint / K.RF_DETR_RUN_SOURCES).write_text("a.png\n")
     with pytest.raises(SystemExit, match="another dataset"):
         T.check_resume_sources(checkpoint, ["a.png"], "data")  # (it records none)
     (checkpoint / K.RF_DETR_DATASET_ID).write_text("data")

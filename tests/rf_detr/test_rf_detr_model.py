@@ -117,6 +117,44 @@ def test_tiles_find_each_object_once_in_screenshot_pixels() -> None:
     assert tuple(tile[y - oy, x - ox]) == K.RF_DETR_HUD_FILL[::-1]  # RGB
 
 
+def test_a_find_on_the_hud_is_dropped_before_the_duplicates(monkeypatch: pytest.MonkeyPatch) -> None:
+    """What lies on the HUD is HUD art, dropped in the tiled inference itself: the program, training's scores and the
+    pre-labels all see it gone (CodeRabbit)."""
+    torch = pytest.importorskip("torch")
+    tile = K.RF_DETR_TILE
+    monkeypatch.setattr(rf_detr_model.T, "tile_origins", lambda width, height: [(0, 1080 - tile)])
+
+    def model(pixel_values):
+        logits = torch.full((len(pixel_values), 2, 4), -20.0)
+        logits[:, :, 1] = 5.0  # sure: grass map nodes
+        y_hud, y_free = 1069 - (1080 - tile), 500 - (1080 - tile)  # (20, 1069) is on the HUD, (500, 500) is not
+        hud = [20 / tile, y_hud / tile, 20 / tile, 18 / tile]
+        free = [500 / tile, y_free / tile, 40 / tile, 40 / tile]
+        boxes = torch.tensor([[hud, free]])
+        return SimpleNamespace(logits=logits, pred_boxes=boxes.repeat(len(pixel_values), 1, 1))
+
+    def processor(*, images, return_tensors):
+        return {"pixel_values": torch.from_numpy(np.stack(images))}
+
+    families = class_families({0: "map_node", 1: "map_node_grass", 2: "map_node_mountain", 3: "icon"})
+    shot = np.zeros((1080, 1920, 3), np.uint8)
+    found = rf_detr_model.predict_tiles(model, processor, shot, families, torch.device("cpu"), threshold=0.35)
+    assert [[round(v) for v in d["box"]] for d in found] == [[480, 480, 520, 520]]
+
+
+def test_a_family_past_the_cap_is_chosen_by_its_whole_sum() -> None:
+    """Two families both summing past 1: the larger sum wins (capped first, they tied and the first listed won:
+    CodeRabbit), and only the score reported is capped."""
+    families = class_families({0: "map_node", 1: "map_node_grass", 2: "citadel_stone", 3: "citadel_iron"})
+    assert list(families) == ["node", "citadel"] or list(families) == ["citadel", "node"]
+    probs = np.array([[0.6, 0.6, 0.8, 0.6], [0.9, 0.3, 0.1, 0.1]])  # node 1.2 / citadel 1.4; node 1.2 / citadel 0.2
+    found = rf_detr_model.family_detections(probs, np.zeros((2, 4)), families, 0.5)
+    assert [(d["family"], d["label"], d["score"]) for d in found] == [
+        ("citadel", "citadel_stone", 1.0),
+        ("node", "map_node", 1.0),
+    ]
+
+
 def test_a_find_in_the_padding_of_a_small_screenshot_is_dropped() -> None:
     """A screenshot smaller than a tile is padded to one: a box the model puts wholly in the padding clamps to nothing
     on the screenshot and is no detection."""
@@ -215,7 +253,6 @@ def test_citadels_halls_and_deadly_bosses_come_back_as_the_classical_landmarks(m
         {"label": "map_node_desert", "family": "node", "box": [1480.0, 280.0, 1520.0, 320.0], "score": 0.9},
         {"label": "icon", "family": "icon", "box": [1483.0, 259.0, 1517.0, 293.0], "score": 0.8},
         {"label": "breach_stronghold", "family": "stronghold", "box": [1200.0, 200.0, 1350.0, 350.0], "score": 0.6},
-        {"label": "map_node", "family": "node", "box": [10.0, 1060.0, 30.0, 1078.0], "score": 0.9},  # on the HUD
     ]
     result = _detect(monkeypatch, predictions, names=["MapBossSpecial"] * 3)
     landmarks = sorted((lm["kind"], lm["x"], lm["y"], lm.get("city_type")) for lm in result["landmarks"])
@@ -230,7 +267,7 @@ def test_citadels_halls_and_deadly_bosses_come_back_as_the_classical_landmarks(m
         (500.0, 500.0): (None, "Vaal"),
         (1000.0, 700.0): ("grass", None),
         (1500.0, 300.0): ("desert", None),
-    }  # the node on the HUD is dropped
+    }
     assert sorted(i["name"] for i in result["icons"]) == ["MapBossSpecial"] * 3
 
 
@@ -328,6 +365,23 @@ def test_rf_detr_tower_keeps_its_map_node(monkeypatch) -> None:
         (1200.0, 500.0, False),
     ]
     assert [(lm["x"], lm["y"]) for lm in result["landmarks"] if lm["kind"] == "Tower"] == [(900.0, 505.0)]
+
+
+def test_a_tower_never_takes_a_city_map_node_beside_it_for_its_base(monkeypatch) -> None:
+    """A City's map node close to a tower's base is the City's, not a duplicate of the tower base: it stays, and so
+    does the City on it (CodeRabbit)."""
+    predictions = [
+        {"label": "map_node_grass", "family": "node", "box": [880.0, 480.0, 920.0, 520.0], "score": 0.9},
+        {"label": "map_node_vaal", "family": "node", "box": [905.0, 480.0, 945.0, 520.0], "score": 0.9},
+        {"label": "citadel_stone", "family": "citadel", "box": [912.0, 460.0, 990.0, 540.0], "score": 0.8},
+        {"label": "tower", "family": "tower", "box": [860.0, 285.0, 940.0, 505.0], "score": 0.8},
+    ]
+    result = _detect(monkeypatch, predictions)
+    assert sorted((n["x"], n["y"], bool(n.get("tower"))) for n in result["nodes"]) == [
+        (900.0, 500.0, True),
+        (925.0, 500.0, False),
+    ]
+    assert [(lm["x"], lm["y"]) for lm in result["landmarks"] if lm["kind"] == "City"] == [(925.0, 500.0)]
 
 
 def test_a_learned_wall_box_never_cuts_a_path_the_classical_wall_mask_lets_through(

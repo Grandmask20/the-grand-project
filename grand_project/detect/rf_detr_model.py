@@ -154,6 +154,7 @@ def load_detector(model_dir: Path) -> dict[str, Any]:
     labels = _labels(model_dir, model)
     listed = model_dir / K.RF_DETR_TRAINED_ON
     trained = trained_on(model_dir) if listed.is_file() else None  # with the weights: the same checkpoint state
+    complete = not (model_dir / K.RF_DETR_TRAINED_ON_PARTIAL).is_file()
     # the files as loaded, labels.json too, must be the ones the detector stamp names (a training run swapping a new
     # best/ in meanwhile would give detections of other weights under the old stamp): the digest from before the load,
     # checked after everything was read
@@ -178,15 +179,19 @@ def load_detector(model_dir: Path) -> dict[str, Any]:
         "device": device,
         "families": class_families(labels),
         "trained_on": trained,
+        "trained_on_complete": complete,
     }
 
 
-def runtime_trained_on(model_dir: Path) -> set[str] | None:
-    """The screenshots the detector in use trained on (None: its folder lists none): the loaded model's list, read
-    with its weights (a new best/ swapped in since would list other ones), else the folder's."""
+def runtime_trained_on(model_dir: Path) -> tuple[set[str] | None, bool]:
+    """The screenshots the detector in use trained on (None: its folder lists none) and whether that list is whole (no
+    ``RF_DETR_TRAINED_ON_PARTIAL``: no ancestor's screenshots missing from it): the loaded model's, read with its
+    weights (a new best/ swapped in since would list other ones), else the folder's."""
     if _RUNTIME is not None and "trained_on" in _RUNTIME:
-        return _RUNTIME["trained_on"]
-    return trained_on(model_dir) if (Path(model_dir) / K.RF_DETR_TRAINED_ON).is_file() else None
+        return _RUNTIME["trained_on"], bool(_RUNTIME.get("trained_on_complete", True))
+    folder = Path(model_dir)
+    listed = trained_on(folder) if (folder / K.RF_DETR_TRAINED_ON).is_file() else None
+    return listed, not (folder / K.RF_DETR_TRAINED_ON_PARTIAL).is_file()
 
 
 def _load_runtime() -> dict[str, Any]:
@@ -215,10 +220,13 @@ def family_detections(
     if not len(probs) or not families:
         return []
     names = list(families)
-    scores = np.stack([probs[:, [i for i, _n in families[f]]].sum(axis=1) for f in names], axis=1).clip(max=1.0)
-    best = scores.argmax(axis=1)
+    # the family is chosen by its uncapped sum (capped first, two families past 1 tied and the first won: CodeRabbit);
+    # only the score reported is capped
+    raw = np.stack([probs[:, [i for i, _n in families[f]]].sum(axis=1) for f in names], axis=1)
+    best = raw.argmax(axis=1)
+    chosen = raw[np.arange(len(raw)), best].clip(max=1.0)
     out = []
-    for query in np.nonzero(scores[np.arange(len(scores)), best] >= threshold)[0]:
+    for query in np.nonzero(chosen >= threshold)[0]:
         name = names[int(best[query])]
         members = families[name]
         index = int(np.argmax(probs[query, [i for i, _n in members]]))
@@ -226,7 +234,7 @@ def family_detections(
             {
                 "label": members[index][1],
                 "family": name,
-                "score": float(scores[query, best[query]]),
+                "score": float(chosen[query]),
                 "box": [float(v) for v in boxes[query]],
             }
         )
@@ -276,6 +284,11 @@ def predict_tiles(
                     continue  # all in the padding of a screenshot smaller than a tile: nothing of it is on it
                 det["box"] = box
                 detections.append(det)
+    # what lies on the HUD is HUD art, dropped before the duplicates are: so the program, the training's scores and the
+    # pre-labels see the same detections (and HUD art never suppresses a real object beside it)
+    centres = np.asarray([_centre(d["box"]) for d in detections], float).reshape(-1, 2)
+    on_hud = core.on_hud_mask(centres, width, height, pad=0) if len(centres) else np.zeros(0, bool)
+    detections = [d for d, hidden in zip(detections, on_hud, strict=True) if not hidden]
     return T.nms(detections, K.RF_DETR_FAMILY_NMS_IOU)
 
 
@@ -348,11 +361,8 @@ def detect_rf_detr(img: np.ndarray, book: dict | None = None) -> dict:
         img: the screenshot (BGR, 1080p as the detector reads it).
         book: the labelled icon pictures to name icons with (``_name_icons``; default the icon model's).
     """
-    detections = _predict(img)
+    detections = _predict(img)  # (off the HUD: predict_tiles)
     h, w = img.shape[:2]
-    centres = [_centre(d["box"]) for d in detections]
-    on_hud = core.on_hud_mask(np.asarray(centres, float), w, h, pad=0) if centres else np.zeros(0, bool)
-    detections = [d for d, hidden in zip(detections, on_hud, strict=True) if not hidden]
     by_family: dict[str, list[dict[str, Any]]] = {}
     for d in detections:
         by_family.setdefault(d["family"], []).append(d)
@@ -448,13 +458,15 @@ def detect_rf_detr(img: np.ndarray, book: dict | None = None) -> dict:
             if distances[nearest] <= K.RF_DETR_TOWER_NODE_REACH:
                 # As in the classical detector (landmarks_from): the tower's map node stays in the graph, flagged, so
                 # paths still reach it (trace_paths) and expedition_rules can unflag it; other map nodes this close
-                # are the same wide tower base.
+                # are the same wide tower base, unless a City or Hall is that map node (its landmark stands on it).
                 tower = nodes[nearest]
                 tower["tower"] = True
                 nodes = [
                     node
                     for node in nodes
-                    if node is tower or np.hypot(node["x"] - tower["x"], node["y"] - tower["y"]) > K.TOWER_NMS
+                    if node is tower
+                    or any(node is mine for mine in own)
+                    or np.hypot(node["x"] - tower["x"], node["y"] - tower["y"]) > K.TOWER_NMS
                 ]
 
     # the Expedition rules first, as in the classical detector: they clear tower flags the path tracer reads

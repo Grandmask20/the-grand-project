@@ -16,9 +16,7 @@ what is not done yet, so a second run changes nothing:
    away);
 4. detect the screenshots not detected yet (``pool.detect_pending``, with the store's detection options; never a
    rerun);
-5. record the bytes detected (``ANNOTATOR_DETECTED_SHA``) for detections made before they were kept, where the file is
-   still the picture's size (``record_digests``);
-6. seed the hand-labelled biome truths (``truth_seed``; by default ``ANNOTATOR_TRUTH_FILES``, the PM's fr-atlas
+5. seed the hand-labelled biome truths (``truth_seed``; by default ``ANNOTATOR_TRUTH_FILES``, the PM's fr-atlas
    truth).
 
 Then ``python -m tools.detection_dataset_annotator.split_ledger`` gives every screenshot its split (the ledger's
@@ -32,12 +30,10 @@ import os
 import shlex
 from collections import Counter
 from collections.abc import Callable, Iterable, Mapping
-from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime
 from pathlib import Path
 
 from . import constants as K
-from .detection import read_with_digest
 from .pool import detect_pending
 from .state import (
     copies,
@@ -85,36 +81,6 @@ def _backup_path(output_dir: Path) -> Path:
         path = output_dir / K.ANNOTATOR_BUILD_BACKUP.format(stamp=f"{stamp}-{number}")
         number += 1
     return path
-
-
-def record_digests(store: ReviewStore, *, dry_run: bool = False) -> tuple[Counter[str], dict[str, str]]:
-    """Record the SHA-256 of the bytes detected (``ANNOTATOR_DETECTED_SHA``) for each detection made before it was
-    kept: the file as it is now, where it is still the picture's size its boxes were detected in. One of another size
-    (replaced since) is left without it, so it counts as changed until its detection is rerun.
-
-    Returns:
-        (``hashed`` (recorded, or would be), ``changed``, ``unreadable``; image key -> each digest recorded, or that
-        would be in a dry run).
-    """
-    todo = [
-        (key, int(item["edit_version"]), Path(item["path"]), (item.get("width"), item.get("height")))
-        for key, item in store.items()
-        if item.get("detected") and not item.get(K.ANNOTATOR_DETECTED_SHA)
-    ]
-    done: Counter[str] = Counter({"hashed": 0, "changed": 0, "unreadable": 0})
-    digests: dict[str, str] = {}
-    with ThreadPoolExecutor(max_workers=K.ANNOTATOR_HASH_THREADS) as pool:  # (decoding lets go of the GIL)
-        for (key, revision, _path, size), read in zip(
-            todo, pool.map(lambda job: read_with_digest(job[2]), todo), strict=True
-        ):
-            if read is None:
-                done["unreadable"] += 1
-            elif (read[0].shape[1], read[0].shape[0]) != size:
-                done["changed"] += 1
-            elif dry_run or store.save_review(key, revision, extra={K.ANNOTATOR_DETECTED_SHA: read[1]}):
-                done["hashed"] += 1  # (not saved: detected again meanwhile, with its own)
-                digests[key] = read[1]
-    return done, digests
 
 
 def _truth_files(truths: list[Path] | None, say: Callable[[str], None]) -> list[Path]:
@@ -231,28 +197,14 @@ def build(
             )
             say(f"  {done['detected']} detected, {done['failed']} failed (retry: run again)")
 
-        say("5. Record the detected bytes")
-        planned: dict[str, str] = {}  # (a dry run's: what the seeding below would find recorded)
-        if store is None:
-            say("  no store yet: nothing detected")
-        else:
-            recorded, planned = record_digests(store, dry_run=dry_run)
-            done.update(recorded)
-            say(
-                f"  {recorded['hashed']} {'would be ' if dry_run else ''}recorded; {recorded['changed']} changed "
-                f"since their detection (rerun them); {recorded['unreadable']} unreadable"
-            )
-
-        say("6. Seed the biome truths")
+        say("5. Seed the biome truths")
         if not truth_files:
             say("  no truth files")
         elif store is None:
             say("  no store yet: nothing detected to seed")
         for path in truth_files if store is not None else []:
             say(f"  {relative_source(path)}")
-            seeded, changed, placed = seed_store(
-                store, Truth.load(path), dry_run=dry_run, recorded=planned if dry_run else None
-            )
+            seeded, changed, placed = seed_store(store, Truth.load(path), dry_run=dry_run)
             done["seeded"] += changed
             for line in seed_lines(seeded, changed, placed, dry_run=dry_run):
                 say(f"    {line}")
@@ -295,6 +247,8 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--no-detect", action="store_true", help="leave undetected screenshots for the page")
     parser.add_argument("--dry-run", action="store_true", help="say what would change, change nothing")
     args = parser.parse_args(argv)
+    if args.workers is not None and args.workers < 1 and not (args.no_detect or args.dry_run):
+        parser.error("--workers must be 1 or more")  # before the store is opened or changed
     try:
         build(
             resolve_path(args.output_dir),

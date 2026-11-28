@@ -47,7 +47,7 @@ from grand_project.detect.rf_detr_model import trained_on
 
 from . import constants as K
 from .effort import EDIT_KINDS, Edits, corners, edit_cost, match_boxes, total
-from .model_prelabel import merge, model_annotations, predict
+from .model_prelabel import UnreadableScreenshot, merge, model_annotations, predict
 from .state import file_hash
 from .truth_seed import Truth, truth_map_at
 
@@ -408,7 +408,11 @@ def _score_splits(
         sums = {policy: {"gold": Edits(), "silver": Edits()} for policy in K.ANNOTATOR_PRELABEL_POLICIES}
         scored = 0
         for row in rows:
-            found, detector_size, raw_size = predict(detector, Path(row["path"]))
+            try:
+                found, detector_size, raw_size = predict(detector, Path(row["path"]))
+            except UnreadableScreenshot:  # (one file only: the others are scored; a model error stops the run)
+                print(f"  {row['path']}: cannot be read (left out)")
+                continue
             if raw_size != (row.get("width"), row.get("height")):
                 # the file is not the one exported (replaced since): the model's boxes would be in another pixel frame
                 # than the classical and truth boxes, so it is not scored
@@ -515,7 +519,13 @@ def main(argv: list[str] | None = None) -> int:
             f"no validation or test screenshots of {args.atlas} seeded by {truth.source} in {args.manifest}: seed them "
             "(truth_seed) and export them with the unreviewed ones (export --unreviewed)"
         )
-    train_sources = [str(row.get("source")) for row in manifest.get("images", []) if row.get("split") == "train"]
+    # the training screenshots a truth-seeded round trains on (rf_detr.load_annotator_manifest's rule): reviewed, or
+    # seeded by a truth; another one revealed by a round stops the run here, before any dataset is built
+    train_sources = [
+        str(row.get("source"))
+        for row in manifest.get("images", [])
+        if row.get("split") == "train" and (row.get("reviewed") or row.get(K.ANNOTATOR_TRUTH_MARK))
+    ]
     rounds = revealed(read_ledger_rows(), args.atlas, parse_rounds(args.rounds), train_sources)
     classical = classical_boxes(resolve_path(args.classical_store))
     missing = [row["source"] for rows in shots.values() for row in rows if row["source"] not in classical]

@@ -86,3 +86,17 @@ def test_a_relative_screenshot_path_is_exported_where_the_file_is(
     manifest = json.loads((out / K.ANNOTATOR_MANIFEST_FILE).read_text(encoding="utf-8"))
     coco = json.loads((out / K.ANNOTATOR_COCO_FILE).read_text(encoding="utf-8"))
     assert manifest["images"][0]["path"] == coco["images"][0]["file_name"] == str(shot.resolve())
+
+
+def test_a_class_only_invalid_boxes_have_is_no_class_of_the_export(tmp_path: Path, review_store: ReviewStore) -> None:
+    """The classes are those of the boxes exported: a reviewer's own label whose only box is invalid (no size) is no
+    class of the manifest (CodeRabbit)."""
+    keys = _store(tmp_path, review_store)
+    item = review_store.item(keys["reviewed"])
+    boxes = [*item["annotations"], {"label": "my_label", "bbox": [5, 5, 0, 20], "source": "manual"}]
+    assert review_store.save_review(keys["reviewed"], item["edit_version"], annotations=boxes)
+    out = tmp_path / "out"
+    assert main(["--output-dir", str(out)]) == 0
+    manifest = json.loads((out / K.ANNOTATOR_MANIFEST_FILE).read_text(encoding="utf-8"))
+    assert "my_label" not in manifest["labels"].values()
+    assert [a["label"] for image in manifest["images"] for a in image["annotations"]] == ["tower"]

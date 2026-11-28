@@ -12,7 +12,9 @@ import {
   isGuess,
   labelForKey,
   plainKeyTarget,
+  relabelled,
   repeatIgnored,
+  scaledSide,
   wheelPixels,
 } from "../../tools/detection_dataset_annotator/component/annotator.js";
 
@@ -108,4 +110,22 @@ test("the label finder leaves Enter and Esc to an input method composing a word"
   assert.equal(finderKeyActs({ key: "Enter", isComposing: true, keyCode: 13 }), false); // picks the composed word
   assert.equal(finderKeyActs({ key: "Enter", isComposing: false, keyCode: 229 }), false); // (Safari's end of one)
   assert.equal(finderKeyActs({ key: "a", isComposing: false, keyCode: 65 }), false); // typed into the finder
+});
+
+test("shrinking a box never grows a side below the drawn-box minimum", () => {
+  assert.equal(scaledSide(1, -1), 1); // a 1 px side stays (the 2 px floor made it grow)
+  assert.equal(scaledSide(3, -1), 1);
+  assert.equal(scaledSide(3, -5), 1);
+  assert.equal(scaledSide(1, 1), 3);
+});
+
+test("a label changes only the boxes that have another one", () => {
+  const boxes = [
+    { id: "a", label: "tower", source: "classical" },
+    { id: "b", label: "hall", source: "classical" },
+  ];
+  assert.deepEqual(
+    relabelled(boxes, "tower").map((box) => box.id),
+    ["b"],
+  );
 });

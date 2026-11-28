@@ -1102,6 +1102,11 @@ def meta() -> dict:
     }
 
 
+_UPLOADS = threading.Lock()
+"""Held while one upload creates, compares and closes its file: a second drop of the same picture never takes a file
+for its own whose writer is still open (its close may yet fail and remove it: CodeRabbit)."""
+
+
 def save_upload(folder: Path, name: str, data: bytes) -> Path:
     """Save a dropped screenshot in a folder under its own name, or a free name when another picture has it.
 
@@ -1113,7 +1118,12 @@ def save_upload(folder: Path, name: str, data: bytes) -> Path:
     Returns:
         The file holding the picture (the one already there when it is the same picture).
     """
-    dest = folder / name
+    with _UPLOADS:
+        return _save_upload(folder / name, data)
+
+
+def _save_upload(dest: Path, data: bytes) -> Path:
+    """``save_upload`` with the upload lock held."""
     stem, k = dest.stem, 0
     while True:
         try:  # the name claimed in the same step as the file is made: checked first, then written, two pictures

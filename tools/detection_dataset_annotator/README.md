@@ -224,11 +224,10 @@ comes out the same:
 3. remove what discovery leaves out: byte copies of another screenshot (the first in discovery order stays, the one
    Discover keeps: the 115 `screenshots/crawl` copies of fr-atlas) and an atlas's own map pictures. Reviewed ones
    stay and are named; missing files are only counted;
-4. detect the screenshots not detected yet in worker processes (`--workers N`; `--no-detect` leaves them for the page);
-5. record the SHA-256 of the bytes each detection was made on, for detections made before it was kept, where the file
-   is still the size it was detected in. Every detection keeps it: a screenshot whose file has changed since (even to
+4. detect the screenshots not detected yet in worker processes (`--workers N`; `--no-detect` leaves them for the page).
+   Every detection keeps the SHA-256 of the bytes it was made on: a screenshot whose file has changed since (even to
    one of the same size) is not shown in the editor, pre-labelled, seeded or exported until its detection is rerun;
-6. seed the biome truths (`--truth`, by default the PM's fr-atlas `truth.json`: [below](#seeding-from-a-biome-truth)).
+5. seed the biome truths (`--truth`, by default the PM's fr-atlas `truth.json`: [below](#seeding-from-a-biome-truth)).
 
 Each step changes only what is not done yet, so a second run changes nothing; `--dry-run` says what would change. When
 the store's tables change, a new store is built the same way: run it with a new `--output-dir` (or after moving the
@@ -379,7 +378,7 @@ review flag.
 | `export.py` | COCO and manifest export (also a command) |
 | `splits.py`, `blocks.py` | train / validation / test splits, drawn by spatial blocks of each atlas |
 | `split_ledger.py`, `splits.csv` | every screenshot's split by the SHA-256 of its bytes, kept in git (`freeze`, `check`) |
-| `build_store.py` | the store brought up to date in one run (back up, discover, remove copies, detect, record bytes, seed truths) |
+| `build_store.py` | the store brought up to date in one run (back up, discover, remove copies, detect, seed truths) |
 | `truth_seed.py` | city areas and citadels from an atlas's hand-labelled biome truth |
 | `score_nodes.py` | the biome and city-area guesses against reviewed screenshots |
 | `effort.py` | what a review changed of the pre-labels, and the effort report by pre-label arm |

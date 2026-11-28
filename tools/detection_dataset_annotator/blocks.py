@@ -13,6 +13,7 @@ import math
 from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path, PureWindowsPath
+from typing import TypeVar
 
 import numpy as np
 
@@ -21,6 +22,8 @@ from grand_project.core.geometry import persp, screen_to_atlas
 
 from . import constants as K
 from .state import relative_source
+
+T = TypeVar("T")
 
 
 @dataclass(frozen=True, order=True)
@@ -55,10 +58,9 @@ def frame_middles(atlas_file: Path) -> dict[tuple[str, ...], tuple[float, float]
     return out
 
 
-def placed_by(
-    middles: dict[tuple[str, ...], tuple[float, float]], atlas_dir: Path, path: Path
-) -> tuple[float, float] | None:
-    """The middle of the screenshot at ``path`` in its atlas: the frame whose saved path ends with the file's own path
+def placed_by(middles: Mapping[tuple[str, ...], T], atlas_dir: Path, path: Path) -> T | None:
+    """The middle of the screenshot at ``path`` in its atlas (or what else ``middles`` keeps of each frame by its saved
+    path's parts, ``frame_middles``): the frame whose saved path ends with the file's own path
     from the atlas folder (``x.png`` next to it, ``pre/x.png`` in a folder below), wherever the atlas was made or
     moved; a file of a frame's name elsewhere is not that frame. None when no frame (or more than one) ends so.
 

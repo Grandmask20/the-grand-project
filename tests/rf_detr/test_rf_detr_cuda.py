@@ -64,3 +64,16 @@ def test_a_main_given_its_own_arguments_restarts_with_them(packages: list[str], 
         [sys.executable, "-u", "-m", "grand_project", "new.json", "--port", "0"],
         [sys.executable, "-u", "-m", "grand_project", "old.json"],
     ]
+
+
+def test_the_environments_own_libraries_come_before_a_system_wheels(tmp_path: Path, monkeypatch) -> None:
+    """In the interpreter's search order: a system folder sorting first ("/usr/...") never comes before the
+    environment's site-packages listed before it on sys.path (CodeRabbit)."""
+    env, system = tmp_path / "z-env", tmp_path / "a-system"
+    for root in (env, system):
+        (root / "nvidia" / "cudnn" / "lib").mkdir(parents=True)
+    monkeypatch.setattr(sys, "path", [str(env), str(system)])
+    assert rf_detr_cuda._library_dirs() == [
+        str(env / "nvidia" / "cudnn" / "lib"),
+        str(system / "nvidia" / "cudnn" / "lib"),
+    ]

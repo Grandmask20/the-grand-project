@@ -17,6 +17,7 @@ const HANDLE_PX = 9; // resize handle reach on screen, at any zoom
 const DRAG_START_PX = 3; // pointer travel on screen before a press becomes a drag
 const HIT_PAD_PX = 2; // boxes are hit this far outside their border (screen pixels)
 const MIN_BOX_PX = 2; // smaller drags are clicks, not new boxes (source pixels)
+const MIN_SIDE_PX = 1; // , / . and the wheel shrink a box side down to this (never grown back up to MIN_BOX_PX)
 const HISTORY_LIMIT = 200;
 const MAX_ZOOM = 16;
 const MIN_ZOOM_OF_FIT = 0.5; // zoom out to half the fitted size at most
@@ -132,6 +133,18 @@ export function finderKeyActs(event) {
   return !event.isComposing && event.keyCode !== 229 && (event.key === "Enter" || event.key === "Escape");
 }
 
+// A box side grown (step > 0) or shrunk by step source px on each end: never below MIN_SIDE_PX, and a side already
+// smaller is never grown by a shrink (the 2 px floor of a drawn box made a 1 px side grow). Exported for tests.
+export function scaledSide(side, step) {
+  return Math.max(Math.min(side, MIN_SIDE_PX), side + 2 * step);
+}
+
+// The boxes a label changes: those with another label (a box that has it already keeps its detector source and
+// score). Exported for tests/detection_dataset_annotator.
+export function relabelled(boxes, name) {
+  return boxes.filter((box) => box.label !== name);
+}
+
 // Whether a box is a guess to check first (an unsure city type, biome or city area: constants.ANNOTATOR_GUESS_SOURCES).
 export function isGuess(guessSources, box) {
   return guessSources.has(box.source);
@@ -233,6 +246,9 @@ class Annotator {
   }
 
   update(data) {
+    // the page answered an action (act): edits are taken again, on these boxes
+    this.leaving = false;
+    this.wrap.inert = false;
     // A new screenshot, detection revision or review state file (output folder) starts a fresh editor, and so does
     // a reload with the saved boxes (another tab saved this screenshot first).
     const first =
@@ -363,7 +379,12 @@ class Annotator {
   }
 
   act(type, extra = {}) {
-    // Navigation carries the latest boxes, so nothing typed since the last autosave is lost.
+    // Navigation carries the latest boxes, so nothing typed since the last autosave is lost. A box drag ends first,
+    // put back (an edit made after the boxes were sent was lost, or saved under the next screenshot); until the page
+    // answers (update), the editor takes no edits (inert), so none can land after the boxes it sent.
+    this.endBoxDrag();
+    this.leaving = true;
+    this.wrap.inert = true;
     clearTimeout(this.autosaveTimer);
     this.autosaveTimer = null;
     this.sentSeq = this.seq;
@@ -443,8 +464,9 @@ class Annotator {
     const view = el("div", "ann-row ann-tools", side);
     this.boxesBtn = this.button(view, "Boxes", "Hide or show boxes (H)", () => this.toggleBoxes());
     this.chipsBtn = this.button(view, "Labels", "Show every label (L)", () => this.toggleChips());
-    this.button(view, "Fit", "Fit the screenshot (F)", () => this.fit());
-    this.button(view, "Centre", "Centre the screenshot, keeping the zoom (C)", () => this.centre());
+    // a box drag ends first (as the F and C keys end it): its boxes would jump to the new view under the pointer
+    this.button(view, "Fit", "Fit the screenshot (F)", () => this.endBoxDrag() || this.fit());
+    this.button(view, "Centre", "Centre the screenshot, keeping the zoom (C)", () => this.endBoxDrag() || this.centre());
     this.helpBtn = this.button(view, "?", "Shortcuts (?)", () => this.toggleHelp());
     this.helpBtn.setAttribute("aria-label", "Shortcuts");
   }
@@ -884,6 +906,11 @@ class Annotator {
     this.renderAll();
   }
 
+  endBoxDrag() {
+    // Cancel a box drag (its boxes put back); a pan goes on.
+    if (this.drag && this.drag.kind !== "pan") this.cancelDrag();
+  }
+
   endDrag() {
     // Forget the drag in progress, restoring nothing.
     const drag = this.drag;
@@ -929,6 +956,11 @@ class Annotator {
 
   keyDown(event) {
     if (!this.active || !this.data || isTyping(event)) return;
+    if (this.leaving && event.composedPath().includes(this.wrap)) {
+      event.preventDefault(); // no edit after the boxes an action sent (act): the page answers first
+      event.stopPropagation();
+      return;
+    }
     if (!this.helpEl.hidden) {
       // The shortcuts card is open: Esc or ? closes it, wherever the focus is in the editor; every other key keeps
       // its own meaning (Tab, Enter on Close), so nothing is edited behind the card.
@@ -1114,9 +1146,10 @@ class Annotator {
       this.renderSide();
       return;
     }
-    if (boxes.every((box) => box.label === name)) return;
+    const changing = relabelled(boxes, name);
+    if (!changing.length) return;
     this.snapshot();
-    for (const box of boxes) {
+    for (const box of changing) {
       box.label = name;
       this.markEdited(box);
     }
@@ -1196,8 +1229,8 @@ class Annotator {
     const resize = (box) => {
       const cx = box.x + box.w / 2;
       const cy = box.y + box.h / 2;
-      box.w = Math.max(MIN_BOX_PX, box.w + 2 * step);
-      box.h = Math.max(MIN_BOX_PX, box.h + 2 * step);
+      box.w = scaledSide(box.w, step);
+      box.h = scaledSide(box.h, step);
       box.x = cx - box.w / 2;
       box.y = cy - box.h / 2;
     };
