@@ -10,4 +10,4 @@ detect (the screenshot detector), finalize (the atlas-wide clean-up), builder (a
 cities, towers, viewer (the window). Each larger part keeps its tunable numbers in its constants.py.
 """
 
-__version__ = "1.30"  # +1 per round of changes; the window title, README and pyproject.toml show the same
+__version__ = "1.31"  # +1 per round of changes; the window title, README and pyproject.toml show the same

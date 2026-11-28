@@ -537,10 +537,31 @@ def test_a_second_drop_waits_until_the_first_writer_has_closed_its_file(tmp_path
     assert got["first"] == got["second"] == tmp_path / "shot.png"
 
 
-def test_an_upload_for_the_atlas_switched_away_while_it_came_in_is_refused(app, tmp_path):
+def test_an_upload_for_the_atlas_switched_away_while_it_came_in_is_refused(app, tmp_path, monkeypatch):
     import http.client
 
     srv, _pts = app
+    # B opens only once the upload handler reads the body: opened before, the request's own generation check
+    # refused it and post_upload's check after the read was never run (CodeRabbit)
+    entered = threading.Event()
+    real_upload = S.Handler.post_upload
+
+    class SignallingBody:
+        def __init__(self, f):
+            self.f = f
+
+        def read(self, n=-1):
+            entered.set()
+            return self.f.read(n)
+
+        def __getattr__(self, name):
+            return getattr(self.f, name)
+
+    def upload(self, q):
+        self.rfile = SignallingBody(self.rfile)
+        return real_upload(self, q)
+
+    monkeypatch.setattr(S.Handler, "post_upload", upload)
     (tmp_path / "b").mkdir()
     b, _pts_b, _img = make_atlas(tmp_path / "b")
     a_folder = srv.session.path.parent
@@ -558,6 +579,7 @@ def test_an_upload_for_the_atlas_switched_away_while_it_came_in_is_refused(app, 
         conn.putheader(k, v)
     conn.endheaders()
     conn.send(data[:100])
+    assert entered.wait(5)  # the handler waits for the rest of the body
     srv.session.open_atlas(b)  # B opens while the picture is still coming in
     conn.send(data[100:])
     res = conn.getresponse()

@@ -295,6 +295,10 @@ class WarmPool:
         self._timer: threading.Timer | None = None
         self._timer_gen = 0  # the armed timer's number: a cancelled timer already running is told apart by it
         self._closed = False
+        # executors an idle timer took out, until their shutdown returns: closing the pool waits for them too (it
+        # returned while their processes still ran: CodeRabbit)
+        self._retiring: set = set()
+        self._retired = threading.Condition(self._lock)
 
     @contextlib.contextmanager
     def use(self):
@@ -352,13 +356,20 @@ class WarmPool:
             if gen != self._timer_gen or self._ex is not ex or self._users:
                 return
             self._ex, self._timer = None, None
-        ex.shutdown(wait=True)
+            self._retiring.add(ex)
+        try:  # (outside the lock: a new job starts a new executor meanwhile)
+            ex.shutdown(wait=True)
+        finally:
+            with self._retired:
+                self._retiring.discard(ex)
+                self._retired.notify_all()
 
     def close(self, wait: bool = True) -> None:
         """Close the worker processes for good (the app is closing).
 
         Args:
-            wait: Let a running job finish (else its processes are stopped: closing cut it off).
+            wait: Let a running job finish and an idle executor still closing end (else the current executor's
+                processes are stopped: closing cut its job off).
         """
         with self._lock:
             self._closed = True
@@ -367,14 +378,21 @@ class WarmPool:
             ex, self._ex, self._timer = self._ex, None, None
         if ex is not None:
             ex.shutdown(wait=True) if wait else _stop(ex)
+        if wait:
+            with self._retired:
+                self._retired.wait_for(lambda: not self._retiring)
 
 
 def _stop(ex) -> None:
     """Stop an executor without waiting: queued jobs cancelled, its processes ended (on Windows a process still
     running keeps the program's files locked, and the update replaces them)."""
-    processes = list((getattr(ex, "_processes", None) or {}).values())  # (ProcessPoolExecutor's own)
+    # ProcessPoolExecutor's own dict, kept (shutdown sets the attribute to None) and read after the shutdown: a
+    # worker started while it shuts down is in it too (a copy taken before missed it: CodeRabbit)
+    processes = getattr(ex, "_processes", None)
+    if processes is None:
+        processes = {}
     ex.shutdown(wait=False, cancel_futures=True)
-    for proc in processes:
+    for proc in list(processes.values()):
         with contextlib.suppress(Exception):
             proc.terminate()
 

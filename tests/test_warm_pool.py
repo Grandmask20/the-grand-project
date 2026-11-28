@@ -146,3 +146,55 @@ def test_closing_without_waiting_stops_a_job_still_running(pool):
     pool.close(wait=False)  # (the app's close cut the job off)
     assert wait_until(lambda: not any(p.is_alive() for p in procs), 20)
     assert time.monotonic() - t0 < 20  # not the 120 s job's end
+
+
+class FakeProcess:
+    def __init__(self):
+        self.terminated = False
+
+    def terminate(self):
+        self.terminated = True
+
+
+def test_stopping_ends_a_worker_started_during_the_shutdown():
+    """The executor's process dict is read after its shutdown: a worker it started meanwhile is ended too, though
+    shutdown drops the attribute (CodeRabbit)."""
+    early, late = FakeProcess(), FakeProcess()
+
+    class Executor:
+        def __init__(self):
+            self._processes = {1: early}
+
+        def shutdown(self, wait=True, cancel_futures=False):
+            self._processes[2] = late  # (spawned while it shuts down)
+            self._processes = None  # (as ProcessPoolExecutor.shutdown does)
+
+    builder._stop(Executor())
+    assert early.terminated and late.terminated
+
+
+def test_closing_waits_for_an_idle_executor_still_shutting_down(pool):
+    """An idle timer took the executor out and shuts it down: closing the pool waits for that too (it returned while
+    its processes still ran: CodeRabbit)."""
+    shutting, release = threading.Event(), threading.Event()
+
+    class Executor:
+        def shutdown(self, wait=True, cancel_futures=False):
+            shutting.set()
+            release.wait(30)
+
+    ex = Executor()
+    pool._ex = ex
+    idle = threading.Thread(target=pool._idle, args=(ex, pool._timer_gen))
+    idle.start()
+    try:
+        assert shutting.wait(10) and not pool.running()
+        closing = threading.Thread(target=pool.close)
+        closing.start()
+        closing.join(0.3)
+        assert closing.is_alive()  # waits for the retiring executor
+    finally:
+        release.set()
+    idle.join(10)
+    closing.join(10)
+    assert not closing.is_alive()

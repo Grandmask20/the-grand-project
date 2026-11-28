@@ -656,8 +656,10 @@ class Handler(BaseHTTPRequestHandler):
             opened = self.S.opened
             if not self.S.owns(gen) or opened.path is None:  # another atlas opened while it came in (CodeRabbit)
                 raise StaleAtlas()
-        # (the folder of the atlas it was checked for, from its own record)
-        self._json({"path": str(save_upload(opened.path.parent, name, data))})
+            # saved in the same locked step as the check, in the folder of the atlas it was checked for: checked,
+            # then saved, a switch between them saved it after another atlas opened (CodeRabbit)
+            dest = save_upload(opened.path.parent, name, data)
+        self._json({"path": str(dest)})
 
     # ------------------------------------------------------------------ adding screenshots
     @route("POST", "/api/screenshots")
