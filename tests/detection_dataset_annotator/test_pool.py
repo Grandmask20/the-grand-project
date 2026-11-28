@@ -222,13 +222,37 @@ def test_a_screenshot_removed_while_it_was_detected_is_skipped(tmp_path: Path, r
     )
     run.total = 2
     review_store.remove_unreviewed([keys["gone"]])
-    run.succeed((keys["gone"], "gone.png"), {"width": 1920, "height": 1080, "annotations": []})
-    run.fail((keys["gone"], "gone.png"), "boom")
+    run.succeed((keys["gone"], "gone.png", 0), {"width": 1920, "height": 1080, "annotations": []})
+    run.fail((keys["gone"], "gone.png", 0), "boom")
     assert (run.completed, run.errors, run.removed, seen) == (0, 0, 2, [1, 2])
 
-    def broken(key, result, *, force):
+    def broken(key, result, *, force, generation=None):
         raise KeyError("a bug")
 
     review_store.record_detection = broken  # type: ignore[method-assign]
     with pytest.raises(KeyError, match="a bug"):
-        run.succeed((keys["kept"], "kept.png"), {"annotations": []})
+        run.succeed((keys["kept"], "kept.png", 0), {"annotations": []})
+
+
+def test_a_worker_that_takes_no_input_is_stuck_not_a_broken_pipe(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A drain that times out is a stuck worker: the TimeoutError reaches the driver (which stops the worker), it is
+    not turned into a send error like a broken pipe (TimeoutError is an OSError: CodeRabbit)."""
+    import asyncio
+    from types import SimpleNamespace
+
+    class Stuck:
+        def write(self, data: bytes) -> None:
+            pass
+
+        async def drain(self) -> None:
+            await asyncio.sleep(10)
+
+    class Broken(Stuck):
+        async def drain(self) -> None:
+            raise BrokenPipeError("gone")
+
+    monkeypatch.setattr(K, "ANNOTATOR_WORKER_ANSWER_S", 0.05)
+    with pytest.raises(TimeoutError):
+        asyncio.run(pool._send(SimpleNamespace(stdin=Stuck()), ("k", "a.png", 0), {}))
+    error = asyncio.run(pool._send(SimpleNamespace(stdin=Broken()), ("k", "a.png", 0), {}))
+    assert error.startswith("Could not send screenshot")

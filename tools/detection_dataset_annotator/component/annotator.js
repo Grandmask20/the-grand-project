@@ -195,6 +195,30 @@ export function coordinateValue(text) {
   return Number.isFinite(value) ? value : null;
 }
 
+// After a move or resize drag: each box whose geometry is as before the drag gets its source and score back (the drag
+// marked it edited); whether any box did change. Exported for tests/detection_dataset_annotator.
+export function keepUnmoved(boxes, before) {
+  const was = new Map(before.map((box) => [box.id, box]));
+  let moved = false;
+  for (const box of boxes) {
+    const old = was.get(box.id);
+    if (!old) continue;
+    if (["x", "y", "w", "h"].every((field) => box[field] === old[field])) {
+      box.source = old.source;
+      box.score = old.score;
+    } else {
+      moved = true;
+    }
+  }
+  return moved;
+}
+
+// The source line under a box's fields: where the box came from, and its score.
+function sourceText(box) {
+  const score = box.score == null ? "" : ` · score ${Number(box.score).toFixed(3)}`;
+  return `${box.source || MANUAL}${score}`;
+}
+
 class Annotator {
   constructor(root) {
     this.root = root;
@@ -246,9 +270,6 @@ class Annotator {
   }
 
   update(data) {
-    // the page answered an action (act): edits are taken again, on these boxes
-    this.leaving = false;
-    this.wrap.inert = false;
     // A new screenshot, detection revision or review state file (output folder) starts a fresh editor, and so does
     // a reload with the saved boxes (another tab saved this screenshot first).
     const first =
@@ -260,6 +281,14 @@ class Annotator {
     // A drag on the old screenshot ends without putting anything back: its boxes must never return over the new one
     // (a later Esc would restore them).
     if (first) this.endDrag();
+    // the page answered the pending action (act), or shows another screenshot: edits are taken again, on these boxes.
+    // An autosave's answer (the same screenshot, the action not handled yet) keeps the editor locked: an edit made
+    // then would land after the boxes the action sent.
+    if (first || (this.pendingAction && data.action_done === this.pendingAction)) {
+      this.pendingAction = null;
+      this.leaving = false;
+      this.wrap.inert = false;
+    }
     this.data = data;
     this.labels = data.labels ?? [];
     // Sources of guessed boxes (an unsure city type, biome or city area: constants.ANNOTATOR_GUESS_SOURCES)
@@ -383,13 +412,15 @@ class Annotator {
     // put back (an edit made after the boxes were sent was lost, or saved under the next screenshot); until the page
     // answers (update), the editor takes no edits (inert), so none can land after the boxes it sent.
     this.endBoxDrag();
+    this.actionCount = (this.actionCount ?? 0) + 1;
+    this.pendingAction = `${this.session}-${this.actionCount}`; // the page answers with it (data.action_done)
     this.leaving = true;
     this.wrap.inert = true;
     clearTimeout(this.autosaveTimer);
     this.autosaveTimer = null;
     this.sentSeq = this.seq;
     this.statusEl.textContent = "Saving…";
-    this.setTriggerValue("action", { type, ...extra, ...this.payload() });
+    this.setTriggerValue("action", { type, ...extra, ...this.payload(), action_id: this.pendingAction });
   }
 
   // ---- DOM ------------------------------------------------------------------------------------------------
@@ -900,8 +931,12 @@ class Annotator {
       this.select(box.id);
       this.changed();
     } else if (drag.moved && (drag.kind === "move" || drag.kind === "resize")) {
-      this.remember(drag.before);
-      this.changed();
+      // A box that ended where it began (dragged out and back, or held against the image edge) keeps its source and
+      // score; a drag that moved nothing is no edit: no undo step, no autosave.
+      if (keepUnmoved(this.boxes, drag.before)) {
+        this.remember(drag.before);
+        this.changed();
+      }
     }
     this.renderAll();
   }
@@ -1462,6 +1497,8 @@ class Annotator {
     const rule = this.labelByName[box.label]?.rule;
     if (rule) el("p", "ann-muted ann-rule", panel).textContent = rule;
     const grid = el("div", "ann-grid", panel);
+    const inputs = {};
+    let sourceEl = null;
     for (const field of ["x", "y", "w", "h"]) {
       const label = el("label", "", grid);
       el("span", "", label).textContent = field.toUpperCase();
@@ -1469,6 +1506,7 @@ class Annotator {
       input.type = "number";
       input.step = "1";
       input.value = String(round2(box[field]));
+      inputs[field] = input;
       input.addEventListener("change", () => {
         const value = coordinateValue(input.value);
         if (value === null) {
@@ -1485,11 +1523,19 @@ class Annotator {
         this.clampBox(target);
         this.markEdited(target);
         this.changed();
-        this.renderAll();
+        // the fields stay (Tab has the next one in hand: drawing the panel anew lost it): their values follow the
+        // clamped box, the rest of the editor is drawn again
+        this.applyView();
+        this.renderBoxes();
+        this.renderSide({ keepDraft: true });
+        if (this.inspectorEl.contains(input)) {
+          for (const [name, node] of Object.entries(inputs)) node.value = String(round2(target[name]));
+          sourceEl.textContent = sourceText(target);
+        }
       });
     }
-    const score = box.score == null ? "" : ` · score ${Number(box.score).toFixed(3)}`;
-    el("p", "ann-muted", panel).textContent = `${box.source || MANUAL}${score}`;
+    sourceEl = el("p", "ann-muted", panel);
+    sourceEl.textContent = sourceText(box);
     this.button(panel, "Delete", "Delete selected (Del)", () => this.deleteSelected());
   }
 }

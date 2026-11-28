@@ -307,9 +307,11 @@ def test_the_goto_action_saves_the_boxes_and_moves_whatever_the_save(
 
     boxes = editor_boxes(item["annotations"])
     boxes[0]["x"] = 50.0  # moved since the last autosave
-    action = {"type": "goto", "target": keys[1], "image_key": keys[0], "revision": revision, "seq": 1, "boxes": boxes}
+    action = {"type": "goto", "target": keys[1], "image_key": keys[0], "revision": revision, "seq": 1, "boxes": boxes,
+              "action_id": "s-1"}  # fmt: skip
     session[editor] = {"action": action}
     app._on_action(store_path, keys[0], revision, editor, keys)
+    assert session[app._action_done_key(editor)] == "s-1"  # the editor unlocks on this answer only
     with ReviewStore.open(store_path) as store:
         assert store.item(keys[0])["annotations"][0]["bbox"][0] == 50.0  # saved before the move
     assert session[K.ANNOTATOR_SESSION_SELECTED] == session[K.ANNOTATOR_SESSION_PICKED] == keys[1]

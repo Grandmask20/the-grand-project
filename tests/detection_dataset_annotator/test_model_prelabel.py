@@ -315,6 +315,42 @@ def test_a_failed_model_pass_keeps_its_blocks_in_the_models_arm(
         assert [b["label"] for b in review_store.item(key)["annotations"]] == ["map_node_vaal"]
 
 
+def test_a_limit_counts_the_screenshots_pre_labelled_not_the_ones_tried(
+    tmp_path: Path, review_store: ReviewStore, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """--limit 1: the first screenshot cannot be read (tried once, left eligible); the pass goes on to the next and
+    stops after the one saved (CodeRabbit)."""
+    folder = tmp_path / "shots"
+    folder.mkdir()
+    paths = [folder / f"{index}.png" for index in range(3)]
+    for index, path in enumerate(paths):
+        path.write_bytes(bytes([index]))
+    review_store.add_images(paths)
+    for path in paths:
+        result = {"width": 1920, "height": 1080, "annotations": [_box("map_node_grass", 300, 300)]}
+        review_store.record_detection(image_key(path), result, force=False)
+    keys = [image_key(path) for path in paths]
+    review_store.claim_splits({key: "train" for key in keys})
+    monkeypatch.setattr(model_prelabel, "_blocks", lambda items: {key: key for key, _item in items})
+    monkeypatch.setattr("grand_project.detect.rf_detr_model.load_detector", lambda model_dir: {})
+    tried = []
+    found = [{"label": "map_node_vaal", "family": "node", "score": 0.9, "box": [281.0, 281.0, 319.0, 319.0]}]
+
+    def predict(detector, path, detected=None):
+        tried.append(Path(path).name)
+        if Path(path).name == "0.png":
+            raise model_prelabel.UnreadableScreenshot("cannot be read")
+        return found, (1920, 1080), (1920, 1080)
+
+    monkeypatch.setattr(model_prelabel, "predict", predict)
+    (tmp_path / "model").mkdir()
+    out = review_store.path.parent
+    command = ["--model", str(tmp_path / "model"), "--output-dir", str(out), "--share", "1", "--limit", "1"]
+    assert model_prelabel.main(command) == 0
+    assert tried == ["0.png", "1.png"]
+    assert [K.ANNOTATOR_PRELABEL_FIELD in review_store.item(key) for key in keys] == [False, True, False]
+
+
 def test_a_dry_run_plans_no_arm(tmp_path: Path, review_store: ReviewStore) -> None:
     path = tmp_path / "a.png"
     path.write_bytes(b"a")

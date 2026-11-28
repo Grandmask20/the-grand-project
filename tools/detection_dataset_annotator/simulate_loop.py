@@ -39,7 +39,7 @@ import sys
 from collections.abc import Callable, Iterable, Mapping, Sequence
 from contextlib import closing
 from pathlib import Path, PurePosixPath
-from typing import Any
+from typing import Any, NamedTuple
 
 from grand_project.detect import constants as DK
 from grand_project.detect import labels as L
@@ -47,7 +47,7 @@ from grand_project.detect.rf_detr_model import trained_on
 
 from . import constants as K
 from .effort import EDIT_KINDS, Edits, corners, edit_cost, match_boxes, total
-from .model_prelabel import UnreadableScreenshot, merge, model_annotations, predict
+from .model_prelabel import ChangedScreenshot, UnreadableScreenshot, merge, model_annotations, predict
 from .state import file_hash
 from .truth_seed import Truth, truth_map_at
 
@@ -71,24 +71,30 @@ def parse_rounds(text: str) -> list[list[str]]:
 
 
 def revealed(
-    rows: Iterable[Any], atlas: str, rounds: Sequence[Sequence[str]], train_sources: Iterable[str]
+    rows: Iterable[Any], atlas: str, rounds: Sequence[Sequence[str]], train_sources: Mapping[str, str | None]
 ) -> list[list[str]]:
     """The training screenshots revealed by each round, cumulative, by the names the manifest gives them.
 
     A screenshot (a digest) may have several ledger rows, one per name its bytes were seen under: it is revealed under
-    the one the manifest trains on (``train_subset`` keeps screenshots by that name).
+    the name of the manifest row holding those bytes (``train_subset`` keeps screenshots by that name). A ledger row
+    is matched to a manifest row by its bytes first; by its name only when the manifest row has no digest: a file
+    whose bytes changed (an old row of its name, in another block) is never revealed early under that name.
 
     Args:
         rows: the split ledger's rows (``read_ledger_rows``).
         atlas: the atlas folder, as the ledger names its blocks (``<atlas>#<n>``).
         rounds: the block numbers each round adds.
-        train_sources: the manifest's training screenshots (their ``source``).
+        train_sources: the manifest's training screenshots: their ``source`` -> the SHA-256 exported (None: none).
 
     Raises:
         ValueError: a block that is not one of the atlas's training blocks, a block named twice, or a screenshot of a
             revealed block the manifest has no training screenshot for.
     """
-    sources = set(train_sources)
+    by_digest: dict[str, list[str]] = {}
+    for source, digest in train_sources.items():
+        if digest:
+            by_digest.setdefault(digest, []).append(source)
+    unhashed = {source for source, digest in train_sources.items() if not digest}
     blocks: dict[str, dict[str, list[str]]] = {}
     for entry in rows:
         if entry.split == "train" and entry.block.startswith(f"{atlas}#"):
@@ -105,8 +111,8 @@ def revealed(
             if block not in blocks:
                 raise ValueError(f"{atlas}#{block} is not a training block (training blocks: {sorted(blocks)})")
             found, missing = [], []
-            for names in blocks[block].values():
-                trained = sorted(name for name in names if name in sources)
+            for digest, names in blocks[block].items():
+                trained = sorted(by_digest.get(digest, [])) or sorted(name for name in names if name in unhashed)
                 if trained:
                     found.append(trained[0])
                 else:
@@ -190,24 +196,32 @@ def _families(*sides: Iterable[Mapping[str, Any]]) -> list[str]:
     return sorted({L.family(str(a.get("label", ""))) or str(a.get("label", "")) for side in sides for a in side})
 
 
-def classical_boxes(store_path: Path) -> dict[str, list[dict[str, Any]]]:
-    """The classical detector's boxes per screenshot (its project-relative file), read from a store copy without
-    changing it."""
-    out: dict[str, list[dict[str, Any]]] = {}
+class Baseline(NamedTuple):
+    """A screenshot's classical boxes and the SHA-256 of the bytes they were detected on (None: not recorded)."""
+
+    sha256: str | None
+    boxes: list[dict[str, Any]]
+
+
+def classical_boxes(store_path: Path) -> dict[str, Baseline]:
+    """The classical detector's boxes per screenshot (its project-relative file) with the digest of the bytes they
+    were detected on, read from a store copy without changing it."""
+    out: dict[str, Baseline] = {}
     # closing(): a connection's own ``with`` only ends a transaction, and an open file cannot be removed on Windows;
     # as_uri percent-encodes the path: a raw "#" or "?" in it would end the path early and drop "mode=ro"
     with closing(sqlite3.connect(f"{store_path.resolve().as_uri()}?mode=ro", uri=True)) as db:
         # LEFT JOIN: a screenshot the classical detector found nothing on has its (empty) boxes too; one never
         # detected (or whose detection failed) has none, which is no baseline
         rows = db.execute(
-            "SELECT images.source, annotations.label, annotations.x, annotations.y, annotations.w, annotations.h, "
-            "annotations.source FROM images LEFT JOIN annotations ON images.key = annotations.image_key "
+            "SELECT images.source, images.extra, annotations.label, annotations.x, annotations.y, annotations.w, "
+            "annotations.h, annotations.source FROM images LEFT JOIN annotations ON images.key = annotations.image_key "
             "WHERE images.detected = 1 ORDER BY images.position, annotations.ord"
         )
-        for source, label, x, y, w, h, box_source in rows:
-            boxes = out.setdefault(source, [])
+        for source, extra, label, x, y, w, h, box_source in rows:
+            if source not in out:
+                out[source] = Baseline(json.loads(extra).get(K.ANNOTATOR_DETECTED_SHA), [])
             if label is not None:  # NULL: the LEFT JOIN's no box (a box's label is never NULL)
-                boxes.append({"label": label, "bbox": [x, y, w, h], "source": box_source})
+                out[source].boxes.append({"label": label, "bbox": [x, y, w, h], "source": box_source})
     return out
 
 
@@ -368,7 +382,7 @@ def truth_map_of(truth: Truth | None, row: Mapping[str, Any]) -> Callable[[Mappi
 def score_round(
     best: Path,
     shots: Mapping[str, list[Mapping[str, Any]]],
-    classical: Mapping[str, list[dict[str, Any]]],
+    classical: Mapping[str, Baseline],
     truth: Truth | None = None,
 ) -> dict[str, Any]:
     """Every policy's edits on the held-out screenshots with a round's model, per split (per screenshot means)."""
@@ -399,31 +413,34 @@ def _free_accelerator() -> None:
 def _score_splits(
     detector: Mapping[str, Any],
     shots: Mapping[str, list[Mapping[str, Any]]],
-    classical: Mapping[str, list[dict[str, Any]]],
+    classical: Mapping[str, Baseline],
     truth: Truth | None,
 ) -> dict[str, Any]:
-    """``score_round`` with its model loaded."""
+    """``score_round`` with its model loaded. A screenshot is scored only on the bytes it was exported with: the
+    file the model reads now, and the classical boxes' detection, must both be those bytes (by digest)."""
     out: dict[str, Any] = {}
     for split, rows in shots.items():
         sums = {policy: {"gold": Edits(), "silver": Edits()} for policy in K.ANNOTATOR_PRELABEL_POLICIES}
         scored = 0
         for row in rows:
+            baseline = classical.get(str(row["source"]))
+            if baseline is None or baseline.sha256 != row.get(K.ANNOTATOR_DETECTED_SHA):
+                # the classical boxes were detected on other bytes than the export's: no baseline for these
+                print(f"  {row['source']}: its classical boxes are of other bytes than exported (left out)")
+                continue
             try:
-                found, detector_size, raw_size = predict(detector, Path(row["path"]))
+                # the bytes the model reads must be the exported ones (checked on that same read): else its boxes
+                # would frame another picture than the classical and truth boxes
+                found, detector_size, raw_size = predict(detector, Path(row["path"]), detected=row)
             except UnreadableScreenshot:  # (one file only: the others are scored; a model error stops the run)
                 print(f"  {row['path']}: cannot be read (left out)")
                 continue
-            if raw_size != (row.get("width"), row.get("height")):
-                # the file is not the one exported (replaced since): the model's boxes would be in another pixel frame
-                # than the classical and truth boxes, so it is not scored
-                print(
-                    f"  {row['source']}: {raw_size[0]}x{raw_size[1]}, exported at {row.get('width')}x"
-                    f"{row.get('height')}: changed since its detection, rerun its detection (left out)"
-                )
+            except ChangedScreenshot:
+                print(f"  {row['source']}: changed since its export, export it again (left out)")
                 continue
             scored += 1
             model = model_annotations(found, detector_size, raw_size)
-            base = classical.get(str(row["source"]), [])
+            base = baseline.boxes
             reference = [{"label": a["label"], "bbox": a["bbox"]} for a in row["annotations"]]
             scale = raw_size[0] / detector_size[0]
             map_of = truth_map_of(truth, row)
@@ -519,14 +536,32 @@ def main(argv: list[str] | None = None) -> int:
             f"no validation or test screenshots of {args.atlas} seeded by {truth.source} in {args.manifest}: seed them "
             "(truth_seed) and export them with the unreviewed ones (export --unreviewed)"
         )
+
     # the training screenshots a truth-seeded round trains on (rf_detr.load_annotator_manifest's rule): reviewed, or
     # seeded by a truth; another one revealed by a round stops the run here, before any dataset is built
-    train_sources = [
+    # the training screenshots a round trains on: reviewed ones, and unreviewed ones this truth seeded. One another
+    # truth seeded is no gold for this one: a round revealing it stops the run here, named, before any training
+    def mark(row: Mapping[str, Any]) -> str | None:
+        return str(row[K.ANNOTATOR_TRUTH_MARK]) if row.get(K.ANNOTATOR_TRUTH_MARK) else None
+
+    training = [row for row in manifest.get("images", []) if row.get("split") == "train"]
+    foreign = {
         str(row.get("source"))
-        for row in manifest.get("images", [])
-        if row.get("split") == "train" and (row.get("reviewed") or row.get(K.ANNOTATOR_TRUTH_MARK))
-    ]
+        for row in training
+        if not row.get("reviewed") and mark(row) and _posix(mark(row)) != _posix(truth.source)
+    }
+    train_sources = {
+        str(row.get("source")): row.get(K.ANNOTATOR_DETECTED_SHA)
+        for row in training
+        if row.get("reviewed") or mark(row)  # (another truth's too: revealed, then named below)
+    }
     rounds = revealed(read_ledger_rows(), args.atlas, parse_rounds(args.rounds), train_sources)
+    wrong = sorted(foreign.intersection(*rounds[-1:]) if rounds else set())
+    if wrong:
+        raise SystemExit(
+            f"{len(wrong)} unreviewed training screenshots the rounds reveal were seeded by another truth than "
+            f"{truth.source}: {wrong[:3]} (seed them with it, or review them)"
+        )
     classical = classical_boxes(resolve_path(args.classical_store))
     missing = [row["source"] for rows in shots.values() for row in rows if row["source"] not in classical]
     if missing:
@@ -564,6 +599,7 @@ __all__ = [
     "check_manifest",
     "check_round",
     "city_area",
+    "Baseline",
     "classical_boxes",
     "dataset_matches",
     "held_out",

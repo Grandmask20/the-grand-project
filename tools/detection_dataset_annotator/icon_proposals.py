@@ -361,8 +361,7 @@ def hidden_nodes(
         # the row's own icons stand right above its map node (a single one ROW_DY above, closer than ICON_NMS)
         mine = {id(icon) for icon in row}
         others = _points([icon for icon in icons if id(icon) not in mine])
-        if not clear(x, y, others):
-            continue
+        snapped = False
         if len(spots):
             distance = np.hypot(spots[:, 0] - x, spots[:, 1] - y)
             reach = distance <= K.ANNOTATOR_HIDDEN_SNAP
@@ -380,7 +379,10 @@ def hidden_nodes(
             if usable:
                 nearest = min(usable, key=lambda i: distance[i])
                 x, y = float(spots[nearest, 0]), float(spots[nearest, 1])
-        if not on_screen(x, y):
+                snapped = True
+        # a usable spot is screened already; the estimate stands only when it keeps clear and is on the screen (an
+        # estimate in another row's icons no longer hides a faint map node that would do: CodeRabbit)
+        if not snapped and not (clear(x, y, others) and on_screen(x, y)):
             continue
         node = {"x": round(x, 1), "y": round(y, 1), "hidden": True, "source": "icon row", "proposal": True}
         found.append(node)

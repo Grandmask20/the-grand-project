@@ -77,7 +77,8 @@ class Truth:
     cities: np.ndarray
     """(C, 2) the Cities found in the city areas (not the stand-ins of areas where none was found)."""
     screenshots: dict[str, dict[str, Any]]
-    """File name -> its placement (``w``, ``h``, ``M``, ``horizon``)."""
+    """File name -> its placement (``w``, ``h``, ``M``, ``horizon``, and ``sha256``: the SHA-256 of the screenshot's
+    bytes the placement was made on; only a placement with it seeds)."""
     source: str = ""
     """The truth file, project-relative: the mark a seeded screenshot carries (``ANNOTATOR_TRUTH_MARK``)."""
     root: Path | None = None
@@ -382,6 +383,15 @@ def seed_store(store: ReviewStore, truth: Truth, *, dry_run: bool = False) -> tu
             done["skipped: unreadable screenshot (not marked)"] += 1  # seeded on a later run, once it can be read
             continue
         raw, digest = read
+        placed = truth.screenshots[Path(item["path"]).name].get(K.ANNOTATOR_DETECTED_SHA)
+        if not placed:
+            # the truth names its screenshots by file name only: without the bytes it placed, a file of that name
+            # (replaced, or another view) would take city areas meant for another picture (CodeRabbit)
+            done["skipped: the truth's placement names no screenshot bytes (sha256): refresh the truth"] += 1
+            continue
+        if placed != digest:
+            done["skipped: not the screenshot the truth placed (other bytes)"] += 1
+            continue
         if changed_since_detection(item, digest):
             # not the bytes its boxes were detected on (replaced since, maybe by one of its size): rerun its detection
             done["skipped: changed since its detection: rerun its detection"] += 1

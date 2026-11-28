@@ -10,6 +10,7 @@ import {
   finderKeyActs,
   finderPick,
   isGuess,
+  keepUnmoved,
   labelForKey,
   plainKeyTarget,
   relabelled,
@@ -128,4 +129,21 @@ test("a label changes only the boxes that have another one", () => {
     relabelled(boxes, "tower").map((box) => box.id),
     ["b"],
   );
+});
+
+test("a drag that ends where it began is no edit of that box", () => {
+  // the drag marked both edited; one moved, the other was held against the image edge and stayed
+  const before = [
+    { id: "a", x: 10, y: 10, w: 40, h: 40, source: "classical", score: 0.9 },
+    { id: "b", x: 0, y: 0, w: 40, h: 40, source: "biome_guess", score: 0.5 },
+  ];
+  const boxes = [
+    { id: "a", x: 12, y: 10, w: 40, h: 40, source: "manual", score: null },
+    { id: "b", x: 0, y: 0, w: 40, h: 40, source: "manual", score: null },
+  ];
+  assert.equal(keepUnmoved(boxes, before), true);
+  assert.deepEqual([boxes[0].source, boxes[1].source, boxes[1].score], ["manual", "biome_guess", 0.5]);
+  const still = [{ ...before[0], source: "manual", score: null }];
+  assert.equal(keepUnmoved(still, before), false); // nothing moved: no undo step, no autosave
+  assert.equal(still[0].source, "classical");
 });

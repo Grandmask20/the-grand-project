@@ -234,6 +234,9 @@ def export_dataset(store: ReviewStore, output_dir: Path, *, reviewed_only: bool 
                 "width": width,
                 "height": height,
                 "reviewed": reviewed,
+                # the bytes exported (the ones its boxes were detected on): tools reading the manifest later check the
+                # file still is them (simulate_loop)
+                K.ANNOTATOR_DETECTED_SHA: settled.digests[key],
                 **({K.ANNOTATOR_TRUTH_MARK: item[K.ANNOTATOR_TRUTH_MARK]} if item.get(K.ANNOTATOR_TRUTH_MARK) else {}),
                 "annotations": objects,
             }

@@ -343,10 +343,11 @@ def settle_splits(
         moved = [names[key] for key in sorted(set(new) | entering) if again.get(key) != digests[key]]
         if moved:
             raise SplitConflict([f"{name}: changed while the splits were settled, run again" for name in moved])
+        written: set[str] = set()  # the splits this claim gave: only those are taken back should the ledger fail
         if new:
             # all or nothing: a split claimed meanwhile (outside this lock) that is not the one given here stops the
             # claim before anything is written, and the ledger is not written either
-            claimed = store.claim_splits(new, only_if_free=True)
+            claimed = store.claim_splits(new, only_if_free=True, written=written)
             moved = [
                 f"{names[key]}: given {new[key]}, store {claimed[key]}"
                 for key in new
@@ -365,15 +366,18 @@ def settle_splits(
             if (digests[key] not in book or copy) and (digests[key], names[key]) not in seen:
                 known = book.get(digests[key])
                 split = known.split if known is not None else split_of[key]  # a digest keeps its split
-                rows.append(Entry(digests[key], split, _block_name(blocks[key], names[key]), names[key]))
+                # the screenshot's own block (its atlas's), not the joined one its copies drew it with: a block names
+                # its atlas, and a tool picking an atlas's blocks must find all of its screenshots (CodeRabbit)
+                rows.append(Entry(digests[key], split, _block_name(own[key], names[key]), names[key]))
                 seen.add((digests[key], names[key]))
                 added += 1
         if added:
             try:
                 write_ledger(rows, ledger)
             except BaseException:
-                # the claims stand only with the ledger rows that keep them: a ledger not written takes them back
-                store.release_splits(new)
+                # the claims stand only with the ledger rows that keep them: a ledger not written takes back the ones
+                # this claim made (another session's claim of the same split stays)
+                store.release_splits({key: new[key] for key in written})
                 raise
     return Settled(split_of, blocks, items, origins, added, unreadable, digests)
 

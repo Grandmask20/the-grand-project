@@ -91,6 +91,11 @@ def _saved_seq_key(editor_key: str) -> str:
     return f"saved-seq-{editor_key}"
 
 
+def _action_done_key(editor_key: str) -> str:
+    """The id of the editor's last action the page handled: the editor stays locked until it is told so."""
+    return f"action-done-{editor_key}"
+
+
 def _known_key(editor_key: str) -> str:
     return f"known-boxes-{editor_key}"
 
@@ -102,7 +107,12 @@ def _base_key(editor_key: str) -> str:
 
 def _forget(editor_key: str) -> None:
     """Drop an editor's session memory (save counter, undo memory, base boxes): only the editor on screen keeps any."""
-    for name in (_saved_seq_key(editor_key), _known_key(editor_key), _base_key(editor_key)):
+    for name in (
+        _saved_seq_key(editor_key),
+        _known_key(editor_key),
+        _base_key(editor_key),
+        _action_done_key(editor_key),
+    ):
         st.session_state.pop(name, None)
 
 
@@ -244,6 +254,10 @@ def _on_action(store_path: Path, image_key: str, revision: int, editor_key: str,
     """Navigation and review keys: save the boxes the action carries, then move through the queue. The list's "goto"
     moves to the screenshot picked whether its save went through or not (it was asked for)."""
     action = (st.session_state.get(editor_key) or {}).get("action")
+    if isinstance(action, dict):
+        # handled, saved or not: the editor unlocks when the page answers with it (and only then: an autosave's answer
+        # comes before)
+        st.session_state[_action_done_key(editor_key)] = action.get("action_id")
     if isinstance(action, dict) and action.get("type") == "goto":
         picked = action.get("target")
         _save_action(store_path, image_key, revision, editor_key, keys, action)
@@ -353,6 +367,7 @@ def _render_editor(store: ReviewStore, key: str, keys: list[str], settings: Sett
         "has_prev": index > 0,
         "has_next": 0 <= index < len(keys) - 1,
         "saved_seq": st.session_state.get(_saved_seq_key(editor_key), 0),
+        "action_done": st.session_state.get(_action_done_key(editor_key)),
         # a screenshot picked in the list: the editor saves its latest boxes and asks to go there (_on_action)
         "goto": goto if (goto := st.session_state.get(K.ANNOTATOR_SESSION_GOTO)) in keys and goto != key else None,
         "chip_px": K.ANNOTATOR_EDITOR_CHIP_PX,

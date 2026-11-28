@@ -3,6 +3,7 @@ one screenshot at a time and safe between sessions."""
 
 from __future__ import annotations
 
+import contextlib
 import sqlite3
 import threading
 from pathlib import Path
@@ -170,24 +171,40 @@ def _in_sessions(path: Path, *saves) -> list[Any]:
     return results
 
 
-def test_a_save_waits_for_another_session_s_write_then_goes_through(tmp_path: Path) -> None:
+def test_a_save_waits_for_another_session_s_write_then_goes_through(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     """A detection run holds the write lock while it saves a result: an editor's save waits for it (up to
     ``ANNOTATOR_STORE_BUSY_S``), it doesn't fail with "database is locked"."""
     path = tmp_path / K.ANNOTATOR_STORE_FILE
     (shot,) = _shots(tmp_path, "a.png")
     with ReviewStore.open(path) as setup:
         key = _detected(setup, shot, _box("map_node", 10))
+    writing = threading.Event()
+    write = ReviewStore._write
+
+    @contextlib.contextmanager
+    def seen_writing(self):
+        writing.set()  # the save is at its write transaction (BEGIN IMMEDIATE next)
+        with write(self):
+            yield
+
+    monkeypatch.setattr(ReviewStore, "_write", seen_writing)
     other = sqlite3.connect(str(path), isolation_level=None)
-    other.execute("BEGIN IMMEDIATE")  # (another session in the middle of a write)
-    saved: list[bool] = []
-    editor = threading.Thread(
-        target=lambda: saved.extend(_in_sessions(path, lambda s: s.save_review(key, 1, reviewed=True)))
-    )
-    editor.start()
-    editor.join(0.5)
-    assert editor.is_alive() and not saved  # waiting for the lock, not refused
-    other.execute("COMMIT")
-    other.close()
+    try:
+        other.execute("BEGIN IMMEDIATE")  # (another session in the middle of a write)
+        saved: list[bool] = []
+        editor = threading.Thread(
+            target=lambda: saved.extend(_in_sessions(path, lambda s: s.save_review(key, 1, reviewed=True)))
+        )
+        editor.start()
+        assert writing.wait(10)
+        editor.join(0.5)
+        assert editor.is_alive() and not saved  # waiting for the lock, not refused
+    finally:
+        if other.in_transaction:
+            other.execute("COMMIT")
+        other.close()
     editor.join(30)
     assert saved == [True]
     with ReviewStore.open(path) as check:
@@ -269,9 +286,25 @@ def test_detection_jobs_follow_selection_and_force(tmp_path: Path, review_store:
     review_store.add_images([a, b, c])
     review_store.record_detection(image_key(b), _result(), force=False)
     keys = [image_key(path) for path in (a, b, c)]
-    assert review_store.detection_jobs() == [(keys[0], str(a)), (keys[2], str(c))]
-    assert review_store.detection_jobs(keys[:2]) == [(keys[0], str(a))]
-    assert review_store.detection_jobs(keys[1:], force=True) == [(keys[1], str(b)), (keys[2], str(c))]
+    assert review_store.detection_jobs() == [(keys[0], str(a), 0), (keys[2], str(c), 0)]
+    assert review_store.detection_jobs(keys[:2]) == [(keys[0], str(a), 0)]
+    assert review_store.detection_jobs(keys[1:], force=True) == [(keys[1], str(b), 1), (keys[2], str(c), 0)]
+
+
+def test_a_rerun_queued_before_an_edit_or_review_changes_nothing(tmp_path: Path, review_store: ReviewStore) -> None:
+    """A forced rerun asked for, then the screenshot edited or reviewed before its result came: the result (or its
+    failure) is stale and dropped, the review kept; one queued after the edit goes through (CodeRabbit)."""
+    (shot,) = _shots(tmp_path, "a.png")
+    key = _detected(review_store, shot, _box("icon", 10.0))
+    ((_key, _path, generation),) = review_store.detection_jobs([key], force=True)
+    assert review_store.save_review(key, 1, reviewed=True)
+    before = review_store.item(key)
+    assert not review_store.record_detection(key, _result(_box("tower", 30)), force=True, generation=generation)
+    review_store.record_failure(key, "boom", force=True, generation=generation)
+    assert review_store.item(key) == before
+    ((_key, _path, now),) = review_store.detection_jobs([key], force=True)
+    assert review_store.record_detection(key, _result(_box("tower", 30)), force=True, generation=now)
+    assert review_store.item(key)["reviewed"] is False
 
 
 def test_used_labels_are_sorted_and_distinct(tmp_path: Path, review_store: ReviewStore) -> None:

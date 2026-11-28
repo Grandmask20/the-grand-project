@@ -12,6 +12,7 @@ import pytest
 
 from tools.detection_dataset_annotator import (
     ReviewStore,
+    StoreLayoutError,
     build_store,
     file_hash,
     image_key,
@@ -32,13 +33,22 @@ def readable(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(truth_seed, "_raw_image", blank)
 
 
-def _truth(tmp_path: Path, files: list[str]) -> Path:
-    """A truth placing the screenshots 1:1 (identity M, no tilt) with one Vaal area map at (600, 500)."""
+def _truth(tmp_path: Path, files: list[Path]) -> Path:
+    """A truth placing the screenshots 1:1 (identity M, no tilt), each by its name and bytes, with one Vaal area map
+    at (600, 500)."""
     data = {
         "maps": [[600.0, 500.0, "Vaal city"]],
         "biomes": [{"type": "Vaal city", "maps": [0], "city": {"x": 600.0, "y": 500.0, "assumed": True}}],
         "screenshots": [
-            {"name": Path(f).stem, "file": f, "w": 1920, "h": 1080, "M": [[1, 0, 0], [0, 1, 0]], "horizon": None}
+            {
+                "name": f.stem,
+                "file": f.name,
+                "w": 1920,
+                "h": 1080,
+                "M": [[1, 0, 0], [0, 1, 0]],
+                "horizon": None,
+                "sha256": file_hash(f),
+            }
             for f in files
         ],
     }
@@ -87,7 +97,7 @@ def _labels(store: ReviewStore, path: Path) -> list[tuple[str, str]]:
 def test_a_run_brings_an_old_store_up_to_date_and_a_second_changes_nothing(
     tmp_path: Path, old_store: dict[str, Path], fake_worker: str
 ) -> None:
-    truth = _truth(tmp_path, ["ok_a.png"])
+    truth = _truth(tmp_path, [old_store["a"]])
     lines: list[str] = []
     done = build_store.build(tmp_path / "out", truths=[truth], workers=1, say=lines.append)
 
@@ -113,7 +123,7 @@ def test_a_run_brings_an_old_store_up_to_date_and_a_second_changes_nothing(
 
 
 def test_a_dry_run_says_what_would_change_and_changes_nothing(tmp_path: Path, old_store: dict[str, Path]) -> None:
-    truth = _truth(tmp_path, ["ok_a.png"])
+    truth = _truth(tmp_path, [old_store["a"]])
     store_file = tmp_path / "out" / K.ANNOTATOR_STORE_FILE
     with ReviewStore.open(store_file) as store:
         before = {key: store.item(key) for key in store.paths()}
@@ -185,3 +195,49 @@ def test_a_backup_never_takes_a_name_another_backup_holds(tmp_path: Path, review
     with pytest.raises(FileExistsError):
         review_store.backup(target)
     assert target.read_bytes() == before
+
+
+def _older_layout(store_file: Path) -> None:
+    """The store as an older annotator built it: no review generation column, no pre-label snapshots."""
+    import contextlib
+    import sqlite3
+
+    with contextlib.closing(sqlite3.connect(store_file, isolation_level=None)) as db:
+        db.execute("ALTER TABLE images DROP COLUMN review_generation")
+        db.execute("DROP TABLE prelabels")
+
+
+def test_a_store_of_an_older_layout_is_brought_up_to_date_keeping_its_work(
+    tmp_path: Path, old_store: dict[str, Path]
+) -> None:
+    """User: a layout change carries every box, review flag and split over (a backup of the old file kept); a dry run
+    says so and changes nothing; once upgraded, a second run finds it up to date."""
+    store_file = tmp_path / "out" / K.ANNOTATOR_STORE_FILE
+    with ReviewStore.open(store_file) as store:
+        store.claim_splits({image_key(old_store["b"]): "test"})
+        before = {key: store.item(key) for key in store.paths()}
+    _older_layout(store_file)
+    with pytest.raises(StoreLayoutError, match="images.review_generation.*build_store"):
+        ReviewStore.open(store_file)
+    unchanged = store_file.read_bytes()
+
+    lines: list[str] = []
+    build_store.build(tmp_path / "out", truths=[], dry_run=True, say=lines.append)
+    assert store_file.read_bytes() == unchanged and any("a run would back it up" in line for line in lines)
+
+    lines.clear()
+    build_store.build(tmp_path / "out", truths=[], detect=False, say=lines.append)
+    assert any("every row copied into the new layout" in line for line in lines)
+    with ReviewStore.open(store_file) as store:
+        kept = [key for key in before if store.item(key) is not None]  # (the run's step 3 removes the copies)
+        assert len(kept) == 3 and all(store.item(key) == before[key] for key in kept)  # boxes, reviews, splits, extra
+        assert store.item(image_key(old_store["b"]))["split"] == "test"
+        assert store.item(image_key(old_store["copy_b"]))["reviewed"] is True
+        assert store.prelabels(image_key(old_store["a"])) == []  # (the table it lacked starts empty)
+    (backup,) = (tmp_path / "out").glob(K.ANNOTATOR_BUILD_BACKUP.format(stamp="*"))
+    with pytest.raises(StoreLayoutError):
+        ReviewStore.open(backup)  # the old file as it was
+
+    lines.clear()
+    build_store.build(tmp_path / "out", truths=[], detect=False, say=lines.append)
+    assert "  up to date" in lines

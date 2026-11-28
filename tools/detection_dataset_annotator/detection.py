@@ -25,9 +25,9 @@ DEFAULT_OPTIONS = DetectionOptions()
 """Generic ``icon`` labels (the deadly-boss icon too), no paths, no walls."""
 
 
-def read_with_digest(path: Path) -> tuple[np.ndarray, str] | None:
-    """The original-size BGR image and the SHA-256 of the bytes it was decoded from (one read: the picture and its
-    identity are the same file), or None when it cannot be read (``np.fromfile`` handles non-ASCII paths).
+def _read(path: Path, *, digest: bool) -> tuple[np.ndarray, str | None] | None:
+    """The original-size BGR image and, when asked, the SHA-256 of the very bytes it was decoded from (one read), or
+    None when it cannot be read (``np.fromfile`` handles non-ASCII paths).
 
     Upright, its EXIF orientation applied (OpenCV's default): training's decoder (``datasets.Image``) applies it too,
     and so does the browser, so the editor, its boxes, the model pre-labels and training share one frame. An empty
@@ -38,12 +38,20 @@ def read_with_digest(path: Path) -> tuple[np.ndarray, str] | None:
         image = cv2.imdecode(encoded, cv2.IMREAD_COLOR) if encoded.size else None
     except (OSError, ValueError, cv2.error):
         return None
-    return None if image is None else (image, hashlib.sha256(encoded.data).hexdigest())
+    if image is None:
+        return None
+    return image, hashlib.sha256(encoded.data).hexdigest() if digest else None
+
+
+def read_with_digest(path: Path) -> tuple[np.ndarray, str] | None:
+    """The original-size BGR image and the SHA-256 of the bytes it was decoded from (the picture and its identity are
+    the same read of the file), or None when it cannot be read (``_read``)."""
+    return _read(path, digest=True)  # type: ignore[return-value]  (digest asked: never None)
 
 
 def decode_image(path: Path) -> np.ndarray | None:
-    """The original-size BGR image, or None when it cannot be read (``read_with_digest``)."""
-    read = read_with_digest(path)
+    """The original-size BGR image, or None when it cannot be read (``_read``; no digest worked out)."""
+    read = _read(path, digest=False)
     return None if read is None else read[0]
 
 

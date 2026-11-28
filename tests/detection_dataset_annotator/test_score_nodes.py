@@ -23,8 +23,13 @@ def _shot(path: Path) -> np.ndarray:
     hsv[:, :960] = GRASS
     hsv[:, 960:] = SNOW
     image = cv2.cvtColor(hsv, cv2.COLOR_HSV2BGR)
-    cv2.imwrite(str(path), image)
+    _write(path, image)
     return image
+
+
+def _write(path: Path, image: np.ndarray) -> None:
+    """A PNG written through Python (cv2.imwrite fails on some non-ASCII paths)."""
+    path.write_bytes(cv2.imencode(".png", image)[1].tobytes())
 
 
 def _node(label: str, x: float, y: float) -> dict:
@@ -208,8 +213,8 @@ def test_a_screenshot_without_node_boxes_uses_none_of_the_limit(tmp_path: Path, 
 
 
 def test_a_screenshot_changed_since_its_detection_is_not_scored(tmp_path: Path, capsys) -> None:
-    """Its boxes frame the bytes detected: a file replaced since (even a larger copy of the same view) is named and
-    not scored, by its digest, not its size (CodeRabbit)."""
+    """Its boxes frame the bytes detected: a file replaced since by another picture of the same size is named and not
+    scored, by its digest, not its size (CodeRabbit)."""
     shot = tmp_path / "a.png"
     image = _shot(shot)
     out = tmp_path / "out"
@@ -222,7 +227,7 @@ def test_a_screenshot_changed_since_its_detection_is_not_scored(tmp_path: Path, 
         assert store.save_review(key, 1, reviewed=True)
     assert main(["--output-dir", str(out)]) == 0
     assert "1 nodes, 100.0% right" in capsys.readouterr().out
-    cv2.imwrite(str(shot), cv2.resize(image, (3840, 2160), interpolation=cv2.INTER_NEAREST))
+    _write(shot, 255 - image)  # other pixels, the same 1920x1080
     assert main(["--output-dir", str(out)]) == 1
     assert "changed since its detection" in capsys.readouterr().out
 

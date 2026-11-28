@@ -67,10 +67,13 @@ def test_files_rewritten_from_several_threads_at_once_are_never_read_half_writte
             failed.append(exc)
 
     def read() -> None:
-        start.wait(5)
-        while not done.is_set():
-            with contextlib.suppress(FileNotFoundError):  # (none written yet)
-                seen.append(f.read_text())
+        try:
+            start.wait(5)
+            while not done.is_set():
+                with contextlib.suppress(FileNotFoundError):  # (none written yet)
+                    seen.append(f.read_text())
+        except BaseException as exc:  # a reader's error fails the test too (as a writer's)
+            failed.append(exc)
 
     threads = [threading.Thread(target=write, args=(w,)) for w in range(writers)]
     reader = threading.Thread(target=read) if reading else None
@@ -85,6 +88,8 @@ def test_files_rewritten_from_several_threads_at_once_are_never_read_half_writte
         done.set()
         if reader:
             reader.join(10)
+    assert not (reader and reader.is_alive()), "the reader did not stop"
+    assert not failed, failed
     assert f.read_text() in texts.values()
     assert all(text == texts[text.split(":", 1)[0]] for text in seen), "a reader saw half a file"
     assert [p.name for p in tmp_path.iterdir()] == ["atlas.json"]  # no temporary file left

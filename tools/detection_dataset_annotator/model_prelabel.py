@@ -323,17 +323,16 @@ def main(argv: list[str] | None = None) -> int:
             # planned before any work, so a model pass that fails leaves its blocks in the model's arm for the next
             plan = store.claim_prelabel_arms({blocks[key]: arms[key] for key, _item in todo})
             arms = {key: plan.get(blocks[key], arm) for key, arm in arms.items()}
-        if args.limit is not None:
-            todo = todo[: args.limit]
         counts = dict(Counter(arms[key] for key, _item in todo))
         members: dict[str, set[str]] = {}
         for key, block in blocks.items():
             members.setdefault(block, set()).add(key)
-        print(f"{len(todo)} screenshots eligible; arms {counts} (policy {args.policy}, model {model_dir})")
+        limit = "" if args.limit is None else f", at most {args.limit} this pass"
+        print(f"{len(todo)} screenshots eligible; arms {counts} (policy {args.policy}, model {model_dir}{limit})")
         if args.dry_run or not todo:
             return 0
         detector = None
-        done = skipped = 0
+        done = skipped = completed = 0  # completed: saved in either arm, what --limit counts
         # a screenshot reviewed, edited, truth-seeded or pre-labelled by another pass meanwhile (the page or another
         # tool open beside this one) keeps what it has: every save checks that in its own write
         # and stays a training screenshot (held-out ones never get model pre-labels: user's rule)
@@ -342,16 +341,22 @@ def main(argv: list[str] | None = None) -> int:
             "unmarked": (K.ANNOTATOR_TRUTH_MARK, K.ANNOTATOR_PRELABEL_FIELD),
             "split": "train",
         }
+        # --limit counts the screenshots saved, not the ones tried: one left (unreadable, edited meanwhile) is tried
+        # once in this pass and stays eligible, and the next one is taken instead
         for key, item in todo:
+            if args.limit is not None and completed >= args.limit:
+                break
             if item.get("split") != "train":  # never: eligible() takes training screenshots only (user's rule)
                 raise RuntimeError(f"refusing to pre-label a {item.get('split')} screenshot: {item['path']}")
             record = {"source": arms[key], "policy": args.policy, "round": round_name}
             # its block's other screenshots have no other arm, checked in the save (another pass may run beside this)
             one_arm = {"arm_block": (members[blocks[key]], arms[key])}
             if arms[key] == K.ANNOTATOR_CLASSICAL_SOURCE:
-                if not store.save_review(
+                if store.save_review(
                     key, int(item["edit_version"]), extra={K.ANNOTATOR_PRELABEL_FIELD: record}, **guard, **one_arm
                 ):
+                    completed += 1
+                else:
                     skipped += 1
                 continue
             if detector is None:
@@ -390,6 +395,7 @@ def main(argv: list[str] | None = None) -> int:
                 **one_arm,
             ):
                 done += 1
+                completed += 1
                 if done % 50 == 0:
                     print(f"  {done} pre-labelled", flush=True)
             else:

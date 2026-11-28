@@ -19,6 +19,7 @@ from tools.detection_dataset_annotator.state import image_key
 from tools.detection_dataset_annotator.truth_seed import Truth, seed_screenshot, seed_store
 
 TRUTH_SOURCE = K.ANNOTATOR_TRUTH_SOURCE
+SHA, SHA_FIELD = "the-detected-bytes", K.ANNOTATOR_DETECTED_SHA  # (what the tests' detections were made on)
 
 
 def _box(label: str, x: float, y: float, source: str = "classical", size: float = 40.0) -> dict[str, Any]:
@@ -36,10 +37,11 @@ def _truth(tmp_path: Path, files: tuple[str, ...] = ("shot.png",)) -> Truth:
             {"type": "Faridun city", "maps": [2], "city": {"x": 1200.0, "y": 500.0, "assumed": False}},
         ],
         "screenshots": [
-            {"name": Path(f).stem, "file": f, "w": 1920, "h": 1080, "M": [[1, 0, 0], [0, 1, 0]], "horizon": None}
+            {"name": Path(f).stem, "file": f, "w": 1920, "h": 1080, "M": [[1, 0, 0], [0, 1, 0]], "horizon": None,
+             "sha256": SHA}  # (every file reads as the bytes SHA: ``readable``)
             for f in files
         ],
-    }
+    }  # fmt: skip
     path = tmp_path / "truth.json"
     path.write_text(json.dumps(data), encoding="utf-8")
     return Truth.load(path)
@@ -56,9 +58,6 @@ def _boxes() -> list[dict[str, Any]]:
         _box("breach_stronghold", 1500, 700, size=150.0),  # near no stronghold area: reported
         _box("icon", 600, 470, size=34.0),
     ]
-
-
-SHA, SHA_FIELD = "the-detected-bytes", K.ANNOTATOR_DETECTED_SHA  # (what the tests' detections were made on)
 
 
 def _blank(path: Path) -> tuple[np.ndarray, str]:
@@ -368,26 +367,49 @@ def test_a_dry_run_counts_only_screenshots_the_save_would_take(
 def test_a_screenshot_changed_since_its_detection_is_left(
     tmp_path: Path, review_store: ReviewStore, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """A file that is not the bytes its boxes were detected on (replaced since, here by a 1440p one; one of its own
-    size alike) is left unmarked, also when no ground ring is needed (CodeRabbit); detected again, it is seeded."""
+    """A file that is not the bytes its boxes were detected on is left unmarked, also when no ground ring is needed
+    (CodeRabbit); the truth placed the bytes detected, so a detection rerun alone is not enough."""
     path = tmp_path / "shot.png"
     truth = _truth(tmp_path)
     review_store.add_images([path])
     key = image_key(path)
     boxes = [_box("map_node_grass", 600, 500)]  # (a Vaal area node: no ground ring read)
     review_store.record_detection(
-        key, {"detected": True, SHA_FIELD: SHA, "width": 1920, "height": 1080, "annotations": boxes}, force=True
-    )
-    monkeypatch.setattr(truth_seed, "_raw_image", lambda path: (np.zeros((1440, 2560, 3), np.uint8), "replaced"))
-    done, changed, _placed = seed_store(review_store, truth)
+        key, {"detected": True, SHA_FIELD: "detected-before", "width": 1920, "height": 1080, "annotations": boxes},
+        force=True,
+    )  # fmt: skip
+    done, changed, _placed = seed_store(review_store, truth)  # (the file reads as SHA, the truth placed SHA)
     assert changed == 0 and done["skipped: changed since its detection: rerun its detection"] == 1
     assert K.ANNOTATOR_TRUTH_MARK not in review_store.item(key)
-    # detected again on the new file: the same Vaal area node in its 2560x1440 pixels (the truth places it at 1080p)
+
+
+def test_only_the_bytes_the_truth_placed_are_seeded(
+    tmp_path: Path, review_store: ReviewStore, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The truth names screenshots by file name: a file of that name with other bytes (replaced since, then detected
+    again) is no screenshot it placed, and a placement naming no bytes seeds nothing (refresh the truth); the truth
+    refreshed with the new bytes seeds it (CodeRabbit)."""
+    path = tmp_path / "shot.png"
+    truth = _truth(tmp_path)
+    review_store.add_images([path])
+    key = image_key(path)
+    # detected again on a new 1440p file: the same Vaal area node in its 2560x1440 pixels (the truth places 1080p)
     again = [_box("map_node_grass", 800, 2000 / 3, size=40 * 4 / 3)]
     review_store.record_detection(
         key, {"detected": True, SHA_FIELD: "replaced", "width": 2560, "height": 1440, "annotations": again}, force=True
     )
-    seed_store(review_store, truth)  # checked against the new bytes, seeded and marked
+    monkeypatch.setattr(truth_seed, "_raw_image", lambda path: (np.zeros((1440, 2560, 3), np.uint8), "replaced"))
+    done, changed, _placed = seed_store(review_store, truth)
+    assert changed == 0 and done["skipped: not the screenshot the truth placed (other bytes)"] == 1
+    data = json.loads((tmp_path / "truth.json").read_text(encoding="utf-8"))
+    del data["screenshots"][0]["sha256"]
+    (tmp_path / "truth.json").write_text(json.dumps(data), encoding="utf-8")
+    done, changed, _placed = seed_store(review_store, Truth.load(tmp_path / "truth.json"))
+    assert changed == 0 and done["skipped: the truth's placement names no screenshot bytes (sha256): refresh the truth"]
+    assert K.ANNOTATOR_TRUTH_MARK not in review_store.item(key)
+    data["screenshots"][0]["sha256"] = "replaced"  # the truth refreshed for the new file
+    (tmp_path / "truth.json").write_text(json.dumps(data), encoding="utf-8")
+    seed_store(review_store, Truth.load(tmp_path / "truth.json"))
     item = review_store.item(key)
     assert item[K.ANNOTATOR_TRUTH_MARK] == truth.source
     assert [box["label"] for box in item["annotations"]] == ["map_node_vaal"]

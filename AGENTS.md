@@ -69,7 +69,8 @@ README's developer section). `tools/` are developer helpers
   unconverted) and loaded with `use_safetensors=True`. A process that runs the model calls
   `rf_detr_cuda.prefer_pip_cuda_libraries()` first (Linux: PyTorch's cuDNN before a system one). Validation and test
   screenshots never get model pre-labels; a training round checks its manifest against the split ledger. When the
-  annotator store's tables change, a new store is built with `build_store` (no migration code).
+  annotator store's tables change, `build_store` brings an existing store up to date (`store.upgrade_layout`: backed
+  up, every row copied into the new layout); the store refuses to open until it has.
 - **App**: requests are answered on their own threads; the session changes the atlas only under its lock, and
   long work runs on the session's worker (or a background thread) and reports through `Events` (log, progress,
   versions, questions). CPU-heavy work that would starve the server (Python's GIL) runs as its own process

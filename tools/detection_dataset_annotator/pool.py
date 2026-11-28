@@ -36,8 +36,8 @@ if TYPE_CHECKING:
 Progress = Callable[[int, int, str], None]
 """Called with (finished, total, screenshot path) after each screenshot."""
 
-Job = tuple[str, str]
-"""A screenshot's key and path."""
+Job = tuple[str, str, int]
+"""A screenshot's key, path and review generation when it was queued (``ReviewStore.detection_jobs``)."""
 
 
 def cpu_count() -> int:
@@ -95,7 +95,7 @@ class _Run:
         # The store raises the screenshot's revision: the editor remounts and shows these detections instead of
         # autosaving old boxes over them.
         try:
-            self.store.record_detection(job[0], result, force=self.force)
+            self.store.record_detection(job[0], result, force=self.force, generation=job[2])
         except KeyError:
             if not self._gone(job):
                 raise
@@ -105,7 +105,7 @@ class _Run:
 
     def fail(self, job: Job, error: str) -> None:
         try:
-            self.store.record_failure(job[0], error, force=self.force)
+            self.store.record_failure(job[0], error, force=self.force, generation=job[2])
         except KeyError:
             if not self._gone(job):
                 raise
@@ -200,11 +200,13 @@ async def _send(process: asyncio.subprocess.Process, job: Job, settings: dict) -
     """
     if process.stdin is None:
         return "Detection worker input was unavailable."
-    key, path = job
+    key, path, _generation = job
     request = {"key": key, "path": path, **settings}
     try:
         process.stdin.write((json.dumps(request) + "\n").encode("utf-8"))
         await asyncio.wait_for(process.stdin.drain(), K.ANNOTATOR_WORKER_ANSWER_S)
+    except TimeoutError:
+        raise  # a stuck worker (TimeoutError is an OSError): the driver stops it, it is no broken pipe
     except (ConnectionError, OSError) as exc:  # BrokenPipeError / ConnectionResetError: the worker is gone
         return f"Could not send screenshot to detection worker: {exc}"
     return None
