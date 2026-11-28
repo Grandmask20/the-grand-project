@@ -27,7 +27,11 @@ def _store(tmp_path: Path, store: ReviewStore) -> dict[str, str]:
                   K.ANNOTATOR_DETECTED_SHA: file_hash(path)}  # fmt: skip
         store.record_detection(key, result, force=False)
     store.save_review(keys["reviewed"], 1, reviewed=True)
-    store.save_review(keys["seeded"], 1, extra={K.ANNOTATOR_TRUTH_MARK: "atlas_test_data/fr-atlas/truth.json"})
+    store.save_review(
+        keys["seeded"],
+        1,
+        extra={K.ANNOTATOR_TRUTH_MARK: "atlas_test_data/fr-atlas/truth.json", K.ANNOTATOR_TRUTH_DIGEST: "d" * 64},
+    )
     return keys
 
 
@@ -45,6 +49,10 @@ def test_an_export_carries_the_truth_that_seeded_a_screenshot(tmp_path: Path, re
     out = tmp_path / "out"
     assert main(["--output-dir", str(out), "--unreviewed"]) == 0
     manifest = json.loads((out / K.ANNOTATOR_MANIFEST_FILE).read_text(encoding="utf-8"))
+    digests = {Path(image["path"]).stem: image.get(K.ANNOTATOR_TRUTH_DIGEST) for image in manifest["images"]}
+    assert digests["seeded"] == "d" * 64 and [d for name, d in digests.items() if name != "seeded"] == [None] * (
+        len(digests) - 1
+    )  # the truth's version goes into the manifest with its mark
     marks = {Path(image["path"]).stem: image.get(K.ANNOTATOR_TRUTH_MARK) for image in manifest["images"]}
     assert marks == {"reviewed": None, "seeded": "atlas_test_data/fr-atlas/truth.json", "plain": None}
     assert {image["split"] for image in manifest["images"]} <= set(K.ANNOTATOR_SPLITS)

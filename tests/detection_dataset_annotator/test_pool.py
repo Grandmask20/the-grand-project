@@ -81,9 +81,18 @@ def test_a_stuck_worker_is_stopped_and_the_others_finish(
 ) -> None:
     """A worker that answers nothing within ANNOTATOR_WORKER_ANSWER_S is stopped: the screenshots it holds fail and
     stay retryable, the other worker goes on."""
-    monkeypatch.setattr(K, "ANNOTATOR_WORKER_ANSWER_S", 1.0)
-    names = ["hang0"] + [f"ok{i}" for i in range(6)]
+    # hang0 comes after six screenshots that answer: the worker that gets it has answered one by then (started, its
+    # imports done), so the short deadline is on the hang alone, not on a slow start. The deadline is set when the
+    # first screenshot finishes, and every worker has asked for its first answer by then.
+    names = [f"ok{i}" for i in range(6)] + ["hang0"]
     keys = _add(review_store, tmp_path, *names)
+    first = []
+
+    def shorten(done: int, total: int, path: str) -> None:
+        if not first:
+            first.append(path)
+            monkeypatch.setattr(K, "ANNOTATOR_WORKER_ANSWER_S", 1.0)
+
     stops = []
     stop = pool._stop_worker
 
@@ -93,11 +102,11 @@ def test_a_stuck_worker_is_stopped_and_the_others_finish(
 
     monkeypatch.setattr(pool, "_stop_worker", recorded)
 
-    completed, failed = pool.detect_pending(review_store, OPTIONS, max_workers=2)
+    completed, failed = pool.detect_pending(review_store, OPTIONS, max_workers=2, progress=shorten)
     assert sorted(stops) == [False, True]  # the stuck one terminated at once, the healthy one closed at its end
 
     assert completed + failed == len(names)
-    assert 1 <= failed <= K.ANNOTATOR_WORKER_IN_FLIGHT  # the stuck one and what was queued behind it on that worker
+    assert failed == 1  # the stuck one: nothing was queued behind it
     items = _items(review_store, keys)
     assert items["hang0"]["detected"] is False
     assert items["hang0"]["error"] == "Detection worker did not answer within 1 s; it was stopped."
@@ -111,7 +120,11 @@ def test_screenshots_left_when_every_worker_crashed_fail(tmp_path: Path, review_
     assert pool.detect_pending(review_store, OPTIONS, max_workers=1) == (0, 4)
 
     errors = [review_store.item(keys[name])["error"] for name in names]
-    assert errors[: K.ANNOTATOR_WORKER_IN_FLIGHT] == ["Detection worker exited unexpectedly (code 3)."] * 2
+    assert errors[0] == "Detection worker exited unexpectedly (code 3)."  # the one that crashed it
+    # the second one was sent before the worker exited, or found its input closed: either way it failed with it
+    assert errors[1] == "Detection worker exited unexpectedly (code 3)." or errors[1].startswith(
+        "Could not send screenshot"
+    )
     assert set(errors[K.ANNOTATOR_WORKER_IN_FLIGHT :]) == {
         "All detection workers stopped before this screenshot was processed."
     }
@@ -256,3 +269,56 @@ def test_a_worker_that_takes_no_input_is_stuck_not_a_broken_pipe(monkeypatch: py
         asyncio.run(pool._send(SimpleNamespace(stdin=Stuck()), ("k", "a.png", 0), {}))
     error = asyncio.run(pool._send(SimpleNamespace(stdin=Broken()), ("k", "a.png", 0), {}))
     assert error.startswith("Could not send screenshot")
+
+
+def test_a_result_the_store_does_not_take_is_skipped_not_saved(tmp_path: Path, review_store: ReviewStore) -> None:
+    """A screenshot edited or reviewed since it was queued keeps what it has: its result is counted as finished for
+    the progress, as skipped in the outcome, not as a detection saved (CodeRabbit)."""
+    keys = _add(review_store, tmp_path, "ok0")
+    review_store.record_detection(keys["ok0"], {"detected": True, "annotations": []}, force=False)
+    jobs = review_store.detection_jobs([keys["ok0"]], force=True)  # queued, then edited before its result arrives
+    review_store.save_review(keys["ok0"], 1, annotations=[{"label": "icon", "bbox": [1, 1, 5, 5]}])
+    seen: list[int] = []
+    run = pool._Run(
+        store=review_store, pending=deque(), force=True, progress=lambda done, total, path: seen.append(done)
+    )
+    run.total = 1
+    run.succeed(jobs[0], {"detected": True, "annotations": []})
+    assert (run.completed, run.skipped, seen) == (0, 1, [1])
+    outcome = pool.Outcome(2, 1, 3)
+    assert outcome == (2, 1) and outcome.skipped == 3 and tuple(outcome) == (2, 1)
+    assert pool.detect_pending(review_store, OPTIONS, max_workers=1).skipped == 0
+
+
+def test_the_detection_loop_is_a_proactor_loop_on_windows(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Streamlit's server uses the selector loop policy on Windows, which cannot start subprocesses: the pool runs in
+    a Proactor loop there, and in ``asyncio.run``'s anywhere else (CodeRabbit)."""
+    import asyncio
+
+    made: list = []
+
+    class Runner:
+        def __init__(self, *, loop_factory):
+            made.append(loop_factory)
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *exc):
+            return False
+
+        def run(self, coroutine):
+            coroutine.close()
+
+    monkeypatch.setattr(pool.sys, "platform", "win32")
+    monkeypatch.setattr(asyncio, "Runner", Runner, raising=True)
+    monkeypatch.setattr(asyncio, "ProactorEventLoop", object(), raising=False)  # (only exists on Windows)
+
+    async def nothing() -> None:
+        pass
+
+    pool._run(nothing())
+    assert made == [asyncio.ProactorEventLoop]
+    monkeypatch.setattr(pool.sys, "platform", "linux")
+    pool._run(nothing())  # asyncio.run: runs to its end
+    assert made == [asyncio.ProactorEventLoop]

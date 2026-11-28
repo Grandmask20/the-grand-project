@@ -584,9 +584,12 @@ def _detect_one(job):
         (screenshot path, None) or (screenshot path, repr of the error).
     """
     image, cache_dir, stamp = job
-    if detector_stamp() != stamp:  # (a warm worker started after the database changed, or the caller before)
-        return image, f"detector changed (this worker's {detector_stamp()}, the caller's {stamp})"
     try:
+        # inside the try: a stamp that cannot be worked out (database, checkpoint) is this screenshot's error, not the
+        # batch's
+        mine = detector_stamp()
+        if mine != stamp:  # (a warm worker started after the database changed, or the caller before)
+            return image, f"detector changed (this worker's {mine}, the caller's {stamp})"
         extract_frame(Path(image), Path(cache_dir))
         return image, None
     except Exception as e:  # one bad screenshot must not stop the batch

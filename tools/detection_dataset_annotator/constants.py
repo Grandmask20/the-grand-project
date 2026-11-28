@@ -222,6 +222,17 @@ its latest boxes and go there (its "goto" action), so edits made since its last 
 ANNOTATOR_SESSION_MOUNTED_IMAGE = "mounted_image"
 """Streamlit session key: the image key of the editor on screen (``ANNOTATOR_SESSION_MOUNTED_EDITOR``'s screenshot)."""
 
+ANNOTATOR_SESSION_OUTPUT = "output_folder"
+"""Streamlit session key: the output folder in use (the sidebar's text box only stages a change of it: switching it
+retires the editor on screen, which must first save its latest boxes, ``ANNOTATOR_SESSION_LEAVE``)."""
+
+ANNOTATOR_SESSION_OUTPUT_TEXT = "output_folder_text"
+"""Streamlit session key of the sidebar's output-folder text box (what is typed, not yet in use)."""
+
+ANNOTATOR_SESSION_LEAVE = "leave_folder"
+"""Streamlit session key: the output folder the reviewer asked to switch to. With an editor on screen it is asked to
+save its latest boxes (its "leave" action) and the folder is switched on its answer; without one at once."""
+
 ANNOTATOR_SESSION_HIDE_REVIEWED = "hide_reviewed"
 """Streamlit session key of the "Hide reviewed screenshots" checkbox (the action callback reads it)."""
 
@@ -319,6 +330,11 @@ ANNOTATOR_DETECTED_SHA = "sha256"
 """The field (in a screenshot's detection result, kept in its ``extra``) holding the SHA-256 of the bytes its boxes were
 detected on (``detection.read_with_digest``): a file replaced since, even by one of its size, is no longer the
 picture they frame (``state.changed_since_detection``); its detection is rerun first."""
+
+ANNOTATOR_TRUTH_DIGEST = "truth_sha256"
+"""The field (in a screenshot's ``extra``, and the export's manifest) holding the SHA-256 of the truth file's bytes that
+seeded it (with ``ANNOTATOR_TRUTH_MARK``): a truth edited since is another version than the one its boxes come from,
+and the simulated loop scores against the truth it loads (``simulate_loop.check_truth_digest``)."""
 
 ANNOTATOR_TRUTH_MARK = "truth"
 """The field (in a screenshot's ``extra``, and the export's manifest) naming the truth that seeded it: a biome truth

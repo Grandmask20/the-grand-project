@@ -161,12 +161,26 @@ def test_a_copy_moves_with_its_block_but_counts_for_its_own_atlas() -> None:
     """A copy joined into another atlas's block (split_ledger.join_blocks) goes where that block goes; its own atlas
     (``atlases``) is only what it counts for in the balance. Saying each screenshot's own block's atlas changes
     nothing."""
-    items = _items(60)
+    items = _items(60, seed=4)  # (a draw where it matters: the atlases given change the splits of other blocks)
     blocks = {key: Block("a" if i < 30 else "b", i // 6) for i, key in enumerate(sorted(items))}
     copy = sorted(items)[45]
     blocks[copy] = blocks[sorted(items)[0]]  # joined into atlas a's first block
     atlases = {key: ("a" if i < 30 else "b") for i, key in enumerate(sorted(items))}
     splits = assign_splits(items, blocks=blocks, atlases=atlases)
     assert splits[copy] == splits[sorted(items)[0]]
+    # the copy counts for atlas b in the balance, though it moves with atlas a's block: the balance, hence the draw of
+    # the other blocks, differs from one that counts it for atlas a (the atlases ignored)
+    assert splits != assign_splits(items, blocks=blocks)
     same = {key: block.atlas for key, block in blocks.items()}
     assert assign_splits(items, blocks=blocks, atlases=same) == assign_splits(items, blocks=blocks)
+
+
+def test_screenshots_that_keep_their_split_count_before_the_first_draw() -> None:
+    """A kept block in the busiest bin counts from the start: the blocks of the quieter bins are drawn to the splits
+    still missing screenshots, not as if nothing were there yet (CodeRabbit)."""
+    items = {f"q{i}": {"map_node_grass": 1} for i in range(20)} | {f"b{i}": {"map_node_grass": 100} for i in range(20)}
+    fixed = {f"b{i}": "train" for i in range(20)}  # the busy half already in train: 50% of all
+    splits = assign_splits(items, fixed=fixed, bins=2, rounds=0)
+    quiet = [splits[f"q{i}"] for i in range(20)]
+    assert quiet.count("train") == 12  # train's 80% of 40 is 32: 20 kept, 12 more
+    assert quiet.count("validation") == 4 and quiet.count("test") == 4

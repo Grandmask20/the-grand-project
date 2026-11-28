@@ -177,6 +177,19 @@ def test_the_page_listens_on_this_computer_unless_told_otherwise(monkeypatch: py
         "--server.address",
         "x",
     ]
+    # a blank address is none: it would make Streamlit listen on every interface, so it goes and the default stands
+    loopback = ["streamlit", "run", "app.py", "--server.address", "127.0.0.1"]
+    assert streamlit_args(app, ["--server.address", ""]) == loopback
+    assert streamlit_args(app, ["--server.address="]) == loopback
+    assert streamlit_args(app, ["--server.address", "  ", "--server.port", "8600"]) == [
+        *loopback,
+        "--server.port",
+        "8600",
+    ]
+    assert streamlit_args(app, ["--server.address"]) == loopback
+    assert streamlit_args(app, ["--server.address", "", "--server.address=::1"])[3:] == ["--server.address=::1"]
+    monkeypatch.setenv("STREAMLIT_SERVER_ADDRESS", "   ")
+    assert streamlit_args(app, []) == loopback
     monkeypatch.setenv("STREAMLIT_SERVER_ADDRESS", "0.0.0.0")
     assert streamlit_args(app, []) == ["streamlit", "run", "app.py"]
 
@@ -325,3 +338,112 @@ def test_the_goto_action_saves_the_boxes_and_moves_whatever_the_save(
     session[K.ANNOTATOR_SESSION_PICKED] = keys[0]
     app._on_pick()  # no editor on screen: moved at once
     assert session[K.ANNOTATOR_SESSION_SELECTED] == keys[0]
+
+
+def _two_screenshots(tmp_path: Path, boxes=None):
+    """Two detected screenshots in a store of ``tmp_path`` and the session a mounted editor leaves."""
+    from tools.detection_dataset_annotator import app
+
+    paths = [tmp_path / name for name in ("a.png", "b.png")]
+    store_path = tmp_path / K.ANNOTATOR_STORE_FILE
+    with ReviewStore.open(store_path) as store:
+        store.add_images(paths)
+        keys = [image_key(path) for path in paths]
+        for key in keys:
+            store.record_detection(
+                key, {"width": 640, "height": 360, "annotations": [_box("tower", 10.0)]}, force=False
+            )
+        item = store.item(keys[0])
+    session: dict[str, Any] = {
+        K.ANNOTATOR_SESSION_SELECTED: keys[0],
+        K.ANNOTATOR_SESSION_PICKED: keys[0],
+        K.ANNOTATOR_SESSION_MOUNTED_IMAGE: keys[0],
+        app._base_key("editor"): [dict(a) for a in item["annotations"]],
+        app._known_key("editor"): {},
+    }
+    return store_path, keys, item, session
+
+
+def test_a_newer_pick_is_not_cleared_by_the_goto_the_editor_answers(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The editor answers its goto for one screenshot while another was picked meanwhile: that newer request stays
+    pending (the editor goes there next), the page does not move to the older one (CodeRabbit)."""
+    from tools.detection_dataset_annotator import app
+    from tools.detection_dataset_annotator.boxes import editor_boxes
+
+    store_path, keys, item, session = _two_screenshots(tmp_path)
+    monkeypatch.setattr(app.st, "session_state", session)
+    older, newer = keys[1], "another-key"
+    session[K.ANNOTATOR_SESSION_GOTO] = newer
+    action = {"type": "goto", "target": older, "image_key": keys[0], "revision": item["edit_version"], "seq": 0,
+              "boxes": editor_boxes(item["annotations"]), "action_id": "s-1"}  # fmt: skip
+    session["editor"] = {"action": action}
+    app._on_action(store_path, keys[0], int(item["edit_version"]), "editor", [*keys, newer])
+    assert session[K.ANNOTATOR_SESSION_SELECTED] == keys[0]  # not moved to the older pick
+    assert session[K.ANNOTATOR_SESSION_GOTO] == newer  # and the newer one is still asked for
+    assert session[app._action_done_key("editor")] == "s-1"  # the editor unlocks, then sends the newer goto
+
+
+def test_a_toggle_flips_the_flag_the_reviewer_saw_not_the_one_stored_now(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Another tab marked the screenshot reviewed after this editor showed it unreviewed: Shift+Enter meant "mark it",
+    and is refused (the editor reloads), not turned into "unmark" (CodeRabbit)."""
+    from tools.detection_dataset_annotator import app
+    from tools.detection_dataset_annotator.boxes import editor_boxes
+
+    store_path, keys, item, session = _two_screenshots(tmp_path)
+    monkeypatch.setattr(app.st, "session_state", session)
+    revision = int(item["edit_version"])
+    with ReviewStore.open(store_path) as store:
+        assert store.save_review(keys[0], revision, reviewed=True)  # the other tab
+    action = {"type": "toggle_review", "image_key": keys[0], "revision": revision, "seq": 0, "shown_reviewed": False,
+              "boxes": editor_boxes(item["annotations"]), "action_id": "s-2"}  # fmt: skip
+    session["editor"] = {"action": action}
+    app._on_action(store_path, keys[0], revision, "editor", keys)
+    with ReviewStore.open(store_path) as store:
+        assert store.item(keys[0])["reviewed"] is True  # not toggled off
+    assert session[K.ANNOTATOR_SESSION_RELOADS] == 1  # the editor shows the saved state again
+
+
+def test_switching_the_output_folder_waits_for_the_editor_s_save(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A typed folder is only staged: the editor on screen saves its latest boxes (its "leave" action) and the folder
+    in use changes on its answer, edits since its last autosave kept (CodeRabbit)."""
+    from tools.detection_dataset_annotator import app
+    from tools.detection_dataset_annotator.boxes import editor_boxes
+
+    store_path, keys, item, session = _two_screenshots(tmp_path)
+    monkeypatch.setattr(app.st, "session_state", session)
+    session.update({K.ANNOTATOR_SESSION_OUTPUT: "old", K.ANNOTATOR_SESSION_LEAVE: "new"})
+    revision = int(item["edit_version"])
+    boxes = editor_boxes(item["annotations"])
+    boxes[0]["x"] = 70.0  # moved since the last autosave
+    action = {"type": "leave", "target": "new", "image_key": keys[0], "revision": revision, "seq": 1, "boxes": boxes,
+              "action_id": "s-3"}  # fmt: skip
+    session["editor"] = {"action": action}
+    app._on_action(store_path, keys[0], revision, "editor", keys)
+    with ReviewStore.open(store_path) as store:
+        assert store.item(keys[0])["annotations"][0]["bbox"][0] == 70.0  # saved first
+    assert session[K.ANNOTATOR_SESSION_OUTPUT] == "new" and K.ANNOTATOR_SESSION_LEAVE not in session
+    # a request replaced meanwhile (another folder typed): the answer to the old one changes nothing
+    session.update({K.ANNOTATOR_SESSION_OUTPUT: "old", K.ANNOTATOR_SESSION_LEAVE: "newer"})
+    app._on_action(store_path, keys[0], revision, "editor", keys)
+    assert session[K.ANNOTATOR_SESSION_OUTPUT] == "old" and session[K.ANNOTATOR_SESSION_LEAVE] == "newer"
+
+
+def test_typing_another_output_folder_changes_nothing_until_it_is_used(page, tmp_path: Path) -> None:
+    """With an editor on screen the button asks for the switch (the editor is asked to save first): the folder in use
+    stays, and the editor is sent the request."""
+    at, store, keys = page({"name": "a.png", "boxes": [_box("tower", 10)]})
+    with store:
+        used = at.session_state[K.ANNOTATOR_SESSION_OUTPUT]
+        other = str(tmp_path / "other")
+        next(t for t in at.sidebar.text_input if t.label == "Output folder").set_value(other).run()
+        assert at.session_state[K.ANNOTATOR_SESSION_OUTPUT] == used  # typed, not used
+        _button(at, "Use this folder").click().run()
+        assert not at.exception
+        assert at.session_state[K.ANNOTATOR_SESSION_OUTPUT] == used  # the editor has to save first
+        assert at.session_state[K.ANNOTATOR_SESSION_LEAVE] == other

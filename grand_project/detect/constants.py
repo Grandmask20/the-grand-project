@@ -33,6 +33,9 @@ RF_DETR_DATASET_ID = "dataset_id.txt"  # in each training checkpoint: the SHA-25
 # (manifest, ledger, kinds, limit), so --resume refuses a checkpoint of another dataset of the same screenshots
 # the annotator's export (tools/detection_dataset_annotator) and the dataset loader (rf_detr.py) share these
 RF_DETR_MANIFEST_FORMAT = "the-grand-project-rf-detr-manifest"  # the manifest's "format"; other files are refused
+RF_DETR_MANIFEST_SHA = (
+    "sha256"  # a manifest row's SHA-256 of the bytes it was detected and exported on (the annotator's)
+)
 RF_DETR_SPLITS = ("train", "validation", "test")  # a screenshot's split (the Hugging Face split names)
 RF_DETR_TRUTH_SEEDED_SOURCE = "annotator_truth_seeded"  # source_type of an unreviewed screenshot a biome truth
 # seeded, taken only with --truth-seeded (a bootstrap round)

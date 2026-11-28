@@ -238,6 +238,11 @@ def export_dataset(store: ReviewStore, output_dir: Path, *, reviewed_only: bool 
                 # file still is them (simulate_loop)
                 K.ANNOTATOR_DETECTED_SHA: settled.digests[key],
                 **({K.ANNOTATOR_TRUTH_MARK: item[K.ANNOTATOR_TRUTH_MARK]} if item.get(K.ANNOTATOR_TRUTH_MARK) else {}),
+                **(
+                    {K.ANNOTATOR_TRUTH_DIGEST: item[K.ANNOTATOR_TRUTH_DIGEST]}
+                    if item.get(K.ANNOTATOR_TRUTH_MARK) and item.get(K.ANNOTATOR_TRUTH_DIGEST)
+                    else {}
+                ),
                 "annotations": objects,
             }
         )

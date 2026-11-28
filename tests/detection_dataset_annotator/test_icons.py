@@ -280,3 +280,15 @@ def test_a_ship_button_is_no_row_neighbour(monkeypatch: pytest.MonkeyPatch) -> N
     )
     monkeypatch.setattr(icon_proposals, "_in_row", lambda pts, anchors, nodes: np.ones(len(pts), bool))
     assert icon_proposals.propose_icons(np.zeros((400, 600, 3), np.uint8), detection, {}) == []
+
+
+def test_the_icon_offset_and_whether_it_was_measured_come_from_one_set_of_pairs(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """``hidden_nodes`` measures the offsets once: the offset used and the "measured" flag are of the same pairs
+    (CodeRabbit)."""
+    calls = []
+    real = icon_proposals._node_offsets
+    monkeypatch.setattr(icon_proposals, "_node_offsets", lambda *a: calls.append(1) or real(*a))
+    icon_proposals.hidden_nodes(np.zeros((1080, 1920, 3), np.uint8), {"nodes": []}, [{"x": 600, "y": 400}])
+    assert len(calls) == 1

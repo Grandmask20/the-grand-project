@@ -24,6 +24,7 @@ import math
 import random
 import shutil
 import tempfile
+import weakref
 from collections.abc import Callable, Iterator
 from dataclasses import dataclass
 from pathlib import Path
@@ -50,6 +51,8 @@ class Record:
     height: int
     annotations: tuple[dict[str, Any], ...]
     split: str = "train"
+    sha256: str | None = None
+    """The SHA-256 of the screenshot's bytes as the export recorded them (None: the manifest has none)."""
 
 
 def _annotation(label: str, raw: dict[str, Any], name_to_id: dict[str, int], manifest_path: Path) -> dict[str, Any]:
@@ -160,6 +163,7 @@ def load_annotator_manifest(
                 height=int(item["height"]),
                 annotations=annotations,
                 split=split,
+                sha256=str(item[K.RF_DETR_MANIFEST_SHA]) if item.get(K.RF_DETR_MANIFEST_SHA) else None,
             )
         )
     if max_images is not None:
@@ -277,53 +281,57 @@ def build_dataset(
 
     The saved folder holds the screenshots' bytes (``_rows``; ``check_bytes`` sees each one's SHA-256 first),
     ``labels.json`` and ``metadata.json``: the screenshots per split and kind (reviewed, truth-seeded), the tile, and
-    ``provenance`` (the manifest's and the ledger's SHA-256: which data a model saw). All three are written to
-    ``<output_dir>.partial`` and the folder takes its name only once they are: a folder at ``output_dir`` is always a
-    whole dataset (a build cut off leaves none to reuse).
+    ``provenance`` (the manifest's and the ledger's SHA-256: which data a model saw). All three are written to a
+    staging folder of this build's own beside ``output_dir`` and it takes its name only once they are: a folder at
+    ``output_dir`` is always a whole dataset (a build cut off leaves none to reuse), and two builds at once never
+    remove each other's stage or replace what the other published (the one that finds the folder taken stops).
+
+    Without ``output_dir`` the dataset maps files in a temporary folder, removed with the dataset (or at once when the
+    build fails).
 
     Raises:
         ValueError: no training or no validation screenshot.
-        FileExistsError: ``output_dir`` exists and is not empty.
+        FileExistsError: ``output_dir`` exists and is not empty (or was published by another build meanwhile).
     """
     from datasets import Dataset, DatasetDict
 
     splits = records_by_split(records)
     features = _features([label_map[str(index)] for index in range(len(label_map))])
-    final = None
-    if output_dir is not None:
-        final = Path(output_dir)
+    final = None if output_dir is None else Path(output_dir)
+    if final is not None:
         if final.exists() and any(final.iterdir()):
             raise FileExistsError(f"dataset output directory is not empty: {final}")
-        output_dir = final.with_name(f"{final.name}.partial")
-        if output_dir.exists():
-            shutil.rmtree(output_dir)  # a build cut off before
-        output_dir.mkdir(parents=True)
-        scratch = output_dir / "rows"
-        scratch.mkdir()
+        final.parent.mkdir(parents=True, exist_ok=True)
+        stage = Path(tempfile.mkdtemp(prefix=f"{final.name}.", suffix=".partial", dir=final.parent))
     else:
-        scratch = Path(tempfile.mkdtemp(prefix="grand-project-dataset-"))  # the returned dataset maps its files
-    # an empty split (no test screenshot yet) from empty columns: no file to match the features
-    dataset = DatasetDict(
-        {
-            split: _write_split(chosen, features, scratch / f"{split}.arrow", check_bytes)
-            if chosen
-            else Dataset.from_dict({name: [] for name in features}, features=features)
-            for split, chosen in splits.items()
-        }
-    )
-    if output_dir is not None:
+        stage = Path(tempfile.mkdtemp(prefix="grand-project-dataset-"))  # the returned dataset maps its files
+    try:
+        scratch = stage / "rows"
+        scratch.mkdir()
+        # an empty split (no test screenshot yet) from empty columns: no file to match the features
+        dataset = DatasetDict(
+            {
+                split: _write_split(chosen, features, scratch / f"{split}.arrow", check_bytes)
+                if chosen
+                else Dataset.from_dict({name: [] for name in features}, features=features)
+                for split, chosen in splits.items()
+            }
+        )
+        if final is None:
+            weakref.finalize(dataset, shutil.rmtree, stage, ignore_errors=True)  # (a mapped file stays on Windows)
+            return dataset
         # an empty split (no test screenshot yet) is not saved: datasets cannot load an empty one back (load_dataset)
-        DatasetDict({split: rows for split, rows in dataset.items() if len(rows)}).save_to_disk(str(output_dir))
+        DatasetDict({split: rows for split, rows in dataset.items() if len(rows)}).save_to_disk(str(stage))
         del dataset
         gc.collect()  # the scratch files' maps closed (Windows keeps a mapped file)
         shutil.rmtree(scratch)
-        (output_dir / "labels.json").write_text(json.dumps(label_map, indent=2) + "\n", encoding="utf-8")
+        (stage / "labels.json").write_text(json.dumps(label_map, indent=2) + "\n", encoding="utf-8")
         kinds: dict[str, dict[str, int]] = {}
         for split, chosen in splits.items():
             for record in chosen:
                 kinds.setdefault(split, {}).setdefault(record.source_type, 0)
                 kinds[split][record.source_type] += 1
-        (output_dir / "metadata.json").write_text(
+        (stage / "metadata.json").write_text(
             json.dumps(
                 {
                     "format": "huggingface-datasets-object-detection",
@@ -338,11 +346,18 @@ def build_dataset(
             + "\n",
             encoding="utf-8",
         )
-        if final.exists():
-            final.rmdir()  # (empty: checked above)
-        output_dir.rename(final)
+        try:
+            # an empty folder is replaced by the rename, or (Windows) removed first: another build's published folder
+            # makes the rmdir or the rename fail, and this build stops without touching it
+            if final.exists():
+                final.rmdir()
+            stage.rename(final)
+        except OSError as exc:
+            raise FileExistsError(f"dataset output directory was taken meanwhile: {final}") from exc
         return load_dataset(final)
-    return dataset
+    except BaseException:
+        shutil.rmtree(stage, ignore_errors=True)  # this build's own stage only
+        raise
 
 
 def load_dataset(folder: Path) -> Any:

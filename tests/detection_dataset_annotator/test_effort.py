@@ -166,3 +166,19 @@ def test_the_pixel_scale_is_how_the_detector_resizes_the_screenshot() -> None:
     keep their pixels (the raw width alone would inflate their radii)."""
     assert pixel_scale(3840, 2160) == 2.0 and pixel_scale(2560, 1440) == pytest.approx(4 / 3)
     assert pixel_scale(2560, 1080) == pixel_scale(800, 600) == pixel_scale(None, None) == 1.0
+
+
+def test_the_report_is_never_written_over_the_store(tmp_path: Path, annotator_output_dir: Path) -> None:
+    """``--json`` naming the review store (or its journal) is refused before anything is opened: the report would
+    destroy the reviews it reports on (CodeRabbit)."""
+    store_file = annotator_output_dir / K.ANNOTATOR_STORE_FILE
+    with ReviewStore.open(store_file) as store:
+        _reviewed(store, tmp_path / "a.png", [_box("icon", 10, 10, 34, 34)], arm="classical", active_s=1.0)
+    before = store_file.read_bytes()
+    for target in (store_file, annotator_output_dir / ".." / annotator_output_dir.name / K.ANNOTATOR_STORE_FILE):
+        with pytest.raises(SystemExit):
+            effort.main(["--json", str(target)])
+    with pytest.raises(SystemExit):
+        effort.main(["--json", str(store_file) + "-wal"])
+    assert store_file.read_bytes() == before
+    assert effort.main(["--json", str(tmp_path / "report.json")]) == 0

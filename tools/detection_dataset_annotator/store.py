@@ -277,7 +277,10 @@ def upgrade_layout(path: Path, target: Path | None = None) -> dict[str, int]:
     staging = final.with_name(f"{final.name}.upgrade")
     staging.unlink(missing_ok=True)
     # the old store's write-ahead log folded into its file first, so the copy and the swap see every committed write
-    with contextlib.closing(sqlite3.connect(str(path), isolation_level=None)) as old:
+    # mode=rw: a store that is not there fails (a plain connect would make an empty database in its place, to be
+    # "upgraded" into nothing), while one that is there can still be checkpointed
+    source = f"{path.resolve().as_uri()}?mode=rw"
+    with contextlib.closing(sqlite3.connect(source, uri=True, isolation_level=None)) as old:
         old.execute("PRAGMA wal_checkpoint(TRUNCATE)")
     copied: dict[str, int] = {}
     # uri=True: ATTACH reads a "file:...?mode=ro" name as a URI only on a URI-enabled connection (Linux builds have it
@@ -307,6 +310,11 @@ def upgrade_layout(path: Path, target: Path | None = None) -> dict[str, int]:
         Path(f"{final}{suffix}").unlink(missing_ok=True)
     os.replace(staging, final)
     return copied
+
+
+class UnknownScreenshot(KeyError):
+    """A screenshot that is not in the store (removed, or never added): found out inside the write that needed it, so
+    no later look can see it back (a rebuild adding it again)."""
 
 
 class StoreLayoutError(sqlite3.DatabaseError):
@@ -813,12 +821,12 @@ class ReviewStore:
             Whether the result was saved.
 
         Raises:
-            KeyError: The screenshot is not in the store.
+            UnknownScreenshot: The screenshot is not in the store (a ``KeyError``).
         """
         with self._write():
             row = self._db.execute("SELECT next_annotation_id, detected FROM images WHERE key = ?", (key,)).fetchone()
             if row is None:
-                raise KeyError(key)
+                raise UnknownScreenshot(key)
             if (row[1] and not force) or self._stale(key, generation):
                 return False
             annotations, counter = _numbered(result.get("annotations", []), row[0])
@@ -846,12 +854,12 @@ class ReviewStore:
         ``generation``, changes nothing; otherwise the screenshot counts as not detected (it can be retried).
 
         Raises:
-            KeyError: The screenshot is not in the store.
+            UnknownScreenshot: The screenshot is not in the store (a ``KeyError``).
         """
         with self._write():
             row = self._db.execute("SELECT detected FROM images WHERE key = ?", (key,)).fetchone()
             if row is None:
-                raise KeyError(key)
+                raise UnknownScreenshot(key)
             if self._stale(key, generation):
                 return  # edited or reviewed since the job was queued: what it shows stands
             if force and row[0]:

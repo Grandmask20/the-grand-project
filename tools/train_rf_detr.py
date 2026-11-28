@@ -314,6 +314,12 @@ def last_complete_checkpoint(checkpoints: Path) -> Path | None:
     return None
 
 
+def wait_for_every_process() -> None:
+    """Wait until every process of a distributed run (torchrun) has reached this point; nothing with one process."""
+    if torch.distributed.is_available() and torch.distributed.is_initialized():
+        torch.distributed.barrier()
+
+
 class EmaCallback(TrainerCallback):
     """An exponential moving average of the weights, updated after every optimizer step and saved into every
     checkpoint (``<checkpoint>/ema``): it is the model the run evaluates and keeps.
@@ -354,6 +360,9 @@ class EmaCallback(TrainerCallback):
             self.ema.update_parameters(model)
 
     def on_save(self, args, state, control, **kwargs):
+        # every process writes some of a checkpoint (its own random state, beside the global main one's weights): the
+        # EMA's files mark it whole, so none are written before every process has finished its part
+        wait_for_every_process()
         if self.ema is None or not state.is_world_process_zero:
             return  # (several processes, torchrun: the global main one writes the checkpoint's EMA, once)
         folder = Path(args.output_dir) / f"checkpoint-{state.global_step}" / EMA_DIR
@@ -542,6 +551,8 @@ class RfDetrTrainer(Trainer):
 
     def _save(self, output_dir: str | None = None, state_dict: dict | None = None) -> None:
         """A checkpoint as the Trainer saves one, its weights in transformers' own key layout (``save_native``)."""
+        if not self.args.should_save:  # the Trainer's own writer check: only the designated process writes
+            return
         model = self.accelerator.unwrap_model(self.model, keep_torch_compile=False)
         if not isinstance(model, PreTrainedModel):
             super()._save(output_dir, state_dict)
@@ -659,34 +670,41 @@ def _git_commit() -> str | None:
 # ---- the dataset -------------------------------------------------------------------------------------------------
 
 
-def _check_ledger(manifest: dict[str, Any], base: Path) -> str:
+def _check_ledger(manifest: dict[str, Any], base: Path) -> tuple[str, list]:
     """Stop when the manifest's splits disagree with the split ledger (a screenshot a model trained on must stay in
-    train); returns the ledger's SHA-256 for the run's record.
+    train); returns the ledger's SHA-256 for the run's record and its rows, from one read of the file: the check, the
+    recorded SHA-256 and the dataset's byte check (``_ledger_bytes``) are of one version of the ledger.
 
     Args:
         manifest: the parsed manifest (the same read the dataset is built from).
         base: its folder (its relative paths lie there, as the dataset reads them).
     """
-    from tools.detection_dataset_annotator import constants as AK
-    from tools.detection_dataset_annotator.split_ledger import check_manifest
+    from tools.detection_dataset_annotator.split_ledger import check_manifest, ledger_snapshot
 
-    problems = check_manifest(manifest, base=base)
+    rows, sha = ledger_snapshot()
+    problems = check_manifest(manifest, base=base, rows=rows)
     if problems:
         shown = "\n  ".join(problems[:20])
         more = f"\n  ... and {len(problems) - 20} more" if len(problems) > 20 else ""
         raise SystemExit(f"the manifest's splits disagree with the split ledger:\n  {shown}{more}")
-    return file_sha256(AK.ANNOTATOR_SPLIT_LEDGER)
+    return sha, rows
 
 
-def _ledger_bytes():
-    """``build_dataset``'s ``check_bytes``: the bytes a screenshot is built from (read once and embedded) must be ones
-    the split ledger keeps, with the screenshot's split. The ledger check vouched for the files as they were then; a
-    file replaced since is stopped here, not trained on under a split it never had."""
-    from tools.detection_dataset_annotator.split_ledger import read_ledger
-
-    book = read_ledger()
+def _ledger_bytes(rows: list):
+    """``build_dataset``'s ``check_bytes``: the bytes a screenshot is built from (read once and embedded) must be the
+    ones its manifest row was exported with (``Record.sha256``, when it has one) and ones the split ledger (``rows``,
+    the snapshot the manifest was checked against) keeps with the screenshot's split. The ledger check vouched for the
+    files as they were then; a file replaced since is stopped here, not trained on under a split it never had."""
+    book: dict[str, Any] = {}
+    for entry in rows:
+        book.setdefault(entry.sha256, entry)
 
     def check(record, digest: str) -> None:
+        if record.sha256 is not None and digest != record.sha256:
+            raise SystemExit(
+                f"{record.path} changed since it was exported: its bytes are not the ones the manifest names; "
+                "export again"
+            )
         entry = book.get(digest)
         if entry is None or entry.split != record.split:
             where = "is not in the split ledger" if entry is None else f"is {entry.split} in the split ledger"
@@ -721,7 +739,7 @@ def _load_or_build_dataset(args: argparse.Namespace):
     # meanwhile would otherwise be checked as one file and built as another)
     raw = args.annotator_manifest.read_bytes()
     manifest = json.loads(raw.decode("utf-8"))
-    ledger_sha = _check_ledger(manifest, args.annotator_manifest.parent)
+    ledger_sha, ledger_rows = _check_ledger(manifest, args.annotator_manifest.parent)
     records, label_map = load_annotator_manifest(
         args.annotator_manifest, max_images=args.max_images, truth_seeded=args.truth_seeded, data=manifest
     )
@@ -744,7 +762,9 @@ def _load_or_build_dataset(args: argparse.Namespace):
         target = dataset_dir.with_name(f"{dataset_dir.name}.new")
         if target.exists():
             shutil.rmtree(target)
-    build_dataset(records, label_map=label_map, output_dir=target, provenance=provenance, check_bytes=_ledger_bytes())
+    build_dataset(
+        records, label_map=label_map, output_dir=target, provenance=provenance, check_bytes=_ledger_bytes(ledger_rows)
+    )
     if target != dataset_dir:
         swap_in(target, dataset_dir)
     # the folder as saved, the same on every process (the others load it: dataset_main_first)

@@ -29,6 +29,7 @@ truth labels roughly every stronghold area).
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 from collections import Counter
 from collections.abc import Callable, Mapping, Sequence
@@ -81,13 +82,17 @@ class Truth:
     bytes the placement was made on; only a placement with it seeds)."""
     source: str = ""
     """The truth file, project-relative: the mark a seeded screenshot carries (``ANNOTATOR_TRUTH_MARK``)."""
+    digest: str = ""
+    """The SHA-256 of the truth file's bytes: the version of the truth a screenshot is seeded from
+    (``ANNOTATOR_TRUTH_DIGEST``)."""
     root: Path | None = None
     """The folder its screenshots lie below (by default the truth file's own: its atlas's): the truth names them by
     file name only, so a screenshot of that name elsewhere (another atlas) is not one of them. None: anywhere."""
 
     @classmethod
     def load(cls, path: Path, root: Path | None = None) -> Truth:
-        data = json.loads(Path(path).read_text(encoding="utf-8"))
+        raw = Path(path).read_bytes()  # one read: the digest is of the bytes parsed
+        data = json.loads(raw.decode("utf-8"))
         maps = np.array([row[:2] for row in data["maps"]], float).reshape(-1, 2)
         cities_found = [
             (area["city"]["x"], area["city"]["y"])
@@ -100,6 +105,7 @@ class Truth:
             cities=np.array(cities_found, float).reshape(-1, 2),
             screenshots={shot["file"]: shot for shot in data["screenshots"]},
             source=relative_source(Path(path)),
+            digest=hashlib.sha256(raw).hexdigest(),
             root=Path(root if root is not None else Path(path).parent).resolve(),
         )
 
@@ -405,6 +411,9 @@ def seed_store(store: ReviewStore, truth: Truth, *, dry_run: bool = False) -> tu
         if not complete:
             continue  # neither boxes nor mark: a truth-seeded round must not take it before it is seeded whole
         mark = {K.ANNOTATOR_TRUTH_MARK: truth.source}
+        # the mark names the truth and the version of its file the boxes come from (seeded again after the truth
+        # changed, the screenshot takes the new version)
+        stamp = {**mark, K.ANNOTATOR_TRUTH_DIGEST: truth.digest}
         # a reviewer's edit or review made since the read (the page open beside it) keeps its boxes, and another
         # truth's mark set meanwhile keeps that truth's (marked: absent or this truth's)
         guard = {"untouched": True, "expect_boxes": item["annotations"], "marked": mark}
@@ -412,7 +421,7 @@ def seed_store(store: ReviewStore, truth: Truth, *, dry_run: bool = False) -> tu
             if (
                 dry_run
                 or other == truth.source
-                or store.save_review(key, int(item["edit_version"]), extra=mark, **guard)
+                or store.save_review(key, int(item["edit_version"]), extra=stamp, **guard)
             ):
                 done.update(corrections)
             else:
@@ -421,7 +430,9 @@ def seed_store(store: ReviewStore, truth: Truth, *, dry_run: bool = False) -> tu
         # a dry run counts what the save would take: a screenshot nobody edited (the save checks it again)
         if (dry_run and store.untouched(key)) or (
             not dry_run
-            and store.save_review(key, int(item["edit_version"]), annotations=boxes, extra=mark, prelabel=True, **guard)
+            and store.save_review(
+                key, int(item["edit_version"]), annotations=boxes, extra=stamp, prelabel=True, **guard
+            )
         ):
             changed += 1
             done.update(corrections)

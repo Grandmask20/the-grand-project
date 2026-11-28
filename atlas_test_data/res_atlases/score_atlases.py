@@ -215,7 +215,9 @@ def main() -> int:
     if args.rebuild:
         for f in folders:
             print(f"rebuilding {f.name} ...", flush=True)
-            rebuild(f)
+            if not rebuild(f):  # nothing placed: the folder's atlas.json would be an older build's, scored as new
+                print(f"{f.name}: the builder placed no screenshot; not scoring a stale atlas", file=sys.stderr)
+                return 1
     res = {f.name: numbers(f, core, view_model) for f in folders}
     ref = res.get(REFERENCE)
     for name, r in res.items():

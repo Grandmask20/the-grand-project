@@ -19,7 +19,8 @@ def packages(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, request: pytest.Fi
     folders = [tmp_path / "nvidia" / name / "lib" for name in ("cudnn", request.param)]
     for folder in folders:
         folder.mkdir(parents=True)
-    monkeypatch.setattr(sys, "path", [str(tmp_path)])
+    (tmp_path / "torch").mkdir()  # the package folder PyTorch is installed in
+    monkeypatch.setattr(rf_detr_cuda, "_package_roots", lambda: [tmp_path])
     monkeypatch.setattr(sys, "platform", "linux")
     monkeypatch.delenv(K.RF_DETR_CUDA_REEXEC_ENV, raising=False)
     return [str(folder) for folder in folders]
@@ -45,7 +46,7 @@ def test_nothing_happens_when_it_is_not_needed(packages: list[str], monkeypatch,
     if case == "not linux":
         monkeypatch.setattr(sys, "platform", "win32")
     if case == "no pytorch cuda":
-        monkeypatch.setattr(sys, "path", [str(tmp_path / "elsewhere")])
+        monkeypatch.setattr(rf_detr_cuda, "_package_roots", lambda: [tmp_path / "elsewhere"])
     monkeypatch.setattr(rf_detr_cuda.os, "execve", lambda *args: pytest.fail("restarted"))
     rf_detr_cuda.prefer_pip_cuda_libraries()
 
@@ -67,16 +68,32 @@ def test_a_main_given_its_own_arguments_restarts_with_them(packages: list[str], 
 
 
 def test_the_environments_own_libraries_come_before_a_system_wheels(tmp_path: Path, monkeypatch) -> None:
-    """In the interpreter's search order: a system folder sorting first ("/usr/...") never comes before the
-    environment's site-packages listed before it on sys.path (CodeRabbit)."""
+    """In the interpreter's package-folder order: a system folder sorting first ("/usr/...") never comes before the
+    environment's own listed before it (CodeRabbit)."""
     env, system = tmp_path / "z-env", tmp_path / "a-system"
     for root in (env, system):
         (root / "nvidia" / "cudnn" / "lib").mkdir(parents=True)
-    monkeypatch.setattr(sys, "path", [str(env), str(system)])
+        (root / "torch").mkdir()
+    monkeypatch.setattr(rf_detr_cuda, "_package_roots", lambda: [env, system])
     assert rf_detr_cuda._library_dirs() == [
         str(env / "nvidia" / "cudnn" / "lib"),
         str(system / "nvidia" / "cudnn" / "lib"),
     ]
+
+
+def test_only_the_interpreters_package_folders_that_hold_pytorch_count(tmp_path: Path, monkeypatch) -> None:
+    """A folder on ``sys.path`` (the working directory, a script's folder) is no source of libraries to load first on
+    ``LD_LIBRARY_PATH``; nor is a package folder without PyTorch (CodeRabbit)."""
+    mine, other, planted = tmp_path / "site", tmp_path / "other-site", tmp_path / "cwd"
+    for root in (mine, other, planted):
+        (root / "nvidia" / "cudnn" / "lib").mkdir(parents=True)
+    (mine / "torch").mkdir()
+    monkeypatch.setattr(rf_detr_cuda.sysconfig, "get_paths", lambda: {"purelib": str(mine), "platlib": str(mine)})
+    monkeypatch.setattr(rf_detr_cuda.site, "getsitepackages", lambda: [str(other)])
+    monkeypatch.setattr(rf_detr_cuda.site, "getusersitepackages", lambda: str(tmp_path / "no-user-site"))
+    monkeypatch.setattr(sys, "path", [str(planted), str(mine), str(other)])
+    assert rf_detr_cuda._package_roots() == [mine]
+    assert rf_detr_cuda._library_dirs() == [str(mine / "nvidia" / "cudnn" / "lib")]
 
 
 @pytest.mark.skipif(sys.platform == "win32", reason="a ':' in a folder name is a POSIX case")
@@ -87,7 +104,8 @@ def test_a_wheel_folder_the_linker_would_split_is_named_not_restarted(
     site = tmp_path / "env:a"
     for name in ("cudnn", "cu13"):
         (site / "nvidia" / name / "lib").mkdir(parents=True)
-    monkeypatch.setattr(sys, "path", [str(site)])
+    (site / "torch").mkdir()
+    monkeypatch.setattr(rf_detr_cuda, "_package_roots", lambda: [site])
     monkeypatch.setattr(sys, "platform", "linux")
     monkeypatch.delenv(K.RF_DETR_CUDA_REEXEC_ENV, raising=False)
     monkeypatch.setattr(rf_detr_cuda.os, "execve", lambda *a: pytest.fail("restarted"))

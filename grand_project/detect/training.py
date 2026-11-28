@@ -382,9 +382,10 @@ def cmd_score_rf_detr() -> int:
     """Command `python -m grand_project.detect score_rf_detr`: the RF-DETR detector on the hand-labelled screenshots.
 
     The model is GRAND_PROJECT_RF_DETR_MODEL's, else runs/rf-detr-small/best. The truth screenshots are pinned to the
-    annotator's test split, so a model trained by `tools.train_rf_detr` never trained on them; the score is called
-    held-out only when the model's own list of training screenshots (RF_DETR_TRAINED_ON) confirms it, beside
-    `score`'s leave-one-out score of the classical detector. Icons are named leave-one-out too: with the labelled
+    annotator's test split, so a `tools.train_rf_detr` run never trains on them itself; a model gone on from another
+    (`--init-from`) may still have learned them in that ancestor's run. The score is called held-out only when the
+    model's own list of training screenshots (RF_DETR_TRAINED_ON, ancestors' included) confirms it, beside `score`'s
+    leave-one-out score of the classical detector. Icons are named leave-one-out too: with the labelled
     pictures of the other truth screenshots, not the stored icon model's (which holds every truth screenshot's).
     Writes the outputs to last_score_outputs_rf_detr.json next to TRUTH.
 

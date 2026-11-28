@@ -30,6 +30,7 @@ from typing import Any
 
 import cv2
 import numpy as np
+from scipy.optimize import linear_sum_assignment
 
 from grand_project import core
 from grand_project.cities import name_button
@@ -86,6 +87,20 @@ def _hash_checkpoint(model_dir: Path) -> str:
                 for chunk in iter(lambda: fh.read(1 << 20), b""):
                     h.update(chunk)
     return h.hexdigest()
+
+
+def folder_identity(model_dir: Path) -> tuple[int, int]:
+    """Which generation of a checkpoint folder this is: its device and inode, as configured (symlinks followed).
+
+    A training run publishes a new ``best/`` by renaming a complete folder into place (``train_rf_detr.swap_in``), so
+    a new generation is a new inode; a reader that sees the same identity before and after reading several files read
+    them all from one generation, never half of one and half of the next.
+
+    Raises:
+        OSError: the folder is not there (swapped out just now).
+    """
+    status = os.stat(model_dir)
+    return status.st_dev, status.st_ino
 
 
 def checkpoint_digest(model_dir: Path) -> str:
@@ -160,6 +175,10 @@ def load_detector(model_dir: Path) -> dict[str, Any]:
         )
     expected = checkpoint_digest(model_dir)
     try:
+        generation = folder_identity(model_dir)
+    except OSError as exc:
+        raise RuntimeError(f"the RF-DETR model in {model_dir} is not there any more: start the program again") from exc
+    try:
         import torch
         from transformers import AutoImageProcessor, AutoModelForObjectDetection
 
@@ -175,7 +194,14 @@ def load_detector(model_dir: Path) -> dict[str, Any]:
     # the files as loaded, labels.json too, must be the ones the detector stamp names (a training run swapping a new
     # best/ in meanwhile would give detections of other weights under the old stamp): the digest from before the load,
     # checked after everything was read
-    if _hash_checkpoint(model_dir) != expected:
+    # the marker and the list are read from the folder the weights were: a folder swapped out meanwhile has no marker
+    # (a stable partial list would read as whole), so it is refused, not taken for an absent marker
+    try:
+        same_generation = folder_identity(model_dir) == generation
+        same_files = same_generation and _hash_checkpoint(model_dir) == expected
+    except OSError:
+        same_files = False
+    if not same_files:
         raise RuntimeError(
             f"the RF-DETR model in {model_dir} changed since this process first read it: start the program again"
         )
@@ -479,33 +505,36 @@ def detect_rf_detr(img: np.ndarray, book: dict | None = None) -> dict:
     feet = [((item["box"][0] + item["box"][2]) / 2, item["box"][3]) for item in by_family.get("tower", [])]
     for (x, y), item in zip(feet, by_family.get("tower", []), strict=True):
         landmarks.append({"kind": "Tower", "x": round(x, 1), "y": round(y, 1), "score": round(item["score"], 3)})
-    # Each tower's map node first, one apiece (the closest pairs first), and only then the pruning: done tower by
-    # tower, a later tower pruned an earlier one's base or took it over (CodeRabbit). As in the classical detector
-    # (landmarks_from): a tower's map node stays in the graph, flagged, so paths still reach it (trace_paths) and
-    # expedition_rules can unflag it; other map nodes this close are the same wide tower base, unless a City or Hall
-    # is that map node (its landmark stands on it) or it is another tower's own.
-    pairs = sorted(
-        (float(np.hypot(node["x"] - x, node["y"] - y)), t, n)
-        for t, (x, y) in enumerate(feet)
-        for n, node in enumerate(nodes)
-    )
-    placed, bases = set(), {}
-    for distance, t, n in pairs:
-        if distance <= K.RF_DETR_TOWER_NODE_REACH and t not in placed and n not in bases:
-            placed.add(t)
-            bases[n] = nodes[n]
-    for base in bases.values():
-        base["tower"] = True
+    # Each tower's map node first, one apiece, and only then the pruning: done tower by tower, a later tower pruned an
+    # earlier one's base or took it over (CodeRabbit). The pairing is the one with the most towers placed, then the
+    # least distance in all: taking the closest pairs first could leave a tower without a base that another pairing
+    # gives every tower. As in the classical detector (landmarks_from): a tower's map node stays in the graph, flagged,
+    # so paths still reach it (trace_paths) and expedition_rules can unflag it. A City's or Hall's map node is never a
+    # tower's base (its landmark stands on it) and stays whatever is beside it.
+    own_at = {n for n, node in enumerate(nodes) if any(node is mine for mine in own)}
+    free = [n for n in range(len(nodes)) if n not in own_at]
+    if feet and free:
+        gap = np.hypot(
+            np.array([[nodes[n]["x"] - x for n in free] for x, _y in feet]),
+            np.array([[nodes[n]["y"] - y for n in free] for _x, y in feet]),
+        )
+        in_reach = gap <= K.RF_DETR_TOWER_NODE_REACH
+        # out of reach costs more than all the pairs in reach together: the most pairs first, then the closest
+        never = (min(gap.shape) + 1) * K.RF_DETR_TOWER_NODE_REACH + 1.0
+        for t, c in zip(*linear_sum_assignment(np.where(in_reach, gap, never)), strict=True):
+            if in_reach[t, c]:
+                nodes[free[int(c)]]["tower"] = True
+    # the Expedition rules first, as in the classical detector: they clear the tower flags the path tracer reads, and
+    # a tower they refuse is an ordinary ocean map whose neighbours are no duplicates of its base
+    nodes, icons, landmarks = expedition_rules(nodes, icons, landmarks)  # (the same nodes, in the same order)
+    bases = [node for node in nodes if node.get("tower")]
     nodes = [
         node
         for n, node in enumerate(nodes)
-        if n in bases
-        or any(node is mine for mine in own)
-        or all(np.hypot(node["x"] - base["x"], node["y"] - base["y"]) > K.TOWER_NMS for base in bases.values())
+        if node.get("tower")
+        or n in own_at
+        or all(np.hypot(node["x"] - base["x"], node["y"] - base["y"]) > K.TOWER_NMS for base in bases)
     ]
-
-    # the Expedition rules first, as in the classical detector: they clear tower flags the path tracer reads
-    nodes, icons, landmarks = expedition_rules(nodes, icons, landmarks)
     edges = trace_paths(nodes, classical_path_dashes(img), img)
     # the classical wall mask alone decides, as in the classical detector: a learned wall box is no exact wall and
     # would cut paths the mask lets through
@@ -526,6 +555,7 @@ __all__ = [
     "class_families",
     "detect_rf_detr",
     "family_detections",
+    "folder_identity",
     "hall_node",
     "load_detector",
     "predict_tiles",

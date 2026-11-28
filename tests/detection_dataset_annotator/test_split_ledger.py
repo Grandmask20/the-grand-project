@@ -4,6 +4,7 @@ anything is written."""
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import shutil
@@ -494,3 +495,22 @@ def test_a_ledger_that_cannot_be_written_takes_the_store_claims_back(
     monkeypatch.setattr(split_ledger, "write_ledger", write)  # (not undo(): that would unpatch the ledger's place)
     assert len(settle_splits(review_store).split_of) == 3
     assert len(review_store.splits()) == 3 and split_ledger_file.exists()
+
+
+def test_the_check_and_its_report_come_from_one_read_of_the_store(tmp_path: Path, review_store: ReviewStore) -> None:
+    """``check_splits`` takes the store's items from the caller's one read: a store that changed since is not looked at
+    again, and the ledger's rows and its SHA-256 come from one read of the file (CodeRabbit)."""
+    from tools.detection_dataset_annotator.split_ledger import check_splits, ledger_snapshot
+
+    paths = _shots(tmp_path / "shots")
+    _detect(review_store, paths)
+    settle_splits(review_store)
+    every = list(review_store.items())
+    assert check_splits(review_store, every=every) == []
+    other = {"train": "test"}  # a read taken at another moment, with other splits than the store has now
+    moved = [(key, {**item, "split": other.get(item["split"], "train")}) for key, item in every if item.get("split")]
+    assert check_splits(review_store, every=moved)  # the read it is given is what it checks
+    assert check_splits(review_store) == []  # the store as it is now agrees with the ledger
+    rows, sha = ledger_snapshot()
+    assert rows == read_ledger_rows() and len(sha) == 64
+    assert ledger_snapshot(tmp_path / "none.csv") == ([], hashlib.sha256(b"").hexdigest())

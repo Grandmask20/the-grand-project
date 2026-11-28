@@ -118,18 +118,24 @@ def test_tiles_find_each_object_once_in_screenshot_pixels() -> None:
 
 
 def test_a_find_on_the_hud_is_dropped_before_the_duplicates(monkeypatch: pytest.MonkeyPatch) -> None:
-    """What lies on the HUD is HUD art, dropped in the tiled inference itself: the program, training's scores and the
-    pre-labels all see it gone (CodeRabbit)."""
+    """What lies on the HUD is HUD art, dropped in the tiled inference itself before the duplicates are: a higher-scored
+    box on the HUD overlapping a real one (centres on either side of the HUD's edge) never suppresses it, so the
+    program, training's scores and the pre-labels all see the real one (CodeRabbit)."""
     torch = pytest.importorskip("torch")
     tile = K.RF_DETR_TILE
-    monkeypatch.setattr(rf_detr_model.T, "tile_origins", lambda width, height: [(0, 1080 - tile)])
+    top = 1080 - tile
+    monkeypatch.setattr(rf_detr_model.T, "tile_origins", lambda width, height: [(0, top)])
+    # column x = 500: the HUD's top edge is at y 930 (the mask is True below it)
+    hud_y, free_y = 934.0, 922.0
+    on_hud = core.on_hud_mask([(500.0, hud_y), (500.0, free_y)], 1920, 1080, pad=0)
+    assert list(on_hud) == [True, False]  # (the premise: the two centres lie on either side of the edge)
 
     def model(pixel_values):
         logits = torch.full((len(pixel_values), 2, 4), -20.0)
-        logits[:, :, 1] = 5.0  # sure: grass map nodes
-        y_hud, y_free = 1069 - (1080 - tile), 500 - (1080 - tile)  # (20, 1069) is on the HUD, (500, 500) is not
-        hud = [20 / tile, y_hud / tile, 20 / tile, 18 / tile]
-        free = [500 / tile, y_free / tile, 40 / tile, 40 / tile]
+        logits[:, 0, 1] = 5.0  # the HUD box: sure
+        logits[:, 1, 1] = 3.0  # the real one: less sure, so it is the one NMS would suppress with the HUD box in
+        hud = [500 / tile, (hud_y - top) / tile, 40 / tile, 40 / tile]
+        free = [500 / tile, (free_y - top) / tile, 40 / tile, 40 / tile]  # 12 px higher: IoU 0.54
         boxes = torch.tensor([[hud, free]])
         return SimpleNamespace(logits=logits, pred_boxes=boxes.repeat(len(pixel_values), 1, 1))
 
@@ -139,7 +145,7 @@ def test_a_find_on_the_hud_is_dropped_before_the_duplicates(monkeypatch: pytest.
     families = class_families({0: "map_node", 1: "map_node_grass", 2: "map_node_mountain", 3: "icon"})
     shot = np.zeros((1080, 1920, 3), np.uint8)
     found = rf_detr_model.predict_tiles(model, processor, shot, families, torch.device("cpu"), threshold=0.35)
-    assert [[round(v) for v in d["box"]] for d in found] == [[480, 480, 520, 520]]
+    assert [[round(v) for v in d["box"]] for d in found] == [[480, 902, 520, 942]]
 
 
 def test_a_family_past_the_cap_is_chosen_by_its_whole_sum() -> None:
@@ -430,6 +436,45 @@ def test_two_towers_close_together_keep_a_map_node_each(monkeypatch) -> None:
     ]
 
 
+def test_towers_take_the_pairing_that_places_most_of_them(monkeypatch) -> None:
+    """The first tower is closest to the first map node, but the second reaches only that one: each takes a base only
+    when the towers are paired as a whole (the closest pairs first left the second tower without one: CodeRabbit)."""
+    predictions = [
+        {"label": "map_node", "family": "node", "box": [880.0, 480.0, 920.0, 520.0], "score": 0.9},  # (900, 500)
+        {"label": "map_node", "family": "node", "box": [930.0, 480.0, 970.0, 520.0], "score": 0.9},  # (950, 500)
+        {"label": "tower", "family": "tower", "box": [885.0, 285.0, 925.0, 500.0], "score": 0.8},  # foot (905, 500)
+        {"label": "tower", "family": "tower", "box": [830.0, 285.0, 870.0, 500.0], "score": 0.7},  # foot (850, 500)
+    ]
+    result = _detect(monkeypatch, predictions)
+    assert sorted((n["x"], bool(n.get("tower"))) for n in result["nodes"]) == [(900.0, True), (950.0, True)]
+
+
+def test_a_tower_beside_only_a_citys_map_node_has_no_base(monkeypatch) -> None:
+    """The City's map node is the City's: not the base of a tower that stands within reach of it (it stays in the
+    graph, unflagged)."""
+    predictions = [
+        {"label": "map_node_vaal", "family": "node", "box": [880.0, 480.0, 920.0, 520.0], "score": 0.9},
+        {"label": "citadel_stone", "family": "citadel", "box": [860.0, 460.0, 940.0, 540.0], "score": 0.8},
+        {"label": "tower", "family": "tower", "box": [880.0, 285.0, 920.0, 505.0], "score": 0.8},
+    ]
+    result = _detect(monkeypatch, predictions)
+    assert [(n["x"], bool(n.get("tower"))) for n in result["nodes"]] == [(900.0, False)]
+    assert sorted(lm["kind"] for lm in result["landmarks"]) == ["City", "Tower"]
+
+
+def test_the_map_beside_a_tower_expedition_refuses_is_kept(monkeypatch) -> None:
+    """A tower under an Expedition icon is an ordinary ocean map: the map node beside it is no duplicate of a tower
+    base, so it stays for the path tracer (it was pruned before the Expedition rules ran: CodeRabbit)."""
+    predictions = [
+        {"label": "map_node_water", "family": "node", "box": [880.0, 480.0, 920.0, 520.0], "score": 0.9},
+        {"label": "map_node_water", "family": "node", "box": [900.0, 480.0, 940.0, 520.0], "score": 0.9},
+        {"label": "tower", "family": "tower", "box": [880.0, 285.0, 920.0, 505.0], "score": 0.8},
+        {"label": "icon", "family": "icon", "box": [883.0, 459.0, 917.0, 493.0], "score": 0.9},
+    ]
+    result = _detect(monkeypatch, predictions, names=[K.EXPEDITION])
+    assert sorted((n["x"], bool(n.get("tower"))) for n in result["nodes"]) == [(900.0, False), (920.0, False)]
+
+
 def test_a_tower_never_takes_a_city_map_node_beside_it_for_its_base(monkeypatch) -> None:
     """A City's map node close to a tower's base is the City's, not a duplicate of the tower base: it stays, and so
     does the City on it (CodeRabbit)."""
@@ -523,6 +568,36 @@ def test_labels_changed_after_they_were_read_are_refused(tmp_path: Path, monkeyp
     def read_then_swapped(model_dir, model):
         labels = real(model_dir, model)
         (tmp_path / "labels.json").write_text('{"0": "map_node", "1": "tower"}', encoding="utf-8")
+        return labels
+
+    monkeypatch.setattr(rf_detr_model, "_labels", read_then_swapped)
+    try:
+        with pytest.raises(RuntimeError, match="changed since this process first read it"):
+            rf_detr_model._load_runtime()
+    finally:
+        rf_detr_model.reset_rf_detr_runtime()
+
+
+def test_a_folder_swapped_while_it_was_read_is_refused_even_with_the_same_files(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The weights, the training list and its partial marker must come from one generation of the folder: one swapped
+    for a copy while they were read (a new folder, the same bytes) is refused, never read as having no marker
+    (CodeRabbit)."""
+    import shutil
+
+    pytest.importorskip("torch")
+    transformers = pytest.importorskip("transformers")
+    model_dir = tmp_path / "best"
+    model_dir.mkdir()
+    _stub_loaders(monkeypatch, transformers, model_dir, {"0": "map_node", "1": "icon"})
+    real = rf_detr_model._labels
+
+    def read_then_swapped(folder, model):
+        labels = real(folder, model)
+        shutil.copytree(model_dir, tmp_path / "next")
+        model_dir.rename(tmp_path / "previous")
+        (tmp_path / "next").rename(model_dir)  # a published new best/: another inode, the same files
         return labels
 
     monkeypatch.setattr(rf_detr_model, "_labels", read_then_swapped)

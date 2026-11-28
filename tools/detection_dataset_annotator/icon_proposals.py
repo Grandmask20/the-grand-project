@@ -283,7 +283,12 @@ def node_offset(icons: list[dict[str, Any]], nodes: list[dict[str, Any]]) -> flo
     Crawl screenshots measure 24 px (``ROW_DY``), the res atlases 31-36; fewer than
     ``ANNOTATOR_HIDDEN_MIN_PAIRS`` pairs fall back to ``ROW_DY``.
     """
-    offsets = _node_offsets(icons, nodes)
+    return _offset_of(_node_offsets(icons, nodes))
+
+
+def _offset_of(offsets: list[float]) -> float:
+    """The icon-to-map-node offset the measured ``offsets`` give: their median, or ``ROW_DY`` when too few pairs
+    measured it."""
     if len(offsets) < K.ANNOTATOR_HIDDEN_MIN_PAIRS:
         return float(detect_constants.ROW_DY)
     return float(np.median(offsets))
@@ -325,10 +330,12 @@ def hidden_nodes(
     """
     nodes = detection.get("nodes", [])
     on_nodes = [icon for icon in icons if icon.get("source") != "square button"]  # ship buttons stand on water
-    offset = node_offset(on_nodes, nodes)
+    # measured once: the offset and whether it was measured are of the same pairs
+    offsets = _node_offsets(on_nodes, nodes)
+    offset = _offset_of(offsets)
     # too few pairs to measure it (the offset is a guess): a faint map node centred anywhere in the row's reach below
     # is taken, not only one near the guessed spot (res atlases sit 31-36 px below, the guess is 24)
-    measured = len(_node_offsets(on_nodes, nodes)) >= K.ANNOTATOR_HIDDEN_MIN_PAIRS
+    measured = len(offsets) >= K.ANNOTATOR_HIDDEN_MIN_PAIRS
     known = _points(nodes)
     visible = _points([node for node in nodes if not node.get("hidden")])
     spots = np.zeros((0, 2)) if spots is None else np.asarray(spots, dtype=float).reshape(-1, 2)

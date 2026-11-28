@@ -24,6 +24,7 @@ from __future__ import annotations
 import argparse
 import contextlib
 import csv
+import hashlib
 import io
 import json
 import os
@@ -129,6 +130,46 @@ def _ledger_lock(path: Path | None = None) -> Iterator[None]:
                 fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
 
 
+def _parse_ledger(text: str, path: Path) -> list[Entry]:
+    """The rows of a ledger file's text (``path`` names it in the errors).
+
+    Raises:
+        ValueError: as ``read_ledger_rows``.
+    """
+    rows: list[Entry] = []
+    split_of: dict[str, Entry] = {}
+    by_file: dict[str, Entry] = {}
+    reader = csv.DictReader(io.StringIO(text, newline=""))
+    if tuple(reader.fieldnames or ()) != LEDGER_COLUMNS:
+        raise ValueError(f"{path} is not a split ledger: its columns must be {', '.join(LEDGER_COLUMNS)}")
+    for row in reader:
+        entry = Entry(**{column: row[column] or "" for column in LEDGER_COLUMNS})
+        if entry.split not in K.ANNOTATOR_SPLITS:
+            raise ValueError(f"{path}: {entry.file} has the unknown split {entry.split!r}")
+        known = split_of.setdefault(entry.sha256, entry)
+        if known.split != entry.split:
+            raise ValueError(f"{path}: {entry.file} and {known.file} have the same bytes and different splits")
+        # a file whose bytes changed has a row per digest: one screenshot, one split
+        named = by_file.setdefault(entry.file, entry) if entry.file else entry
+        if named.split != entry.split:
+            raise ValueError(f"{path}: {entry.file} has two rows with different splits")
+        rows.append(entry)
+    return rows
+
+
+def ledger_snapshot(path: Path | None = None) -> tuple[list[Entry], str]:
+    """The ledger's rows and the SHA-256 of the very bytes they were read from (one read: what a caller checks and
+    what it records are one version of the file, though a writer replaces it meanwhile). No ledger yet: no rows and
+    the SHA-256 of nothing.
+
+    Raises:
+        ValueError: as ``read_ledger_rows``.
+    """
+    path = _ledger_path(path)
+    raw = path.read_bytes() if path.is_file() else b""
+    return (_parse_ledger(raw.decode("utf-8"), path) if raw else []), hashlib.sha256(raw).hexdigest()
+
+
 def read_ledger_rows(path: Path | None = None) -> list[Entry]:
     """Every row of the ledger, in file order (empty when there is no ledger yet). A digest may have several rows:
     each file name its bytes were seen under, all with its one split; a file name too (its bytes changed), all with
@@ -137,29 +178,7 @@ def read_ledger_rows(path: Path | None = None) -> list[Entry]:
     Raises:
         ValueError: The file is not a ledger, names an unknown split, or gives one hash or one file two splits.
     """
-    path = _ledger_path(path)
-    if not path.is_file():
-        return []
-    rows: list[Entry] = []
-    split_of: dict[str, Entry] = {}
-    by_file: dict[str, Entry] = {}
-    with path.open(encoding="utf-8", newline="") as handle:
-        reader = csv.DictReader(handle)
-        if tuple(reader.fieldnames or ()) != LEDGER_COLUMNS:
-            raise ValueError(f"{path} is not a split ledger: its columns must be {', '.join(LEDGER_COLUMNS)}")
-        for row in reader:
-            entry = Entry(**{column: row[column] or "" for column in LEDGER_COLUMNS})
-            if entry.split not in K.ANNOTATOR_SPLITS:
-                raise ValueError(f"{path}: {entry.file} has the unknown split {entry.split!r}")
-            known = split_of.setdefault(entry.sha256, entry)
-            if known.split != entry.split:
-                raise ValueError(f"{path}: {entry.file} and {known.file} have the same bytes and different splits")
-            # a file whose bytes changed has a row per digest: one screenshot, one split
-            named = by_file.setdefault(entry.file, entry) if entry.file else entry
-            if named.split != entry.split:
-                raise ValueError(f"{path}: {entry.file} has two rows with different splits")
-            rows.append(entry)
-    return rows
+    return ledger_snapshot(path)[0]
 
 
 def read_ledger(path: Path | None = None) -> dict[str, Entry]:
@@ -382,9 +401,12 @@ def settle_splits(
     return Settled(split_of, blocks, items, origins, added, unreadable, digests)
 
 
-def _check_rows(rows: list[tuple[str, Path, str | None, str]], ledger: Path | None) -> list[str]:
-    """Where rows (name, path, split, where) disagree with the ledger or are missing from it."""
-    rows_kept = read_ledger_rows(ledger)
+def _check_rows(
+    rows: list[tuple[str, Path, str | None, str]], ledger: Path | None, kept: list[Entry] | None = None
+) -> list[str]:
+    """Where rows (name, path, split, where) disagree with the ledger (its rows ``kept`` when the caller read them
+    already) or are missing from it."""
+    rows_kept = read_ledger_rows(ledger) if kept is None else kept
     book: dict[str, Entry] = {}
     by_file: dict[str, Entry] = {}
     for entry in rows_kept:
@@ -435,7 +457,13 @@ def _manifest_rows(manifest: Mapping[str, Any], base: Path | None) -> list[tuple
     return rows
 
 
-def check_manifest(manifest: Mapping[str, Any], *, base: Path | None = None, ledger: Path | None = None) -> list[str]:
+def check_manifest(
+    manifest: Mapping[str, Any],
+    *,
+    base: Path | None = None,
+    ledger: Path | None = None,
+    rows: list[Entry] | None = None,
+) -> list[str]:
     """Where an export's manifest disagrees with the ledger (the trainer's check before every dataset it builds:
     a screenshot a model trained on must stay in train). Needs no store; changes nothing.
 
@@ -443,8 +471,10 @@ def check_manifest(manifest: Mapping[str, Any], *, base: Path | None = None, led
         manifest: the export's ``manifest.json``.
         base: the folder its relative paths lie in (its own folder).
         ledger: the ledger file (default ``ANNOTATOR_SPLIT_LEDGER``).
+        rows: the ledger's rows as the caller read them (``ledger_snapshot``), so the check and the caller's other uses
+            of the ledger see one version of it.
     """
-    return _check_rows(_manifest_rows(manifest, base), ledger)
+    return _check_rows(_manifest_rows(manifest, base), ledger, rows)
 
 
 def check_splits(
@@ -453,15 +483,25 @@ def check_splits(
     ledger: Path | None = None,
     manifest: Mapping[str, Any] | None = None,
     manifest_base: Path | None = None,
+    every: list[tuple[str, dict[str, Any]]] | None = None,
 ) -> list[str]:
     """Where the store's splits (and an export's manifest's, its relative paths in ``manifest_base``) disagree with
     the ledger, or are missing from it.
 
     Changes nothing. An empty list: every split given so far is the ledger's.
+
+    Args:
+        store: the review store.
+        ledger: the ledger file (default ``ANNOTATOR_SPLIT_LEDGER``).
+        manifest: an export's manifest, checked too.
+        manifest_base: the folder its relative paths lie in.
+        every: the store's items as one read gave them (``store.items()``), when the caller has them already: the
+            check and a report made from the same read describe the same splits.
     """
+    every = list(store.items()) if every is None else every
     rows = [
         (relative_source(Path(item["path"])), Path(item["path"]), item["split"], "store")
-        for _key, item in store.items()
+        for _key, item in every
         if item.get("split")
     ]
     if manifest is not None:
@@ -544,8 +584,9 @@ def main(argv: list[str] | None = None) -> int:
             if args.manifest:
                 manifest_path = resolve_path(args.manifest)
                 manifest, base = json.loads(manifest_path.read_text(encoding="utf-8")), manifest_path.parent
-            problems = check_splits(store, ledger=ledger, manifest=manifest, manifest_base=base)
-            report = overlap_report(paths, store.splits())
+            problems = check_splits(store, ledger=ledger, manifest=manifest, manifest_base=base, every=every)
+            # the splits of the same read the check used (the store may change while the ledger is read and hashed)
+            report = overlap_report(paths, {key: item["split"] for key, item in every if item.get("split")})
             if report:
                 print(report)
             for line in problems:
@@ -579,6 +620,7 @@ __all__ = [
     "check_splits",
     "held_out_overlap",
     "join_blocks",
+    "ledger_snapshot",
     "overlap_report",
     "read_ledger",
     "read_ledger_rows",

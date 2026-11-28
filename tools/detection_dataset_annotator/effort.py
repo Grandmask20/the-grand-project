@@ -320,6 +320,15 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--json", type=Path, help="also save the report here")
     args = parser.parse_args(argv)
     store_path = resolve_path(args.output_dir) / K.ANNOTATOR_STORE_FILE
+    if args.json is not None:
+        # the report is written whole over --json: a path that is the store (or its journal) would destroy the review
+        # work it reports on, so it is refused before anything is opened
+        report_path = args.json.resolve()
+        for guarded in (store_path, *(store_path.with_name(store_path.name + suffix) for suffix in ("-wal", "-shm"))):
+            if report_path == guarded.resolve() or (
+                report_path.exists() and guarded.exists() and report_path.samefile(guarded)
+            ):
+                parser.error(f"--json {args.json} is the review store {guarded}: choose another file for the report")
     if not store_path.is_file():  # (opening it for writing would make an empty store, and its folder)
         print(f"No annotator store at {store_path}")
         return 2

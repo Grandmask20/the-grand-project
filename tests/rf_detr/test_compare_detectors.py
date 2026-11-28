@@ -134,3 +134,39 @@ def test_the_scorer_comes_from_this_checkout_not_the_data_folder() -> None:
     """The atlas folder given on the command line is data: its own score_atlases.py is never run (CodeRabbit)."""
     assert compare_detectors.SCORER.is_relative_to(compare_detectors.project_paths.ROOT)
     assert compare_detectors.SCORER.is_file()
+
+
+def test_landmarks_are_not_matched_by_place_without_a_shift_from_the_scorer(monkeypatch: pytest.MonkeyPatch) -> None:
+    """No shift (the scorer found no map node to line the atlases up by) is not a zero shift: the counts are kept and
+    nothing is matched by place; an explicit [0, 0] still matches (CodeRabbit)."""
+    landmarks = {"Tower": [{"kind": "Tower", "x": 10.0, "y": 10.0}]}
+    monkeypatch.setattr(compare_detectors, "_live_landmarks", lambda folder, core, view: landmarks["Tower"])
+    kept = dict(scorer_core=None, view_model=None)
+    none = compare_detectors._add_landmark_metrics(Path("a"), Path("b"), {}, 15.0, **kept)
+    assert none["landmarks"] == "0 of 1 match; found 0 of 1 (0%)"
+    zero = compare_detectors._add_landmark_metrics(Path("a"), Path("b"), {"shift": [0.0, 0.0]}, 15.0, **kept)
+    assert zero["landmarks"] == "1 of 1 match; found 1 of 1 (100%)"
+
+
+def test_a_checkpoint_replaced_while_it_is_copied_is_never_scored(tmp_path: Path, monkeypatch) -> None:
+    """A training run publishes a new best/ by renaming a folder in: a copy across that is refused and removed."""
+    given = tmp_path / "best"
+    given.mkdir()
+    (given / "model.safetensors").write_bytes(b"weights")
+    copy = tmp_path / "copy"
+    compare_detectors._copy_checkpoint(given, copy)
+    assert (copy / "model.safetensors").read_bytes() == b"weights"
+
+    real = compare_detectors.shutil.copytree
+
+    def copy_then_swap(source, target, *args, **kwargs):
+        real(source, target, *args, **kwargs)
+        given.rename(tmp_path / "previous")
+        (tmp_path / "next").mkdir()
+        (tmp_path / "next").rename(given)
+
+    monkeypatch.setattr(compare_detectors.shutil, "copytree", copy_then_swap)
+    swapped = tmp_path / "swapped"
+    with pytest.raises(SystemExit, match="replaced while it was copied"):
+        compare_detectors._copy_checkpoint(given, swapped)
+    assert not swapped.exists()

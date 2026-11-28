@@ -267,13 +267,33 @@ def test_a_screenshot_replaced_after_the_ledger_check_is_not_built(tmp_path: Pat
     shot = tmp_path / "a.png"
     shot.write_bytes(b"picture")
     write_ledger([Entry(file_hash(shot), "train", "", "a.png")], ledger)
-    check = T._ledger_bytes()
+    from tools.detection_dataset_annotator.split_ledger import ledger_snapshot
+
+    check = T._ledger_bytes(ledger_snapshot()[0])
     record = Record(0, shot, "a.png", "annotator_reviewed", "g", 1, 1, (), "train")
     check(record, file_hash(shot))
     with pytest.raises(SystemExit, match="is not in the split ledger"):
         check(record, "0" * 64)
     with pytest.raises(SystemExit, match="is train in the split ledger"):
         check(Record(0, shot, "a.png", "annotator_reviewed", "g", 1, 1, (), "test"), file_hash(shot))
+
+
+def test_a_screenshot_must_be_the_bytes_its_manifest_row_was_exported_with(tmp_path: Path, ledger) -> None:
+    """The ledger may hold other bytes of the same file name or split: the row's own SHA-256 decides, as well as the
+    ledger (CodeRabbit)."""
+    from grand_project.detect.rf_detr import Record
+    from tools.detection_dataset_annotator.split_ledger import ledger_snapshot
+
+    shot, other = tmp_path / "a.png", tmp_path / "b.png"
+    shot.write_bytes(b"picture")
+    other.write_bytes(b"another picture")
+    write_ledger([Entry(file_hash(shot), "train", "", "a.png"), Entry(file_hash(other), "train", "", "b.png")], ledger)
+    check = T._ledger_bytes(ledger_snapshot()[0])
+    exported = file_hash(shot)
+    check(Record(0, shot, "a.png", "annotator_reviewed", "g", 1, 1, (), "train", exported), exported)
+    with pytest.raises(SystemExit, match="since it was exported"):
+        # b's bytes are in the ledger as train too, but a's row was exported with a's
+        check(Record(0, shot, "a.png", "annotator_reviewed", "g", 1, 1, (), "train", exported), file_hash(other))
 
 
 def test_a_screenshot_replaced_between_the_ledger_check_and_the_build_is_refused(
@@ -286,11 +306,11 @@ def test_a_screenshot_replaced_between_the_ledger_check_and_the_build_is_refused
     check = T._check_ledger
 
     def check_then_replace(data, base):
-        sha = check(data, base)
+        checked = check(data, base)
         shot = tmp_path / "shot0.png"
         image = cv2.imdecode(np.fromfile(str(shot), np.uint8), cv2.IMREAD_COLOR)
         shot.write_bytes(cv2.imencode(".png", 255 - image)[1].tobytes())
-        return sha
+        return checked
 
     monkeypatch.setattr(T, "_check_ledger", check_then_replace)
     out = tmp_path / "run"
@@ -740,6 +760,35 @@ def test_only_the_global_main_process_writes_a_checkpoints_extras(tmp_path: Path
     assert (tmp_path / "checkpoint-1" / K.RF_DETR_RUN_SOURCES).read_text() == "a.png\nb.png\n"
     assert (tmp_path / "checkpoint-1" / K.RF_DETR_DATASET_ID).read_text() == "data-id"
     assert T.ema_complete(tmp_path / "checkpoint-1")
+
+
+def test_every_process_finishes_its_part_of_a_checkpoint_before_the_ema_marks_it_whole(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Each process writes its own random state into a checkpoint: the global main one writes the EMA's files (the
+    mark of a whole checkpoint) only after a barrier every process reached, and the others reach it too
+    (CodeRabbit)."""
+    args = SimpleNamespace(output_dir=str(tmp_path))
+    model = _tiny(LABELS)
+    ema = T.EmaCallback(0.9, 10.0)
+    ema.on_train_begin(args, None, None, model=model)
+    events = []
+    monkeypatch.setattr(T, "wait_for_every_process", lambda: events.append("barrier"))
+    ema.on_save(args, SimpleNamespace(global_step=1, is_world_process_zero=False), None)
+    assert events == ["barrier"] and not (tmp_path / "checkpoint-1").exists()
+    real_replace = T.os.replace
+    monkeypatch.setattr(T.os, "replace", lambda *a: events.append("marked whole") or real_replace(*a))
+    events.clear()
+    ema.on_save(args, SimpleNamespace(global_step=1, is_world_process_zero=True), None)
+    assert events == ["barrier", "marked whole"]
+
+
+def test_a_process_that_may_not_save_writes_no_checkpoint_files(tmp_path: Path) -> None:
+    """The Trainer's own writer check (``should_save``) holds for the native save too (CodeRabbit)."""
+    trainer = T.RfDetrTrainer.__new__(T.RfDetrTrainer)  # no Trainer set-up: only the guard is looked at
+    trainer.args = SimpleNamespace(should_save=False, output_dir=str(tmp_path / "out"))
+    trainer._save(str(tmp_path / "out"))
+    assert not (tmp_path / "out").exists()
 
 
 def test_resume_refuses_a_checkpoint_of_other_screenshots(tmp_path: Path) -> None:

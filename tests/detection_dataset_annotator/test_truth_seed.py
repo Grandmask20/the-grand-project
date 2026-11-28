@@ -161,6 +161,8 @@ def test_every_screenshot_the_truth_places_is_marked(
     assert (changed, placed) == (1, 2)
     seeded, quiet, elsewhere = (review_store.item(image_key(path)) for path in paths)
     assert seeded[K.ANNOTATOR_TRUTH_MARK] == quiet[K.ANNOTATOR_TRUTH_MARK] == truth.source
+    # the version of the truth file it came from goes with the mark (simulate_loop.check_truth_digest)
+    assert seeded[K.ANNOTATOR_TRUTH_DIGEST] == quiet[K.ANNOTATOR_TRUTH_DIGEST] == truth.digest != ""
     assert K.ANNOTATOR_TRUTH_MARK not in elsewhere
     assert review_store.prelabels(image_key(paths[0])) == seeded["annotations"]  # what a reviewer is first shown
     assert seed_store(review_store, truth)[1] == 0

@@ -237,9 +237,11 @@ Each step changes only what is not done yet, so a second run changes nothing; `-
 Rebuilding is not recovering: a run into a new `--output-dir` (a lost store, a new machine) detects every screenshot
 again and seeds the truths again, and the split ledger gives every screenshot its split back, but the review work
 (edited and drawn boxes, review flags, review times, model pre-labels and their arms) lives only in
-`review_state.sqlite3`. To keep it, keep that file (or one of its `review_state.before-build-*.sqlite3` backups) and
-run `build_store` on its folder. Then
-`python -m tools.detection_dataset_annotator.split_ledger` gives every screenshot its split, the ledger's where it has
+`review_state.sqlite3`. To keep it, keep that file and run `build_store` on its folder. If only a
+`review_state.before-build-*.sqlite3` backup is left, stop the annotator page, make a clean recovery folder, copy the
+backup there as `review_state.sqlite3` (keep the original backup as it is), and run `build_store --output-dir` on that
+folder: the backup is a whole store, but `build_store` backs up and changes the store it is given. Then
+`python -m tools.detection_dataset_annotator.split_ledger` (with the same `--output-dir`) gives every screenshot its split, the ledger's where it has
 one ([Splits](#splits)). Restart the annotator page afterwards: it keeps the screenshots it showed.
 
 ## Seeding from a biome truth
@@ -284,6 +286,8 @@ are never changed. Atlas folders may keep their screenshots in folders right bel
 transformers' `Trainer`:
 
 ```sh
+make install_training                    # pip install -e ".[training]": the training module imports torch, datasets and
+                                         # transformers before it looks at --dataset-only, so the data step needs them too
 make export_dataset                      # or the page's Export button
 make prepare_rf_detr_data                # python -m tools.train_rf_detr --annotator-manifest .../manifest.json --dataset-only
 make train_rf_detr                       # trains into runs/rf-detr-small (best/ is what the program loads)

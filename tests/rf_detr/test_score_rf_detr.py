@@ -38,10 +38,19 @@ def test_the_hand_truth_scores_the_rf_detr_detector(
         return json.loads(json.dumps(found))
 
     monkeypatch.setattr(rf_detr_model, "detect_rf_detr", detect)
+    scored = []
+    real_score = training.atlas_truth.score
+    monkeypatch.setattr(
+        training.atlas_truth, "score", lambda truth_, out: scored.append(real_score(truth_, out)) or scored[-1]
+    )
     assert training.cmd_score_rf_detr() == 0
     assert seen == [(1080, 1920, 3)]
     printed = capsys.readouterr().out
     assert "RF-DETR detector" in printed
+    # the outputs reached the truth's scorer: the one map found where the truth has it, the other a false one
+    (result,) = scored
+    assert (result["maps"]["tp"], result["maps"]["fp"]) == (1, 1)
+    assert "maps: 1 right, 1 wrong" in printed
     saved = json.loads((tmp_path / "last_score_outputs_rf_detr.json").read_text())
     assert saved["shot.png"]["icons"] == [] and len(saved["shot.png"]["nodes"]) == 2
 

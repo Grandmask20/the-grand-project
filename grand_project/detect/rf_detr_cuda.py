@@ -13,18 +13,34 @@ Standard library only: the player release ships it, and it does nothing where Py
 
 from __future__ import annotations
 
+import contextlib
 import os
+import site
 import sys
+import sysconfig
 from pathlib import Path
 
 from . import constants as K
 
 
+def _package_roots() -> list[Path]:
+    """The folders PyTorch's wheels are installed in: this interpreter's own package folders (``sysconfig``, ``site``),
+    those that hold PyTorch itself, in that order.
+
+    Not every ``sys.path`` entry: it may hold the working directory or a folder a script put there, and its
+    ``nvidia/*/lib`` would then come first on the restarted process's ``LD_LIBRARY_PATH`` and be loaded as code.
+    """
+    names = [sysconfig.get_paths().get(kind) for kind in ("purelib", "platlib")]
+    with contextlib.suppress(Exception):  # (site.getsitepackages is missing in some virtualenv builds)
+        names += [*site.getsitepackages(), site.getusersitepackages()]
+    roots = list(dict.fromkeys(Path(name) for name in names if name))
+    return [root for root in roots if (root / "torch").is_dir()]
+
+
 def _library_dirs() -> list[str]:
     """PyTorch's CUDA library folders (cuDNN, the CUDA runtime: ``cu13`` or the older wheels' ``cuda_runtime``) found
-    on ``sys.path``."""
-    # in the interpreter's search order: sorted, a system wheel folder could come before the environment's own
-    package_dirs = list(dict.fromkeys(Path(entry) / "nvidia" for entry in sys.path if entry))
+    in the package folders PyTorch is installed in."""
+    package_dirs = [root / "nvidia" for root in _package_roots()]
     names = ("cudnn", "cu13", "cuda_runtime")
     found = [package_dir / name / "lib" for name in names for package_dir in package_dirs]
     return [str(folder) for folder in found if folder.is_dir()]
