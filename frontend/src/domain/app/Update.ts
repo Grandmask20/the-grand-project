@@ -16,7 +16,15 @@ export interface UpdateStatus {
 	/** When GitHub may be asked again (s since 1970; 0: now): at most once a minute, its limit. */
 	next: number;
 	state: "idle" | "checking" | "downloading" | "restarting" | "error";
-	latest: { release: string; name: string; notes: string; url: string; published: string } | null;
+	/** The newest release; `since`: the releases between this copy's and it (skipped by an update), newest first. */
+	latest: {
+		release: string;
+		name: string;
+		notes: string;
+		url: string;
+		published: string;
+		since?: { release: string; name: string; notes: string }[];
+	} | null;
 	/** The latest release is newer than this one. */
 	available: boolean;
 	error: string | null;

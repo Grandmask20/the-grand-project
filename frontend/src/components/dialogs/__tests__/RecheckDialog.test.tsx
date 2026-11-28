@@ -68,4 +68,21 @@ describe("RecheckDialog", () => {
 			}),
 		);
 	});
+
+	it("offers the slim down, remembered for every atlas (user: packaged with Re-check)", async () => {
+		const { user, calls } = open("/atlases/default/atlas.json", {
+			"GET /api/atlas/recheck-info": { ...info, slim: { count: 12, mb: 9.6 } },
+			"PATCH /api/settings": { ok: true },
+		});
+		expect(await screen.findByText(/\(12 now, about 9\.6 MB\)/)).toBeInTheDocument();
+		await user.click(screen.getByRole("checkbox"));
+		await waitFor(() => expect(calls.find((c) => c.path === "/api/settings")?.body).toEqual({ recheck_slim: true }));
+	});
+
+	it("says to run Fix seams first when there is no clean map of the screenshots as they are to tell", async () => {
+		open("/atlases/default/atlas.json", {
+			"GET /api/atlas/recheck-info": { ...info, slim: { count: 0, mb: 0, clean: false } },
+		});
+		expect(await screen.findByText(/run Fix seams first/)).toBeInTheDocument();
+	});
 });

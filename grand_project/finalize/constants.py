@@ -290,3 +290,12 @@ ICON_TIME_WIDE = 70  # px around the row where the icon still counts as there (w
 # off: roa atlas 65 px)
 ICON_TIME_TIE = 0.03  # an icon found near the row counts only when it is within this of its best match (roa test: the
 # player marker over a map fit Cleansed's pictures)
+# the gold fields kept at once by the path check (~4 MB each; kept for every screenshot, they were its peak) and the
+# cell of the curve the links are scored along (atlas units: a few links per cell, a screenshot spans several)
+CHECK_FIELDS_KEEP = 48
+CHECK_CURVE_CELL = 200.0
+# decoded screenshots kept while the atlas-wide check runs (~6 MB each; placing keeps core.Atlas.IMAGE_CACHE, 90, for
+# its terrain checks of ~60 neighbours): the check keeps what it works out from each screenshot in caches of its own
+# (gold fields, dashes), so 90 only held ~540 MB more at its peak. Measured on the roa atlas (1261 screenshots): peak
+# 2.42 -> 1.97 GB, the same time (559 / 566 s) and the very same result
+FINAL_IMAGE_CACHE = 24

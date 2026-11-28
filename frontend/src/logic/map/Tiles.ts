@@ -12,6 +12,21 @@ export function terrainVersion(info: Pick<MapInfo, "tile_key" | "terrain_version
 	return `${info.tile_key}-${info.terrain_version}`;
 }
 
+/**
+ * The ground version drawn under the map's own (the backdrop): while a job runs (adding, re-checking), the one from
+ * before its changes, so the old ground shows wherever the new hasn't come in yet, also where the map wasn't looking
+ * (user: "the old terrain should always be viewable until the new terrain is in, even if it was offscreen"); else the
+ * current one. Never another atlas's: its tile key differs.
+ *
+ * @param kept The backdrop's version until now.
+ * @param current The ground's version now (terrainVersion).
+ * @param busy A job is running.
+ */
+export function backdropVersion(kept: string, current: string, busy: boolean): string {
+	const atlas = (v: string) => v.slice(0, v.lastIndexOf("-")); // (the tile key: this run of the app and atlas)
+	return busy && atlas(kept) === atlas(current) ? kept : current;
+}
+
 export const PREFETCH_TILES = 340; // the most ground tiles fetched ahead (every level down to where the atlas needs more)
 export const PREFETCH_PARALLEL = 3;
 export const PREFETCH_DELAY_MS = 1500;

@@ -1,10 +1,12 @@
-# The Grand Project — v1.25
+# The Grand Project — v1.30
+<img width="232" height="34" alt="Screenshot 2026-11-25 at 04-49-29 The Grand Project" src="https://github.com/user-attachments/assets/d971e5c5-42ec-426d-a95b-db8a7444b58d" />
 
-Builds one big map of your Path of Exile 2 atlas from your screenshots. Named after the in-game tablet, *The Grand Project*. It finds maps, paths, icons, towers and cities, and lets you search, bookmark and route through them.
+Builds one big map of your Path of Exile 2 atlas from your screenshots. It will also find any icons, maps, cities, city biomes, breach strongholds, deadly bosses for you to search through later.
+<img width="1917" height="916" alt="Screenshot_204" src="https://github.com/user-attachments/assets/da24efef-1760-495e-91d0-3bcdbba5136f" />
 
-The app runs in your web browser: starting it opens a page served by the program on this computer (`http://127.0.0.1:8765`). Your atlases, screenshots and settings stay on your computer. The app goes online only for updates: it asks GitHub for the latest release once a day when it starts (to say an update is out; this can be turned off) and when you press **Check now** in the update box (click the version), and **Update now** downloads that release from GitHub (and, when it needs other Python packages, installs them from PyPI with pip). These requests send nothing of yours: GitHub sees the request, the app's name and version, and your network address, as with any website; PyPI gets pip's usual request (pip's version, Python's and your system's).
+The app runs in your web browser: starting it opens a page served by the program on this computer (`http://127.0.0.1:8765`). Your atlases, screenshots and settings stay on your computer. The app is completly offline besides the once a day update request to github(same system pob uses, this can be turned off and you can update the app manually)
 
-## Run it
+## How to install and start
 
 **Which files to run:**
 
@@ -13,11 +15,7 @@ The app runs in your web browser: starting it opens a page served by the program
 | **Windows** | `Install (run once).bat` | the **The Grand Project** shortcut (made by the install), or `Start The Grand Project.bat` |
 | **macOS / Linux** | `./install.sh` | `./start.sh` |
 
-### Get it
-
-Download the newest release from the [Releases page](https://github.com/Grandmask20/the-grand-project/releases): open the top one and click **Source code (zip)**. Unzip it into a folder you can write to, e.g. `Documents\The Grand Project` (not `Program Files`). Don't use the green **Code** button on the front page: that is the developer copy, and its page isn't built.
-
-### First time
+#### First time
 
 **Windows:**
 
@@ -29,27 +27,26 @@ Download the newest release from the [Releases page](https://github.com/Grandmas
 1. Install Python 3.11 or newer (macOS: the [python.org](https://www.python.org/downloads/) installer or Homebrew; Linux: your package manager's `python3`, plus `python3-venv` on Debian / Ubuntu).
 2. Open a terminal in this folder and run **`./install.sh`**. It makes a `.venv` folder and installs the packages there. (If it says *permission denied*: `bash install.sh`.)
 
-### Every time
-
-- **Windows:** double-click the **The Grand Project** shortcut (or **`Start The Grand Project.bat`**). No window opens: the app runs in the background and your browser opens its page.
-- **macOS / Linux:** run **`./start.sh`** in a terminal and keep the terminal open. (On macOS right-click is a two-finger click, or Ctrl+click.)
+**To run:**
+Windows: run "The grand project.bat" or the shortcut. it will open the page up.
+macOS / Linux: run **`./start.sh`** in a terminal and keep the terminal open. (On macOS right-click is a two-finger click, or Ctrl+click.)
 
 The page is **`http://127.0.0.1:8765`**: bookmark it. Closing the browser tab doesn't stop the app: open the page again any time. Starting it again while it runs just opens its page. To stop it: **File ▾ → Quit the app** (or Ctrl+C in the terminal).
 
 On first start the app opens the empty atlas **`atlases/default`**.
 
-### Updating
+#### Updating
 
-**From 1.3 on, in the app:** the version at the top right says **Up to date** (green) or **Check update** / **Update to 1.x** (red). Click it to open the update box, and **Check now** (or **Check again**) asks GitHub for the latest release and shows what's new (at most once a minute: GitHub limits how often it answers). **Update now** downloads it, checks every file, and the app restarts on it (the page reloads by itself). Only the program's own files change: your atlases (`atlases/`) and settings (`user_data/`) stay, a file that fails to go in puts the old ones back, and the Python packages are installed again when the new release needs others. The app checks once a day when it starts (the box has the switch to turn that off).
+**From 1.3 on, in the app:** the version at the top right says **Up to date** (green) or **Check update** / **Update to 1.x** (red). Click it to open the update box, and **Check now** (or **Check again**) asks GitHub for the latest release and shows what's new. **Update now** downloads it, checks every file, and the app restarts on it (the page reloads by itself). Only the program's own files change: your atlases (`atlases/`) and settings (`user_data/`) stay, the Python packages are installed again when the new release needs others. The app checks once a day when it starts (the box has the switch to turn that off).
 
-**By hand** (an older release, or a copy the app can't update): first quit the app (**File ▾ → Quit the app**). Then download the new release and unzip it: it holds one folder (`the-grand-project-<version>`). Open that folder and copy everything in it into your current program folder, replacing the files. The release has no `atlases` or `user_data` folder, so yours are never replaced (never delete or replace those two folders yourself): your atlases (`atlases/`) and settings (`user_data/`) stay. Then run the install file again (**`Install (run once).bat`** or **`./install.sh`**): a new version can need new packages. (From 1.18 the Windows start file is `Start The Grand Project.bat`: an old `Start Atlas Viewer.bat` left in the folder can be deleted.)
+**By hand** (an older release, or a copy the app can't update): first quit the app (**File ▾ → Quit the app**). Then download the new release and unzip it: it holds one folder (`the-grand-project-<version>`). Open that folder and copy everything in it into your current program folder, replacing the files. The release has no `atlases` or `user_data` folder, so yours are never replaced (never delete or replace those two folders yourself): your atlases (`atlases/`) and settings (`user_data/`) stay. Then run the install file again (**`Install (run once).bat`** or **`./install.sh`**): a new version can need new packages.
 
-### If it doesn't start
+#### If it doesn't start
 
 - **Windows: nothing happens, or "python is not recognized":** Python isn't on the PATH. Run the Python installer again, choose *Modify*, tick *Add Python to environment variables*, then run `Install (run once).bat` again.
 - **The browser didn't open:** go to `http://127.0.0.1:8765` yourself. If that port was taken the app uses the next free one (8766, ...); the terminal (macOS / Linux) shows it, and so does `user_data/atlas_debug.log`.
 - **The page says "The page isn't built":** you have the developer copy. Download the release from the Releases page instead.
-- **Something else:** open a terminal in this folder and run `python -m grand_project` (macOS / Linux: `./start.sh`) to see the error; the full log is `user_data/atlas_debug.log`. 
+- **Something else:** open a terminal in this folder and run `python -m grand_project` (macOS / Linux: `./start.sh`) to see the error; the full log is `user_data/atlas_debug.log`.
 
 ## Annotating RF-DETR training data
 
@@ -90,19 +87,17 @@ In Steam, open **Settings → In Game → Screenshots** and:
 - leave **Save external HDR screenshots as AVIF** off, so the copies stay PNG
 - set the **External screenshots folder** to the atlas you are building: `atlases/default/` inside this program's folder (click **Change folder** and pick it)
 
-Screenshots then land straight in the atlas folder as `2694490_<date>_1.png`, and the app picks them up from there. Point the folder back to your usual one when you are done mapping, so your other screenshots don't end up in the atlas.
+Screenshots then land straight in the atlas folder as `2694490_<date>_1.png`, and the app picks them up from there. Point the folder back to your usual one when you are done mapping, so your other screenshots don't end up in the atlas. or simply dont change the folder, and take screenshots while you map and then move them into the atlas folder at the end of the day, it's functionally the same
 
 ## 1. Start an atlas
 
 1. In the app, go to the **Atlases tab → Auto-add** page and turn on *Add new screenshots automatically*. The app watches the open atlas's own folder, which is where Steam is now saving.
-2. In game, open the atlas centred on the **fortress** (the giant walled structure in the middle) and press F12. The HUD can stay on screen; it is masked out.
-3. Pan a little (keep about half the screen overlapping) and press F12 again. Repeat outward from the fortress in any direction. Each screenshot is added while you play.
+2. In game, open the atlas centred on the **fortress** (The one with the arbiter of divinity and where your atlas tutorial was) and press F12. The HUD can stay on screen; it is masked out.
+3. Then just repeatedly take screenshots with f12(default steam screenshot button) and pan a bit every time, it's reccomended to circle the fortress first and then walk around the edges of your atlas. itll be easier for you to get the first scan of your atlas that way(the program doesnt really care in which order screenshots arrive in, just aslong as you're fully zoomed out and at 100% render resolution)
 
 For screenshots you already have, copy them into `atlases/default/` and use the **Atlas ▾** button → `default` → **Add new screenshots from its folder**.
 
 The first screenshot becomes the centre, and every next one is placed where it overlaps the ones already in the atlas.
-
-The fortress itself places poorly, because its walls cut the paths. Start right at its edge and move outward.
 
 ## 2. Add new maps
 
@@ -113,7 +108,7 @@ Any of these adds screenshots. Screenshots already in the atlas are skipped.
 - **File ▾ → Add screenshots…** (File ▾ is the first button on the toolbar)
 - **Atlas ▾ → (atlas) → Add new screenshots from its folder.**
 
-**Maps you have run since:** newer screenshots of a spot win over older ones. A map's icon is removed when the newest screenshots of it show the map without it (a map that turns green always loses its icon; a blue map can lose one; an attempted deadly boss map keeps only its Deadly Map Boss icon). Screenshots taken less than 30 seconds apart count as one moment, and where the detector missed an icon the app looks at the icon row again before calling it gone. Icons that never appear on a map (Corruption, the blue hideout, Abyss, Abyssal Depths, Expedition, Unique Map, the merchant), or Cleansed where there was no Corruption, are dropped when an earlier screenshot clearly showed the map without them. So keep screenshotting as you play: the atlas follows.
+**Maps you have run since:** newer screenshots of a spot will update old areas. A map's icon is removed when the newest screenshots of it show the map without it (a map that's cleared loses its icon). Screenshots taken less than 30 seconds apart count as one moment, and where the detector missed an icon the app looks at the icon row again before calling it gone. So keep screenshotting as you play: the atlas will update as you go.
 
 A screenshot that overlaps nothing yet goes to **Waiting** (Atlases tab → Auto-add). Waiting screenshots are retried whenever another one is added, and you can also click **Retry** or **Retry all**.
 
@@ -171,7 +166,7 @@ A screenshot that might be placed wrong is shown on the map, see-through and out
 - **File menu:**
   - *New atlas*, *Open atlas*, *Open a screenshot folder*, *Save* (adding screenshots also saves).
   - *Re-check the whole atlas* detects again the screenshots an older detector read (after an update that changed the detector, all of them once: long on a big atlas; the others keep their saved detection), then runs the atlas-wide clean-up again (a few minutes on a big atlas). It asks first, and says when the atlas was last re-checked, its screenshots in groups by when and on which version they were detected, how many will be detected again and about how long it takes (measured on your computer after the first Re-check). When it finishes, a box over the map lists what changed, in groups: *Maps*, *Paths*, *Landmarks*, *Towers*, *Biomes*, *Icons*. Each group's card shows how many things were added (+, green) and removed (−, red), and changed (~) when some moved or became another kind or biome. Click a card to list its changes with where each one is; click one to see its spot on the map, ringed. Tick *Keep?* on the groups whose changes you want and press *Apply*. An unticked group stays as it was before, on the maps it was on: e.g. untick *Biomes* and every map keeps the biome it had. Your ticks are remembered for every atlas. The map shows the atlas as it was until you apply, nothing changes if the app is closed first, and with nothing changed no box opens.
-  - *Fix seams (clean map)* rebuilds the map image with care: each map node comes whole from one screenshot with its icons, seams stay off paths and away from screenshot edges, and lit copies win over fogged ones. It takes several minutes on a big atlas and runs in the background. While screenshots are being added it doesn't start: it asks to *Queue* it or cancel. A queued one starts once adding finishes; if adding failed (a screenshot couldn't be read, ...) it says why and asks: *Cancel* or *Fix seams anyway*. Screenshots added while it runs are added as usual. *Stop fixing seams* stops it, or takes a queued one off.
+  - *Fix seams (clean map)* rebuilds the map image with a more expensive merging system: each map node comes whole from one screenshot with its icons, seams stay off paths and away from screenshot edges, and lit copies win over fogged ones. It takes several minutes on a big atlas and runs in the background. Screenshots added while it runs are added as usual. *Stop fixing seams* stops it, or takes a queued one off.
   - *Export map PNGs*.
   - *Close atlas*, *Quit the app*.
 
@@ -253,3 +248,21 @@ The code is released under the MIT License (see `LICENSE`).
 The in-app update (the version at the top right: check for an update, Update now) is modelled on the update system of [Path of Building Community](https://github.com/PathOfBuildingCommunity/PathOfBuilding) ([PoE 2 version](https://github.com/PathOfBuildingCommunity/PathOfBuilding-PoE2)): a release's list of its files with their hashes, compared with the newest release's; the files that differ checked against it and staged; and put in place when the program restarts, by a step of its own. Thanks to its contributors.
 
 Path of Exile 2 is made by Grinding Gear Games. The badge icons, tower templates and badge crops in `references/` come from the game and remain the property of Grinding Gear Games. The page's look is built from the game's own interface art (its stash tabs, panels, buttons, dropdowns, sliders, scrollbars and icons, in `frontend/src/assets/poe/`), also the property of Grinding Gear Games. This is an unofficial fan tool, not affiliated with or endorsed by them.
+
+The Path of Exile 2 interface art the page uses, by the game's own file name (its folder in the game's UI art); after the arrow, the file in `frontend/src/assets/poe/` where it was renamed, trimmed to its drawn part, or made from it:
+
+- `common/`:
+  - buttons: `buttongenericnormalleft.png`, `buttongenericnormalmiddle.png`, `buttongenericnormalright.png`, `buttongenerichoverleft.png`, `buttongenerichovermiddle.png`, `buttongenerichoverright.png`, `buttongenericpressedleft.png`, `buttongenericpressedmiddle.png`, `buttongenericpressedright.png`, `buttongreennormalleft.png`, `buttongreennormalmiddle.png`, `buttongreennormalright.png`, `buttongreenhoverleft.png`, `buttongreenhovermiddle.png`, `buttongreenhoverright.png`, `buttongreenpressedleft.png`, `buttongreenpressedmiddle.png`, `buttongreenpressedright.png`, `buttonrednormalleft.png`, `buttonrednormalmiddle.png`, `buttonrednormalright.png`, `buttonredhoverleft.png`, `buttonredhovermiddle.png`, `buttonredhoverright.png`, `buttonredpressedleft.png`, `buttonredpressedmiddle.png`, `buttonredpressedright.png`
+  - icon buttons: `fouriconbuttonnormal.png`, `fouriconbuttonhover.png`, `fouriconbuttonpressed.png`, `fouriconbuttongreennormal.png`, `fouriconbuttongreenhover.png`, `fouriconbuttongreenpressed.png`, `fouriconbuttonrednormal.png`, `fouriconbuttonredhover.png`, `fouriconbuttonredpressed.png`, `fouriconedit.png`, `iconsearch.png`
+  - expand and reveal buttons: `buttonexpandnormal.png`, `buttonexpandhover.png`, `buttonexpandpressed.png`, `buttontriangleupnormal.png`, `buttontriangleuphover.png`
+  - tick boxes: `checkboxsquarechecked.png`, `checkboxsquareunchecked.png`
+  - the stash tab: `tablabelleft.png`, `tablabelmiddle.png`, `tablabelright.png` → `stashtablit.png`, `stashtabunlit.png` (recoloured and textured with `stashtablabeltexture.png`: `tools/poe_art.py`)
+- `ingame/`: `itemsheaderuniquesinglelineleft.png`, `itemsheaderuniquesinglelinemiddle.png`, `itemsheaderuniquesinglelineright.png` (the title plate)
+- `ingame/cosmetics/`: `cosmeticscollapsebuttonnormal.png`, `cosmeticscollapsebuttonhover.png`, `cosmeticscollapsebuttonpressed.png` (hiding and showing the side panel)
+- `ingame/hud/`: `menu.png` → `hudmenunormal.png`, `menuhover.png` → `hudmenuhover.png`, `menupressed.png` → `hudmenupressed.png`
+- `ingame/options menu/`: `closebutton.png` → `optionsclosebutton.png`, `9slicemenu.png` → `dropbox9.png`, `enabledbutton.png` → `toggleon.png`, `disabledbutton.png` → `toggleoff.png`
+- `ingame/options menu/scroller/`: `top.png` → `scrollertop.png`, `centre.png` → `scrollercentre.png`, `bottom.png` → `scrollerbottom.png`, `scrollbararea.png` → `scrollerscrollbararea.png`
+- `ingame/optionsmenu/`: `optionssliderbgleft.png`, `optionssliderbgmiddle.png`, `optionssliderbgright.png`, `optionssliderfillleft.png`, `optionssliderfillmiddle.png`, `optionssliderfillright.png`, `optionssliderthumb.png`, `optionsiconfolder.png`, `optionsiconrefresh.png`
+- `ingame/mappinswindow/`: `mappindropdownarrow.png` → `droparrow.png`
+- `ingame/marketbrowser/`: `marketbrowsermainsearchbar.png` → `marketsearchbar.png`
+- `ingame/stashtabwindow/`: `stashtabbg.png` → `stashframe9.png` (its gold-lined ring, as a nine-slice frame), `stashunavailablebg.png` → `stashunavailablebg.jpg`, `stashtablabeltexture.png` → `stashtabbar.png` (and the stash tabs' texture)

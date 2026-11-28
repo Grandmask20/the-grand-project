@@ -20,6 +20,12 @@ def app(tmp_path):
     path, pts, _img = make_atlas(tmp_path)
     session = AtlasSession(settings={}, worker=False)
     session.open_atlas(path)
+    # opening starts the locked-stronghold search, which ends with a model rebuild (new versions): waited for, it
+    # landed after a test read the versions and before it asked with them (CodeRabbit)
+    t = getattr(session, "_lock_thread", None)
+    if t:
+        t.join(60)
+        assert not t.is_alive(), "the locked-stronghold search didn't end"
     srv = AppServer(session, port=0)
     threading.Thread(target=srv.serve_forever, daemon=True).start()
     yield srv, pts
@@ -59,7 +65,8 @@ def test_tiles_over_http(app):
     s = srv.session
     wx, wy = s.grid.world_px(*pts[0])
     z = s.grid.zmax
-    st, h, body = call(srv, f"/api/tiles/terrain/{z}/{int(wx // 256)}/{int(wy // 256)}.jpg?v=1")
+    v = f"{s.map_info()['tile_key']}-{s.terrain_version}"  # (the page's address: tile key, map image version)
+    st, h, body = call(srv, f"/api/tiles/terrain/{z}/{int(wx // 256)}/{int(wy // 256)}.jpg?v={v}")
     assert st == 200 and h["Content-Type"] == "image/jpeg" and body[:2] == b"\xff\xd8"
     assert "immutable" in h["Cache-Control"]  # versioned URLs: kept by the browser
     assert call(srv, f"/api/tiles/terrain/{z}/0/0.jpg")[0] == 204  # no ground there
@@ -151,6 +158,54 @@ def test_the_page_is_served_and_routes_itself(app, tmp_path, monkeypatch):
     st, h, _b = call(srv, "/assets/a.js")
     assert st == 200 and "immutable" in h["Cache-Control"]
     assert call(srv, "/../../etc/passwd")[2] == b"<html>app</html>"  # never outside the page's folder
+
+
+def test_tiles_and_the_3d_scene_are_kept_only_under_the_address_they_were_made_for(app):
+    srv, pts = app
+    s = srv.session
+    wx, wy = s.grid.world_px(*pts[0])
+    tile = f"/api/tiles/vector/{s.grid.zmax}/{int(wx // 256)}/{int(wy // 256)}.pbf"
+    info = s.map_info()
+    now = f"{info['tile_key']}-{info['model_version']}-{info['filter_version']}-{info['terrain_version']}"
+    for path in (tile, "/api/scene3d"):
+        assert "immutable" in call(srv, f"{path}?v={now}")[1]["Cache-Control"]  # made for it: kept
+        # asked with an older address (the map changed since the page read it): answered from what is current, so
+        # not kept under the old one (CodeRabbit: it stayed a year)
+        st, h, _body = call(srv, f"{path}?v=older-0-0-0")
+        assert st == 200 and h["Cache-Control"] == "no-store"
+        # (the timelapse's tab asking for steps of a plan that isn't open: not kept either)
+        assert call(srv, f"{path}?v={now}&r=7")[1]["Cache-Control"] == "no-store"
+
+
+def test_the_backdrop_gets_the_ground_from_before_the_jobs_running_now(app):
+    srv, pts = app
+    s = srv.session
+    wx, wy = s.grid.world_px(*pts[0])
+    path = f"/api/tiles/terrain/{s.grid.zmax}/{int(wx // 256)}/{int(wy // 256)}.jpg"
+    key, old = s.map_info()["tile_key"], s.terrain_version
+    st, _h, before = call(srv, f"{path}?v={key}-{old}")
+    assert st == 200
+    canvas, weight, origin = s.terrain
+    with s._lock:  # as the worker does when jobs begin, then a job's new map image
+        s.pin_ground()
+        s.set_terrain(canvas // 3, weight, origin, save=False, cities=False)
+    new = s.terrain_version
+    st, h, body = call(srv, f"{path}?v={key}-{old}")  # the backdrop's address: the old ground, kept
+    assert st == 200 and body == before and "immutable" in h["Cache-Control"]
+    st, h, body = call(srv, f"{path}?v={key}-{new}")  # the map's own: the new ground
+    assert body != before and "immutable" in h["Cache-Control"]
+    # an address of neither: the current ground, not kept under it (CodeRabbit: the new ground sat under the old
+    # address a year, and a map image built again elsewhere put the backdrop off its place)
+    st, h, other = call(srv, f"{path}?v={key}-{new + 40}")
+    assert other == body and h["Cache-Control"] == "no-store"
+    # another run of the app's address with this version's number (a tab outliving a restart): not kept either
+    assert call(srv, f"{path}?v=0000beef.{s.opened.gen}-{new}")[1]["Cache-Control"] == "no-store"
+    # past the map image's own levels the kept ground has nothing (its sharp ground reads the live atlas): the
+    # current ground, not kept under the old address (CodeRabbit)
+    deeper = f"/api/tiles/terrain/{s.grid.zmax + 1}/{int(wx // 128)}/{int(wy // 128)}.jpg"
+    assert call(srv, f"{deeper}?v={key}-{old}")[1]["Cache-Control"] == "no-store"
+    s._tile_before = None  # the jobs ended: the backdrop follows the current ground
+    assert call(srv, f"{path}?v={key}-{old}")[1]["Cache-Control"] == "no-store"
 
 
 def test_a_dropped_connection_is_not_printed_as_an_error(app, capsys):
@@ -380,3 +435,18 @@ def test_the_page_s_log_lines_and_group_names_are_checked(app, caplog):
     with caplog.at_level(logging.INFO, logger=S.LOG.name):
         call(srv, "/api/log", "POST", {"lines": ["two\nlines"]})
     assert "two lines" in caplog.text
+
+
+def test_the_start_line_names_the_release_in_a_player_release(tmp_path, monkeypatch):
+    # (v1.xx counts develop's merges; players only ever see release numbers: user)
+    import json
+
+    from grand_project import paths as rc_paths
+    from grand_project.app import server as srv
+
+    (tmp_path / "manifest.json").write_text(json.dumps({"release": "1.3.1", "program": "1.29", "files": {}}))
+    monkeypatch.setattr(rc_paths, "ROOT", tmp_path)
+    monkeypatch.setattr(rc_paths, "CHANNEL", "release")
+    assert srv.shown_version() == "release 1.3.1"
+    monkeypatch.setattr(rc_paths, "CHANNEL", "internal")
+    assert srv.shown_version() == f"v{srv.VERSION}"

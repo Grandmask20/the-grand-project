@@ -406,13 +406,15 @@ STEAM_TIME = re.compile(r"_(\d{14})_\d+$")  # Steam names screenshots <app id>_<
 
 
 def capture_time(frame: dict) -> float | None:
-    """When a screenshot was taken: from its Steam file name, else the file's modified time.
+    """When a screenshot was taken: from its Steam file name, else the time kept with it ("taken": saved when its
+    copy was kept, app/keeping.py, so a deleted screenshot keeps its place in "oldest to newest" and the timelapse),
+    else the file's modified time.
 
     Args:
-        frame: Atlas frame dict ("name", "path").
+        frame: Atlas frame dict ("name", "path", "taken").
 
     Returns:
-        Seconds since the epoch (local time), or None when neither is known.
+        Seconds since the epoch (local time), or None when none is known.
     """
     m = STEAM_TIME.search(frame.get("name", ""))
     if m:
@@ -420,6 +422,8 @@ def capture_time(frame: dict) -> float | None:
             return time.mktime(time.strptime(m.group(1), "%Y%m%d%H%M%S"))
         except ValueError:
             pass
+    if frame.get("taken") is not None:
+        return float(frame["taken"])
     try:
         return Path(frame["path"]).stat().st_mtime
     except (OSError, KeyError):

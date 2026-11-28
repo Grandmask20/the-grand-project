@@ -598,6 +598,22 @@ class Handler(BaseHTTPRequestHandler):
         """What the Re-check prompt says about an atlas (?path=: another one than the open one, read, not opened)."""
         self._json(self.S.recheck_info(q.get("path", [None])[0] or None))
 
+    @route("GET", "/api/atlas/keep-info")
+    def get_keep_info(self, q) -> None:
+        """What the "Keep copies" prompt says about the open atlas (its screenshots' copies: app/keeping.py)."""
+        gen = self.S.generation
+        info = self.S.keep_info()
+        if self.S.generation != gen:  # another atlas opened while it was counted: refused, never a mix (CodeRabbit)
+            raise StaleAtlas()
+        self._resp_gen = gen
+        self._json(info)
+
+    @route("POST", "/api/atlas/keep")
+    def post_keep(self, q) -> None:
+        """Keep copies of the open atlas's screenshots and move the detected ones in its folder to used/ (a job)."""
+        self.S.keep_all()
+        self._json({"ok": True})
+
     @route("POST", "/api/atlas/recheck-file")
     def post_recheck_file(self, q) -> None:
         """Re-check an atlas from the Atlases tab ({"path"}: opened first when another one is open)."""
@@ -728,8 +744,10 @@ class Handler(BaseHTTPRequestHandler):
 
     @route("GET", r"/api/tiles/terrain/(?P<z>\d+)/(?P<x>\d+)/(?P<y>\d+)\.jpg")
     def get_terrain_tile(self, q, z, x, y) -> None:
-        """A ground tile."""
-        self._bytes(self.S.terrain_tile(int(z), int(x), int(y), self._still_connected), "image/jpeg")
+        """A ground tile of the map image version its address names ("v": tile key, then that version), kept by the
+        browser only when it is of that version (terrain_tile_for)."""
+        data, same = self.S.terrain_tile_for(int(z), int(x), int(y), q.get("v", [""])[0], self._still_connected)
+        self._bytes(data, "image/jpeg", cache=same)
 
     @route("GET", "/api/crop")
     def get_crop(self, q) -> None:
@@ -741,15 +759,32 @@ class Handler(BaseHTTPRequestHandler):
 
     @route("GET", r"/api/tiles/vector/(?P<z>\d+)/(?P<x>\d+)/(?P<y>\d+)\.pbf")
     def get_vector_tile(self, q, z, x, y) -> None:
-        """A vector tile."""
+        """A vector tile: kept by the browser only when made for the address it was asked with (_asked_for)."""
         replay = bool(q.get("r", [""])[0])  # the tab playing the timelapse
-        self._bytes(self.S.vector_tile(int(z), int(x), int(y), replay), "application/x-protobuf")
+        data, made_for = self.S.vector_tile_made(int(z), int(x), int(y), replay)
+        self._bytes(data, "application/x-protobuf", cache=made_for == self._asked_for(q))
 
     @route("GET", "/api/scene3d")
     def get_scene_3d(self, q) -> None:
-        """The 3D view's icons, paths and models, whole (versioned URL: kept by the browser)."""
+        """The 3D view's icons, paths and models, whole (kept by the browser when made for its address: _asked_for)."""
         replay = bool(q.get("r", [""])[0])  # the tab playing the timelapse
-        self._bytes(self.S.scene_3d(replay), "application/json")
+        data, made_for = self.S.scene_3d_made(replay)
+        self._bytes(data, "application/json", cache=made_for == self._asked_for(q))
+
+    @staticmethod
+    def _asked_for(q) -> str:
+        """The address a vector tile or the 3D scene was asked with ("v", and "&r=" for the timelapse's tab), as
+        MapImageMixin._address writes it. The answer is made from what is current: when that changed since the
+        page read its addresses, it was kept a year under the older one (CodeRabbit), so then it isn't kept.
+
+        Args:
+            q: The query.
+
+        Returns:
+            "<v>" (+ "&r=<r>").
+        """
+        r = q.get("r", [""])[0]
+        return q.get("v", [""])[0] + (f"&r={r}" if r else "")
 
     @route("GET", r"/api/icons/(?P<name>[^/]+)\.png")
     def get_icon(self, q, name) -> None:
@@ -1311,7 +1346,7 @@ def reuse_running(port: int, atlas: str | None, browser: bool) -> str:
         return START
     url, version, rf_detr = found
     if version != VERSION:
-        _say(f"An older copy (v{version}) is running: closing it to start v{VERSION}")
+        _say("Another version of the app is running: closing it to start this one")
         _local(url + "api/quit", {})
         t0 = time.monotonic()
         old_port = int(url.rstrip("/").rsplit(":", 1)[1])
@@ -1422,6 +1457,19 @@ def open_first_atlas(session: AtlasSession, given: str | None, gen: int | None =
         )
 
 
+def shown_version() -> str:
+    """The version as the players know it: the release (1.3.1) in a player release, else the program's own version
+    (v1.xx: develop's, one up per merge; user: players only ever see release numbers).
+
+    Returns:
+        "release 1.3.1" or "v1.29".
+    """
+    from grand_project import release_manifest as rm
+
+    m = rm.read(rc_paths.ROOT) if rc_paths.CHANNEL == "release" else None
+    return f"release {m['release']}" if m and m.get("release") else f"v{VERSION}"
+
+
 def main(argv: list[str] | None = None) -> int:
     """Start the app: open the atlas (the one given, else the last one), serve the page and open the browser.
 
@@ -1480,7 +1528,7 @@ def main(argv: list[str] | None = None) -> int:
     # a copy started on another port was not found, and that launch gave up (CodeRabbit)
     with contextlib.suppress(OSError):
         (rc_paths.USER_DATA / APP_URL_FILE).write_text(server.url, encoding="utf-8")
-    _say(f"The Grand Project {VERSION}: {server.url}  (Ctrl+C to quit)")
+    _say(f"The Grand Project {shown_version()}: {server.url}  (Ctrl+C to quit)")
     LOG.info(f"serving on {server.url}")
     if not args.no_browser:
         threading.Timer(0.4, lambda: webbrowser.open(server.url)).start()

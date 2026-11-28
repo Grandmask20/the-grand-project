@@ -41,6 +41,8 @@ from .debug import DebugMixin
 from .edits import EditsMixin
 from .events import Events
 from .icons import icon_label, icon_rows
+from .idle import IdleMixin
+from .keeping import KeepingMixin
 from .library import LibraryMixin
 from .mapimage import MapImageMixin, files_key
 from .model import view_model
@@ -86,6 +88,7 @@ class AtlasSession(
     LibraryMixin,
     MapImageMixin,
     AddingMixin,
+    KeepingMixin,
     WatchMixin,
     EditsMixin,
     BookmarksMixin,
@@ -93,6 +96,7 @@ class AtlasSession(
     DebugMixin,
     ReplayMixin,
     UpdatesMixin,
+    IdleMixin,
 ):
     """The open atlas and its background work (see the module docstring)."""
 
@@ -127,6 +131,7 @@ class AtlasSession(
         self._init_mapimage()
         self._init_adding(start=worker)
         self._init_watch()
+        self._init_idle(start=worker)
 
     # ------------------------------------------------------------------ settings shared with the page
     def save_settings(self) -> None:
@@ -165,6 +170,8 @@ class AtlasSession(
             "replay": s.get("replay", {}),
             "ui": s.get("ui", {}),
             "recheck_update": {g: bool(_recheck_ticks(s).get(g, True)) for g in RECHECK_GROUPS},
+            # the Re-check prompt's slim down (for every atlas): the copies of screenshots in dump removed
+            "recheck_slim": bool(s.get("recheck_slim", False)),
         }
 
     def set_ui_settings(self, changes: dict) -> dict:
@@ -200,6 +207,8 @@ class AtlasSession(
                 s[k] = bool(changes[k])
         if "hidden_types" in changes:
             s["icon_hidden"] = sorted(set(changes["hidden_types"]))
+        if "recheck_slim" in changes:
+            s["recheck_slim"] = bool(changes["recheck_slim"])
         if isinstance(changes.get("recheck_update"), dict):
             got = {g: bool(v) for g, v in changes["recheck_update"].items() if g in RECHECK_GROUPS}
             s["recheck_update"] = {**_recheck_ticks(s), **got}
@@ -269,6 +278,7 @@ class AtlasSession(
                 self.events.log(f"switched to atlas {name}", before.scope)
         maps = len((atlas.final or {}).get("nodes", []))
         self.events.log(f"opened atlas {name} ({p}): {len(atlas.frames)} screenshots, {maps} maps", now.scope)
+        self.say_update(now.scope)  # (an update just put in place: its line where the Log tab can show it)
         if atlas.frames and atlas.final is None:
             self.events.log("this atlas predates the atlas-wide check: running it now")
             try:
@@ -279,7 +289,17 @@ class AtlasSession(
                 LOG.exception("atlas-wide check failed")
                 self.events.log(f"atlas-wide check failed: {e}")
         self._after_load()
-        missing = [f["name"] for f in atlas.frames if not Path(f["path"]).exists()]
+        # (a screenshot whose file is gone shows from its 1080p copy: only one gone without a copy loses its ground)
+        gone = [f for f in atlas.frames if not atlas.has_picture(f["path"])]
+        # (ones slimmed down showed no spot of the map: nothing is missing there, no warning: self review)
+        slimmed = [f["name"] for f in gone if f.get("slimmed")]
+        missing = [f["name"] for f in gone if not f.get("slimmed")]
+        if slimmed:
+            self.events.log(
+                f"{len(slimmed)} screenshot(s) gone with their copies (slimmed down): they showed no spot of the map, "
+                "others show it",
+                now.scope,
+            )
         if missing:
             self.events.log(f"screenshots not found (terrain missing there): {', '.join(missing[:20])}" +
                             (f" and {len(missing) - 20} more" if len(missing) > 20 else ""))  # fmt: skip
@@ -318,6 +338,8 @@ class AtlasSession(
         self.set_setting("last_atlas", str(p), save=False)
         self._after_load()
         self.events.log(f"new atlas: {p}", now.scope)
+        # (an update just put in place: a new atlas made before the start-up one opened never got its line, CodeRabbit)
+        self.say_update(now.scope)
         if self.settings.get("watch_on"):
             self.start_watch()  # auto-add follows the new atlas too (it was stopped above and left off)
 
@@ -348,6 +370,7 @@ class AtlasSession(
         self.D = {}
         self.model_version += 1
         self.opened = Opened(atlas, p, self.opened.gen + 1, scope)
+        self._source_sync("gen", "V", "D", "model_version")  # (the map's vector tiles are made from it)
         self.parts.reset(self.opened.gen)
         self.events.set_scope(scope)
         return self.opened
@@ -535,7 +558,10 @@ class AtlasSession(
             # close between the check and the replan made the rebuild fail after it said the model was ready,
             # CodeRabbit)
             if getattr(self, "_replay_on", False) and self.atlas and self.atlas.frames:
-                self._replan()
+                self._replan(sync=False)
+            # the map's vector tiles are made from it: the model and its timelapse steps put in as one (apart, a
+            # tile could be made of the new model with the steps of the old)
+            self._source_sync("V", "D", "model_version", "replay", "replay_token")
 
     # ------------------------------------------------------------------ what the page shows of the atlas
     def atlas_summary(self) -> dict | None:
@@ -592,6 +618,7 @@ class AtlasSession(
         self._extra_groups = set()
         self._replay_on, self._plan, self._replay_steps = False, None, None
         self._fog = None
+        self._source_sync("replay")
 
 
 # how a settings key reads in the log (others: their own name)
@@ -600,6 +627,7 @@ _WORDS = {
     "only_icon_maps": "Find: only maps with a ticked icon",
     "near_only": "Find: only potential city maps",
     "recheck_update": "Re-check updates",
+    "recheck_slim": "Re-check slim down",
     "path_freq": "paths drawn by at least",
     "path_width": "path width",
     "path_style": "path style",

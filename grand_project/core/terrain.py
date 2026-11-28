@@ -34,7 +34,9 @@ def _valid_mask(frame_img: np.ndarray) -> np.ndarray:
     m = _valid_mask_calc(frame_img)
     m.flags.writeable = False  # shared: callers must not change it
     try:
-        _MASKS[id(frame_img)] = (weakref.ref(frame_img), m)
+        # (gone with its screenshot: kept up to _MASK_CACHE after the picture was let go, ~2 MB each for nothing)
+        key = id(frame_img)
+        _MASKS[key] = (weakref.ref(frame_img, lambda _r, k=key: _MASKS.pop(k, None)), m)
         while len(_MASKS) > _MASK_CACHE:
             _MASKS.pop(next(iter(_MASKS)))
     except TypeError:  # (a view that cannot be weakly referenced)
