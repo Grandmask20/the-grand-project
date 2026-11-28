@@ -1,13 +1,13 @@
 """How well the classical first guesses name map nodes, measured on reviewed screenshots.
 
-    python -m tools.detection_dataset_annotator.score_nodes [--output-dir DIR] [--ring 19.35 38] [--limit 50]
+    python -m tools.detection_dataset_annotator.score_nodes [--output-dir DIR] [--limit 50]
 
 For every reviewed screenshot, the reviewer's node boxes (their places and classes), icon boxes and landmark boxes
 (citadels, halls, towers, strongholds) are taken as they are (an icon the reviewer named no type is named as the
 classical detector names it, ``name_icons``); the biome ring (``detect.biomes.node_biomes``, ``BIOME_RING``) and the
 city areas (``city_area_nodes``, over paths the classical tracer finds between the reviewed nodes) guess each node's
 class again, and the guesses are compared with the reviewer's classes: a confusion matrix and each class's precision
-and recall, for the sure guesses and for all. Use it to tune ``BIOME_*`` (``--ring`` tries another ring).
+and recall, for the sure guesses and for all. Use it to tune ``BIOME_*``.
 """
 
 from __future__ import annotations
@@ -167,32 +167,21 @@ def main(argv: list[str] | None = None) -> int:
     """Score the node guesses on the reviewed screenshots of a review store."""
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--output-dir", default=K.ANNOTATOR_DEFAULT_OUTPUT_DIR, help="the annotator's output folder")
-    parser.add_argument("--ring", nargs=2, type=float, metavar=("INNER", "OUTER"), help="try another BIOME_RING (px)")
     parser.add_argument("--limit", type=int, default=None, help="score at most this many screenshots")
     args = parser.parse_args(argv)
-    if args.ring and not (
-        np.isfinite(args.ring).all() and 0 <= args.ring[0] < args.ring[1] <= K.ANNOTATOR_SCORE_RING_MAX
-    ):
-        parser.error(f"--ring needs two finite radii, 0 <= INNER < OUTER <= {K.ANNOTATOR_SCORE_RING_MAX:g}")
     if args.limit is not None and args.limit < 0:
         parser.error("--limit must be 0 or more")
     store_path = resolve_path(args.output_dir) / K.ANNOTATOR_STORE_FILE
     if not store_path.is_file():  # opening it would make an empty store (and its folder)
         print(f"no annotator store at {store_path}")
         return 1
-    ring = DK.BIOME_RING
-    if args.ring:
-        DK.BIOME_RING = (args.ring[0], args.ring[1])  # read live by biomes.node_biomes; put back below
-    try:
-        pairs, scored = _score(store_path, args.limit)
-        if not pairs:
-            print("No reviewed node boxes yet: review some screenshots first.")
-            return 1
-        print(f"{scored} reviewed screenshots with node boxes, ring {DK.BIOME_RING[0]:g}-{DK.BIOME_RING[1]:g} px\n")
-        print(report(pairs))
-        return 0
-    finally:
-        DK.BIOME_RING = ring
+    pairs, scored = _score(store_path, args.limit)
+    if not pairs:
+        print("No reviewed node boxes yet: review some screenshots first.")
+        return 1
+    print(f"{scored} reviewed screenshots with node boxes, ring {DK.BIOME_RING[0]:g}-{DK.BIOME_RING[1]:g} px\n")
+    print(report(pairs))
+    return 0
 
 
 def _score(store_path: Path, limit: int | None) -> tuple[list[tuple[str, str, bool]], int]:

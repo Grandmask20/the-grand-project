@@ -2,14 +2,12 @@
 
 import json
 import os
-import sqlite3
 
 import numpy as np
 import pytest
 
 from grand_project import builder, core
 from grand_project import fileio as atlas_io
-from grand_project.detect import constants as detect_constants
 
 
 def test_atomic_write_replaces_and_leaves_no_temp_files(tmp_path):
@@ -143,27 +141,3 @@ def test_capture_time_comes_from_the_steam_name(tmp_path) -> None:
 
 def test_untimed_screenshots_stay_after_the_one_placed_before_them() -> None:
     assert core.time_order([30.0, None, 10.0, 20.0]) == [2, 3, 0, 1]
-
-
-def test_renaming_an_icon_picture_makes_cached_detections_stale(tmp_path, monkeypatch) -> None:
-    """tools/split_icon_type.py renames stored pictures (same rows, same ids): the stamp changes, so caches made with
-    the old names are detected again. The database's path has a "#": its read-only URI must still open it."""
-    db = tmp_path / "refs #1.sqlite3"
-    c = sqlite3.connect(db)
-    c.execute("CREATE TABLE detector_models (name TEXT, info TEXT, blob BLOB)")
-    c.execute("CREATE TABLE badge_refs (id INTEGER PRIMARY KEY, name TEXT, png BLOB)")
-    c.execute("INSERT INTO badge_refs (name) VALUES ('ArcaneOrProsperous')")
-    c.commit()
-    c.close()
-    monkeypatch.setattr(detect_constants, "DB_PATH", db)
-
-    def stamp() -> str:
-        monkeypatch.setattr(builder, "_STAMP", [])  # worked out once per process: again here
-        return builder.detector_stamp()
-
-    before = stamp()
-    c = sqlite3.connect(db)
-    c.execute("UPDATE badge_refs SET name = 'ArcaneHordes'")
-    c.commit()
-    c.close()
-    assert stamp() != before

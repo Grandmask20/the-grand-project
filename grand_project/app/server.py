@@ -644,8 +644,14 @@ class Handler(BaseHTTPRequestHandler):
             opened = self.S.opened
             if not self.S.owns(gen) or opened.path is None:  # another atlas opened while it came in (CodeRabbit)
                 raise StaleAtlas()
-        # (the folder of the atlas it was checked for, from its own record)
-        self._json({"path": str(save_upload(opened.path.parent, name, data))})
+        dest = opened.path.parent / name  # (the folder of the atlas it was checked for, from its own record)
+        stem, k = dest.stem, 0
+        while dest.exists() and dest.read_bytes() != data:  # another picture by that name: a free name (CodeRabbit)
+            k += 1
+            dest = dest.with_name(f"{stem}_{int(time.time())}{f'_{k}' if k > 1 else ''}{dest.suffix}")
+        if not dest.exists():
+            dest.write_bytes(data)
+        self._json({"path": str(dest)})
 
     # ------------------------------------------------------------------ adding screenshots
     @route("POST", "/api/screenshots")
@@ -1120,49 +1126,6 @@ def meta() -> dict:
         "icon_row_dy": C.ICON_ROW_DY,
         "bookmark_ats": list(C.BOOKMARK_ATS),
     }
-
-
-_UPLOADS = threading.Lock()
-"""Held while one upload creates, compares and closes its file: a second drop of the same picture never takes a file
-for its own whose writer is still open (its close may yet fail and remove it: CodeRabbit)."""
-
-
-def save_upload(folder: Path, name: str, data: bytes) -> Path:
-    """Save a dropped screenshot in a folder under its own name, or a free name when another picture has it.
-
-    Args:
-        folder: The open atlas's folder.
-        name: The file's name.
-        data: The file's bytes.
-
-    Returns:
-        The file holding the picture (the one already there when it is the same picture).
-    """
-    with _UPLOADS:
-        return _save_upload(folder / name, data)
-
-
-def _save_upload(dest: Path, data: bytes) -> Path:
-    """``save_upload`` with the upload lock held."""
-    stem, k = dest.stem, 0
-    while True:
-        try:  # the name claimed in the same step as the file is made: checked first, then written, two pictures
-            # dropped together under one name both found it free and the second overwrote the first
-            f = open(dest, "xb")  # noqa: SIM115 (closed below, its failure included)
-        except FileExistsError:
-            with contextlib.suppress(OSError):
-                if dest.read_bytes() == data:  # the same picture again: its file
-                    return dest
-        else:
-            try:
-                with f:  # the write and the close (its flush can fail too: a full disk)
-                    f.write(data)
-            except BaseException:
-                dest.unlink(missing_ok=True)  # this call made it: no cut-off picture left under the name
-                raise
-            return dest
-        k += 1  # another picture by that name: a free name (CodeRabbit)
-        dest = dest.with_name(f"{stem}_{int(time.time())}{f'_{k}' if k > 1 else ''}{dest.suffix}")
 
 
 def _jsonable(o):

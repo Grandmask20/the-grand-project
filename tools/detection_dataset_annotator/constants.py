@@ -54,15 +54,6 @@ screenshot each and take milliseconds; the wait only matters when several land a
 ANNOTATOR_MANIFEST_FILE = "manifest.json"
 """Filename for the project-native RF-DETR manifest export (read by ``rf_detr.load_annotator_manifest``)."""
 
-ANNOTATOR_COCO_FILE = "annotations.json"
-"""Filename for the interoperable COCO object-detection export."""
-
-ANNOTATOR_LABELS_FILE = "labels.json"
-"""Filename for the exported numeric label ids."""
-
-ANNOTATOR_SCHEMA_VERSION = 2
-"""Version of the manifest schema."""
-
 ANNOTATOR_MANIFEST_FORMAT = RF_DETR_MANIFEST_FORMAT
 """The manifest's ``format`` value; ``rf_detr.load_annotator_manifest`` refuses other files."""
 
@@ -331,11 +322,6 @@ ANNOTATOR_DETECTED_SHA = "sha256"
 detected on (``detection.read_with_digest``): a file replaced since, even by one of its size, is no longer the
 picture they frame (``state.changed_since_detection``); its detection is rerun first."""
 
-ANNOTATOR_TRUTH_DIGEST = "truth_sha256"
-"""The field (in a screenshot's ``extra``, and the export's manifest) holding the SHA-256 of the truth file's bytes that
-seeded it (with ``ANNOTATOR_TRUTH_MARK``): a truth edited since is another version than the one its boxes come from,
-and the simulated loop scores against the truth it loads (``simulate_loop.check_truth_digest``)."""
-
 ANNOTATOR_TRUTH_MARK = "truth"
 """The field (in a screenshot's ``extra``, and the export's manifest) naming the truth that seeded it: a biome truth
 (``truth_seed``) vouches for its city areas and citadels, hand-checked map node positions (``node_truth``) for its map
@@ -365,58 +351,11 @@ ANNOTATOR_TRUTH_STRONGHOLD_REACH = 250.0
 only (the truth labels roughly every stronghold area: 133 of fr-atlas's 176 seeded stronghold boxes were this close)."""
 
 
-# ---- the iterative loop: review effort and model pre-labels -----------------------------------------------------
-
-ANNOTATOR_EFFORT_MOVE_IOU = 0.75
-"""Overlap under which a kept box counts as moved or resized (``effort.edit_cost``): a node box (38.7 px) shifted
-about 5 px, or resized about 10 %. Smaller nudges are within the box rules' tolerance."""
-
-ANNOTATOR_SCORE_RING_MAX = 200.0
-"""``score_nodes --ring``: the largest OUTER radius tried (detector px). The ring's mask is a square of twice it a
-side per map node: a fifth of a 1080p screenshot's height already reaches past every neighbour (BIOME_RING is
-19.35-38), and a mistyped radius would allocate without bound."""
-
-ANNOTATOR_UNASSIGNED_ARM = "unassigned"
-"""The effort report's arm of a review no pre-label pass assigned an arm (reviewed before the A/B loop): its own row,
-never counted in the classical control arm."""
-
-ANNOTATOR_EDIT_KINDS = ("kept", "relabelled", "moved", "deleted", "added")
-"""What a review can do to a box (``effort.Edits``' fields, in this order: the report's columns and the fit's)."""
-
-ANNOTATOR_EFFORT_SECONDS = {"kept": 0.3, "relabelled": 1.5, "moved": 3.0, "deleted": 1.0, "added": 5.0}
-"""Estimated seconds a reviewer spends per box by what the review did to it (a kept box still has to be checked).
-Estimates, not measurements: ``effort report`` fits them to the review timer's active seconds once enough timed
-reviews exist."""
-
-ANNOTATOR_EFFORT_MIN_FIT = 10
-"""Timed reviews from which ``effort report`` fits the seconds per edit to the active seconds."""
-
-ANNOTATOR_IDLE_MS = 60_000
-"""Milliseconds without a key or pointer event after which the review timer stops counting (a reviewer away)."""
+# ---- model pre-labels -------------------------------------------------------------------------------------------
 
 ANNOTATOR_PRELABEL_FIELD = "prelabel"
-"""The field (in a screenshot's ``extra``) saying what pre-labelled it: ``{"source": "classical" | "rf_detr",
-"model", "model_sha", "policy", "round"}`` (``model_prelabel``), so the effort report compares the arms."""
-
-ANNOTATOR_PRELABEL_PLAN = "prelabel_arms"
-"""The store's ``meta`` entry holding each spatial block's planned pre-label arm (block -> ``classical`` |
-``rf_detr``), kept apart from a screenshot's done mark (``ANNOTATOR_PRELABEL_FIELD``): a model pass that fails keeps
-its blocks in the model's arm for the next one."""
+"""The field (in a screenshot's ``extra``) saying a model pre-labelled it: ``{"source": "rf_detr", "model",
+"model_sha", "round", "found"}`` (``model_prelabel``)."""
 
 ANNOTATOR_SQL_CHUNK = 500
 """Keys bound in one SQL query of the store (SQLite's limit is 999 in older builds)."""
-
-ANNOTATOR_REVIEW_FIELD = "review"
-"""The field (in a screenshot's ``extra``) holding its review log: ``{"active_s", "reviewed_at"}``."""
-
-ANNOTATOR_PRELABEL_POLICIES = ("classical", "model", "relabel", "union")
-"""How model pre-labels join the classical boxes (``model_prelabel.merge``): ``classical`` keeps them as they are;
-``model`` takes the model's boxes instead (a hand truth's box stays); ``relabel`` keeps the classical boxes and gives
-each the class of the model box it matches; ``union`` is ``relabel`` plus the boxes only the model found (dotted).
-``simulate_loop`` measures which one saves the most edits."""
-
-ANNOTATOR_PRELABEL_POLICY = "relabel"
-"""The policy ``model_prelabel`` uses unless told otherwise. The simulated loop (2026-11-21, fr-atlas, the trial
-recipe) chose it: after a first round of 63 screenshots it left 1.7-1.9 truth-checked edits per screenshot where the
-classical boxes left 8.2-10.7, and as it keeps the classical boxes it adds none to judge; ``union`` saved as many
-truth-checked edits but added 19-31 boxes per screenshot only the model found, unchecked until reviewed."""

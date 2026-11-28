@@ -102,19 +102,13 @@ def _one_shot(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
         (None, "not known to be held-out"),
         (["other.png"], "held-out: the model trained on none"),
         (["shot.png"], "NOT held-out"),
-        (["other.png", "partial"], "misses an earlier model's"),
-        (["shot.png", "partial"], "NOT held-out"),
     ],
 )
 def test_the_score_is_held_out_only_when_the_model_says_so(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture, listed, header: str
 ) -> None:
-    """The model's own list of training screenshots (RF_DETR_TRAINED_ON) decides; without one, or with one that misses
-    an ancestor's (RF_DETR_TRAINED_ON_PARTIAL), it is not known, unless the list names a scored screenshot."""
+    """The model's own list of training screenshots (RF_DETR_TRAINED_ON) decides; without one it is not known."""
     shot = _one_shot(tmp_path, monkeypatch)
-    if listed is not None and "partial" in listed:
-        listed = [name for name in listed if name != "partial"]
-        (tmp_path / "model" / K.RF_DETR_TRAINED_ON_PARTIAL).write_text("", encoding="utf-8")
     if listed is not None:
         names = [training._project_name(shot.with_name(name)) for name in listed]
         (tmp_path / "model" / K.RF_DETR_TRAINED_ON).write_text("".join(f"{n}\n" for n in names), encoding="utf-8")

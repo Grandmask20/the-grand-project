@@ -277,15 +277,6 @@ def _icon_rows(icons: list[dict[str, Any]]) -> list[list[dict[str, Any]]]:
     return rows
 
 
-def node_offset(icons: list[dict[str, Any]], nodes: list[dict[str, Any]]) -> float:
-    """How far below its icons this screenshot's map nodes sit: the median over icons centred above a map node.
-
-    Crawl screenshots measure 24 px (``ROW_DY``), the res atlases 31-36; fewer than
-    ``ANNOTATOR_HIDDEN_MIN_PAIRS`` pairs fall back to ``ROW_DY``.
-    """
-    return _offset_of(_node_offsets(icons, nodes))
-
-
 def _offset_of(offsets: list[float]) -> float:
     """The icon-to-map-node offset the measured ``offsets`` give: their median, or ``ROW_DY`` when too few pairs
     measured it."""

@@ -23,10 +23,11 @@ RF_DETR_CUDA_REEXEC_ENV = "GRAND_PROJECT_RF_DETR_CUDA_REEXEC"
 RF_DETR_CUDA_PATH_SEPARATOR = ":"  # LD_LIBRARY_PATH's separator (a Linux variable: never os.pathsep, which is
 # ";" on Windows, where the tests fake Linux)
 RF_DETR_DEFAULT_MODEL_DIR = rc_paths.ROOT / "runs" / "rf-detr-small" / "best"
+RF_DETR_HUB_FILES = ("*.json", "*.safetensors", "trained_on.txt")  # what a model given by its Hugging Face id
+# (owner/name[@revision]) downloads: its config, processor, labels, safetensors weights and training list, never a
+# pickled file (AGENTS.md: models)
 RF_DETR_TRAINED_ON = "trained_on.txt"  # in a kept model's folder: the screenshots it trained on (one project-relative
 # path a line), which the annotator's model pre-labels skip (they would only replay its training labels)
-RF_DETR_TRAINED_ON_PARTIAL = "trained_on.partial"  # beside RF_DETR_TRAINED_ON: the list misses what an ancestor
-# trained on (gone on from with --init-from, a model without its own list), so "trained on none of these" is not known
 RF_DETR_RUN_SOURCES = "run_sources.txt"  # in each training checkpoint: this run's own training screenshots, which
 # --resume compares (RF_DETR_TRAINED_ON there lists every screenshot the weights learned, its ancestors' too)
 RF_DETR_DATASET_ID = "dataset_id.txt"  # in each training checkpoint: the SHA-256 of its dataset's metadata.json
@@ -41,10 +42,8 @@ RF_DETR_TRUTH_SEEDED_SOURCE = "annotator_truth_seeded"  # source_type of an unre
 # seeded, taken only with --truth-seeded (a bootstrap round)
 RF_DETR_SCORE_THRESHOLD = 0.35  # family score (the sum of a family's class scores) a detection needs; a starting
 # point, to be set from a trained checkpoint's validation precision / recall
-RF_DETR_MAP_BOX_SHRINK = 0.9  # factor: user's rule, the map node box is 10% smaller per side than first set
-# (reviewers found it too large); only map nodes: every other box keeps its size
-RF_DETR_MAP_BOX = 43.0 * RF_DETR_MAP_BOX_SHRINK  # px: square around a map node's centre: the 1080p map-base glow
-# measured 48, which reviewers found too large; 43 is 20% less area (48 * sqrt(0.8)), then shrunk as above
+RF_DETR_MAP_BOX = 38.7  # px: square around a map node's centre: the 1080p map-base glow measured 48, which reviewers
+# found too large; 43 is 20% less area (48 * sqrt(0.8)), then 10% smaller per side (user's rule: 43 * 0.9)
 RF_DETR_ICON_BOX = 34.0  # px: square around an icon centre, inside the standard icon rim
 RF_DETR_LANDMARK_BOX = 80.0  # px: square around a citadel: the city's map node and its brass barrel
 RF_DETR_TOWER_WIDTH = 80.0  # px: tower box width around its map node
@@ -53,8 +52,6 @@ RF_DETR_TOWER_NODE_REACH = 55.0  # px: a tower box's base and the map node it st
 RF_DETR_STRONGHOLD_BOX = 150.0  # px: square around a Breach stronghold structure
 RF_DETR_BUTTON_BOX = (68.0, 66.0)  # px: width, height of a square reveal button's frame (references/lock_icon.png,
 # the frame cities.square_buttons matches at 1080p)
-RF_DETR_PATH_PAD = 8.0  # px: padding around a traced path centre line
-RF_DETR_WALL_MIN_AREA = 12000  # px²: ignore tiny connected components in optional painted wall masks
 
 # RF-DETR input: native-scale tiles. Every screenshot is first read as the classical detector reads it (1440p and
 # 4K windows scaled to 1080p, core.scale_screenshot), then cut into square tiles the model sees at their own size:
@@ -69,8 +66,7 @@ RF_DETR_HUD_FILL = (114, 114, 114)  # BGR: the game HUD is painted over with thi
 
 # RF-DETR training augmentation. The paper keeps only horizontal flips and crops and warns that augmentations bias
 # a detector toward images that never occur. The atlas has a fixed camera: citadels always face the same way and
-# icons are never mirrored, so a mirrored screenshot never occurs and flips are off.
-RF_DETR_AUGMENT_FLIP_PROBABILITY = 0.0  # chance: off, see above (kept as a setting for experiments)
+# icons are never mirrored, so a mirrored screenshot never occurs and tiles are never flipped.
 RF_DETR_AUGMENT_CROP_MIN_VISIBILITY = 0.5  # fraction: keep a clipped box only when at least half remains visible
 RF_DETR_AUGMENT_CROP_ATTEMPTS = 10  # attempts: find a tile holding at least one labelled object
 RF_DETR_AUGMENT_SCALE_JITTER = 0.10  # fraction: tiles cut 10% larger or smaller and resized to RF_DETR_TILE
@@ -128,8 +124,6 @@ RF_DETR_EVAL_RADIUS = {
     "hall": 90.0,
     "tower": 90.0,
     "stronghold": 90.0,
-    "path": 90.0,
-    "wall": 90.0,
 }
 
 # ---- RF-DETR labels: the one registry (detect/labels.py reads it) ----------------------------------------------
@@ -143,7 +137,7 @@ RF_DETR_EVAL_RADIUS = {
 # of the node classes), rule (the box rule shown to the reviewer), color (BGR), key (editor hotkey: "1" or
 # "shift+1"), picture (an ICON_INFO type or a references/ file), biome / city_type (what a node or citadel class
 # says), landmark (the classical landmark kind it becomes), parent (the class a new class's head row starts from
-# when a checkpoint is fine-tuned with --init-from), optional (derived labels, exported only when used).
+# when a checkpoint is fine-tuned with --init-from).
 _NODE_RULE = "Map node box ({:.1f} px) centred on the map node."
 RF_DETR_LABEL_INFO = {
     "map_node": {
@@ -305,22 +299,6 @@ RF_DETR_LABEL_INFO = {
         "rule": f"{RF_DETR_ICON_BOX:.0f} px box centred on a round map icon (not the square Expedition ship button).",
         "color": (130, 180, 255),
         "key": "shift+6",
-    },
-    "path": {
-        "title": "Traced path with its dashes",
-        "family": "path",
-        "rule": f"Box around a traced path's centre line, {RF_DETR_PATH_PAD:.0f} px padding.",
-        "color": (60, 230, 255),
-        "key": "shift+7",
-        "optional": True,
-    },
-    "fortress_wall": {
-        "title": "Fortress wall region",
-        "family": "wall",
-        "rule": "Box around one connected fortress-wall region.",
-        "color": (170, 170, 170),
-        "key": "shift+8",
-        "optional": True,
     },
 }
 RF_DETR_ICON_EXCLUDED = frozenset({"LostTower", "Checkpoint", "ExpeditionShip"})  # icon types that are no icon
@@ -813,14 +791,3 @@ DETECT_DIGEST_MEMO = 20000  # screenshot hashes kept in memory (builder.file_dig
 # bytes read from the start of a saved detection to tell its detector, version and time (builder.cache_head): those
 # fields come first (name, path, sha256, detector, models, version, detected_at: ~400 bytes with a long path)
 CACHE_HEAD_BYTES = 2048
-
-# ---- detection speed (pipeline._prefetch, cache._per_image) --------------------------------------------------------
-DETECT_PER_IMAGE_KEEP = 16  # results remembered per screenshot function (cache._per_image): a detection's own
-# (dashes, amber dashes, walls, special icons, the landmark rules, square buttons) for the last two screenshots
-DETECT_PREFETCH_THREADS = (
-    3  # threads that work out a screenshot's image-only stages (dashes, special icons, the landmark
-)
-# rules, fortress walls, square buttons) while the detection finds its maps: they are mostly OpenCV, which runs
-# beside Python. At most the process's own thread share less one (fileio.process_pool), so capped workers stay capped
-PATH_FEATURE_REACH = 49.0  # px: dashes looked up around a spot for paths.path_features (its rings end at 48 px; the
-# extra px keeps a dash at 47.99... that the lookup rounds the other way)

@@ -120,7 +120,6 @@ from .constants import (  # noqa: F401
 from .landmarks import (  # noqa: F401
     _barrel,
     _beam,
-    _beam_column,
     _clean_icons,
     _ground_classes,
     _guessed,

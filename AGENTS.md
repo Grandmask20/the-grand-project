@@ -68,28 +68,20 @@ README's developer section). `tools/` are developer helpers
 - **Models**: no pickles from outside. Detector models are skops archives loaded with an allowlist
   (`test_model_safety`); small models are stored as plain arrays in `.npz` (e.g. `references/city_barrel.npz`).
 - **Icons: finding vs naming.** Finding (is there an icon here?) uses only frozen data (`references/badge_finder.npz`: rim template + one picture set); naming (which icon?) uses the growing stored pictures. Teaching icons must never change what is found; re-freeze only on purpose (`python -m tools.freeze_badge_finder`, then retrain and re-score). Map node states are named the same way: the node is found (RF-DETR or the map finder), its state named from `references/node_states.npz` (`python -m tools.node_state_sheet freeze`; its pictures never come from the truth sets that score it). A new freeze re-names the saved states at the next check (`states_from`), it never re-finds.
-- **RF-DETR** (`tools/train_rf_detr.py`, `detect/rf_detr*.py`, the annotator's loop tools): trained with
+- **RF-DETR** (`tools/train_rf_detr.py`, `detect/rf_detr*.py`, the annotator's model pre-labels): trained with
   transformers' `Trainer` on the official roboflow/rf-detr recipe (`RF_DETR_*`; check a recipe change against that
   repo, file:line). Checkpoints are saved in transformers' own key layout (`save_native`: the Trainer reloads them
   unconverted) and loaded with `use_safetensors=True`. A process that runs the model calls
   `rf_detr_cuda.prefer_pip_cuda_libraries()` first (Linux: PyTorch's cuDNN before a system one). Validation and test
-  screenshots never get model pre-labels; a training round checks its manifest against the split ledger. When the
-  annotator store's tables change, `build_store` brings an existing store up to date (`store.upgrade_layout`: backed
-  up, every row copied into the new layout); the store refuses to open until it has.
+  screenshots never get model pre-labels; a training round checks its manifest against the split ledger. A model is
+  a folder or a Hugging Face id (`rf_detr_model.model_folder`: downloaded once, safetensors and text files only).
+  Paths and fortress walls are no dataset labels: the classical tracer and wall mask find them for both detectors.
 - **App**: requests are answered on their own threads; the session changes the atlas only under its lock, and
   long work runs on the session's worker (or a background thread) and reports through `Events` (log, progress,
   versions, questions). CPU-heavy work that would starve the server (Python's GIL) runs as its own process
   (`python -m grand_project.core.seams ...`), not a thread and not `multiprocessing` (spawn re-runs the caller's
-  main script). The exception is a batch of the same job (detecting many screenshots, the check's path tracing):
-  it goes through `fileio.process_pool`, whose workers each keep to their share of the CPU's threads (uncapped,
-  every worker started one per CPU and detection ran 2.7x slower). The app keeps its detection workers warm between
-  jobs (`builder.WarmPool`, closed when idle and by `shutdown`), and sends them single screenshots too. Within one
-  detection, the stages that read only the screenshot run on helper threads (`detect/pipeline._prefetch`): such a
-  stage is `@_per_image` (`detect/cache.py`, thread-safe; lists come back as copies), and a lazy loader it reaches
-  fills its cache in one step. Speed changes to the detector keep every result bit-identical (user's rule)
-  (check all test screenshots before and after). Anything that changes what the map's tiles hold
-  bumps a version (model, map image, filters): tile URLs carry it, so the browser keeps tiles until they really
-  change.
+  main script). Anything that changes what the map's tiles hold bumps a version (model, map image, filters): tile
+  URLs carry it, so the browser keeps tiles until they really change.
 - **The open atlas is one record** (`session.opened`: atlas, path, generation, log scope), swapped only in
   `AtlasSession._switch`. Work that outlives a request takes the record once when it starts, uses its parts (never
   `self.atlas` / `self.generation` read again later), checks `owns(record)` under the lock before applying a result,

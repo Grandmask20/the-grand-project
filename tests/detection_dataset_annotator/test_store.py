@@ -237,18 +237,6 @@ def test_two_tabs_saving_edits_of_the_same_boxes_at_once_keep_exactly_one(tmp_pa
         assert kept == ["tower" if saved[0] else "hall"]
 
 
-def test_review_time_saved_from_two_tabs_at_once_counts_both(tmp_path: Path) -> None:
-    """The review log is read, added to and written in one write: two saves together both count (none is lost)."""
-    path = tmp_path / K.ANNOTATOR_STORE_FILE
-    (shot,) = _shots(tmp_path, "a.png")
-    with ReviewStore.open(path) as setup:
-        key = _detected(setup, shot, _box("map_node", 10))
-    saves = [lambda s: s.save_review(key, 1, review_s=1.5) for _ in range(6)]
-    assert _in_sessions(path, *saves) == [True] * 6
-    with ReviewStore.open(path) as check:
-        assert check.item(key)[K.ANNOTATOR_REVIEW_FIELD]["active_s"] == 9.0
-
-
 def test_a_failed_detection_keeps_what_a_rerun_replaces(tmp_path: Path, review_store: ReviewStore) -> None:
     new, old = _shots(tmp_path, "new.png", "old.png")
     review_store.add_images([new])
@@ -403,7 +391,7 @@ def test_prelabels_are_what_a_reviewer_was_first_shown(tmp_path: Path, review_st
 
 
 def test_extra_fields_merge_and_go_with_a_rerun(tmp_path: Path, review_store: ReviewStore) -> None:
-    """A truth mark, a pre-label's arm or the review log are merged into a screenshot's ``extra`` under the same
+    """A truth mark or a model pre-label record is merged into a screenshot's ``extra`` under the same
     revision check as its boxes (None removes a field); a detection rerun replaces them with the boxes."""
     (path,) = _shots(tmp_path, "a.png")
     key = image_key(path)
@@ -416,24 +404,6 @@ def test_extra_fields_merge_and_go_with_a_rerun(tmp_path: Path, review_store: Re
     assert not review_store.save_review(key, 0, extra={"truth": "other.json"})  # an old revision: nothing saved
     review_store.record_detection(key, _result(_box("icon", 10.0)), force=True)
     assert "truth" not in review_store.item(key)
-
-
-def test_a_store_an_older_annotator_built_is_refused(tmp_path: Path) -> None:
-    """Its first detection would fail on the missing table: opening it says to build a new store instead (no
-    migration), and leaves its file as it was."""
-    import sqlite3
-
-    from tools.detection_dataset_annotator import StoreLayoutError
-
-    path = tmp_path / "old" / K.ANNOTATOR_STORE_FILE
-    ReviewStore.open(path).close()
-    with sqlite3.connect(path) as db:
-        db.execute("DROP TABLE prelabels")  # the store as the annotator before pre-label snapshots built it
-    db.close()
-    before = path.read_bytes()
-    with pytest.raises(StoreLayoutError, match="no prelabels table.*build_store"):
-        ReviewStore.open(path)
-    assert path.read_bytes() == before
 
 
 def test_an_untouched_save_leaves_a_review_in_progress(tmp_path: Path, review_store: ReviewStore) -> None:
@@ -502,25 +472,6 @@ def test_a_save_can_need_its_own_mark_or_none(tmp_path: Path, review_store: Revi
     assert review_store.item(key)[K.ANNOTATOR_TRUTH_MARK] == "truth.json"
 
 
-def test_one_block_keeps_one_pre_label_arm(tmp_path: Path, review_store: ReviewStore) -> None:
-    """Two passes at once could give a block's screenshots different arms: a save refuses an arm another screenshot of
-    its block already has a different one of."""
-    first, second, elsewhere = (
-        _detected(review_store, p, _box("icon", 10.0)) for p in _shots(tmp_path, "a.png", "b.png", "c.png")
-    )
-    block = [first, second]
-
-    def arm(key: str, source: str) -> bool:
-        record = {K.ANNOTATOR_PRELABEL_FIELD: {"source": source}}
-        return review_store.save_review(key, 1, extra=record, arm_block=(block, source))
-
-    assert arm(first, "rf_detr")
-    assert not arm(second, K.ANNOTATOR_CLASSICAL_SOURCE)
-    assert arm(second, "rf_detr")
-    other = {K.ANNOTATOR_PRELABEL_FIELD: {"source": K.ANNOTATOR_CLASSICAL_SOURCE}}
-    assert review_store.save_review(elsewhere, 1, extra=other, arm_block=([elsewhere], K.ANNOTATOR_CLASSICAL_SOURCE))
-
-
 def test_an_all_or_nothing_claim_writes_none_when_one_is_taken(tmp_path: Path, review_store: ReviewStore) -> None:
     """``only_if_free``: one screenshot already in another split stops the whole claim, in the same write."""
     paths = _shots(tmp_path, "a.png", "b.png")
@@ -532,16 +483,6 @@ def test_an_all_or_nothing_claim_writes_none_when_one_is_taken(tmp_path: Path, r
         keys[0]: "test",
         keys[1]: "train",
     }
-
-
-def test_review_time_adds_up_in_the_write(tmp_path: Path, review_store: ReviewStore) -> None:
-    """Two saves made from one read (an autosave and a review key close together) both count their time."""
-    (shot,) = _shots(tmp_path, "a.png")
-    key = _detected(review_store, shot, _box("icon", 10.0))
-    assert review_store.save_review(key, 1, review_s=12.5)
-    assert review_store.save_review(key, 1, review_s=2.0, reviewed=True, reviewed_at="2026-11-23T10:00:00")
-    log = review_store.item(key)[K.ANNOTATOR_REVIEW_FIELD]
-    assert log == {"active_s": 14.5, "reviewed_at": "2026-11-23T10:00:00"}
 
 
 def test_a_save_can_need_its_split(tmp_path: Path, review_store: ReviewStore) -> None:

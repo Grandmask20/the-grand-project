@@ -45,14 +45,13 @@ from .state import (
     resolve_path,
     write_json_atomic,
 )
-from .store import QueueEntry, ReviewStore, StoreLayoutError
+from .store import QueueEntry, ReviewStore
 
 __all__ = [
     "Block",
     "DetectionOptions",
     "QueueEntry",
     "ReviewStore",
-    "StoreLayoutError",
     "annotations_changed",
     "apply_editor_boxes",
     "assign_splits",

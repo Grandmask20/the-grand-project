@@ -461,18 +461,6 @@ def test_the_server_knows_which_calls_belong_to_no_atlas():
     assert not any("/api/atlas/save".startswith(p) or "/api/atlas/close".startswith(p) for p in S.GEN_FREE)
 
 
-def test_the_page_keeps_the_answers_of_every_call_the_server_says_belongs_to_no_atlas():
-    # the page's own list (api/Http.ts) lacked /api/atlas/recheck-file: Re-check from another atlas's card switches
-    # the atlas, so its answer came back with the new atlas's generation and the page dropped it as stale
-    import re
-
-    page = (Path(__file__).parents[1] / "frontend" / "src" / "api" / "Http.ts").read_text(encoding="utf-8")
-    listed = re.search(r"const GEN_FREE = \[(.*?)\];", page, re.S)
-    assert listed, "GEN_FREE not found in frontend/src/api/Http.ts"
-    page_free = set(re.findall(r'"(/api/[^"]*)"', listed[1]))
-    assert set(S.GEN_FREE) <= page_free, f"missing on the page: {sorted(set(S.GEN_FREE) - page_free)}"
-
-
 def test_a_refused_switch_leaves_auto_add_on(session, two, monkeypatch):
     a, b = two
     monkeypatch.setattr(session, "detector_ready", lambda: None)

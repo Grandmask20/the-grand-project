@@ -2,11 +2,8 @@
 
 from __future__ import annotations
 
-import contextlib
 import multiprocessing
 import os
-import sys
-import threading
 
 import pytest
 
@@ -45,66 +42,6 @@ def test_write_text_atomic_gives_up_and_cleans_up(tmp_path, monkeypatch):
     assert [p.name for p in tmp_path.iterdir()] == ["settings.json"]
 
 
-def test_files_rewritten_from_several_threads_at_once_are_never_read_half_written(tmp_path, rng, runs):
-    # the atlas, the settings and the detection caches are written from the page's requests, the worker and the
-    # detection processes at once (two copies of one screenshot share one cache file)
-    f = tmp_path / "atlas.json"
-    writers, each = rng.randint(2, 6), runs(15)
-    texts = {f"{w}-{i}": f"{w}-{i}:" + "x" * rng.randint(10_000, 60_000) for w in range(writers) for i in range(each)}
-    # Windows: a file open for reading can't be replaced (the writers' tries would run out); there only the writers
-    reading = sys.platform != "win32"
-    start = threading.Barrier(writers + reading)
-    done = threading.Event()
-    reads: list[int] = []  # how many files were read (one entry per observation would hold a megabyte of text each)
-    torn: list[str] = []  # the beginning of each observation that was no whole text, as the evidence
-    failed: list[BaseException] = []
-
-    def write(w: int) -> None:
-        try:
-            start.wait(5)
-            for i in range(each):
-                fileio.write_text_atomic(f, texts[f"{w}-{i}"])
-        except BaseException as exc:  # a writer's error fails the test, not only its thread
-            failed.append(exc)
-
-    def read() -> None:
-        try:
-            start.wait(5)
-            count = 0
-            last = False
-            while not last:
-                last = done.is_set()  # one more read after the writers are done: the file is there by then
-                with contextlib.suppress(FileNotFoundError):  # (none written yet)
-                    text = f.read_text()
-                    count += 1
-                    # checked as it is read: a whole text is one of the texts written, whichever it is
-                    if texts.get(text.split(":", 1)[0]) != text and len(torn) < 3:
-                        torn.append(text[:80])
-            reads.append(count)
-        except BaseException as exc:  # a reader's error fails the test too (as a writer's)
-            failed.append(exc)
-
-    threads = [threading.Thread(target=write, args=(w,)) for w in range(writers)]
-    reader = threading.Thread(target=read) if reading else None
-    for t in threads + ([reader] if reader else []):
-        t.start()
-    try:
-        for t in threads:
-            t.join(30)
-            assert not t.is_alive(), "a writer did not finish"
-        assert not failed, failed
-    finally:  # the reader stops however the writers ended
-        done.set()
-        if reader:
-            reader.join(10)
-    assert not (reader and reader.is_alive()), "the reader did not stop"
-    assert not failed, failed
-    assert f.read_text() in texts.values()
-    assert not torn, f"a reader saw half a file: {torn}"
-    assert not reading or (reads and reads[0] > 0), "the reader never read"
-    assert [p.name for p in tmp_path.iterdir()] == ["atlas.json"]  # no temporary file left
-
-
 def test_workers_leave_a_core_free(monkeypatch):
     monkeypatch.setattr(fileio.os, "cpu_count", lambda: 8)
     assert fileio.workers(4) == 4
@@ -119,32 +56,3 @@ def test_process_pool_starts_its_workers_fresh():
         assert pool._mp_context.get_start_method() == "spawn"
         assert pool.submit(abs, -3).result(timeout=60) == 3
     assert multiprocessing.get_context("spawn").get_start_method() == "spawn"
-
-
-def _thread_limits() -> tuple[int, int, str | None]:
-    """What a worker process may use (run in it): its share (and OpenCV's threads, but on macOS, whose GCD backend
-    reports the CPU count whatever it was told), the largest OpenMP / BLAS pool, OMP_NUM_THREADS."""
-    import cv2
-    from threadpoolctl import threadpool_info
-
-    share = fileio.thread_share()
-    if sys.platform != "darwin":
-        assert cv2.getNumThreads() == share
-    return share, max(p["num_threads"] for p in threadpool_info()), os.environ.get("OMP_NUM_THREADS")
-
-
-def test_each_worker_process_uses_only_its_share_of_the_cpu():
-    # uncapped, every worker started one thread per CPU: 4 workers detected 2.7x slower (core.constants)
-    with fileio.process_pool(2, threads=1) as pool:
-        assert pool.submit(_thread_limits).result(timeout=120) == (1, 1, "1")
-    with fileio.process_pool(1, threads=2) as pool:
-        assert pool.submit(_thread_limits).result(timeout=120) == (2, 2, "2")
-
-
-def test_a_worker_s_share_is_the_cpus_divided_among_the_workers(monkeypatch):
-    monkeypatch.setattr(fileio.os, "cpu_count", lambda: 22)
-    assert [fileio.worker_threads(n) for n in (1, 4, 6, 22, 40)] == [22, 5, 3, 1, 1]
-    monkeypatch.setattr(fileio.os, "cpu_count", lambda: None)  # unknown: as if 2
-    assert fileio.worker_threads(4) == 1
-    with fileio.process_pool(4) as pool:  # (no worker started: they start with the first job)
-        assert pool._initargs == (1,)

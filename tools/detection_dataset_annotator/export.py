@@ -1,7 +1,7 @@
-"""Export of the review store: COCO ``annotations.json``, the project-native ``manifest.json`` and ``labels.json``.
+"""Export of the review store as the project-native ``manifest.json`` (its labels, screenshots, splits and boxes).
 
-``grand_project.detect.rf_detr.load_annotator_manifest`` reads the manifest (``make prepare_rf_detr_data
-RF_DETR_ANNOTATOR_MANIFEST=...``). Both files point at the original screenshots; nothing is copied.
+``grand_project.detect.rf_detr.load_annotator_manifest`` reads it (``make prepare_rf_detr_data
+RF_DETR_ANNOTATOR_MANIFEST=...``). It points at the original screenshots; nothing is copied.
 
 Stored labels become detector classes (``labels.export_class``: icon types the detector does not keep become
 ``icon``, the icon types the dataset leaves out are not exported), numbered by ``labels.dataset_classes``. Labels
@@ -17,12 +17,7 @@ screenshot carries its split, and the biome truth that seeded it (``ANNOTATOR_TR
 from __future__ import annotations
 
 import argparse
-import contextlib
 import math
-import os
-import shutil
-import tempfile
-from collections.abc import Iterable
 from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -47,7 +42,6 @@ class ExportResult:
     classes: int
     skipped_annotations: int
     """Annotations left out: unknown label or invalid box."""
-    coco_path: Path
     manifest_path: Path
     unknown: dict[str, int] | None = None
     """Exported boxes per label outside the dataset's vocabulary (``labels.known``)."""
@@ -103,53 +97,8 @@ def _image_size(item: dict[str, Any], path: Path) -> tuple[int, int] | None:
     return None if image is None else (image.shape[1], image.shape[0])
 
 
-def _source_group(path: Path, roots: Iterable[str]) -> str:
-    """The screenshot's source for a split by source: the (most specific) discovery root it was found under, else its
-    folder, so screenshots of one source stay together and different roots can be told apart."""
-    resolved = path.resolve()
-    under = []
-    for root in roots:
-        candidate = Path(root).resolve()
-        if candidate != resolved and resolved.is_relative_to(candidate):
-            under.append(candidate)
-    return relative_source(max(under, key=lambda root: len(root.parts), default=resolved.parent))
-
-
-def _publish(output_dir: Path, files: dict[str, Any]) -> None:
-    """Write the export files as one generation: all of them are written to a staging folder first, then moved into
-    place; if a move fails, the previous files are put back, so a reader never finds a mix of two exports."""
-    staging = Path(tempfile.mkdtemp(prefix=".export-new-", dir=output_dir))
-    backup = Path(tempfile.mkdtemp(prefix=".export-old-", dir=output_dir))
-    keep_backup = False
-    try:
-        for name, value in files.items():
-            write_json_atomic(staging / name, value)
-        for name in files:
-            if (output_dir / name).is_file():
-                shutil.copy2(output_dir / name, backup / name)
-        placed: list[str] = []
-        try:
-            for name in files:
-                os.replace(staging / name, output_dir / name)
-                placed.append(name)
-        except BaseException:
-            keep_backup = True  # until every previous file is back in place
-            for name in placed:
-                if (backup / name).is_file():
-                    os.replace(backup / name, output_dir / name)
-                else:
-                    (output_dir / name).unlink()
-            keep_backup = False
-            raise
-    finally:
-        shutil.rmtree(staging, ignore_errors=True)
-        if not keep_backup:
-            with contextlib.suppress(OSError):
-                shutil.rmtree(backup)
-
-
 def export_dataset(store: ReviewStore, output_dir: Path, *, reviewed_only: bool = True) -> ExportResult:
-    """Export the (reviewed) annotations as COCO JSON and a project-native RF-DETR manifest.
+    """Export the (reviewed) annotations as the project-native RF-DETR manifest.
 
     Screenshots that no longer exist are left out. Classes are ``labels.dataset_classes`` of the labels the exported
     screenshots use, numbered in that order. Every screenshot of the store without a split gets one
@@ -194,94 +143,52 @@ def export_dataset(store: ReviewStore, output_dir: Path, *, reviewed_only: bool 
         if _export_bbox(annotation) is not None
     )
     label_ids = {label: index for index, label in enumerate(labels)}
-    image_rows: list[dict[str, Any]] = []
-    annotation_rows: list[dict[str, Any]] = []
     manifest_rows: list[dict[str, Any]] = []
-    skipped = 0
-    roots = store.input_roots()
+    boxes = skipped = 0
     for key, item, path, (width, height) in chosen:
         reviewed = bool(item.get("reviewed", False))
-        image_id = len(image_rows)
-        image_rows.append(
-            {
-                "id": image_id,
-                "file_name": str(path),
-                "width": width,
-                "height": height,
-                "source_key": key,
-                "reviewed": reviewed,
-            }
-        )
         objects = []
         for annotation in item.get("annotations", []):
             exported = _exported_annotation(annotation, label_ids)
             if exported is None:
                 skipped += 1
                 continue
-            annotation_rows.append({"id": len(annotation_rows), "image_id": image_id, **exported})
-            objects.append(
-                {name: exported[name] for name in ("label", "category_id", "bbox", "area", "iscrowd", "source")}
-            )
+            objects.append(exported)
+        boxes += len(objects)
         source = item.get("source")
         manifest_rows.append(
             {
-                "image_id": image_id,
+                "image_id": len(manifest_rows),
                 "key": key,
                 "path": str(path),
                 "source": source or relative_source(path),
                 "source_type": "annotator_reviewed" if reviewed else "annotator_unreviewed",
-                "source_group": _source_group(path, roots),
                 "width": width,
                 "height": height,
                 "reviewed": reviewed,
-                # the bytes exported (the ones its boxes were detected on): tools reading the manifest later check the
-                # file still is them (simulate_loop)
+                # the bytes exported (the ones its boxes were detected on): the trainer checks the file still is them
                 K.ANNOTATOR_DETECTED_SHA: settled.digests[key],
                 **({K.ANNOTATOR_TRUTH_MARK: item[K.ANNOTATOR_TRUTH_MARK]} if item.get(K.ANNOTATOR_TRUTH_MARK) else {}),
-                **(
-                    {K.ANNOTATOR_TRUTH_DIGEST: item[K.ANNOTATOR_TRUTH_DIGEST]}
-                    if item.get(K.ANNOTATOR_TRUTH_MARK) and item.get(K.ANNOTATOR_TRUTH_DIGEST)
-                    else {}
-                ),
                 "annotations": objects,
             }
         )
 
     for row in manifest_rows:
         row["split"] = split_of[row["key"]]
-    for row in image_rows:
-        row["split"] = split_of[row["source_key"]]
-    label_map = {str(index): label for label, index in label_ids.items()}
-    coco = {
-        "info": {
-            "description": "The Grand Project RF-DETR detection dataset",
-            "version": str(K.ANNOTATOR_SCHEMA_VERSION),
-        },
-        "licenses": [],
-        "images": image_rows,
-        "annotations": annotation_rows,
-        "categories": [{"id": index, "name": label, "supercategory": "atlas"} for label, index in label_ids.items()],
-    }
     manifest = {
-        "schema_version": K.ANNOTATOR_SCHEMA_VERSION,
         "format": K.ANNOTATOR_MANIFEST_FORMAT,
         "reviewed_only": reviewed_only,
-        "labels": label_map,
+        "labels": {str(index): label for label, index in label_ids.items()},
         "images": manifest_rows,
     }
-    coco_path = output_dir / K.ANNOTATOR_COCO_FILE
     manifest_path = output_dir / K.ANNOTATOR_MANIFEST_FILE
-    _publish(
-        output_dir,
-        {K.ANNOTATOR_COCO_FILE: coco, K.ANNOTATOR_MANIFEST_FILE: manifest, K.ANNOTATOR_LABELS_FILE: label_map},
-    )
+    write_json_atomic(manifest_path, manifest)  # (one file: a reader never finds half an export)
     counts = {row["key"]: _class_counts(row) for row in manifest_rows}
     return ExportResult(
-        images=len(image_rows),
-        annotations=len(annotation_rows),
+        images=len(manifest_rows),
+        annotations=boxes,
         classes=len(labels),
         skipped_annotations=skipped,
-        coco_path=coco_path,
         manifest_path=manifest_path,
         unknown=_unknown(manifest_rows),
         splits={split: sum(1 for row in manifest_rows if row["split"] == split) for split in K.ANNOTATOR_SPLITS},

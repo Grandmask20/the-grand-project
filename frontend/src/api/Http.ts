@@ -44,9 +44,7 @@ export function sameAtlas(): () => boolean {
 
 /**
  * Calls that don't belong to one atlas: their answers are kept whichever atlas is open (switching atlas itself, the
- * state that tells the page about it, settings, the atlas list, folders, answering a question, quitting, the update).
- * Every one of the app's own list (GEN_FREE in app/server.py) is here too (test_atlas_owner checks): Re-check from
- * another atlas's card opens that atlas, and its answer was dropped as stale.
+ * state that tells the page about it, settings, the atlas list, folders, answering a question, quitting).
  */
 const GEN_FREE = [
 	"/api/state",
@@ -58,11 +56,9 @@ const GEN_FREE = [
 	"/api/atlases",
 	"/api/atlas/open",
 	"/api/atlas/new",
-	"/api/atlas/recheck-file",
 	"/api/atlas/folder",
 	"/api/fs",
 	"/api/replay/close",
-	"/api/update",
 ];
 const genFree = (path: string) => GEN_FREE.some((p) => path === p || path.startsWith(p.endsWith("/") ? p : `${p}/`));
 

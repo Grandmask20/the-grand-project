@@ -7,8 +7,7 @@ temporary file next to the target, which then replaces the target in one step: r
 one, never half of one.
 
 process_pool: worker processes are always started fresh ("spawn"), as Windows and macOS do anyway. Linux
-would otherwise copy ("fork") the viewer process, threads and Tk included, which can hang. Each worker's thread
-pools are limited to its share of the CPU (core.constants.POOL_THREAD_ENV_VARS says what that saved).
+would otherwise copy ("fork") the viewer process, threads and Tk included, which can hang.
 """
 
 from __future__ import annotations
@@ -98,71 +97,15 @@ def workers(wanted: int) -> int:
     return max(1, min(wanted, (os.cpu_count() or 2) - 1))
 
 
-def worker_threads(max_workers: int) -> int:
-    """Choose how many threads each of a pool's workers may use: its share of the CPU.
+def process_pool(max_workers: int):
+    """Create a process pool whose workers are started fresh ("spawn"; see the module docstring).
 
     Args:
         max_workers: Number of worker processes.
-
-    Returns:
-        The CPUs divided among the workers, at least 1.
-    """
-    return max(1, (os.cpu_count() or 2) // max(1, max_workers))
-
-
-_SHARE: int | None = None
-"""The threads this process may use, once a worker pool capped it (``_cap_threads``); None in the app itself."""
-
-
-def thread_share() -> int:
-    """The threads this process may use: its worker share (``_cap_threads``), else every CPU.
-
-    Not read back from OpenCV: on macOS (its GCD backend) ``cv2.getNumThreads()`` gives the CPU count whatever
-    ``setNumThreads`` was told, though a share of 1 does keep OpenCV serial there (CI: macOS runner).
-    """
-    return _SHARE if _SHARE is not None else (os.cpu_count() or 1)
-
-
-def _cap_threads(threads: int) -> None:
-    """Limit a worker process's thread pools to `threads` (run in each worker as it starts).
-
-    The libraries a spawned worker has loaded by now (NumPy's and SciPy's BLAS while it imported the program) are
-    limited through threadpoolctl; scikit-learn is loaded first so its OpenMP is among them (the map and tower models'
-    predict runs on it). Libraries loaded later read the environment (PyTorch, when RF-DETR detects).
-
-    Args:
-        threads: Threads each pool may use.
-    """
-    from grand_project.core.constants import POOL_THREAD_ENV_VARS
-
-    global _SHARE
-    _SHARE = threads
-    os.environ.update(dict.fromkeys(POOL_THREAD_ENV_VARS, str(threads)))
-    import cv2
-    import sklearn.ensemble  # noqa: F401  (loads scikit-learn's OpenMP runtime, so the limit reaches it)
-    from threadpoolctl import threadpool_limits
-
-    cv2.setNumThreads(threads)
-    threadpool_limits(threads)
-
-
-def process_pool(max_workers: int, threads: int | None = None):
-    """Create a process pool whose workers are started fresh ("spawn") with their thread pools limited (see the
-    module docstring).
-
-    Args:
-        max_workers: Number of worker processes.
-        threads: Threads each worker's OpenCV, OpenMP, BLAS and PyTorch may use (None: its share of the CPU).
 
     Returns:
         A concurrent.futures.ProcessPoolExecutor.
     """
     from concurrent.futures import ProcessPoolExecutor
 
-    threads = worker_threads(max_workers) if threads is None else max(1, threads)
-    return ProcessPoolExecutor(
-        max_workers=max_workers,
-        mp_context=multiprocessing.get_context("spawn"),
-        initializer=_cap_threads,
-        initargs=(threads,),
-    )
+    return ProcessPoolExecutor(max_workers=max_workers, mp_context=multiprocessing.get_context("spawn"))

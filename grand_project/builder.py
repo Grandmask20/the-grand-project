@@ -12,12 +12,10 @@ reason, and the atlas is left untouched.  After every successful add it writes
 from __future__ import annotations
 
 import argparse
-import contextlib
 import hashlib
 import json
 import re
 import sys
-import threading
 import time
 import types
 from concurrent.futures import as_completed
@@ -69,8 +67,7 @@ def detector_stamp() -> str:
 
         h = hashlib.sha1()
         try:
-            # as_uri percent-encodes the path: a raw "#" or "?" in it would end the path early and drop "mode=ro"
-            c = sqlite3.connect(f"{Path(DB_PATH).resolve().as_uri()}?mode=ro", uri=True)
+            c = sqlite3.connect(f"file:{DB_PATH.as_posix()}?mode=ro", uri=True)
             # what the rows hold, not their names and counts: a model trained again under the same name and time,
             # or an icon picture replaced in place, kept the stamp, so the old detections stayed (GPT audit)
             for row in c.execute("SELECT name, info, blob FROM detector_models ORDER BY name"):
@@ -86,7 +83,10 @@ def detector_stamp() -> str:
             h.update(f.read_bytes() if f.exists() else b"-")
         if rf_detr_enabled():
             h.update(b"rf-detr")
-            rf_model = rf_detr_model_path()
+            try:
+                rf_model = rf_detr_model_path()
+            except RuntimeError:  # a Hugging Face model id that could not be downloaded: no checkpoint
+                return h.hexdigest()[:12]
             if not rf_model.is_dir():
                 # not kept: the checkpoint may appear later in this process (a training run finishing), and the
                 # detections made with it must carry its digest, not this stamp
@@ -289,124 +289,11 @@ def is_cached(image_path: Path, cache_dir: Path) -> bool:
     return _fresh(cache_dir / f"{digest[:16]}_{atlas_detect.DETECTOR_ID}.json") is not None
 
 
-class WarmPool:
-    """Detection worker processes kept between jobs (the viewer's: one per session).
+def detect_uncached(paths: list, cache_dir: Path, log=None, progress=None) -> dict:
+    """Detect the screenshots not cached yet, several at a time (the viewer's batches).
 
-    Starting a pool took ~3.3 s a job (4 processes started, the program imported, the models loaded) before the
-    first screenshot was detected; a pool kept warm pays that once. It starts with the first job and closes after
-    `idle_s` without one (giving back ~1.3 GB a worker), at the next job it starts again. A pool whose worker died
-    is dropped and the next job gets a new one.
-    """
-
-    def __init__(self, workers: int, idle_s: float):
-        """Make the pool (no process starts yet).
-
-        Args:
-            workers: Worker processes.
-            idle_s: Seconds without a job after which the processes are closed.
-        """
-        self.workers = workers
-        self.idle_s = idle_s
-        # held to hand out, drop or close the executor and to count its users, never while waiting for a job
-        self._lock = threading.Lock()
-        self._ex = None
-        self._users = 0
-        self._timer: threading.Timer | None = None
-        self._timer_gen = 0  # the armed timer's number: a cancelled timer already running is told apart by it
-        self._closed = False
-
-    @contextlib.contextmanager
-    def use(self):
-        """The pool's executor for one job (started when there is none).
-
-        Yields:
-            A concurrent.futures executor; an error inside the block drops it (a dead worker breaks the whole pool).
-
-        Raises:
-            RuntimeError: The pool was closed (the app is closing).
-        """
-        with self._lock:
-            if self._closed:
-                raise RuntimeError("the detection workers are closed")
-            if self._timer is not None:
-                self._timer.cancel()
-                self._timer = None
-            self._timer_gen += 1  # a timer whose cancel came too late (its thread waits for the lock) does nothing
-            if self._ex is None:
-                self._ex = atlas_io.process_pool(self.workers)
-            ex = self._ex
-            self._users += 1
-        try:
-            yield ex
-        except BaseException:
-            self._drop(ex)
-            raise
-        finally:
-            with self._lock:
-                self._users -= 1
-                if not self._users and self._ex is not None and not self._closed:
-                    # the executor held now: a job that dropped a broken one may end after another started anew
-                    self._timer_gen += 1
-                    self._timer = threading.Timer(self.idle_s, self._idle, args=(self._ex, self._timer_gen))
-                    self._timer.daemon = True
-                    self._timer.start()
-
-    def running(self) -> bool:
-        """Tell whether the worker processes are up (started and not closed since)."""
-        with self._lock:
-            return self._ex is not None
-
-    def _drop(self, ex) -> None:
-        """Forget a broken executor (the next job starts a new one) and stop what it still runs."""
-        with self._lock:
-            if self._ex is not ex:
-                return
-            self._ex = None
-        _stop(ex)
-
-    def _idle(self, ex, gen: int) -> None:
-        """Close the processes after idle_s without a job (the timer's thread); ``gen`` is the timer's number."""
-        with self._lock:
-            # a job came meanwhile, or this timer was cancelled after it fired and another was armed since
-            if gen != self._timer_gen or self._ex is not ex or self._users:
-                return
-            self._ex, self._timer = None, None
-        ex.shutdown(wait=True)
-
-    def close(self, wait: bool = True) -> None:
-        """Close the worker processes for good (the app is closing).
-
-        Args:
-            wait: Let a running job finish (else its processes are stopped: closing cut it off).
-        """
-        with self._lock:
-            self._closed = True
-            if self._timer is not None:
-                self._timer.cancel()
-            ex, self._ex, self._timer = self._ex, None, None
-        if ex is not None:
-            ex.shutdown(wait=True) if wait else _stop(ex)
-
-
-def _stop(ex) -> None:
-    """Stop an executor without waiting: queued jobs cancelled, its processes ended (on Windows a process still
-    running keeps the program's files locked, and the update replaces them)."""
-    processes = list((getattr(ex, "_processes", None) or {}).values())  # (ProcessPoolExecutor's own)
-    ex.shutdown(wait=False, cancel_futures=True)
-    for proc in processes:
-        with contextlib.suppress(Exception):
-            proc.terminate()
-
-
-def detect_uncached(paths: list, cache_dir: Path, log=None, progress=None, pool: WarmPool | None = None) -> dict:
-    """Detect the screenshots not cached yet in worker processes (the viewer's jobs).
-
-    Afterwards extract_frame reads each from the cache. Without a warm pool it starts one for the call, and then
-    does nothing for fewer than 2 screenshots or when DETECT_WORKERS < 2; with one, a single screenshot goes to it
-    too (detected there, not in the viewer's process, whose page requests then wait less). When the worker
-    processes fail, the screenshots are left to be detected one at a time later. A worker whose detector is not the
-    caller's (its database changed since the caller read it) detects nothing: its detections would not count as
-    fresh to the caller, who detects them itself.
+    Afterwards extract_frame reads each from the cache. Does nothing for fewer than 2 screenshots or when
+    DETECT_WORKERS < 2; when worker processes fail, the screenshots are left to be detected one at a time later.
 
     Args:
         paths: Screenshot paths.
@@ -414,20 +301,18 @@ def detect_uncached(paths: list, cache_dir: Path, log=None, progress=None, pool:
         log: Optional function taking one line of text.
         progress: Optional function (done, total) called as each screenshot finishes (user: the progress box
             showed only the total while 1261 screenshots were re-detected).
-        pool: The session's warm pool, or None for one started for this call.
 
     Returns:
         {path: error} for failures.
     """
     todo = [p for p in paths if not is_cached(Path(p), cache_dir)]
-    if not todo or (pool is None and (len(todo) < 2 or DETECT_WORKERS < 2)):
+    if len(todo) < 2 or DETECT_WORKERS < 2:
         return {}
     cache_dir.mkdir(parents=True, exist_ok=True)
-    stamp = detector_stamp()
     errors = {}
     try:
-        with pool.use() if pool is not None else atlas_io.process_pool(min(DETECT_WORKERS, len(todo))) as ex:
-            jobs = [ex.submit(_detect_one, (str(p), str(cache_dir), stamp)) for p in todo]
+        with atlas_io.process_pool(min(DETECT_WORKERS, len(todo))) as ex:
+            jobs = [ex.submit(_detect_one, (str(p), str(cache_dir))) for p in todo]
             for done, job in enumerate(as_completed(jobs), 1):
                 p, err = job.result()
                 if err:
@@ -578,18 +463,13 @@ def _detect_one(job):
     One bad screenshot must not stop the batch, so errors are returned, not raised.
 
     Args:
-        job: (screenshot path, cache folder, the caller's detector_stamp()).
+        job: (screenshot path, cache folder) as strings.
 
     Returns:
         (screenshot path, None) or (screenshot path, repr of the error).
     """
-    image, cache_dir, stamp = job
+    image, cache_dir = job
     try:
-        # inside the try: a stamp that cannot be worked out (database, checkpoint) is this screenshot's error, not the
-        # batch's
-        mine = detector_stamp()
-        if mine != stamp:  # (a warm worker started after the database changed, or the caller before)
-            return image, f"detector changed (this worker's {mine}, the caller's {stamp})"
         extract_frame(Path(image), Path(cache_dir))
         return image, None
     except Exception as e:  # one bad screenshot must not stop the batch
@@ -616,8 +496,7 @@ def detect_many(images: list, cache_dir: Path, workers: int = 1, log=_log) -> tu
         from concurrent.futures import as_completed
 
         with atlas_io.process_pool(workers) as ex:
-            stamp = detector_stamp()
-            futs = [ex.submit(_detect_one, (str(i), str(cache_dir), stamp)) for i in todo]
+            futs = [ex.submit(_detect_one, (str(i), str(cache_dir))) for i in todo]
             for k, fu in enumerate(as_completed(futs), 1):
                 image, err = fu.result()
                 log(f"[{k}/{len(todo)}] {Path(image).name}" + (f"  FAILED: {err}" if err else ""))

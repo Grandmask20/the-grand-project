@@ -367,15 +367,12 @@ def _project_name(path: Path) -> str:
         return str(resolved)
 
 
-def _held_out(trained: set[str] | None, shots, complete: bool = True) -> bool | None:
-    """Whether a model trained on none of the screenshots: False when its ``RF_DETR_TRAINED_ON`` list names one of
-    them; else None when it has no list or the list is not whole (``complete``: an ancestor's screenshots are missing
-    from it), so it is not known; else True."""
-    if trained is not None and any(_project_name(path) in trained for path in shots):
-        return False
-    if trained is None or not complete:
+def _held_out(trained: set[str] | None, shots) -> bool | None:
+    """Whether a model trained on none of the screenshots: None when it has no ``RF_DETR_TRAINED_ON`` list (not
+    known), else whether the list names none of them."""
+    if trained is None:
         return None
-    return True
+    return not any(_project_name(path) in trained for path in shots)
 
 
 def cmd_score_rf_detr() -> int:
@@ -392,7 +389,7 @@ def cmd_score_rf_detr() -> int:
     Returns:
         0 (process exit code); 1 when there is no hand-labelled truth or none of its screenshots can be read.
     """
-    from .rf_detr_model import detect_rf_detr, rf_detr_model_path, runtime_trained_on
+    from .rf_detr_model import detect_rf_detr, rf_detr_model_path, trained_on
 
     t0 = time.time()
     truth, where = _truth_screenshots()
@@ -420,14 +417,10 @@ def cmd_score_rf_detr() -> int:
         print("no truth screenshot could be read")
         return 1
     model_dir = rf_detr_model_path()
-    # the list read with the weights that detected (a new best/ swapped in meanwhile lists other screenshots)
-    trained, complete = runtime_trained_on(model_dir)
     # the screenshots scored, not every truth one
-    held_out = _held_out(trained, [where[name] for name in new], complete)
+    held_out = _held_out(trained_on(model_dir), [where[name] for name in new])
     if held_out:
         kind = "held-out: the model trained on none of the scored screenshots"
-    elif held_out is None and trained is not None:
-        kind = f"not known to be held-out: {model_dir}'s list of training screenshots misses an earlier model's"
     elif held_out is None:
         kind = f"not known to be held-out: {model_dir} does not list its training screenshots ({RF_DETR_TRAINED_ON})"
     else:

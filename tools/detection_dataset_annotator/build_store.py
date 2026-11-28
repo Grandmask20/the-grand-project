@@ -7,9 +7,6 @@ store (2026-11-20: 1,947 screenshots) to the one being reviewed.
 It builds a new store from nothing as well as it updates one built before a step existed. Each step changes only
 what is not done yet, so a second run changes nothing:
 
-0. bring a store an older annotator built up to this one's tables and columns (``store.upgrade_layout``): backed up
-   first (``ANNOTATOR_BUILD_BACKUP``), then copied row by row into the new layout and swapped in, every box, review
-   flag, split and pre-label kept (stop the annotator page first);
 1. back up the store (``ANNOTATOR_BUILD_BACKUP`` next to it; SQLite's online backup, safe while the page runs);
 2. discover the screenshots below the roots (``--root``, else the store's, else ``ANNOTATOR_DEFAULT_INPUT_DIRS``)
    and queue the new ones;
@@ -29,11 +26,8 @@ where it has one). ``--dry-run`` backs up, adds, removes, detects and saves noth
 from __future__ import annotations
 
 import argparse
-import contextlib
 import os
 import shlex
-import sqlite3
-import tempfile
 from collections import Counter
 from collections.abc import Callable, Iterable, Mapping
 from datetime import datetime
@@ -50,7 +44,7 @@ from .state import (
     relative_source,
     resolve_path,
 )
-from .store import ReviewStore, layout_problems, upgrade_layout
+from .store import ReviewStore
 from .truth_seed import Truth, seed_lines, seed_store
 
 
@@ -128,79 +122,13 @@ def build(
     existed = store_path.is_file()
     if dry_run and not existed:
         say(f"No store at {relative_source(store_path)}: a run would build it from the roots")
-    with tempfile.TemporaryDirectory(prefix="annotator-dry-run-") as scratch:
-        backed_up = False
-        if existed:
-            say("0. Layout")
-            backed_up, store_path = _upgrade(store_path, output_dir, Path(scratch), dry_run, say)
-        return _build(
-            output_dir, store_path, existed, backed_up, truth_files, roots, detect, workers, dry_run, say, done
-        )
-
-
-def _copy_store(source: Path, target: Path) -> None:
-    """A whole copy of a store file, whatever its layout (SQLite's online backup; the source is only read).
-
-    ``target`` is claimed exclusively first (as ``ReviewStore.backup`` does): SQLite would open a file that is there
-    and write over it, so a name taken since it was chosen is refused.
-
-    Raises:
-        FileExistsError: ``target`` exists.
-    """
-    with open(target, "xb"):
-        pass
-    uri = f"{source.resolve().as_uri()}?mode=ro"
-    try:
-        with (
-            contextlib.closing(sqlite3.connect(uri, uri=True)) as db,
-            contextlib.closing(sqlite3.connect(target)) as copy,
-        ):
-            db.backup(copy)
-    except BaseException:
-        target.unlink(missing_ok=True)  # this call made it: no half a backup left under the name
-        raise
-
-
-def _upgrade(
-    store_path: Path, output_dir: Path, scratch: Path, dry_run: bool, say: Callable[[str], None]
-) -> tuple[bool, Path]:
-    """Step 0: a store of an older layout backed up and brought up to date (a dry run: a scratch copy of it, which the
-    dry run then reads). Returns (whether a backup was made, the store to go on with)."""
-    uri = f"{store_path.resolve().as_uri()}?mode=ro"
-    with contextlib.closing(sqlite3.connect(uri, uri=True)) as db:
-        missing = layout_problems(db)
-    if not missing:
-        say("  up to date")
-        return False, store_path
-    say(f"  built by an older annotator (no {', '.join(missing)})")
-    if dry_run:
-        copy = scratch / K.ANNOTATOR_STORE_FILE
-        _copy_store(store_path, copy)
-        copied = upgrade_layout(copy)
-        say(f"  a run would back it up and copy every row into the new layout ({_rows(copied)}); planned from that")
-        return False, copy
-    while True:
-        backup = _backup_path(output_dir)
-        try:
-            _copy_store(store_path, backup)
-            break
-        except FileExistsError:  # the name was taken since it was chosen: another one, that file left as it is
-            continue
-    say(f"  backed up: {relative_source(backup)}")
-    copied = upgrade_layout(store_path)
-    say(f"  every row copied into the new layout ({_rows(copied)})")
-    return True, store_path
-
-
-def _rows(copied: Mapping[str, int]) -> str:
-    return ", ".join(f"{count} {table}" for table, count in copied.items())
+    return _build(output_dir, store_path, existed, truth_files, roots, detect, workers, dry_run, say, done)
 
 
 def _build(
     output_dir: Path,
     store_path: Path,
     existed: bool,
-    backed_up: bool,
     truth_files: list[Path],
     roots: list[Path] | None,
     detect: bool,
@@ -219,8 +147,6 @@ def _build(
         say("1. Back up")
         if dry_run:
             say("  (dry run: no backup)")
-        elif backed_up:
-            say("  backed up before the layout upgrade")
         elif not existed or not store.queue():
             say("  nothing to back up")
         else:

@@ -289,8 +289,8 @@ def random_tile(
 
     The square is ``tile`` px give or take ``RF_DETR_AUGMENT_SCALE_JITTER``, resized to ``tile``; with probability
     ``RF_DETR_AUGMENT_RENDER_PROBABILITY`` it is blurred as a lower render scale draws it, with
-    ``RF_DETR_AUGMENT_PHOTO_PROBABILITY`` its brightness and contrast change (and it is mirrored with
-    ``RF_DETR_AUGMENT_FLIP_PROBABILITY``, 0: the atlas is never mirrored). Boxes are clipped to it
+    ``RF_DETR_AUGMENT_PHOTO_PROBABILITY`` its brightness and contrast change; it is never mirrored (the atlas is
+    not). Boxes are clipped to it
     (``crop_boxes``); a square without any box is tried again (``RF_DETR_AUGMENT_CROP_ATTEMPTS``).
 
     Args:
@@ -334,28 +334,7 @@ def random_tile(
         out = _render_blur(out, rng)
     if rng.random() < K.RF_DETR_AUGMENT_PHOTO_PROBABILITY:
         out = _brightness_contrast(out, rng)
-    if rng.random() < K.RF_DETR_AUGMENT_FLIP_PROBABILITY:  # off by default: the atlas is never mirrored
-        out = out[:, ::-1]
-        kept = [[tile - box[0] - box[2], box[1], box[2], box[3]] for box in kept]
     return np.ascontiguousarray(out), keep, kept
-
-
-def densest_tile(
-    image: np.ndarray, boxes: Sequence[Sequence[float]], tile: int = K.RF_DETR_TILE
-) -> tuple[np.ndarray, list[int], list[list[float]]]:
-    """The inference tile holding the most boxes: a fixed tile per screenshot for the validation loss.
-
-    Boxes are counted and kept as training keeps them (``crop_boxes``: at least half visible, clipped), so the loss
-    labels what a training tile would label; a half-visible object left unlabelled would count as a false find.
-    """
-    height, width = image.shape[:2]
-    best: tuple[int, int, list[int], list[list[float]]] = (0, 0, [], [])
-    for left, top in tile_origins(width, height, tile):
-        keep, kept = crop_boxes(boxes, left, top, left + tile, top + tile)
-        if len(keep) > len(best[2]):
-            best = (left, top, keep, kept)
-    left, top, keep, kept = best
-    return np.ascontiguousarray(image[top : top + tile, left : left + tile]), keep, kept
 
 
 def prepare(image: np.ndarray, boxes: Sequence[Sequence[float]] = (), *, rgb: bool) -> tuple[np.ndarray, list]:
@@ -402,22 +381,10 @@ def nms(detections: list[dict[str, Any]], iou: float, key: str = "family") -> li
     return kept
 
 
-def box_iou(a: Sequence[float], b: Sequence[float]) -> float:
-    """Intersection over union of two ``[x0, y0, x1, y1]`` boxes."""
-    w = min(a[2], b[2]) - max(a[0], b[0])
-    h = min(a[3], b[3]) - max(a[1], b[1])
-    if w <= 0 or h <= 0:
-        return 0.0
-    inter = w * h
-    return inter / max(1e-9, (a[2] - a[0]) * (a[3] - a[1]) + (b[2] - b[0]) * (b[3] - b[1]) - inter)
-
-
 __all__ = [
     "backbone_weight_decay",
-    "box_iou",
     "crop_boxes",
     "cut_by_inner_edge",
-    "densest_tile",
     "epoch_indices",
     "epoch_length",
     "fill_hud",

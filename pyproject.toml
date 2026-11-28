@@ -11,7 +11,6 @@ dependencies = [
     "scipy",
     "scikit-learn",
     "skops",
-    "threadpoolctl",  # (installed with scikit-learn) limits each worker process's thread pools: fileio.process_pool
 ]
 
 [project.scripts]
@@ -64,9 +63,6 @@ testpaths = ["tests"]
 # `pytest` alone runs the offline tests and the ones with test data (skipped without it); the long ones are
 # opt-in: pytest -m slow / pytest -m "" for everything
 addopts = '-ra -m "not slow"'
-# a test still running after 15 minutes prints every thread's stack (a hang shows where it waits; the slow test takes
-# ~10). It is not stopped: CI's timeout-minutes ends a hung job
-faulthandler_timeout = 900
 markers = [
     "data: needs the test screenshots (Git LFS or ATLAS_TEST_DATA); skipped without them",
     "slow: takes several minutes",

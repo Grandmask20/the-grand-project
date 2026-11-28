@@ -35,20 +35,3 @@ def test_tampered_model_is_refused(blob):
     """A model archive with anything but the allowed classes is refused, never loaded."""
     with pytest.raises(ad.UnsafeModel):
         ad.safe_model_loads(blob)
-
-
-def test_a_database_path_with_reserved_uri_characters_is_read(tmp_path):
-    """A "#" in the database path once ended the read-only URI early, and a "%" started an escape: the right file
-    must be read, read-only, and no file named after the part before the "#" may appear. ("?" would end it too, but
-    Windows file names cannot hold one.)"""
-    from sklearn.preprocessing import LabelEncoder
-
-    from grand_project.detect import models
-
-    db = tmp_path / "x#y%41.sqlite3"
-    models.save_model("enc", LabelEncoder().fit(["a", "b"]), {}, path=db)
-
-    loaded = models.load_model("enc", db)
-
-    assert list(loaded.classes_) == ["a", "b"]
-    assert sorted(path.name for path in tmp_path.iterdir()) == ["x#y%41.sqlite3"]

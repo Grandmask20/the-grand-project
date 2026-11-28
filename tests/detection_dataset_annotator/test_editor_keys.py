@@ -23,7 +23,7 @@ NODE = shutil.which("node")
 
 @pytest.mark.skipif(NODE is None, reason="Node.js is not installed")
 def test_editor_keys_and_guess_styling(tmp_path: Path) -> None:
-    labels = label_names([], named_icons=True, paths=True, walls=True)
+    labels = label_names([], named_icons=True)
     palette = tmp_path / "palette.json"
     palette.write_text(
         json.dumps({"palette": label_palette(labels), "guessSources": sorted(K.ANNOTATOR_GUESS_SOURCES)}),

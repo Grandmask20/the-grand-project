@@ -16,7 +16,8 @@ Run from the project folder:
     python -m tools.compare_detectors --max-images 20 --atlas res_1080_100
     python -m tools.compare_detectors --output detector-comparison.json
 
-The RF-DETR checkpoint defaults to ``runs/rf-detr-small/best`` and can be changed with ``--model-dir``.
+The RF-DETR checkpoint defaults to ``runs/rf-detr-small/best`` and can be changed with ``--model-dir`` (a folder or a
+Hugging Face model id).
 """
 
 from __future__ import annotations
@@ -53,6 +54,7 @@ from grand_project.detect.rf_detr_model import (
     checkpoint_digest,
     detect_rf_detr,
     folder_identity,
+    model_folder,
     reset_rf_detr_runtime,
 )
 
@@ -418,7 +420,11 @@ def _parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--atlas-tests", type=Path, default=project_paths.TEST_DATA / "res_atlases")
     parser.add_argument("--roa-atlas", type=Path, default=project_paths.TEST_DATA / "roa-atlas")
-    parser.add_argument("--model-dir", type=Path, default=RF_DETR_DEFAULT_MODEL_DIR)
+    parser.add_argument(
+        "--model-dir",
+        default=str(RF_DETR_DEFAULT_MODEL_DIR),
+        help="the RF-DETR model folder, or its Hugging Face id (owner/name[@revision])",
+    )
     parser.add_argument("--device", choices=("auto", "cpu", "cuda", "mps"), default="auto")
     parser.add_argument("--max-images", type=int, help="speed benchmark limit; default is every roa-atlas screenshot")
     parser.add_argument("--atlas", dest="atlas_names", action="append", help="accuracy atlas name; may be repeated")
@@ -456,7 +462,7 @@ def main() -> int:
     """Run both detector comparisons and return a process exit code."""
     prefer_pip_cuda_libraries()  # RF-DETR on CUDA needs PyTorch's own cuDNN, before torch loads (rf_detr_cuda)
     args = _parse_args()
-    given = args.model_dir.expanduser().resolve()
+    given = model_folder(args.model_dir).expanduser().resolve()
     if not given.is_dir():
         raise SystemExit(f"RF-DETR model directory does not exist: {given} (use --model-dir)")
     with tempfile.TemporaryDirectory(prefix="grand-project-compare-model-") as temporary:

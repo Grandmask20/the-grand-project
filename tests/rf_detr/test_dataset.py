@@ -5,7 +5,6 @@ import json
 import math
 import pickle
 import random
-import tempfile
 from pathlib import Path
 
 import pytest
@@ -16,7 +15,6 @@ from grand_project.detect.rf_detr import (
     Record,
     load_annotator_manifest,
     records_by_split,
-    slug,
     tile_transform,
 )
 
@@ -38,12 +36,7 @@ def _image(tmp_path: Path, name: str = "shot.png", split: str = "train", **field
     path = tmp_path / name
     path.write_bytes(b"placeholder")
     return {"path": str(path), "width": 1920, "height": 1080, "split": split, "reviewed": True, "annotations": [],
-            **fields}  # fmt: skip
-
-
-def test_category_slug_is_stable_and_safe() -> None:
-    assert slug("Map Boss Special") == "map_boss_special"
-    assert slug("!!!") == "unknown"
+            "source_type": "annotator_reviewed", K.RF_DETR_MANIFEST_SHA: "0" * 64, **fields}  # fmt: skip
 
 
 def test_annotator_manifest_loads_paths_labels_and_splits(tmp_path: Path) -> None:
@@ -126,7 +119,7 @@ def test_truth_seeded_screenshots_join_only_when_asked(tmp_path: Path) -> None:
 
 def test_records_by_split_needs_training_and_validation() -> None:
     def record(split: str) -> Record:
-        return Record(0, Path("a.png"), "a", "annotator_reviewed", "g", 1920, 1080, (), split)
+        return Record(0, Path("a.png"), "a", "annotator_reviewed", 1920, 1080, (), "0" * 64, split)
 
     assert {k: len(v) for k, v in records_by_split([record("train"), record("validation")]).items()} == {
         "train": 1,
@@ -154,18 +147,15 @@ def test_tile_transform_cuts_native_scale_tiles_and_pickles() -> None:
         "iscrowd": [0, 0],
     }
     examples = {"image": [image], "image_id": [3], "objects": [objects]}
-    for train in (True, False):
-        transform = tile_transform(_echo_processor, train=train, seed=7)
-        copy = pickle.loads(pickle.dumps(transform))
-        original, copied = transform(examples), copy(examples)
-        assert copied["annotations"] == original["annotations"]
-        (tile,) = original["images"]
-        assert tile.shape == (K.RF_DETR_TILE, K.RF_DETR_TILE, 3)
-        for box in original["annotations"][0]["annotations"]:
-            x, y, w, h = box["bbox"]
-            assert x >= 0 and y >= 0 and x + w <= K.RF_DETR_TILE + 1e-6 and y + h <= K.RF_DETR_TILE + 1e-6
-    densest = tile_transform(_echo_processor, train=False)(examples)
-    assert len(densest["annotations"][0]["annotations"]) == 2  # the validation tile holds both boxes whole
+    transform = tile_transform(_echo_processor, seed=7)
+    copy = pickle.loads(pickle.dumps(transform))
+    original, copied = transform(examples), copy(examples)
+    assert copied["annotations"] == original["annotations"]
+    (tile,) = original["images"]
+    assert tile.shape == (K.RF_DETR_TILE, K.RF_DETR_TILE, 3)
+    for box in original["annotations"][0]["annotations"]:
+        x, y, w, h = box["bbox"]
+        assert x >= 0 and y >= 0 and x + w <= K.RF_DETR_TILE + 1e-6 and y + h <= K.RF_DETR_TILE + 1e-6
 
 
 def test_tiles_in_a_dataloader_worker_follow_its_seed(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -173,9 +163,9 @@ def test_tiles_in_a_dataloader_worker_follow_its_seed(monkeypatch: pytest.Monkey
     epochs draw different tiles; without workers, the transform's own seed."""
     data = pytest.importorskip("torch.utils.data")
     monkeypatch.setattr(data, "get_worker_info", lambda: type("Worker", (), {"id": 0, "seed": 123})())
-    assert tile_transform(_echo_processor, train=True, seed=7)._random().random() == random.Random(123).random()
+    assert tile_transform(_echo_processor, seed=7)._random().random() == random.Random(123).random()
     monkeypatch.setattr(data, "get_worker_info", lambda: None)
-    assert tile_transform(_echo_processor, train=True, seed=7)._random().random() == random.Random(7).random()
+    assert tile_transform(_echo_processor, seed=7)._random().random() == random.Random(7).random()
 
 
 def test_a_retired_class_only_a_left_out_screenshot_uses_is_no_class(tmp_path: Path) -> None:
@@ -228,10 +218,8 @@ def test_the_dataset_keeps_the_annotators_splits(tmp_path: Path) -> None:
         Image.new("RGB", (64, 36), (20, 120, 20)).save(tmp_path / f"{name}.png")
 
     def record(index: int, name: str, split: str) -> Record:
-        boxes = (
-            {"category_id": 1, "bbox": (1.0, 2.0, 10.0, 10.0), "area": 100.0, "iscrowd": 0, "provenance": "manual"},
-        )
-        return Record(index, tmp_path / f"{name}.png", name, "annotator_reviewed", "g", 64, 36, boxes, split)
+        boxes = ({"category_id": 1, "bbox": (1.0, 2.0, 10.0, 10.0), "area": 100.0, "iscrowd": 0},)
+        return Record(index, tmp_path / f"{name}.png", name, "annotator_reviewed", 64, 36, boxes, "0" * 64, split)
 
     records = [record(0, "a", "train"), record(1, "b", "validation"), record(2, "c", "test")]
     labels = {"0": "map_node_grass", "1": "icon"}
@@ -245,14 +233,14 @@ def test_the_dataset_keeps_the_annotators_splits(tmp_path: Path) -> None:
     assert json.loads((out / "labels.json").read_text()) == labels
     with pytest.raises(FileExistsError):
         build_dataset(records, label_map=labels, output_dir=out)
-    no_test = build_dataset(records[:2], label_map=labels)  # no test screenshot yet: an empty test split
+    no_test = build_dataset(records[:2], label_map=labels, output_dir=tmp_path / "no-test")  # an empty test split
     assert len(no_test["test"]) == 0 and no_test["test"].features == no_test["train"].features
 
 
 def test_the_dataset_holds_the_bytes_it_checked_and_appears_only_whole(tmp_path: Path) -> None:
     """Each screenshot is read once: its SHA-256 goes to ``check_bytes`` and its bytes into the dataset (a file replaced
-    later changes nothing trained on). The folder is built in a stage of its own (``<name>.<random>.partial``) and
-    named once whole: a build stopped by the check leaves no dataset to reuse (CodeRabbit)."""
+    later changes nothing trained on). The labels and metadata come last: a build stopped by the check leaves no
+    whole dataset (the trainer builds beside the one in use and swaps it in: CodeRabbit)."""
     pytest.importorskip("datasets")
     import hashlib
 
@@ -261,8 +249,8 @@ def test_the_dataset_holds_the_bytes_it_checked_and_appears_only_whole(tmp_path:
     for name in ("a", "b"):
         Image.new("RGB", (64, 36), (20, 120, 20)).save(tmp_path / f"{name}.png")
     records = [
-        Record(0, tmp_path / "a.png", "a", "annotator_reviewed", "g", 64, 36, (), "train"),
-        Record(1, tmp_path / "b.png", "b", "annotator_reviewed", "g", 64, 36, (), "validation"),
+        Record(0, tmp_path / "a.png", "a", "annotator_reviewed", 64, 36, (), "0" * 64, "train"),
+        Record(1, tmp_path / "b.png", "b", "annotator_reviewed", 64, 36, (), "0" * 64, "validation"),
     ]
     labels = {"0": "map_node_grass"}
     originals = {n: hashlib.sha256((tmp_path / f"{n}.png").read_bytes()).hexdigest() for n in ("a", "b")}
@@ -276,7 +264,6 @@ def test_the_dataset_holds_the_bytes_it_checked_and_appears_only_whole(tmp_path:
     out = tmp_path / "dataset"
     build_dataset(records, label_map=labels, output_dir=out, check_bytes=check_then_replace)
     assert seen == originals
-    assert not list(tmp_path.glob("dataset.*.partial"))  # (its stage is gone: the folder was renamed into place)
     saved = load_dataset(out)
     assert saved["train"][0]["image"].size == (64, 36)  # the bytes checked, not the file now
     assert len(saved["test"]) == 0  # (none: an empty split comes back empty)
@@ -286,76 +273,14 @@ def test_the_dataset_holds_the_bytes_it_checked_and_appears_only_whole(tmp_path:
 
     with pytest.raises(SystemExit):
         build_dataset(records, label_map=labels, output_dir=tmp_path / "other", check_bytes=refuse)
-    assert not (tmp_path / "other").exists()
-
-
-def test_a_failed_build_without_an_output_folder_leaves_no_temporary_folder(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """A dataset kept in memory maps files in a temporary folder: one the check stops after the train split was
-    written is removed with the rest (CodeRabbit); one that is returned removes its folder when it is dropped."""
-    pytest.importorskip("datasets")
-    import gc
-
-    from grand_project.detect.rf_detr import build_dataset
-
-    made = []
-    real = tempfile.mkdtemp
-    monkeypatch.setattr(
-        tempfile, "mkdtemp", lambda *a, **k: made.append(real(*a, **{**k, "dir": tmp_path})) or made[-1]
-    )
-    for name in ("a", "b"):
-        Image.new("RGB", (64, 36), (20, 120, 20)).save(tmp_path / f"{name}.png")
-    records = [
-        Record(0, tmp_path / "a.png", "a", "annotator_reviewed", "g", 64, 36, (), "train"),
-        Record(1, tmp_path / "b.png", "b", "annotator_reviewed", "g", 64, 36, (), "validation"),
-    ]
-
-    def refuse_validation(record, digest):
-        if record.split == "validation":
-            raise SystemExit("changed")
-
-    with pytest.raises(SystemExit):
-        build_dataset(records, label_map={"0": "map_node_grass"}, check_bytes=refuse_validation)
-    assert len(made) == 1 and not Path(made[0]).exists()
-    dataset = build_dataset(records, label_map={"0": "map_node_grass"})
-    assert Path(made[1]).is_dir() and len(dataset["train"]) == 1
-    del dataset
-    gc.collect()
-    assert not Path(made[1]).exists()
-
-
-def test_two_builds_at_once_never_replace_what_the_other_published(tmp_path: Path) -> None:
-    """Each build has a stage of its own, and the folder it publishes is refused when another build named it first:
-    the dataset that was published stays whole, and the loser's stage goes (CodeRabbit)."""
-    pytest.importorskip("datasets")
-    from grand_project.detect.rf_detr import build_dataset
-
-    for name in ("a", "b"):
-        Image.new("RGB", (64, 36), (20, 120, 20)).save(tmp_path / f"{name}.png")
-    records = [
-        Record(0, tmp_path / "a.png", "a", "annotator_reviewed", "g", 64, 36, (), "train"),
-        Record(1, tmp_path / "b.png", "b", "annotator_reviewed", "g", 64, 36, (), "validation"),
-    ]
-    out = tmp_path / "dataset"
-    labels = {"0": "map_node_grass"}
-
-    def rival_publishes_first(record, digest):
-        if record.split == "validation" and not out.exists():  # the other build finishes while this one still runs
-            build_dataset(records, label_map={"0": "map_node_grass", "1": "icon"}, output_dir=out)
-
-    with pytest.raises(FileExistsError):
-        build_dataset(records, label_map=labels, output_dir=out, check_bytes=rival_publishes_first)
-    assert json.loads((out / "labels.json").read_text()) == {"0": "map_node_grass", "1": "icon"}  # the rival's, whole
-    assert not list(tmp_path.glob("dataset.*.partial"))
+    assert not (tmp_path / "other" / "labels.json").exists() and not (tmp_path / "other" / "metadata.json").exists()
 
 
 def test_a_record_keeps_the_sha256_its_manifest_row_was_exported_with(tmp_path: Path) -> None:
     """The byte check at build time compares each screenshot with its own exported digest (CodeRabbit); a row without
-    one has none (None)."""
-    manifest = _manifest(
-        tmp_path,
-        [_image(tmp_path, "a.png", **{K.RF_DETR_MANIFEST_SHA: "a" * 64}), _image(tmp_path, "b.png", "validation")],
-    )
+    one is refused (export again)."""
+    manifest = _manifest(tmp_path, [_image(tmp_path, "a.png", **{K.RF_DETR_MANIFEST_SHA: "a" * 64})])
     records, _labels = load_annotator_manifest(manifest)
-    assert [r.sha256 for r in records] == ["a" * 64, None]
+    assert [r.sha256 for r in records] == ["a" * 64]
+    with pytest.raises(ValueError, match="no SHA-256"):
+        load_annotator_manifest(_manifest(tmp_path, [_image(tmp_path, "b.png", **{K.RF_DETR_MANIFEST_SHA: ""})]))

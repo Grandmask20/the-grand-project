@@ -492,14 +492,11 @@ def test_a_tower_never_takes_a_city_map_node_beside_it_for_its_base(monkeypatch)
     assert [(lm["x"], lm["y"]) for lm in result["landmarks"] if lm["kind"] == "City"] == [(925.0, 500.0)]
 
 
-def test_a_learned_wall_box_never_cuts_a_path_the_classical_wall_mask_lets_through(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """Paths are filtered by the classical wall mask alone: a model's wall box over a path removes nothing."""
+def test_paths_are_filtered_by_the_classical_wall_mask(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Walls are no RF-DETR class: the classical wall mask decides which traced paths cross a fortress wall."""
     predictions = [
         {"label": "map_node_grass", "family": "node", "box": [480.0, 480.0, 520.0, 520.0], "score": 0.9},
         {"label": "map_node_grass", "family": "node", "box": [780.0, 480.0, 820.0, 520.0], "score": 0.9},
-        {"label": "fortress_wall", "family": "wall", "box": [550.0, 400.0, 750.0, 600.0], "score": 0.9},
     ]
     line = [[float(x), 500.0] for x in range(500, 801, 10)]
     monkeypatch.setattr(rf_detr_model, "classical_path_dashes", lambda img: [])
@@ -606,3 +603,57 @@ def test_a_folder_swapped_while_it_was_read_is_refused_even_with_the_same_files(
             rf_detr_model._load_runtime()
     finally:
         rf_detr_model.reset_rf_detr_runtime()
+
+
+@pytest.fixture
+def fake_hub(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> list[dict]:
+    """A stand-in ``huggingface_hub`` (no network): ``snapshot_download`` "downloads" a model with a training list
+    into a folder of its own and records how it was asked."""
+    import sys
+
+    calls: list[dict] = []
+
+    def snapshot_download(repo_id, *, revision=None, allow_patterns=None):
+        calls.append({"repo": repo_id, "revision": revision, "patterns": allow_patterns})
+        folder = tmp_path / "hub" / repo_id.replace("/", "--") / (revision or "main")
+        folder.mkdir(parents=True, exist_ok=True)
+        (folder / K.RF_DETR_TRAINED_ON).write_text("a.png\nb.png\n", encoding="utf-8")
+        return str(folder)
+
+    monkeypatch.setitem(sys.modules, "huggingface_hub", SimpleNamespace(snapshot_download=snapshot_download))
+    rf_detr_model.reset_rf_detr_runtime()
+    yield calls
+    rf_detr_model.reset_rf_detr_runtime()
+
+
+def test_a_hugging_face_model_id_is_downloaded_once_with_safe_files_only(fake_hub: list[dict], tmp_path: Path) -> None:
+    """``owner/name[@revision]`` is a Hub model: downloaded once per process (the stamp and the weights are of one
+    download), only safetensors and text files (no pickles: AGENTS.md); its training list reads as a folder's."""
+    folder = rf_detr_model.model_folder("someone/atlas-rf-detr@v2")
+    assert rf_detr_model.model_folder("someone/atlas-rf-detr@v2") == folder and len(fake_hub) == 1
+    assert fake_hub[0] == {"repo": "someone/atlas-rf-detr", "revision": "v2", "patterns": list(K.RF_DETR_HUB_FILES)}
+    assert rf_detr_model.trained_on("someone/atlas-rf-detr@v2") == {"a.png", "b.png"}
+    assert rf_detr_model.model_folder("someone/other").name == "main"  # no revision: the default branch
+
+
+def test_a_local_folder_is_never_taken_for_a_hub_id(fake_hub: list[dict], tmp_path: Path, monkeypatch) -> None:
+    """An existing folder is used as it is, even one named like an id; a path that is no id (absolute, relative with
+    more parts, a drive letter) is a folder that is not there (yet), never a download."""
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / "runs" / "best").mkdir(parents=True)
+    assert rf_detr_model.model_folder("runs/best") == Path("runs/best")
+    for path in (str(tmp_path / "missing"), "runs/rf-detr-small/best", "C:/models/best", "./a/b", "~/a"):
+        assert rf_detr_model.trained_on(path) is None
+    assert fake_hub == []
+
+
+def test_a_hub_model_that_cannot_be_downloaded_says_so(monkeypatch: pytest.MonkeyPatch) -> None:
+    import sys
+
+    def offline(repo_id, **kwargs):
+        raise OSError("no network")
+
+    monkeypatch.setitem(sys.modules, "huggingface_hub", SimpleNamespace(snapshot_download=offline))
+    rf_detr_model.reset_rf_detr_runtime()
+    with pytest.raises(RuntimeError, match="no local folder someone/model"):
+        rf_detr_model.model_folder("someone/model")

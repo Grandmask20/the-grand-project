@@ -69,7 +69,7 @@ def test_left_out_icon_types_are_no_labels() -> None:
     assert L.export_class("icon_expeditionship") is None
     assert not L.known("icon_losttower") and L.known("icon_breachhive") and L.known("citadel_iron")
     assert not L.known("custom")
-    named = L.annotator_labels(named_icons=True, paths=True, walls=True)
+    named = L.annotator_labels(named_icons=True)
     assert not {"icon_losttower", "icon_checkpoint", "icon_expeditionship"} & set(named)
 
 
@@ -88,11 +88,11 @@ def test_reveal_buttons_are_one_class_and_strongholds_one_structure() -> None:
 
 def test_dataset_classes_are_the_registry_then_other_labels_in_use() -> None:
     classes = L.dataset_classes()
-    assert classes == [label for label, entry in K.RF_DETR_LABEL_INFO.items() if not entry.get("optional")]
+    assert classes == list(K.RF_DETR_LABEL_INFO)
     assert len(classes) == 16 and "path" not in classes
-    used = ["icon_breachhive", "path", "zzz", "icon_losttower", "map_node"]
-    # a used optional label takes its registry place, a reviewer's own label comes last, a left-out icon never
-    assert L.dataset_classes(used) == [*classes, "path", "zzz"]
+    used = ["icon_breachhive", "zzz", "icon_losttower", "map_node", "aaa"]
+    # a reviewer's own labels come last, in alphabetical order; a left-out icon never
+    assert L.dataset_classes(used) == [*classes, "aaa", "zzz"]
 
 
 def test_annotator_labels_offer_every_icon_type_when_named() -> None:
@@ -100,10 +100,7 @@ def test_annotator_labels_offer_every_icon_type_when_named() -> None:
     assert "icon" not in named and named[-len(dataset_icon_types()) :] == [icon_class(n) for n in dataset_icon_types()]
     plain = L.annotator_labels(named_icons=False)
     assert [label for label in plain if label.startswith("icon")] == ["icon"]  # user: no icon types when unnamed
-    assert "path" not in plain and "fortress_wall" not in plain  # user: only with their options
-    assert L.annotator_labels(named_icons=False, paths=True)[-2:] == ["path", "icon"]
-    walls = L.annotator_labels(named_icons=False, walls=True)
-    assert "fortress_wall" in walls and "path" not in walls
+    assert "path" not in plain and "fortress_wall" not in plain  # (the classical tracer and wall mask's)
 
 
 def test_warm_start_rows_follow_names_and_parents() -> None:

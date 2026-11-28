@@ -2,22 +2,20 @@
 
 from __future__ import annotations
 
-import contextlib
 import sys
 import time
-from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 import numpy as np
 
-from grand_project import core, fileio
+from grand_project import core
 
-from .badges import find_badges, special_icons
-from .constants import DETECT_PREFETCH_THREADS, MAP, WALL_CROSS
-from .landmarks import expedition_rules, find_landmarks, old_landmarks, ship_markers, square_buttons
+from .badges import find_badges
+from .constants import MAP, WALL_CROSS
+from .landmarks import expedition_rules, find_landmarks, ship_markers
 from .maps import _nms, map_candidates, map_features
 from .models import _models, load_model
-from .paths import amber_dashes, maps_from_paths, path_dashes, path_features, trace_paths
+from .paths import maps_from_paths, path_dashes, path_features, trace_paths
 from .rf_detr_model import detect_rf_detr, rf_detr_enabled
 from .walls import fortress_walls, wall_share
 
@@ -55,54 +53,25 @@ def ensure_models() -> None:
             _models[k] = model
 
 
-@contextlib.contextmanager
-def _prefetch(img: np.ndarray):
-    """Work out the screenshot's image-only stages on helper threads while the detection goes on.
+def detect_classical(img: np.ndarray, *, found_maps: tuple[list[dict], np.ndarray, np.ndarray] | None = None) -> dict:
+    """The classical detector on one screenshot (``detect`` picks it unless RF-DETR is enabled; the benchmark and the
+    dataset annotator run it explicitly).
 
-    The dashes, the special icons, the landmark rules, the fortress walls and the square buttons read nothing but
-    the screenshot, and are mostly OpenCV, which runs beside Python: a single detection used one core of the several
-    its worker may use. Each is remembered per image (cache._per_image), so when the detection reaches it, it takes
-    the result (or waits for it): the same functions on the same screenshot, so the same results. Threads: at most
-    the process's thread share less one (``fileio.thread_share``: a capped worker stays within it); none with a
-    share of 1.
+    Runs map nodes, icons (badges), landmarks, map nodes found from paths, the Expedition rules, ship markers and
+    paths (dropping paths that cross a fortress wall).
 
     Args:
         img: BGR screenshot (1080p).
-
-    Yields:
-        Nothing; the helper threads are done when the block ends.
-    """
-    threads = min(DETECT_PREFETCH_THREADS, fileio.thread_share() - 1)
-    if threads < 1:
-        yield
-        return
-    with ThreadPoolExecutor(threads, thread_name_prefix="detect") as ex:
-        # in the order the detection needs them (the map finder reads the dashes first)
-        for stage in (path_dashes, special_icons, old_landmarks, fortress_walls, amber_dashes, square_buttons):
-            ex.submit(stage, img)  # (an error is raised again where the detection asks for that stage)
-        yield
-
-
-def _detect_classical(img: np.ndarray, found_maps: tuple[list[dict], np.ndarray, np.ndarray] | None = None) -> dict:
-    """Run the existing classical detector for one screenshot.
-
-    This runs map nodes, icons, landmarks, map nodes found from paths, the Expedition rules, ship markers and paths.
-
-    Args:
-        img: BGR screenshot (1080p).
-        found_maps: ``find_maps(img, _models["maps"])`` when the caller has it already (see detect_classical).
+        found_maps: The result of ``find_maps(img, _models["maps"])`` (after ``ensure_models()``) for callers that
+            use the map candidates too (the dataset annotator), so the map finder (~1.7 s) runs only once.
 
     Returns:
         Dict with "width", "height" (px), "nodes", "landmarks", "icons" and "edges" (paths) lists.
 
+    Raises:
+        RuntimeError: The maps, badges or towers model is not in the DB yet.
     """
     ensure_models()
-    with _prefetch(img):
-        return _classical_stages(img, found_maps)
-
-
-def _classical_stages(img: np.ndarray, found_maps: tuple[list[dict], np.ndarray, np.ndarray] | None) -> dict:
-    """The classical detector's stages in order (see _detect_classical)."""
     nodes, mp, mprob = found_maps if found_maps is not None else find_maps(img, _models["maps"])
     icons, more = find_badges(img, _models["badges"], nodes, mp, mprob)
     lms, nodes = find_landmarks(img, _models["towers"], nodes + more, icons)
@@ -128,26 +97,9 @@ def _classical_stages(img: np.ndarray, found_maps: tuple[list[dict], np.ndarray,
     }
 
 
-def detect_classical(img: np.ndarray, *, found_maps: tuple[list[dict], np.ndarray, np.ndarray] | None = None) -> dict:
-    """Run the established classical detector explicitly.
-
-    The public entry point is useful for benchmark tools that need to compare both detector backends in the same
-    process.  Normal application code should keep using :func:`detect`, which selects the configured backend.
-
-    Args:
-        img: BGR screenshot (1080p).
-        found_maps: The result of ``find_maps(img, _models["maps"])`` (after ``ensure_models()``) for callers that
-            use the map candidates too (the dataset annotator), so the map finder (~1.7 s) runs only once.
-    """
-    return _detect_classical(img, found_maps)
-
-
 def detect(img: np.ndarray) -> dict:
-    """Detect one screenshot with the configured backend.
-
-    The classical detector remains the default.  Set ``GRAND_PROJECT_USE_RF_DETR=1`` to use the optional
-    fine-tuned RF-DETR model; both backends return the same ``nodes``, ``icons``, ``landmarks`` and ``edges`` shape.
-    """
+    """Live mode: one screenshot with the configured detector, the classical one unless ``GRAND_PROJECT_USE_RF_DETR``
+    selects the optional RF-DETR model; both return the same ``nodes``, ``icons``, ``landmarks`` and ``edges``."""
     return detect_rf_detr(img) if rf_detr_enabled() else detect_classical(img)
 
 
@@ -167,7 +119,7 @@ def cmd_run() -> int:  # noqa: E302
         for landmark in r["landmarks"]:
             kinds[landmark["kind"]] = kinds.get(landmark["kind"], 0) + 1
         print(
-            f"{Path(f).name}: {len(r['nodes']) - hid} maps, {hid} hidden maps, {len(r['icons'])} icons, "
+            f"{Path(f).name}: {len(r['nodes']) - hid} maps, {hid} hidden maps, {len(r['icons'])} badges, "
             f"{len(r['edges'])} paths, {kinds} "
             f"in {time.time() - t0:.1f} s"
         )

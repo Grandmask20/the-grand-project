@@ -60,9 +60,8 @@ class Events:
             kind: Event name ("log", "progress", "status", "model", "terrain", "question", ...).
             data: JSON-able payload.
         """
-        with self._lock:  # the id taken in the same step as the append: taken before the lock, a publisher pausing
-            # between the two let a later id into the history (and to the listeners) first
-            ev = {"id": next(self._ids), "kind": kind, "data": data, "time": time.time()}
+        ev = {"id": next(self._ids), "kind": kind, "data": data, "time": time.time()}
+        with self._lock:
             self.history.append(ev)
             for q in list(self._listeners):
                 try:

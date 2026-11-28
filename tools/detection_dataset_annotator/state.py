@@ -29,10 +29,6 @@ UNIDENTIFIED_ICON = icon_class("Unidentified")
 class DetectionOptions:
     """What a detection run emits besides the core labels; stored as the state's ``settings``."""
 
-    include_paths: bool = False
-    """Traced paths (with their dashes) as ``path`` boxes."""
-    include_fortress_walls: bool = False
-    """Classical fortress-wall regions as ``fortress_wall`` boxes."""
     named_icons: bool = False
     """Icons labelled by name (``icon_mapboss``) instead of one ``icon`` label (off: every icon is ``icon``, the
     deadly-boss icon too). Named or not, an export gives the detector the one ``icon`` class
@@ -46,11 +42,6 @@ class DetectionOptions:
     def as_settings(self) -> dict[str, bool]:
         """The options as JSON for the state file and the worker request."""
         return asdict(self)
-
-    @property
-    def derived(self) -> bool:
-        """Whether any optional derived label is emitted."""
-        return self.include_paths or self.include_fortress_walls
 
 
 def resolve_path(value: str | Path, root: Path = paths.ROOT) -> Path:
@@ -211,16 +202,16 @@ def write_text_atomic(path: Path, text: str) -> None:
         raise
 
 
-def label_names(used: Iterable[str], *, named_icons: bool, paths: bool = False, walls: bool = False) -> list[str]:
+def label_names(used: Iterable[str], *, named_icons: bool) -> list[str]:
     """The editor's labels: the dataset's (``labels.annotator_labels``) and nothing else.
 
     With named icons every icon type is a label (``icon_<name>``, in ``ICON_INFO`` order) whether or not a
     screenshot has one yet, so every type can be labelled, plus ``icon_unidentified`` while some box still has it (the
-    icons to name); without, only ``icon`` (user). ``path`` and ``fortress_wall`` only with their options. Other labels
+    icons to name); without, only ``icon`` (user). Other labels
     in ``used`` (the store's ``used_labels``: labels the dataset no longer has, such as boxes from before the labels
     changed) are not offered: rerun those screenshots. A box that still has one shows it as is.
     """
-    labels = annotator_labels(named_icons=named_icons, paths=paths, walls=walls)
+    labels = annotator_labels(named_icons=named_icons)
     if named_icons and UNIDENTIFIED_ICON in set(used):
         labels.append(UNIDENTIFIED_ICON)
     return labels

@@ -23,8 +23,6 @@ import json
 import math
 import random
 import shutil
-import tempfile
-import weakref
 from collections.abc import Callable, Iterator
 from dataclasses import dataclass
 from pathlib import Path
@@ -35,7 +33,6 @@ import numpy as np
 from . import constants as K
 from . import labels as L
 from . import rf_detr_tiles as T
-from .icon_types import slug  # noqa: F401  (re-exported, see __all__)
 
 
 @dataclass(frozen=True)
@@ -46,13 +43,12 @@ class Record:
     path: Path
     source: str
     source_type: str
-    source_group: str
     width: int
     height: int
     annotations: tuple[dict[str, Any], ...]
+    sha256: str
+    """The SHA-256 of the screenshot's bytes as the export recorded them."""
     split: str = "train"
-    sha256: str | None = None
-    """The SHA-256 of the screenshot's bytes as the export recorded them (None: the manifest has none)."""
 
 
 def _annotation(label: str, raw: dict[str, Any], name_to_id: dict[str, int], manifest_path: Path) -> dict[str, Any]:
@@ -77,7 +73,6 @@ def _annotation(label: str, raw: dict[str, Any], name_to_id: dict[str, int], man
         "bbox": bbox,
         "area": area,
         "iscrowd": int(raw.get("iscrowd", 0)),
-        "provenance": str(raw.get("source", "annotator_reviewed")),
     }
 
 
@@ -146,6 +141,8 @@ def load_annotator_manifest(
         split = str(item.get("split") or "")
         if split not in K.RF_DETR_SPLITS:
             raise ValueError(f"Screenshot {image_path} has no split in {manifest_path}: export it again")
+        if not item.get(K.RF_DETR_MANIFEST_SHA):
+            raise ValueError(f"Screenshot {image_path} has no SHA-256 in {manifest_path}: export it again")
         annotations = tuple(
             _annotation(str(raw.get("label", "")), raw, name_to_id, manifest_path)
             for raw in item.get("annotations", [])
@@ -155,15 +152,12 @@ def load_annotator_manifest(
                 image_id=int(item.get("image_id", len(records))),
                 path=image_path,
                 source=str(item.get("source", image_path.name)),
-                source_type=K.RF_DETR_TRUTH_SEEDED_SOURCE
-                if seeded
-                else str(item.get("source_type", "annotator_reviewed")),
-                source_group=str(item.get("source_group", "annotator")),
+                source_type=K.RF_DETR_TRUTH_SEEDED_SOURCE if seeded else str(item["source_type"]),
                 width=int(item["width"]),
                 height=int(item["height"]),
                 annotations=annotations,
+                sha256=str(item[K.RF_DETR_MANIFEST_SHA]),
                 split=split,
-                sha256=str(item[K.RF_DETR_MANIFEST_SHA]) if item.get(K.RF_DETR_MANIFEST_SHA) else None,
             )
         )
     if max_images is not None:
@@ -211,7 +205,6 @@ def _features(label_names: list[str]):
             "image_id": Value("int64"),
             "source": Value("string"),
             "source_type": Value("string"),
-            "source_group": Value("string"),
             "width": Value("int32"),
             "height": Value("int32"),
             "objects": {
@@ -221,7 +214,6 @@ def _features(label_names: list[str]):
                 "category": Sequence(ClassLabel(names=label_names)),
                 "iscrowd": Sequence(Value("int8")),
             },
-            "annotation_sources": Sequence(Value("string")),
         }
     )
 
@@ -241,7 +233,6 @@ def _rows(records: list[Record], check_bytes: Callable[[Record, str], None] | No
                 "image_id": record.image_id,
                 "source": record.source,
                 "source_type": record.source_type,
-                "source_group": record.source_group,
                 "width": record.width,
                 "height": record.height,
                 "objects": {
@@ -251,7 +242,6 @@ def _rows(records: list[Record], check_bytes: Callable[[Record, str], None] | No
                     "category": [int(annotation["category_id"]) for annotation in record.annotations],
                     "iscrowd": [int(annotation["iscrowd"]) for annotation in record.annotations],
                 },
-                "annotation_sources": [str(a["provenance"]) for a in record.annotations],
             }
         )
 
@@ -273,91 +263,68 @@ def build_dataset(
     records: list[Record],
     *,
     label_map: dict[str, str],
-    output_dir: Path | None = None,
+    output_dir: Path,
     provenance: dict[str, Any] | None = None,
     check_bytes: Callable[[Record, str], None] | None = None,
 ) -> Any:
-    """Create a ``DatasetDict`` (train, validation, test, as the records' splits say) and optionally save it.
+    """Create and save a ``DatasetDict`` (train, validation, test, as the records' splits say).
 
-    The saved folder holds the screenshots' bytes (``_rows``; ``check_bytes`` sees each one's SHA-256 first),
+    The folder holds the screenshots' bytes (``_rows``; ``check_bytes`` sees each one's SHA-256 first),
     ``labels.json`` and ``metadata.json``: the screenshots per split and kind (reviewed, truth-seeded), the tile, and
-    ``provenance`` (the manifest's and the ledger's SHA-256: which data a model saw). All three are written to a
-    staging folder of this build's own beside ``output_dir`` and it takes its name only once they are: a folder at
-    ``output_dir`` is always a whole dataset (a build cut off leaves none to reuse), and two builds at once never
-    remove each other's stage or replace what the other published (the one that finds the folder taken stops).
-
-    Without ``output_dir`` the dataset maps files in a temporary folder, removed with the dataset (or at once when the
-    build fails).
+    ``provenance`` (the manifest's and the ledger's SHA-256: which data a model saw). The labels and metadata are
+    written last, so a build cut off leaves no folder to reuse (``train_rf_detr`` builds beside the dataset in use and
+    swaps the new one in).
 
     Raises:
         ValueError: no training or no validation screenshot.
-        FileExistsError: ``output_dir`` exists and is not empty (or was published by another build meanwhile).
+        FileExistsError: ``output_dir`` exists and is not empty.
     """
     from datasets import Dataset, DatasetDict
 
     splits = records_by_split(records)
     features = _features([label_map[str(index)] for index in range(len(label_map))])
-    final = None if output_dir is None else Path(output_dir)
-    if final is not None:
-        if final.exists() and any(final.iterdir()):
-            raise FileExistsError(f"dataset output directory is not empty: {final}")
-        final.parent.mkdir(parents=True, exist_ok=True)
-        stage = Path(tempfile.mkdtemp(prefix=f"{final.name}.", suffix=".partial", dir=final.parent))
-    else:
-        stage = Path(tempfile.mkdtemp(prefix="grand-project-dataset-"))  # the returned dataset maps its files
-    try:
-        scratch = stage / "rows"
-        scratch.mkdir()
-        # an empty split (no test screenshot yet) from empty columns: no file to match the features
-        dataset = DatasetDict(
+    folder = Path(output_dir)
+    if folder.exists() and any(folder.iterdir()):
+        raise FileExistsError(f"dataset output directory is not empty: {folder}")
+    folder.mkdir(parents=True, exist_ok=True)
+    scratch = folder / "rows"
+    scratch.mkdir()
+    # an empty split (no test screenshot yet) from empty columns: no file to match the features
+    dataset = DatasetDict(
+        {
+            split: _write_split(chosen, features, scratch / f"{split}.arrow", check_bytes)
+            if chosen
+            else Dataset.from_dict({name: [] for name in features}, features=features)
+            for split, chosen in splits.items()
+        }
+    )
+    # an empty split (no test screenshot yet) is not saved: datasets cannot load an empty one back (load_dataset)
+    DatasetDict({split: rows for split, rows in dataset.items() if len(rows)}).save_to_disk(str(folder))
+    del dataset
+    gc.collect()  # the scratch files' maps closed (Windows keeps a mapped file)
+    shutil.rmtree(scratch)
+    (folder / "labels.json").write_text(json.dumps(label_map, indent=2) + "\n", encoding="utf-8")
+    kinds: dict[str, dict[str, int]] = {}
+    for split, chosen in splits.items():
+        for record in chosen:
+            kinds.setdefault(split, {}).setdefault(record.source_type, 0)
+            kinds[split][record.source_type] += 1
+    (folder / "metadata.json").write_text(
+        json.dumps(
             {
-                split: _write_split(chosen, features, scratch / f"{split}.arrow", check_bytes)
-                if chosen
-                else Dataset.from_dict({name: [] for name in features}, features=features)
-                for split, chosen in splits.items()
-            }
+                "format": "huggingface-datasets-object-detection",
+                **{f"{split}_images": len(chosen) for split, chosen in splits.items()},
+                "kinds": kinds,
+                "labels": label_map,
+                "tile": K.RF_DETR_TILE,
+                **(provenance or {}),
+            },
+            indent=2,
         )
-        if final is None:
-            weakref.finalize(dataset, shutil.rmtree, stage, ignore_errors=True)  # (a mapped file stays on Windows)
-            return dataset
-        # an empty split (no test screenshot yet) is not saved: datasets cannot load an empty one back (load_dataset)
-        DatasetDict({split: rows for split, rows in dataset.items() if len(rows)}).save_to_disk(str(stage))
-        del dataset
-        gc.collect()  # the scratch files' maps closed (Windows keeps a mapped file)
-        shutil.rmtree(scratch)
-        (stage / "labels.json").write_text(json.dumps(label_map, indent=2) + "\n", encoding="utf-8")
-        kinds: dict[str, dict[str, int]] = {}
-        for split, chosen in splits.items():
-            for record in chosen:
-                kinds.setdefault(split, {}).setdefault(record.source_type, 0)
-                kinds[split][record.source_type] += 1
-        (stage / "metadata.json").write_text(
-            json.dumps(
-                {
-                    "format": "huggingface-datasets-object-detection",
-                    **{f"{split}_images": len(chosen) for split, chosen in splits.items()},
-                    "kinds": kinds,
-                    "labels": label_map,
-                    "tile": K.RF_DETR_TILE,
-                    **(provenance or {}),
-                },
-                indent=2,
-            )
-            + "\n",
-            encoding="utf-8",
-        )
-        try:
-            # an empty folder is replaced by the rename, or (Windows) removed first: another build's published folder
-            # makes the rmdir or the rename fail, and this build stops without touching it
-            if final.exists():
-                final.rmdir()
-            stage.rename(final)
-        except OSError as exc:
-            raise FileExistsError(f"dataset output directory was taken meanwhile: {final}") from exc
-        return load_dataset(final)
-    except BaseException:
-        shutil.rmtree(stage, ignore_errors=True)  # this build's own stage only
-        raise
+        + "\n",
+        encoding="utf-8",
+    )
+    return load_dataset(folder)
 
 
 def load_dataset(folder: Path) -> Any:
@@ -372,18 +339,16 @@ def load_dataset(folder: Path) -> Any:
 
 
 class TileTransform:
-    """The batched dataset transform: each screenshot becomes one native-scale tile, processed for the model.
+    """The batched training transform: each screenshot becomes one native-scale tile, processed for the model.
 
-    Training cuts a random tile every time an image is drawn (``rf_detr_tiles.random_tile``: scale jitter, tiles
-    centred on rare classes, render-scale blur; no flips: the atlas is never mirrored); validation takes the fixed
-    tile holding the most boxes (for its loss; the task metrics run the whole tiled inference). A module-level class,
-    not a closure, so a dataset carrying it can be pickled into DataLoader worker processes (spawn, on Windows and
-    macOS); each worker draws its own random tiles.
+    A random tile every time an image is drawn (``rf_detr_tiles.random_tile``: scale jitter, tiles centred on rare
+    classes, render-scale blur; no flips: the atlas is never mirrored; evaluation runs the whole tiled inference). A
+    module-level class, not a closure, so a dataset carrying it can be pickled into DataLoader worker processes
+    (spawn, on Windows and macOS); each worker draws its own random tiles.
     """
 
-    def __init__(self, processor, *, train: bool, seed: int = 1337, rare: frozenset[int] = frozenset()) -> None:
+    def __init__(self, processor, *, seed: int = 1337, rare: frozenset[int] = frozenset()) -> None:
         self.processor = processor
-        self.train = train
         self.seed = seed
         self.rare = set(rare)
         self._rng: random.Random | None = None
@@ -406,10 +371,7 @@ class TileTransform:
         array = np.asarray(image.convert("RGB"))
         array, boxes = T.prepare(array, objects.get("bbox", ()), rgb=True)
         categories = [int(c) for c in objects.get("category", ())]
-        if self.train:
-            tile, keep, kept = T.random_tile(array, boxes, categories, self._random(), rare=self.rare)
-        else:
-            tile, keep, kept = T.densest_tile(array, boxes)
+        tile, keep, kept = T.random_tile(array, boxes, categories, self._random(), rare=self.rare)
         crowd = list(objects.get("iscrowd", [0] * len(categories)))
         annotations = [
             {"category_id": categories[i], "bbox": box, "area": float(box[2] * box[3]), "iscrowd": int(crowd[i])}
@@ -427,9 +389,9 @@ class TileTransform:
         return self.processor(images=images, annotations=annotations, return_tensors="pt")
 
 
-def tile_transform(processor, *, train: bool, seed: int = 1337, rare: frozenset[int] = frozenset()) -> TileTransform:
-    """Return the batched tile transform (``TileTransform``)."""
-    return TileTransform(processor, train=train, seed=seed, rare=rare)
+def tile_transform(processor, *, seed: int = 1337, rare: frozenset[int] = frozenset()) -> TileTransform:
+    """Return the batched training tile transform (``TileTransform``)."""
+    return TileTransform(processor, seed=seed, rare=rare)
 
 
 __all__ = [
@@ -439,6 +401,5 @@ __all__ = [
     "build_dataset",
     "load_annotator_manifest",
     "records_by_split",
-    "slug",
     "tile_transform",
 ]

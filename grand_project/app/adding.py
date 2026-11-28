@@ -31,7 +31,6 @@ from . import recheck_choices
 from .atlaslock import atlas_edit, atlas_switch
 from .constants import (
     DETECT_LOG_EVERY,
-    DETECT_POOL_IDLE_S,
     PICTURE_SIDE,
     PICTURES_KEPT,
     PREVIEW_AGREE_TOL,
@@ -108,9 +107,6 @@ class AddingMixin:
         # worker then dropped it (CodeRabbit). Apart from the session lock, which a running job holds for long.
         self._admit = threading.RLock()
         self._busy = False
-        # detection worker processes kept between jobs (with the worker: tests that run jobs on their own thread
-        # get one pool per job, as the builder does)
-        self._detect_pool = builder.WarmPool(builder.DETECT_WORKERS, DETECT_POOL_IDLE_S) if start else None
         self._pictures: dict[int, bytes] = {}
         self._picture_ids = itertools.count(1)
         self._forget_adding()
@@ -608,11 +604,7 @@ class AddingMixin:
         return progress
 
     def _detect(self, paths: list[Path], what: str) -> tuple[list, list[str]]:
-        """Detect screenshots in worker processes, then read them from the cache.
-
-        The session's warm pool takes every screenshot, one alone too (detected in this process, it held Python's
-        lock from the page's requests for seconds); without it (tests running jobs themselves) one screenshot is
-        detected here. A screenshot whose worker failed is detected here.
+        """Detect screenshots (in worker processes when several, then read from the cache).
 
         Args:
             paths: Screenshot files.
@@ -622,10 +614,10 @@ class AddingMixin:
             (detected frames, paths that failed).
         """
         frames, failed = [], []
-        if len(paths) > 1 or (paths and self._detect_pool is not None):  # (one too: not in this process, see below)
+        if len(paths) > 1:
             self.events.set_progress(f"{what} {len(paths)} screenshots")
             for p, err in builder.detect_uncached(
-                paths, self._cache_dir(), log=self.events.log, progress=self._counter(what), pool=self._detect_pool
+                paths, self._cache_dir(), log=self.events.log, progress=self._counter(what)
             ).items():
                 LOG.warning(f"{Path(p).name}: detection failed in a worker: {err}")
         for i, p in enumerate(paths, 1):
