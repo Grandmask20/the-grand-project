@@ -200,8 +200,6 @@ class MapImageMixin:
         # is in, even offscreen), and answered from the new one, a map image built again elsewhere put it off its
         # place (CodeRabbit). It holds the old map image's memory meanwhile.
         self._tile_before: tuple | None = None
-        self._ground = None
-        self._ground_for = None
         self._tiles.clear()
         if hasattr(self, "_source"):  # (not yet while the session is being set up: _init_mapimage)
             self._source_sync(*MAP_IMAGE_PARTS)
@@ -352,7 +350,6 @@ class MapImageMixin:
                 origin=origin if labels is not None else None,
                 folder=self._sharp_folder(),
             )
-            self._ground = None
             self.terrain_version += 1
             self._terrain_snap = (self.terrain, self.terrain_version)
             self._tile_state = (self.grid, self._raster, self._sharp, self.terrain_version)  # (all of it at once)
@@ -449,6 +446,13 @@ class MapImageMixin:
             return None
         base = core.atlas_files(self.path) / (self.path.stem + "_sharp")
         key = self.atlas.terrain_key()[:16] + (f"c{self._labels_key()}" if self.labels is not None else "")
+        # (and which screenshots have no picture left: tiles made without one are made again once it is back -
+        # CodeRabbit; never keeping them made every such tile again at each look)
+        lost = [f["name"] for f in list(self.atlas.frames) if not self.atlas.has_picture(f["path"])]
+        if lost:
+            import hashlib
+
+            key += "m" + hashlib.blake2b("|".join(lost).encode(), digest_size=4).hexdigest()
         keep = {key, self._sharp_key}
         if base.exists():
             for d in base.iterdir():  # tiles of other screenshots / placements: never shown again
@@ -478,18 +482,18 @@ class MapImageMixin:
         return True
 
     def ground(self):
-        """Return the ground sampler of the map image (the biomes compare ground looks), made once per map image.
+        """Return a ground sampler of the map image (the biomes compare ground looks), made for each use: kept, its Lab
+        copy of the whole map image (~115 MB on a big atlas) stayed all session for the biomes' few seconds after a
+        change; made again it costs a fraction of a second.
 
         Returns:
             A cities.ground_sampler, or None without a map image.
         """
-        if self.terrain is None:
+        terrain = self.terrain
+        if terrain is None:
             return None
-        if self._ground_for != self.terrain_version:
-            canvas, weight, origin = self.terrain
-            self._ground = atlas_cities.ground_sampler(canvas, weight, origin)
-            self._ground_for = self.terrain_version
-        return self._ground
+        canvas, weight, origin = terrain
+        return atlas_cities.ground_sampler(canvas, weight, origin)
 
     @staticmethod
     def _model_tops(shapes: list[dict]) -> dict[int, float]:
@@ -538,7 +542,8 @@ class MapImageMixin:
         canvas, weight, (ox, oy, sc) = terrain
         # grid cell (c, r) -> map image px ((x0 + c * cell - ox) * sc, ...)
         A = np.array([[cell * sc, 0, (x0 - ox) * sc], [0, cell * sc, (y0 - oy) * sc]], np.float32)
-        grey = canvas.mean(axis=2).astype(np.float32) if canvas.ndim == 3 else canvas.astype(np.float32)
+        # (averaged in float32 directly: the same values, without a float64 copy of a map image of up to 40 Mpx)
+        grey = canvas.mean(axis=2, dtype=np.float32) if canvas.ndim == 3 else canvas.astype(np.float32)
         wt = (weight > 0).astype(np.float32)
         flags = cv2.INTER_AREA | cv2.WARP_INVERSE_MAP
         g = cv2.warpAffine(grey, A, (w, h), flags=flags, borderValue=0.0)
@@ -657,6 +662,7 @@ class MapImageMixin:
                 if line.strip() and line.strip() != "done":
                     self.events.set_progress(line.strip(), scope, owner=owner)
             proc.wait()
+            shown = None
             try:
                 if proc.returncode == 0 and out.exists() and self.owns(gen) and not self._seams_stopped:
                     with np.load(out) as r:
@@ -672,6 +678,7 @@ class MapImageMixin:
                             if self.set_terrain(canvas, weight, origin, labels=(labels, names), gen=gen):
                                 self.events.log(f"Fix seams: clean map ready ({time.monotonic() - t0:.0f} s)", scope)
                                 self._seams_ready(names)
+                                shown = self.opened  # (sorted below, by the clean map's own ownership)
                 elif self._seams_stopped:
                     self.events.log("Fix seams: stopped (its clean map was left out)", scope)
                 elif proc.returncode != 0:
@@ -684,6 +691,10 @@ class MapImageMixin:
                     self._seams_proc, self._seams_busy = None, False
                 self.events.set_progress(None, owner=owner)
                 self.events.publish("seams", False)
+            # its screenshots into used/ and dump/ by the clean map's own ownership: after the clean-up above (it
+            # waits for the session lock, and a job holding it kept "fixing seams" on the page: self review)
+            if shown is not None:
+                self._sort_dump(shown)
 
         threading.Thread(target=watch, daemon=True).start()
         return "started"
@@ -1049,11 +1060,12 @@ class MapImageMixin:
         Returns:
             (the JPEG bytes or None where there is no ground; whether it is of the address asked, so the browser may
             keep it under it: the whole address, this run of the app and this atlas included, as versions restart
-            with every run and a tab outliving one asked with the old run's numbers, CodeRabbit).
+            with every run and a tab outliving one asked with the old run's numbers, CodeRabbit; never a tile with a
+            screenshot left out, its picture gone mid-build: its address stays when the picture is back, CodeRabbit).
         """
         state, before = self._tile_state, self._tile_before
         if not asked:
-            return self._tile_from(state, z, x, y, wanted), True
+            return self._tile_made(state, z, x, y, wanted)
         key, _, end = asked.rpartition("-")
         version = int(end) if end.isdigit() else None
         mine = key == f"{SESSION_RUN}.{self._source.gen}"  # (map_info's tile key)
@@ -1067,28 +1079,37 @@ class MapImageMixin:
             and z <= before[0].zmax  # (its map image levels: deeper, the current ground, not kept)
         ):
             state = before
-        return self._tile_from(state, z, x, y, wanted), mine and state[3] == version
+        data, whole = self._tile_made(state, z, x, y, wanted)
+        return data, whole and mine and state[3] == version
 
     def _tile_from(self, state: tuple, z: int, x: int, y: int, wanted=None) -> bytes | None:
         """terrain_tile, from one map image's tiling (_tile_state, read once by the caller)."""
+        return self._tile_made(state, z, x, y, wanted)[0]
+
+    def _tile_made(self, state: tuple, z: int, x: int, y: int, wanted=None) -> tuple[bytes | None, bool]:
+        """_tile_from, and whether the tile is whole: False for a sharp tile with a screenshot left out (its picture
+        gone mid-build), kept nowhere (its folder, the tile cache, the browser): made again next time."""
         _grid, raster, sharp, version = state
         key = ("t", version, z, x, y)
         hit = self._tiles.get(key)
         if hit is not None:
-            return hit or None
+            return hit or None, True
         if raster is None:
-            return None
+            return None, True
         if sharp is not None and sharp.has(z):
             if raster.pixels(raster.grid.zmax, x >> (z - raster.grid.zmax), y >> (z - raster.grid.zmax)) is None:
                 data = None  # nothing under it at all: no screenshot there
             else:
-                data = sharp.jpeg(z, x, y, wanted)
+                left: list[str] = []
+                data = sharp.jpeg(z, x, y, wanted, left)
                 if data is None:  # given up by the browser: built when asked again, not cached as empty
-                    return None
+                    return None, True
+                if left:  # a screenshot's picture gone mid-build: not kept, made again next time (CodeRabbit)
+                    return data, False
         else:
             data = raster.jpeg(z, x, y)
         self._tiles.put(key, data or b"")
-        return data
+        return data, True
 
     def crop_jpeg(self, x: float, y: float, gen: int) -> bytes | None:
         """Return a small picture of the ground around an atlas point (Find's rows show the map node itself: user's

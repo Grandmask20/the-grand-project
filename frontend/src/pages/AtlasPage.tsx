@@ -5,6 +5,7 @@ import { ConfirmDialog } from "@/components/dialogs/ConfirmDialog";
 import { DeleteAtlasDialog } from "@/components/dialogs/DeleteAtlasDialog";
 import { FileBrowserDialog } from "@/components/dialogs/FileBrowserDialog";
 import { GroupDialog } from "@/components/dialogs/GroupDialog";
+import { KeepDialog } from "@/components/dialogs/KeepDialog";
 import { PromptDialog } from "@/components/dialogs/PromptDialog";
 import { QuestionDialog } from "@/components/dialogs/QuestionDialog";
 import { RecheckDialog } from "@/components/dialogs/RecheckDialog";
@@ -124,6 +125,7 @@ export function AtlasPage() {
 			<PromptDialog />
 			<ConfirmDialog />
 			<RecheckDialog />
+			<KeepDialog />
 			<BookmarkDialog />
 			<GroupDialog />
 			<SourcesDialog />

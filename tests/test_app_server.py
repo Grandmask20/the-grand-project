@@ -440,3 +440,18 @@ def test_the_page_s_log_lines_and_group_names_are_checked(app, caplog):
     with caplog.at_level(logging.INFO, logger=S.LOG.name):
         call(srv, "/api/log", "POST", {"lines": ["two\nlines"]})
     assert "two lines" in caplog.text
+
+
+def test_the_start_line_names_the_release_in_a_player_release(tmp_path, monkeypatch):
+    # (v1.xx counts develop's merges; players only ever see release numbers: user)
+    import json
+
+    from grand_project import paths as rc_paths
+    from grand_project.app import server as srv
+
+    (tmp_path / "manifest.json").write_text(json.dumps({"release": "1.3.1", "program": "1.29", "files": {}}))
+    monkeypatch.setattr(rc_paths, "ROOT", tmp_path)
+    monkeypatch.setattr(rc_paths, "CHANNEL", "release")
+    assert srv.shown_version() == "release 1.3.1"
+    monkeypatch.setattr(rc_paths, "CHANNEL", "internal")
+    assert srv.shown_version() == f"v{srv.VERSION}"

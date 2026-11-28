@@ -55,6 +55,7 @@ describe("UpdateButton", () => {
 		expect(calls.some((c) => c.path === "/api/update/check")).toBe(true);
 		expect(await screen.findByText("The Grand Project 1.4 is out.")).toBeInTheDocument();
 		expect(screen.getByText("What's new: routes")).toBeInTheDocument();
+		expect(screen.getByText("This copy: release 1.3")).toBeInTheDocument(); // (no program version: user)
 		await user.click(screen.getByRole("button", { name: "Update now" }));
 		await waitFor(() => expect(calls.some((c) => c.path === "/api/update/install")).toBe(true));
 		expect(await screen.findByText(/Downloading… 0\.0 MB/)).toBeInTheDocument(); // (the box; the pill says it too)
@@ -117,5 +118,36 @@ describe("UpdateButton", () => {
 		expect(newerUpdate(old, { ...base, run: 200, seq: 1 }).run).toBe(200);
 		expect(newerUpdate(old, { ...base, run: 100, seq: 39 })).toBe(old);
 		expect(newerUpdate(undefined, old)).toBe(old);
+	});
+
+	it("shows a release's notes formatted, and the last update's line only while no newer one is offered", async () => {
+		const notes = "## 1.3.2 Test\n\n- A test update\n- with **bold**";
+		const just = { ok: true, from: "1.3", to: "1.3.1" };
+		const found = { ...base, release: "1.3.1", latest: { ...latest("1.3.2"), notes }, available: true, just };
+		const { user } = renderWithApp(<UpdateButton />, { "GET /api/update": found });
+		await user.click(await screen.findByRole("button", { name: /Update to 1\.3\.2/i }));
+		expect(screen.getByRole("heading", { name: "1.3.2 Test" })).toBeInTheDocument(); // (not "## 1.3.2 Test": user)
+		expect(screen.queryByText(/##/)).not.toBeInTheDocument();
+		expect(screen.getAllByRole("listitem")).toHaveLength(2);
+		expect(screen.getByText("bold").tagName).toBe("STRONG");
+		expect(screen.queryByText(/Updated from release/)).not.toBeInTheDocument(); // (not beside "1.3.2 is out")
+	});
+
+	it("still says why an update failed beside the release it failed on", async () => {
+		const just = { ok: false, from: "1.3.1", to: "1.3.2", error: "a file didn't match" };
+		const found = { ...base, release: "1.3.1", latest: latest("1.3.2"), available: true, just };
+		const { user } = renderWithApp(<UpdateButton />, { "GET /api/update": found });
+		await user.click(await screen.findByRole("button", { name: /Update to 1\.3\.2/i }));
+		expect(screen.getByText(/The update to 1\.3\.2 failed, nothing changed: a file didn't match/)).toBeInTheDocument();
+	});
+
+	it("shows the notes of releases an update skips too (user)", async () => {
+		const since = [{ release: "1.3.1", name: "The Grand Project 1.3.1", notes: "## 1.3.1 Hotfix\n\n- safe deletion" }];
+		const found = { ...base, latest: { ...latest("1.3.2"), notes: "## 1.3.2\n\n- newest", since }, available: true };
+		const { user } = renderWithApp(<UpdateButton />, { "GET /api/update": found });
+		await user.click(await screen.findByRole("button", { name: /Update to 1\.3\.2/i }));
+		expect(screen.getByRole("heading", { name: "1.3.2" })).toBeInTheDocument();
+		expect(screen.getByRole("heading", { name: "1.3.1 Hotfix" })).toBeInTheDocument();
+		expect(screen.getByText("safe deletion")).toBeInTheDocument();
 	});
 });

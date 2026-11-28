@@ -17,6 +17,8 @@ from .constants import (
     ABYSS_LINK,
     ABYSS_NAMES,
     ABYSS_TOWER_CLEAR,
+    CHECK_CURVE_CELL,
+    CHECK_FIELDS_KEEP,
     CHECK_SEEN,
     CLUMP_N,
     CLUMP_R,
@@ -28,6 +30,7 @@ from .constants import (
     END_DASHES,
     END_REACH,
     END_VIEWS,
+    FINAL_IMAGE_CACHE,
     GAP_FOUND,
     GAP_MIN,
     GAP_ON,
@@ -113,7 +116,60 @@ from .traces import (
 )
 
 
+def _curve_keys(points: np.ndarray, cell: float) -> np.ndarray:
+    """Each point's place along a Hilbert curve over the atlas: points close on the curve are close on the atlas.
+
+    Args:
+        points: (n, 2) atlas x, y.
+        cell: the curve's cell (atlas units).
+
+    Returns:
+        (n,) int64 keys; sorting by them walks the atlas cell by cell.
+    """
+    q = np.floor((points - points.min(0)) / cell).astype(np.int64)
+    side = 1
+    while side <= int(q.max(initial=0)):
+        side *= 2
+    x, y = q[:, 0].copy(), q[:, 1].copy()
+    d = np.zeros(len(q), np.int64)
+    s = side // 2
+    while s > 0:
+        rx = ((x & s) > 0).astype(np.int64)
+        ry = ((y & s) > 0).astype(np.int64)
+        d += s * s * ((3 * rx) ^ ry)
+        # rotate the quadrant (the standard xy -> d walk)
+        flip = ry == 0
+        swap_x = np.where(flip & (rx == 1), s - 1 - x, x)
+        swap_y = np.where(flip & (rx == 1), s - 1 - y, y)
+        x, y = np.where(flip, swap_y, swap_x), np.where(flip, swap_x, swap_y)
+        s //= 2
+    return d
+
+
 def finalize(atlas, log=_log) -> dict:
+    """Run the atlas-wide check (_finalize) with fewer decoded screenshots kept: FINAL_IMAGE_CACHE while it runs,
+    the atlas's own (placing's) again after.
+
+    Args:
+        atlas: The Atlas; its final is set.
+        log: Callable taking one message string.
+
+    Returns:
+        The final dict (also stored in atlas.final).
+    """
+    own = atlas.__dict__.get("IMAGE_CACHE")  # (an atlas of its own: else the class's)
+    atlas.IMAGE_CACHE = min(atlas.IMAGE_CACHE, FINAL_IMAGE_CACHE)
+    atlas.trim_images()  # (a cache a placement just filled kept all 90 when every read was a hit: CodeRabbit)
+    try:
+        return _finalize(atlas, log)
+    finally:
+        if own is None:
+            del atlas.IMAGE_CACHE
+        else:
+            atlas.IMAGE_CACHE = own
+
+
+def _finalize(atlas, log=_log) -> dict:
     """Run the atlas-wide check over every screenshot and store what to believe in atlas.final.
 
     Nothing detected is changed; the steps decide which map nodes, paths, icons and landmarks are kept:
@@ -616,20 +672,38 @@ def finalize(atlas, log=_log) -> dict:
         sp, ok = _visible(f, Hi, pts, margin=6)
         if ok.sum() >= 2:
             views.append((f, sp, ok))
-    fields: dict[str, np.ndarray] = {}
+    fields: dict[str, np.ndarray | None] = {}  # (most recently used last: CHECK_FIELDS_KEEP of them)
+    built = [0]
+    link_views = [0]  # the screenshots the link being scored needs: never fewer kept (else every link rebuilt them all)
 
     def field(f):
-        """Return a screenshot's distance-to-gold field as float32, computed once per check.
+        """Return a screenshot's distance-to-gold field; the CHECK_FIELDS_KEEP most recently used are kept.
+
+        Kept float16 (route_score reads a few dozen pixels as float32): a float32 copy per screenshot doubled the
+        check's memory (~8 MB per screenshot seen). And only CHECK_FIELDS_KEEP of them (~4 MB each): kept for every
+        screenshot the check touched, they were the check's peak (2.8 GB on a 384-screenshot atlas). The links are
+        scored along the atlas (score_all), so the ones in use are the few around; one let go is worked out again
+        (~12-25 ms). Never fewer than the link being scored needs (link_views): with more screenshots over one link than
+        CHECK_FIELDS_KEEP, each link would let go the ones the next link reads first (the same sorted order), and
+        rebuild them all (CodeRabbit). Kept for that link, the next links over the same spot find them.
 
         Args:
             f: the screenshot (frame) dict.
 
         Returns:
-            A 2-D float32 array: distance in screen px from each pixel to the nearest gold path dash.
+            A 2-D float16 array: distance in screen px from each pixel to the nearest gold path dash; None when its
+            picture is gone (its detected maps and paths still count, only this look is left out).
         """
-        if f["name"] not in fields:
-            fields[f["name"]] = _gold(atlas, f)[1].astype(np.float32)
-        return fields[f["name"]]
+        name = f["name"]
+        if name in fields:
+            fields[name] = fields.pop(name)
+        else:
+            g = _gold(atlas, f)
+            fields[name] = None if g is None else g[1]
+            built[0] += 1
+            while len(fields) > max(CHECK_FIELDS_KEEP, link_views[0]):
+                fields.pop(next(iter(fields)))
+        return fields[name]
 
     cache: dict[tuple[int, int], tuple[float, int, int]] = {}
     node_views: list[set] = [set() for _ in range(len(pts))]
@@ -652,55 +726,102 @@ def finalize(atlas, log=_log) -> dict:
         """
         key = (min(i, j), max(i, j))
         if key not in cache:
+            shared = sorted(node_views[i] & node_views[j])
+            link_views[0] = len(shared)
             vals = [
-                gp.route_score(field(views[vi][0]), views[vi][1][i], views[vi][1][j])
-                for vi in sorted(node_views[i] & node_views[j])
+                gp.route_score(fd, views[vi][1][i], views[vi][1][j])
+                for vi in shared
+                if (fd := field(views[vi][0])) is not None  # (no picture left: not scored there, CodeRabbit)
             ]
             cache[key] = ((float(np.mean(vals)) if vals else 0.0), len(vals), sum(v >= PATH_THRESHOLD for v in vals))
         return cache[key]
 
-    proposals = []
-    n = len(pts)
-    visited = set()
-    for i in range(n):
-        if i in blocked_ends:
-            continue
-        local = np.array(pts_grid.near(pts[i], 300.0), int)
-        dist_l = np.linalg.norm(pts[local] - pts[i], axis=1)
-        for q in np.argsort(dist_l)[1:11]:
-            j = int(local[q])
-            x, y = min(i, j), max(i, j)
-            if j in blocked_ends or not 30 <= dist_l[q] <= 300 or (x, y) in visited:
+    def propose(score_fn) -> list:
+        """The straight links the gold dotted line supports: (i, j, score, length), as the loop has always found them.
+
+        Args:
+            score_fn: score(i, j) for a link (or a stand-in that records the links asked for).
+
+        Returns:
+            The proposals, in the order found.
+        """
+        proposals = []
+        n = len(pts)
+        visited = set()
+        for i in range(n):
+            if i in blocked_ends:
                 continue
-            visited.add((x, y))
-            delta = pts[y] - pts[x]
-            L2 = float(delta @ delta)
-            loc = np.array(pts_grid.near(pts[x], math.sqrt(L2) + 30), int)  # maps near this link
-            lp = pts[loc]
-            t = ((lp - pts[x]) @ delta) / L2
-            nearest = pts[x] + t[:, None] * delta
-            blocking = (np.linalg.norm(lp - nearest, axis=1) < 24) & (t > 0.12) & (t < 0.88) & (loc != x) & (loc != y)
-            if blocking.any():
-                continue
-            bad = False
-            for s, e in ((x, y), (y, x)):
-                out = pts[e] - pts[s]
-                L = float(np.linalg.norm(out))
-                ls = np.array(pts_grid.near(pts[s], L), int)
-                v = pts[ls] - pts[s]
-                vl = np.linalg.norm(v, axis=1)
-                cosang = (v @ out) / np.maximum(1e-9, vl * L)
-                for k in ls[np.nonzero((vl >= 30) & (vl < L * 0.88) & (cosang > 0.936))[0]]:
-                    if int(k) not in (x, y) and score(s, int(k))[0] >= 0.53:
-                        bad = True
+            local = np.array(pts_grid.near(pts[i], 300.0), int)
+            dist_l = np.linalg.norm(pts[local] - pts[i], axis=1)
+            for q in np.argsort(dist_l)[1:11]:
+                j = int(local[q])
+                x, y = min(i, j), max(i, j)
+                if j in blocked_ends or not 30 <= dist_l[q] <= 300 or (x, y) in visited:
+                    continue
+                visited.add((x, y))
+                delta = pts[y] - pts[x]
+                L2 = float(delta @ delta)
+                loc = np.array(pts_grid.near(pts[x], math.sqrt(L2) + 30), int)  # maps near this link
+                lp = pts[loc]
+                t = ((lp - pts[x]) @ delta) / L2
+                nearest = pts[x] + t[:, None] * delta
+                blocking = (
+                    (np.linalg.norm(lp - nearest, axis=1) < 24) & (t > 0.12) & (t < 0.88) & (loc != x) & (loc != y)
+                )
+                if blocking.any():
+                    continue
+                bad = False
+                for s, e in ((x, y), (y, x)):
+                    out = pts[e] - pts[s]
+                    L = float(np.linalg.norm(out))
+                    ls = np.array(pts_grid.near(pts[s], L), int)
+                    v = pts[ls] - pts[s]
+                    vl = np.linalg.norm(v, axis=1)
+                    cosang = (v @ out) / np.maximum(1e-9, vl * L)
+                    for k in ls[np.nonzero((vl >= 30) & (vl < L * 0.88) & (cosang > 0.936))[0]]:
+                        if int(k) not in (x, y) and score_fn(s, int(k))[0] >= 0.53:
+                            bad = True
+                            break
+                    if bad:
                         break
                 if bad:
-                    break
-            if bad:
-                continue
-            c, nf, ns = score(x, y)
-            if nf and c >= (TOWER_THRESHOLD if tower[x] or tower[y] else PROPOSE):
-                proposals.append((x, y, c, float(np.linalg.norm(delta))))
+                    continue
+                c, nf, ns = score_fn(x, y)
+                if nf and c >= (TOWER_THRESHOLD if tower[x] or tower[y] else PROPOSE):
+                    proposals.append((x, y, c, float(np.linalg.norm(delta))))
+        return proposals
+
+    def score_all() -> None:
+        """Score every link the proposal loop can ask for, in order along the atlas (a Hilbert curve).
+
+        The loop goes through the maps by index, which jumps around the atlas: each link wanted gold fields of
+        screenshots anywhere, so all of them were kept (the check's peak). Scored along the atlas first, the
+        screenshots in use are the few around, and CHECK_FIELDS_KEEP of their fields are enough. score() keeps every
+        link's score, so the loop then finds the same links in the same order: only when the fields are worked out
+        changes. Records every link the loop may ask for (a stand-in score of 0 never stops it early: a superset).
+        """
+        asked: dict[tuple[int, int], None] = {}
+
+        def record(i, j):
+            asked[(min(i, j), max(i, j))] = None
+            return (0.0, 0, 0)
+
+        propose(record)
+        if not asked:
+            return
+        links = list(asked)
+        mid = np.array([(pts[a] + pts[b]) / 2 for a, b in links])
+        for k in np.argsort(_curve_keys(mid, CHECK_CURVE_CELL), kind="stable"):
+            score(*links[k])
+
+    score_all()
+    proposals = propose(score)
+    n = len(pts)  # (read further on)
+    if log:
+        log(
+            f"path check: {built[0]} gold fields worked out "
+            f"({len(views)} screenshots, {CHECK_FIELDS_KEEP} kept at once)"
+        )
     supported = {(x, y): c for x, y, c, _ in proposals}
     proposals = [
         p
@@ -805,9 +926,10 @@ def finalize(atlas, log=_log) -> dict:
             for i in vis:
                 if np.min(np.hypot(mp[:, 0] - sp[i, 0], mp[:, 1] - sp[i, 1])) <= LOCAL_RETRACE:
                     local[i] = True
-            if local.sum() >= 2:
+            d = _dashes(atlas, f) if local.sum() >= 2 else None  # (None: its picture gone, copy too)
+            if d is not None:
                 miss = set(missing)
-                for (i, j), r in atlas_detect.screen_paths(_dashes(atlas, f), sp, local, tower).items():
+                for (i, j), r in atlas_detect.screen_paths(d, sp, local, tower).items():
                     if (i in miss or j in miss) and _on_wall(rec, r["line"]) < atlas_detect.WALL_CROSS:
                         add_trace(f, i, j, r["line"], len(r["from"]) == 2, r["dashes"])
         for e in rec["edges"]:

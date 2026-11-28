@@ -169,7 +169,11 @@ class _Grid:
             self.shot[i] = None
             return None
         gx0, gy0, w, h, Hg = win
-        sc, busy = _score(self.atlas.image(self.frames[i]["path"]))
+        img = self.atlas.image(self.frames[i]["path"])
+        if img is None:  # deleted since Fix seams began, with no copy: it owns nothing (user: aggressive checking)
+            self.shot[i] = None
+            return None
+        sc, busy = _score(img)
         S = np.diag([float(SEAM_SCORE_SCALE), float(SEAM_SCORE_SCALE), 1.0])
         Hroi = np.array([[1, 0, -gx0], [0, 1, -gy0], [0, 0, 1]], float) @ Hg @ S
         # the score is a distance: sample it (no averaging), the busyness averaged over the cell
@@ -424,7 +428,7 @@ def clean_composite(atlas, max_pixels: int = 36_000_000, region=None, log=None):
         (canvas, (x0, y0, scale), weight, labels, frame names): BGR canvas, its origin, (h, w) float32 weight,
         (h, w) int16 owner per canvas pixel (index into frame names, -1 = none), and the screenshot names.
     """
-    frames = [f for f in atlas.frames if Path(f["path"]).exists()]
+    frames = [f for f in atlas.frames if atlas.has_picture(f["path"])]  # (the screenshot, else its copy)
     if not frames:
         z = np.zeros((1, 1), np.float32)
         return np.zeros((1, 1, 3), np.uint8), (0, 0, 1.0), z, z.astype(np.int16) - 1, []
@@ -485,7 +489,7 @@ def clean_composite(atlas, max_pixels: int = 36_000_000, region=None, log=None):
         L.astype(np.float32), Mi, (CW, CH), flags=cv2.INTER_NEAREST | cv2.WARP_INVERSE_MAP, borderValue=-1
     ).astype(np.int16)
     canvas = np.zeros((CH, CW, 3), np.uint8)
-    best = np.zeros((CH, CW), np.float32)
+    gone = set()
     for i, f in enumerate(frames):
         roi = _roi(T @ _H(atlas, f), f, CW, CH)
         if roi is None:
@@ -494,14 +498,20 @@ def clean_composite(atlas, max_pixels: int = 36_000_000, region=None, log=None):
         mine = labels[by0 : by0 + size[1], bx0 : bx0 + size[0]] == i
         if not mine.any():
             continue
-        pix = cv2.warpPerspective(atlas.image(f["path"]), Hroi, size, flags=cv2.INTER_LINEAR, borderValue=0)
+        img = atlas.image(f["path"])
+        if img is None:  # deleted while the clean map was worked out, with no copy: its part stays empty and owned
+            # by no one (owned and weighted, the black kept later quick adds from filling it: CodeRabbit)
+            labels[labels == i] = -1
+            gone.add(i)
+            continue
+        pix = cv2.warpPerspective(img, Hroi, size, flags=cv2.INTER_LINEAR, borderValue=0)
         canvas[by0 : by0 + size[1], bx0 : bx0 + size[0]][mine] = pix[mine]
         if log and i % 100 == 99:
             log(f"clean map: drawn {i + 1} of {len(frames)} screenshots")
     # each spot's score (the quick map's units: later quick adds take over only where more central)
     sgrid = np.zeros((GH, GW), np.float32)
     for i, sh in grid.shot.items():
-        if sh is not None:
+        if sh is not None and i not in gone:
             gx0, gy0, s, _b = sh
             win = (slice(gy0, gy0 + s.shape[0]), slice(gx0, gx0 + s.shape[1]))
             mine = L[win] == i

@@ -64,7 +64,7 @@ def route_score(field: np.ndarray, start: np.ndarray, end: np.ndarray) -> float:
     loc = loc[None] + off
     x = np.clip(np.rint(loc[..., 0]).astype(int), 0, w - 1)
     y = np.clip(np.rint(loc[..., 1]).astype(int), 0, h - 1)
-    distance = field[y, x]  # (3, 39)
+    distance = field[y, x].astype(np.float32)  # (3, 39) (the field may be float16: the check keeps it so)
     support = np.clip((10 - distance) / 10, 0, 1)
     coverage = (np.maximum.reduceat(support, _GROUPS, axis=1) >= 0.22).mean(axis=1)
     consistency = (support >= 0.17).mean(axis=1)

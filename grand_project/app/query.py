@@ -8,7 +8,6 @@ from __future__ import annotations
 
 import math
 import re
-from pathlib import Path
 
 import cv2
 import numpy as np
@@ -694,7 +693,14 @@ class QueryMixin:
             [{"name", "w", "h", "px", "py" (the spot in its px), "exists"}].
         """
         return [
-            {"name": f["name"], "w": f["w"], "h": f["h"], "px": px, "py": py, "exists": Path(f["path"]).exists()}
+            {
+                "name": f["name"],
+                "w": f["w"],
+                "h": f["h"],
+                "px": px,
+                "py": py,
+                "exists": self.atlas.has_picture(f["path"]),
+            }
             for f, px, py in self.frames_at(x, y)
         ]
 
@@ -711,7 +717,7 @@ class QueryMixin:
         f = next((f for f in (self.atlas.frames if self.atlas else []) if f["name"] == name), None)
         if f is None:
             return None
-        img = core.read_screenshot(f["path"])
+        img = self.atlas.image(f["path"])  # (the screenshot, else its 1080p copy)
         if img is None:
             return None
         if 0 < width < img.shape[1]:

@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import math
-from pathlib import Path
+import weakref
 
 import cv2
 import numpy as np
@@ -22,7 +22,7 @@ from .constants import (
     SETTLE_BADGE,
     SETTLE_MERGE,
 )
-from .traces import _Grid, _visible
+from .traces import _evict_oldest, _Grid, _visible
 
 
 def _barrel(img, x, y, nodes=None) -> bool:
@@ -77,7 +77,7 @@ def _screen_nodes(atlas, f, x, y, reach: float = 80.0) -> np.ndarray:
     return core.persp(Hi, near)
 
 
-_OCEAN: dict = {}  # id(screenshot) -> (screenshot, ground classes, unusable pixels): recent ones kept
+_OCEAN: dict = {}  # id(screenshot) -> (weak ref to it, ground classes, unusable pixels): recent ones kept
 _OCEAN_KEEP = 24  # the re-check goes back and forth between screenshots (one kept: ~300 rebuilds per 80 adds)
 
 
@@ -88,10 +88,11 @@ def _ground_classes(hsv: np.ndarray) -> np.ndarray:
         hsv: the screenshot in OpenCV HSV (H 0-179, S and V 0-255), shape (h, w, 3).
 
     Returns:
-        An (h, w) int array: 0 water, 1 sand, 2 rock / snow, 3 grass, 4 forest, -1 unknown.
+        An (h, w) int8 array: 0 water, 1 sand, 2 rock / snow, 3 grass, 4 forest, -1 unknown (int8: _OCEAN_KEEP
+        of them in int64 were ~380 MB, kept after every re-check).
     """
-    H, S, V = hsv[..., 0].astype(int), hsv[..., 1].astype(int), hsv[..., 2].astype(int)
-    out = np.full(H.shape, -1, int)
+    H, S, V = hsv[..., 0].astype(np.int16), hsv[..., 1].astype(np.int16), hsv[..., 2].astype(np.int16)
+    out = np.full(H.shape, -1, np.int8)
     out[(H >= 78) & (H <= 112) & (S >= 85) & (V >= 50)] = 0  # water (blue-grey rock shadow is less saturated)
     out[(H >= 10) & (H <= 30) & (S >= 25) & (S <= 140) & (V >= 135)] = 1  # sand / desert
     out[(S < 40) & (V >= 95)] = 2  # rock / snow
@@ -113,16 +114,17 @@ def ground_of(img) -> tuple[np.ndarray, np.ndarray]:
         both of shape (h, w).
     """
     got = _OCEAN.get(id(img))
-    if got is None or got[0] is not img:
+    # (a weak ref: the screenshot goes when the atlas's own cache lets it go, not kept here as well; the identity
+    # check stays, an id can be reused)
+    if got is None or got[0]() is not img:
         cls = _ground_classes(cv2.cvtColor(img, cv2.COLOR_BGR2HSV))
         bad = (
             (gp.gold_stroke_mask(img) > 0) | (cv2.cvtColor(img, cv2.COLOR_BGR2GRAY) < 22) | (core._valid_mask(img) == 0)
         )
-        got = (img, cls, bad)
+        got = (weakref.ref(img), cls, bad)
         _OCEAN.pop(id(img), None)
         _OCEAN[id(img)] = got
-        while len(_OCEAN) > _OCEAN_KEEP:
-            _OCEAN.pop(next(iter(_OCEAN)))
+        _evict_oldest(_OCEAN, _OCEAN_KEEP)  # (the idle release may clear it meanwhile)
     return got[1], got[2]
 
 
@@ -397,20 +399,20 @@ def _settlements(atlas, maps, landmarks, icons, state_at) -> list[dict]:
             votes = [
                 _barrel(im, sp[0], sp[1], _screen_nodes(atlas, f, bx, by))
                 for _c, f, sp in atlas.central_views(bx, by, 3)
-                if (im := atlas.image(f["path"]) if Path(f["path"]).exists() else None) is not None
+                if (im := atlas.image(f["path"])) is not None  # (the screenshot, else its copy)
             ]
             barrel = bool(votes) and 2 * sum(votes) > len(votes)
         views = [
-            (atlas.image(f["path"]), sp)
+            (im, sp)
             for _c, f, sp in atlas.central_views(b["x"], b["y"], 3)
-            if Path(f["path"]).exists()
+            if (im := atlas.image(f["path"])) is not None  # (the screenshot, else its copy)
         ]
         ocean = bool(views) and 2 * sum(_ocean(im, sp[0], sp[1]) for im, sp in views) > len(views)
         blue = orange = seen = 0
         for f, Hi in maps:
             sp, ok = _visible(f, Hi, [[b["x"], b["y"]]], margin=5)
-            if ok[0]:
-                bl, orr = _beam(atlas.image(f["path"]), sp[0, 0], sp[0, 1], b["spread"])
+            if ok[0] and (im := atlas.image(f["path"])) is not None:  # (no picture left: no beam seen there)
+                bl, orr = _beam(im, sp[0, 0], sp[0, 1], b["spread"])
                 blue, orange, seen = blue + bl, orange + orr, seen + 1
         status = "kept"
         state = state_at(b["x"], b["y"])

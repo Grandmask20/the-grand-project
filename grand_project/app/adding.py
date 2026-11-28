@@ -523,7 +523,8 @@ class AddingMixin:
         ]
         name = mode[0] if isinstance(mode, tuple) else mode
         what = {"manual": "adding", "watch": "auto-add", "undo": "undo", "recheck_all": "Re-check",
-                "drop": "placing by hand", "retry": "retry"}.get(name, str(name))  # fmt: skip
+                "keep_all": "keeping copies", "drop": "placing by hand",
+                "retry": "retry"}.get(name, str(name))  # fmt: skip
         self.events.log(f"{what} took {took:.1f} s: " + ", ".join(changes))
 
     def _worker(self) -> None:
@@ -626,6 +627,9 @@ class AddingMixin:
                 fr = builder.extract_frame(p, self._cache_dir())
                 frames.append(fr)
                 self.events.log(f"{p.name}: {int(fr.usable.sum())} maps, {len(getattr(fr, 'icons', []))} icons")
+            except FileNotFoundError:  # deleted or moved before it was read: no fault, and nothing for auto-add to
+                # try again (its raw error and "trying again" read like trouble: checked in the app)
+                self.events.log(f"{p.name}: gone before it was detected (deleted or moved): left out")
             except Exception as e:
                 LOG.exception(f"{p.name}: detection failed")
                 self.events.log(f"{p.name}: detection failed: {e}")
@@ -646,10 +650,16 @@ class AddingMixin:
         if mode == "recheck_all":
             self._run_recheck()
             return
+        if mode == "keep_all":
+            self._run_keep()
+            return
         retry = isinstance(mode, tuple) and mode[0] == "retry"
         frames, failed = self._detect(paths, "detecting") if paths else ([], [])
         if failed and mode == "watch":
             self._watch_failed(failed)
+        # their copies kept right away: one deleted while it is placed still has its picture (user: aggressive
+        # checking on files deleted mid-way); made after the job, it had none
+        self._copy_detected(frames)
         self.events.set_progress("placing")
         self._shown_early = set()  # (screenshots pasted while a question was open: _show_placed)
         self._rebuilt_early = False
@@ -675,6 +685,7 @@ class AddingMixin:
                         self.events.log(ln)
             else:
                 added, refused = self._place_watched(frames)
+            rec = self.opened  # (the job's atlas, for the copies kept after it: _keep_screenshots)
             if added:
                 new = self.atlas.frames[-added:]
                 self._remember_add([f["name"] for f in new], snapshot)
@@ -693,6 +704,9 @@ class AddingMixin:
                 with contextlib.suppress(OSError):
                     snapshot.unlink()
         self._after_placed(mode, added, refused)
+        if added:  # copies kept, the originals in the atlas's folder moved to used/ (safe to delete: user)
+            self._keep_screenshots(rec, [f["name"] for f in new])
+            self._sort_dump(rec)  # (a newer, more central screenshot can send an older one to dump/)
 
     def _run_recheck(self) -> None:
         """Detect again screenshots detected by an older detector, re-check the whole atlas, then ask which of the
@@ -750,6 +764,7 @@ class AddingMixin:
                 done = "whole atlas re-checked" + (": nothing changed" if listed is not None else "")
         if listed is None or not any(g["count"] for g in listed.values()):
             self.rebuild_model()
+            self._slim_down(rec)  # (ticked in the Re-check prompt: the copies of dump screenshots removed)
             self._done(done)
             return
         picked = self._ask_recheck(listed)
@@ -788,6 +803,7 @@ class AddingMixin:
         msg = "whole atlas re-checked: " + (f"updated {', '.join(took)}" if took else "nothing updated")
         if left:
             msg += f"; kept as before: {', '.join(left)}"
+        self._slim_down(rec)  # (ticked in the Re-check prompt: the copies of dump screenshots removed)
         self._done(msg)
 
     @staticmethod
@@ -864,6 +880,8 @@ class AddingMixin:
             "missing": missing,
             "estimate_s": round(estimate),
             "groups": sorted(groups.values(), key=lambda g: -g["newest"]),
+            # the slim down's tick (packaged with Re-check: user): the copies of screenshots in dump
+            "slim": self.slim_info(atlas, rec if atlas is rec.atlas else None),
         }
 
     def _biomes_of(self, atlas, final: dict, kept: bool) -> dict:
@@ -1025,8 +1043,26 @@ class AddingMixin:
         entry = self._undo[-1]
         self.events.set_progress("undoing the last add")
         with self._lock:
+            rec = self.opened
             old = core.Atlas.load(entry["file"])  # (raises: the entry stays, Undo can be tried again: CodeRabbit)
             self._undo.pop()
+            # (by content, as below: two screenshots can share a name, and one undone stayed in used/ - CodeRabbit)
+            kept = {f.get("sha") or f["name"] for f in old.frames}
+            self._unkeep([f for f in self.atlas.frames if (f.get("sha") or f["name"]) not in kept])  # (out of used/)
+            # each screenshot where it is now: the snapshot names its place from before the add, and the add's sort
+            # (or a keep since) moved some into used/ or dump/; the old place kept them there for good (self review)
+            # (and what was kept about it since: the time it was taken, its copy slimmed away; CodeRabbit)
+            now = {f.get("sha") or f["name"]: f for f in self.atlas.frames}  # (by its content: names can repeat)
+            for f in old.frames:
+                cur = now.get(f.get("sha") or f["name"])
+                if cur is None:
+                    continue
+                if Path(cur["path"]).exists():
+                    f["path"] = cur["path"]
+                if f.get("taken") is None and cur.get("taken") is not None:
+                    f["taken"] = cur["taken"]
+                if cur.get("slimmed"):
+                    f["slimmed"] = True
             self._lock_rev = getattr(self, "_lock_rev", 0) + 1  # (a stronghold search running now is out of date)
             for attr in core.Atlas.SAVED:
                 if attr not in core.Atlas.HAND_EDITS:
@@ -1038,6 +1074,7 @@ class AddingMixin:
         self.recent = [n for n in self.recent if n not in gone]
         self.rebuild_model()
         self.load_terrain(cities=True)
+        self._sort_dump(rec)  # (a screenshot the undone ones outshone shows its spots again: back to used/)
         self._done(f"undone: {', '.join(entry['names'])}")
 
     # ------------------------------------------------------------------ placing
