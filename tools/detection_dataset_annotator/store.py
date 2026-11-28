@@ -10,8 +10,8 @@ it takes milliseconds however many screenshots are detected, and each detection 
 - ``annotations``: one row per box. ``WITHOUT ROWID`` with the key ``(image_key, ord)`` keeps a screenshot's boxes
   together on disk, so loading or replacing them touches a few pages, however large the dataset grows.
 - ``prelabels``: the boxes a reviewer is first shown (``annotations``' columns): written by detection, truth seeding
-  and model pre-labels, never by an edit, so ``effort.py`` can count what the review changed.
-- ``meta``: the discovery roots, the detection options and the planned pre-label arms, as JSON.
+  and model pre-labels, never by an edit, so a background pass can tell nobody edited a screenshot (``untouched``).
+- ``meta``: the discovery roots and the detection options, as JSON.
 
 The database runs in WAL mode, so the editor reads and writes while a detection run writes. Every write is one short
 ``BEGIN IMMEDIATE`` transaction: a check and the change it guards (``save_review``'s revision) cannot be split by
@@ -30,7 +30,6 @@ import contextlib
 import itertools
 import json
 import operator
-import os
 import sqlite3
 from collections.abc import Iterable, Iterator, Mapping
 from dataclasses import dataclass
@@ -131,9 +130,6 @@ _INSERT_ANNOTATION = (
     f"INSERT INTO annotations (image_key, ord, {', '.join(_ANNOTATION_COLUMNS)}) "
     f"VALUES ({', '.join('?' * (len(_ANNOTATION_COLUMNS) + 2))})"
 )
-_TABLES = tuple(statement.split()[2] for statement in _SCHEMA if statement.startswith("CREATE TABLE"))
-"""The store's tables, as ``_SCHEMA`` creates them (an opened store must have them all)."""
-
 _INSERT_PRELABEL = _INSERT_ANNOTATION.replace("INSERT INTO annotations", "INSERT INTO prelabels")
 _SELECT_PRELABELS = f"SELECT {', '.join(_ANNOTATION_COLUMNS)} FROM prelabels"
 
@@ -232,93 +228,9 @@ def _extra(item: Mapping[str, Any]) -> str:
     return json.dumps({name: value for name, value in item.items() if name not in _ITEM_FIELDS})
 
 
-def _columns(db: sqlite3.Connection, table: str, schema: str = "main") -> list[str]:
-    """A table's columns, in order (none: no such table)."""
-    return [row[1] for row in db.execute(f"PRAGMA {schema}.table_info({table})")]
-
-
-def _layout() -> dict[str, list[str]]:
-    """Every table this annotator writes and its columns, as ``_SCHEMA`` makes them."""
-    with contextlib.closing(sqlite3.connect(":memory:")) as db:
-        for statement in _SCHEMA:
-            db.execute(statement)
-        return {table: _columns(db, table) for table in _TABLES}
-
-
-def layout_problems(db: sqlite3.Connection, schema: str = "main") -> list[str]:
-    """What an opened store lacks of this annotator's tables and columns ("prelabels table", "images.split"); empty
-    when it has them all."""
-    out = []
-    for table, columns in _layout().items():
-        have = set(_columns(db, table, schema))
-        if not have:
-            out.append(f"{table} table")
-        else:
-            out += [f"{table}.{column}" for column in columns if column not in have]
-    return out
-
-
-def upgrade_layout(path: Path, target: Path | None = None) -> dict[str, int]:
-    """Copy a store an older annotator built into this annotator's layout, every row kept (a column it lacks takes its
-    default, a table it lacks starts empty), checked by counting.
-
-    The store at ``path`` is only read. The copy is written to ``target`` (default: ``path`` itself, replaced once the
-    copy is whole and counted; keep a backup first, as ``build_store`` does). No annotator page may have the store open
-    while it is replaced.
-
-    Returns:
-        Table -> rows copied.
-
-    Raises:
-        sqlite3.Error: The store cannot be read, or the copy's rows do not add up.
-    """
-    path = Path(path)
-    final = path if target is None else Path(target)
-    staging = final.with_name(f"{final.name}.upgrade")
-    staging.unlink(missing_ok=True)
-    # the old store's write-ahead log folded into its file first, so the copy and the swap see every committed write
-    # mode=rw: a store that is not there fails (a plain connect would make an empty database in its place, to be
-    # "upgraded" into nothing), while one that is there can still be checkpointed
-    source = f"{path.resolve().as_uri()}?mode=rw"
-    with contextlib.closing(sqlite3.connect(source, uri=True, isolation_level=None)) as old:
-        old.execute("PRAGMA wal_checkpoint(TRUNCATE)")
-    copied: dict[str, int] = {}
-    # uri=True: ATTACH reads a "file:...?mode=ro" name as a URI only on a URI-enabled connection (Linux builds have it
-    # on by default, the Windows and macOS ones do not); a plain staging path still opens as a path
-    with contextlib.closing(sqlite3.connect(str(staging), uri=True, isolation_level=None)) as db:
-        db.execute("BEGIN")
-        for statement in _SCHEMA:
-            db.execute(statement)
-        db.execute("ATTACH DATABASE ? AS old", (f"{path.resolve().as_uri()}?mode=ro",))
-        for table, columns in _layout().items():
-            kept = [column for column in columns if column in set(_columns(db, table, "old"))]
-            if not kept:
-                copied[table] = 0
-                continue
-            listed = ", ".join(kept)
-            db.execute(f"INSERT INTO main.{table} ({listed}) SELECT {listed} FROM old.{table}")
-            (before,) = db.execute(f"SELECT COUNT(*) FROM old.{table}").fetchone()
-            (after,) = db.execute(f"SELECT COUNT(*) FROM main.{table}").fetchone()
-            if before != after:
-                raise sqlite3.DatabaseError(f"{table}: {before} rows in {path}, {after} copied")
-            copied[table] = after
-        (version,) = db.execute("PRAGMA old.user_version").fetchone()
-        db.execute("COMMIT")
-        db.execute("DETACH DATABASE old")
-        db.execute(f"PRAGMA user_version = {int(version) or int(K.ANNOTATOR_STORE_CREATED)}")
-    for suffix in ("-wal", "-shm"):  # (checkpointed and closed above: no log of the old file may meet the new one)
-        Path(f"{final}{suffix}").unlink(missing_ok=True)
-    os.replace(staging, final)
-    return copied
-
-
 class UnknownScreenshot(KeyError):
     """A screenshot that is not in the store (removed, or never added): found out inside the write that needed it, so
     no later look can see it back (a rebuild adding it again)."""
-
-
-class StoreLayoutError(sqlite3.DatabaseError):
-    """A review store whose tables an older annotator made (``ReviewStore.open`` refuses it)."""
 
 
 class ReviewStore:
@@ -341,7 +253,6 @@ class ReviewStore:
         Raises:
             sqlite3.Error: The file is not a database, is locked for longer than ``ANNOTATOR_STORE_BUSY_S``, or (read
                 only) does not exist or has no tables yet.
-            StoreLayoutError: An older annotator built it (a ``sqlite3.Error`` too).
         """
         if read_only:
             # as_uri percent-encodes the path: a raw "#" or "?" in it would end the path early and drop "mode=ro"
@@ -351,7 +262,6 @@ class ReviewStore:
                 store = cls(connection, path)
                 if not store._version():
                     raise sqlite3.OperationalError(f"{path} is not an annotator store yet")
-                store._check_tables()
             except BaseException:
                 connection.close()
                 raise
@@ -387,7 +297,6 @@ class ReviewStore:
     def _initialise(self, input_roots: list[str]) -> None:
         """Create the schema when the file is new (``PRAGMA user_version`` 0)."""
         if self._version():
-            self._check_tables()
             return  # the usual case, without taking the write lock
         with self._write():
             if self._version():
@@ -397,21 +306,6 @@ class ReviewStore:
             self._set_meta("input_roots", input_roots)
             self._set_meta("settings", DetectionOptions().as_settings())
             self._db.execute(f"PRAGMA user_version = {int(K.ANNOTATOR_STORE_CREATED)}")
-
-    def _check_tables(self) -> None:
-        """Refuse a store an older annotator built: it lacks tables or columns this one writes (``build_store``
-        brings it up to date, every row kept: ``upgrade_layout``).
-
-        Raises:
-            StoreLayoutError: a table or column is missing.
-        """
-        missing = layout_problems(self._db)
-        if missing:
-            folder = relative_source(Path(self.path).parent)
-            raise StoreLayoutError(
-                f"{self.path} was built by an older annotator (no {', '.join(missing)}): bring it up to date with "
-                f"python -m tools.detection_dataset_annotator.build_store --output-dir {folder} (its work is kept)"
-            )
 
     # ---- transactions --------------------------------------------------------------------------------------------
 
@@ -618,27 +512,6 @@ class ReviewStore:
             out.update(dict(self._db.execute(query, chunk)))
         return out
 
-    # ---- model pre-label arms ------------------------------------------------------------------------------------
-
-    def prelabel_plan(self) -> dict[str, str]:
-        """Spatial block -> the pre-label arm planned for it (``model_prelabel``), done or not."""
-        return dict(self._meta(K.ANNOTATOR_PRELABEL_PLAN, {}))
-
-    def claim_prelabel_arms(self, arms: Mapping[str, str]) -> dict[str, str]:
-        """Plan blocks' pre-label arms where they have none yet, in one write: a planned arm is kept until its work is
-        done, also when a pass fails half-way or two passes run at once.
-
-        Returns:
-            The whole plan, block -> arm, as the store now has it.
-        """
-        with self._write():
-            plan = dict(self._meta(K.ANNOTATOR_PRELABEL_PLAN, {}))
-            added = {block: arm for block, arm in arms.items() if block not in plan}
-            if added:
-                plan.update(added)
-                self._set_meta(K.ANNOTATOR_PRELABEL_PLAN, plan)
-        return plan
-
     # ---- the editor ----------------------------------------------------------------------------------------------
 
     def save_review(
@@ -654,11 +527,8 @@ class ReviewStore:
         expect_boxes: Iterable[Mapping[str, Any]] | None = None,
         unmarked: Iterable[str] = (),
         marked: Mapping[str, Any] | None = None,
-        arm_block: tuple[Iterable[str], str] | None = None,
         split: str | None = None,
         expect_reviewed: bool | None = None,
-        review_s: float = 0.0,
-        reviewed_at: str | None = None,
     ) -> bool:
         """Save a screenshot's edited boxes, its review flag and/or fields of ``extra``, if it is still at detection
         ``revision``.
@@ -671,7 +541,7 @@ class ReviewStore:
             revision: the detection revision the change was made against.
             annotations: its new boxes.
             reviewed: its new review flag.
-            extra: fields merged into ``extra`` (None removes one): a truth mark, a pre-label's arm, the review log.
+            extra: fields merged into ``extra`` (None removes one): a truth mark, a model pre-label's record.
             prelabel: the boxes are new pre-labels (truth seeding, model pre-labels), not an edit: they also replace
                 the snapshot the review is measured against (``prelabels``), and raise the revision as a detection
                 does, so an editor showing the old boxes reloads instead of saving them over the new ones.
@@ -680,18 +550,13 @@ class ReviewStore:
                 in progress.
             expect_boxes: save only while the screenshot's boxes are still these (the snapshot a background pass
                 worked from): another pass's boxes saved meanwhile are never overwritten with ones made from older.
-            unmarked: save only while ``extra`` has none of these fields (a truth mark or a pre-label arm set
+            unmarked: save only while ``extra`` has none of these fields (a truth mark or a model pre-label set
                 meanwhile).
             marked: save only while each of these ``extra`` fields is absent or has this value (another truth's
                 mark set meanwhile).
-            arm_block: (the screenshots of its spatial block, the pre-label arm saved): save only while none of the
-                others has another arm (``ANNOTATOR_PRELABEL_FIELD``): one block, one arm, also for two passes at once.
             split: save only while the screenshot has this split (model pre-labels: train only, user's rule).
             expect_reviewed: save only while its review flag is still this (a toggle worked out from it: another tab
                 toggling meanwhile would otherwise be undone, and the page move on by a flag never saved).
-            review_s: active review seconds added to its review log (``ANNOTATOR_REVIEW_FIELD``) in the same write,
-                so two saves close together both count.
-            reviewed_at: when it was marked reviewed, kept in its review log.
         """
         with self._write():
             row = self._db.execute(
@@ -713,8 +578,6 @@ class ReviewStore:
                     return False
                 if any(have.get(name, value) != value for name, value in (marked or {}).items()):
                     return False
-            if arm_block is not None and not self._one_arm(key, *arm_block):
-                return False
             if annotations is not None or reviewed is not None:
                 # a detection queued before this edit must not replace it (record_detection's ``generation``)
                 self._db.execute("UPDATE images SET review_generation = review_generation + 1 WHERE key = ?", (key,))
@@ -727,20 +590,14 @@ class ReviewStore:
                 self._db.execute("UPDATE images SET next_annotation_id = ? WHERE key = ?", (counter, key))
             if reviewed is not None:
                 self._db.execute("UPDATE images SET reviewed = ? WHERE key = ?", (reviewed, key))
-            if extra or review_s > 0 or reviewed_at:
+            if extra:
                 (stored,) = self._db.execute("SELECT extra FROM images WHERE key = ?", (key,)).fetchone()
                 merged = json.loads(stored)
-                for name, value in (extra or {}).items():
+                for name, value in extra.items():
                     if value is None:
                         merged.pop(name, None)
                     else:
                         merged[name] = value
-                if review_s > 0 or reviewed_at:
-                    log = dict(merged.get(K.ANNOTATOR_REVIEW_FIELD) or {})
-                    log["active_s"] = round(float(log.get("active_s", 0.0)) + review_s, 1)
-                    if reviewed_at:
-                        log["reviewed_at"] = reviewed_at
-                    merged[K.ANNOTATOR_REVIEW_FIELD] = log
                 self._db.execute("UPDATE images SET extra = ? WHERE key = ?", (json.dumps(merged), key))
         return True
 
@@ -748,18 +605,6 @@ class ReviewStore:
         """A screenshot's boxes in the editor's order, as ``item`` gives them (inside a transaction)."""
         rows = self._db.execute(f"{_SELECT_ANNOTATIONS} WHERE image_key = ? ORDER BY ord", (key,))
         return [_annotation(row) for row in rows]
-
-    def _one_arm(self, key: str, block: Iterable[str], arm: str) -> bool:
-        """Whether no screenshot of ``block`` but ``key`` has a pre-label arm other than ``arm`` (inside a write)."""
-        others = sorted(set(block) - {key})
-        for start in range(0, len(others), K.ANNOTATOR_SQL_CHUNK):
-            chunk = others[start : start + K.ANNOTATOR_SQL_CHUNK]
-            query = f"SELECT extra FROM images WHERE key IN ({', '.join('?' * len(chunk))})"
-            for (stored,) in self._db.execute(query, chunk):
-                given = (json.loads(stored).get(K.ANNOTATOR_PRELABEL_FIELD) or {}).get("source")
-                if given is not None and given != arm:
-                    return False
-        return True
 
     def untouched(self, key: str) -> bool:
         """Whether a screenshot is unreviewed and its boxes are still its pre-labels (False when it is not in the

@@ -109,16 +109,6 @@ def test_most_guesses_first_orders_the_queue(page) -> None:
         assert options[0].endswith("2 guesses")
 
 
-def test_the_review_timer_adds_up_in_the_review_log() -> None:
-    """Each editor message gives its active time (the store adds it up in the save's write); marking it reviewed
-    notes when."""
-    from tools.detection_dataset_annotator import app
-
-    assert app._review_log({"active_ms": 0}, reviewed=None) == {"review_s": 0.0, "reviewed_at": None}
-    assert app._review_log({"active_ms": 12_500}, reviewed=None)["review_s"] == 12.5
-    assert app._review_log({"active_ms": 2_000}, reviewed=True)["reviewed_at"]
-
-
 def test_pre_label_starts_the_model_pass_on_this_store(page, monkeypatch: pytest.MonkeyPatch) -> None:
     """The button runs ``model_prelabel`` as its own process (the GPU work would stall the page) on the page's output
     folder and the chosen model, logging into that folder, and is disabled while the pass runs."""

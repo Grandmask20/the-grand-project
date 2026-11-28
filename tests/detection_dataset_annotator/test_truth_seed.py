@@ -161,8 +161,6 @@ def test_every_screenshot_the_truth_places_is_marked(
     assert (changed, placed) == (1, 2)
     seeded, quiet, elsewhere = (review_store.item(image_key(path)) for path in paths)
     assert seeded[K.ANNOTATOR_TRUTH_MARK] == quiet[K.ANNOTATOR_TRUTH_MARK] == truth.source
-    # the version of the truth file it came from goes with the mark (simulate_loop.check_truth_digest)
-    assert seeded[K.ANNOTATOR_TRUTH_DIGEST] == quiet[K.ANNOTATOR_TRUTH_DIGEST] == truth.digest != ""
     assert K.ANNOTATOR_TRUTH_MARK not in elsewhere
     assert review_store.prelabels(image_key(paths[0])) == seeded["annotations"]  # what a reviewer is first shown
     assert seed_store(review_store, truth)[1] == 0
@@ -418,12 +416,12 @@ def test_only_the_bytes_the_truth_placed_are_seeded(
 
 
 def test_a_screenshot_a_model_pre_labelled_is_left(tmp_path: Path, review_store: ReviewStore) -> None:
-    """Its boxes are the model's: a truth-seeded round would learn the model's own answers (CodeRabbit). One in the
-    classical arm keeps the classical boxes and is seeded."""
+    """Its boxes are the model's: a truth-seeded round would learn the model's own answers (CodeRabbit). One the model
+    did not pre-label keeps the classical boxes and is seeded."""
     truth = _truth(tmp_path, files=("model.png", "classical.png"))
     paths = [tmp_path / "model.png", tmp_path / "classical.png"]
     review_store.add_images(paths)
-    for path, arm in zip(paths, (DK.RF_DETR_SOURCE_MODEL, K.ANNOTATOR_CLASSICAL_SOURCE), strict=True):
+    for path, mark in zip(paths, ({"source": DK.RF_DETR_SOURCE_MODEL}, None), strict=True):
         result = {
             "detected": True,
             SHA_FIELD: SHA,
@@ -432,8 +430,8 @@ def test_a_screenshot_a_model_pre_labelled_is_left(tmp_path: Path, review_store:
             "annotations": [_box("map_node_grass", 600, 500)],
         }
         review_store.record_detection(image_key(path), result, force=True)
-        extra = {K.ANNOTATOR_PRELABEL_FIELD: {"source": arm}}
-        assert review_store.save_review(image_key(path), 1, extra=extra)
+        if mark is not None:
+            assert review_store.save_review(image_key(path), 1, extra={K.ANNOTATOR_PRELABEL_FIELD: mark})
     done, changed, _placed = seed_store(review_store, truth)
     assert changed == 1 and done["skipped: pre-labelled by a model"] == 1
     model, classical = (review_store.item(image_key(path)) for path in paths)

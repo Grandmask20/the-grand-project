@@ -182,16 +182,6 @@ def _reload_editor() -> None:
     )
 
 
-def _review_log(payload: dict[str, Any], *, reviewed: bool | None) -> dict[str, Any]:
-    """What an editor message adds to the screenshot's review log (``save_review``'s ``review_s`` and
-    ``reviewed_at``, added in the save's own write): the editor's review timer, and when it was marked reviewed."""
-    active_ms = max(0.0, float(payload.get("active_ms") or 0))
-    return {
-        "review_s": active_ms / 1000.0,
-        "reviewed_at": time.strftime("%Y-%m-%dT%H:%M:%S") if reviewed else None,
-    }
-
-
 def _on_edit(store_path: Path, image_key: str, revision: int, editor_key: str) -> None:
     """Autosave: runs before the script whenever the editor sends its boxes."""
     payload = (st.session_state.get(editor_key) or {}).get("edit")
@@ -200,9 +190,8 @@ def _on_edit(store_path: Path, image_key: str, revision: int, editor_key: str) -
         if item is None or _changed_elsewhere(item, editor_key):
             return
         edited = _edited_annotations(item, editor_key, payload)
-        log = _review_log(payload, reviewed=None)
-        if (edited is not None or log["review_s"] > 0) and not store.save_review(
-            image_key, revision, annotations=edited, expect_boxes=item["annotations"], **log
+        if edited is not None and not store.save_review(
+            image_key, revision, annotations=edited, expect_boxes=item["annotations"]
         ):
             _reload_editor()  # a detector rerun or another tab's save landed in between
             return
@@ -299,8 +288,7 @@ def _save_action(
         shown = action.get("shown_reviewed")
         displayed = bool(item.get("reviewed")) if shown is None else bool(shown)
         reviewed, target = _action_target(kind, displayed, keys, image_key)
-        log = _review_log(action, reviewed=reviewed)
-        changes = edited is not None or reviewed is not None or log["review_s"] > 0
+        changes = edited is not None or reviewed is not None
         # a toggle flips the flag that was on screen: saved only while the store still has it (another tab may have
         # toggled it since, and the reviewer pressed the key to undo what they saw), so the queue moves by the flag
         # saved; "Reviewed, next" sets it whatever it was
@@ -312,7 +300,6 @@ def _save_action(
             reviewed=reviewed,
             expect_boxes=item["annotations"],
             expect_reviewed=was,
-            **log,
         ):
             _reload_editor()  # a detector rerun or another tab's save landed in between
             return None
@@ -364,13 +351,7 @@ def _render_editor(store: ReviewStore, key: str, keys: list[str], settings: Sett
         st.session_state[_base_key(editor_key)] = copy.deepcopy(item.get("annotations", []))
     _remember(editor_key, item.get("annotations", []))
     index = keys.index(key) if key in keys else -1
-    options = settings.options
-    labels = label_names(
-        store.used_labels(),
-        named_icons=options.named_icons,
-        paths=options.include_paths,
-        walls=options.include_fortress_walls,
-    )
+    labels = label_names(store.used_labels(), named_icons=settings.options.named_icons)
     payload = {
         "dataset": _dataset_id(settings.store_path),
         "image_key": key,
@@ -394,7 +375,6 @@ def _render_editor(store: ReviewStore, key: str, keys: list[str], settings: Sett
         "leave": st.session_state.get(K.ANNOTATOR_SESSION_LEAVE),
         "chip_px": K.ANNOTATOR_EDITOR_CHIP_PX,
         "autosave_ms": K.ANNOTATOR_EDITOR_AUTOSAVE_MS,
-        "idle_ms": K.ANNOTATOR_IDLE_MS,
         "editor_height": K.ANNOTATOR_EDITOR_HEIGHT,
     }
     annotate(
@@ -450,16 +430,6 @@ def _sidebar() -> Settings:
         )
         output_text = _output_folder_box()
         options = DetectionOptions(
-            include_paths=st.checkbox(
-                "Include paths and path dashes",
-                value=False,
-                help="Traced paths and their dashes are emitted together as the `path` class.",
-            ),
-            include_fortress_walls=st.checkbox(
-                "Include fortress walls",
-                value=False,
-                help="Export classical fortress-wall regions as a separate `fortress_wall` class.",
-            ),
             named_icons=st.checkbox(
                 "Name icons by type",
                 value=False,
@@ -537,7 +507,7 @@ def _export(store: ReviewStore, settings: Settings) -> None:
         return
     st.success(
         f"Exported {result.images} images and {result.annotations} boxes to "
-        f"`{result.manifest_path}` and `{result.coco_path}`. Splits: "
+        f"`{result.manifest_path}`. Splits: "
         + ", ".join(f"{name} {count}" for name, count in (result.splits or {}).items())
         + (f"; {result.ledger_added} screenshots added to the split ledger." if result.ledger_added else "")
     )
@@ -571,12 +541,10 @@ def _model_prelabels(settings: Settings) -> None:
         log = logs[-1] if logs else None
     with st.expander("Model pre-labels"):
         st.caption(
-            "An RF-DETR model pre-labels unreviewed training screenshots beside the classical boxes: a share of their "
-            "blocks, the rest keep the classical boxes, so the effort report compares both. Validation and test "
-            "screenshots never get them."
+            "An RF-DETR model relabels the classical boxes of unreviewed training screenshots (a changed class is "
+            "dotted). Validation and test screenshots never get them."
         )
         model = st.text_input("Model folder", relative_source(DK.RF_DETR_DEFAULT_MODEL_DIR))
-        share = st.slider("Share of blocks the model pre-labels", 0.0, 1.0, 0.5, 0.05)
         if st.button("Pre-label", width="stretch", disabled=busy):
             settings.output_dir.mkdir(parents=True, exist_ok=True)
             stamp = f"{time.strftime('%Y%m%d-%H%M%S')}-{os.getpid()}-{time.monotonic_ns()}"
@@ -591,8 +559,6 @@ def _model_prelabels(settings: Settings) -> None:
                         "tools.detection_dataset_annotator.model_prelabel",
                         "--model",
                         str(resolve_path(model)),
-                        "--share",
-                        str(share),
                         "--output-dir",
                         str(settings.output_dir),
                     ],

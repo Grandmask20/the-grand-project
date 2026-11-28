@@ -131,7 +131,8 @@ def _export(tmp_path: Path, splits: list[str] = SPLITS) -> Path:
         path = tmp_path / f"shot{index}.png"
         path.write_bytes(cv2.imencode(".png", shot)[1].tobytes())  # (cv2.imwrite fails on some non-ASCII paths)
         images.append({"image_id": index, "path": str(path), "source": path.name, "width": 1920, "height": 1080,
-                       "split": split, "reviewed": True, "annotations": boxes})  # fmt: skip
+                       "split": split, "reviewed": True, "source_type": "annotator_reviewed",
+                       K.RF_DETR_MANIFEST_SHA: file_hash(path), "annotations": boxes})  # fmt: skip
     manifest = tmp_path / "manifest.json"
     manifest.write_text(json.dumps({"format": "the-grand-project-rf-detr-manifest",
                                     "labels": LABELS, "images": images}))  # fmt: skip
@@ -178,7 +179,6 @@ def test_a_whole_run_trains_picks_the_best_checkpoint_and_scores_the_test_split(
     checkpoint = out / "checkpoints" / summary["best_checkpoint"]
     # each checkpoint lists its run's screenshots and dataset
     T.check_resume_sources(checkpoint, ["shot0.png", "shot1.png", "shot2.png"], T.dataset_id(out / "dataset"))
-    assert summary["best_sha256"] == T.file_sha256(best / "model.safetensors")
     assert summary["dataset"]["max_images"] is None
     # only what a resume needs is left: the newest checkpoint and the best (the Trainer's limit is the callback's)
     assert {p.name for p in (out / "checkpoints").glob("checkpoint-*")} == {checkpoint.name, last_name(out)}
@@ -220,7 +220,6 @@ def test_a_run_gone_on_from_a_model_lists_what_that_one_trained_on_too(tmp_path:
     assert T.main(args) == 0
     listed = (out / "best" / K.RF_DETR_TRAINED_ON).read_text().split()
     assert listed == ["older/shot.png", "shot0.png", "shot1.png", "shot2.png"]
-    assert not (out / "best" / K.RF_DETR_TRAINED_ON_PARTIAL).exists()
     # each checkpoint lists the same (a pre-label pass with a checkpoint skips the earlier model's screenshots too),
     # and this run's own apart, for --resume
     checkpoint = next((out / "checkpoints").glob("checkpoint-*"))
@@ -228,9 +227,9 @@ def test_a_run_gone_on_from_a_model_lists_what_that_one_trained_on_too(tmp_path:
     assert (checkpoint / K.RF_DETR_RUN_SOURCES).read_text().split() == ["shot0.png", "shot1.png", "shot2.png"]
 
 
-def test_a_model_gone_on_from_one_without_a_list_is_marked_partial(tmp_path: Path, fakes, ledger) -> None:
-    """--init-from a model that lists no training screenshots: what it learned is not known, so the kept model is
-    marked partial (a held-out check then says unknown, never held out)."""
+def test_a_model_without_a_list_of_its_training_screenshots_is_not_gone_on_from(tmp_path: Path, fakes, ledger) -> None:
+    """--init-from a model that lists no training screenshots: the new model's list would miss what it learned, so the
+    run stops before it builds or loads anything."""
     earlier = tmp_path / "earlier"
     earlier.mkdir()
     (earlier / "labels.json").write_text(json.dumps(LABELS))
@@ -240,9 +239,9 @@ def test_a_model_gone_on_from_one_without_a_list_is_marked_partial(tmp_path: Pat
     args = ["--annotator-manifest", str(manifest), "--output-dir", str(out), "--epochs", "1",
             "--tiles-per-image", "1", "--batch-size", "2", "--grad-accum", "1", "--device", "cpu",
             "--workers", "0", "--init-from", str(earlier)]  # fmt: skip
-    assert T.main(args) == 0
-    assert (out / "best" / K.RF_DETR_TRAINED_ON_PARTIAL).is_file()
-    assert T.ancestry(out / "best") == ({"shot0.png", "shot1.png", "shot2.png"}, True)
+    with pytest.raises(SystemExit, match="lists no training screenshots"):
+        T.main(args)
+    assert not (out / "dataset").exists() and not (out / "best").exists()
 
 
 def test_a_fresh_run_never_goes_on_among_an_earlier_runs_checkpoints(tmp_path: Path, fakes, ledger) -> None:
@@ -270,12 +269,15 @@ def test_a_screenshot_replaced_after_the_ledger_check_is_not_built(tmp_path: Pat
     from tools.detection_dataset_annotator.split_ledger import ledger_snapshot
 
     check = T._ledger_bytes(ledger_snapshot()[0])
-    record = Record(0, shot, "a.png", "annotator_reviewed", "g", 1, 1, (), "train")
-    check(record, file_hash(shot))
+
+    def record(sha: str, split: str = "train") -> Record:  # (exported with the bytes read: only the ledger decides)
+        return Record(0, shot, "a.png", "annotator_reviewed", 1, 1, (), sha, split)
+
+    check(record(file_hash(shot)), file_hash(shot))
     with pytest.raises(SystemExit, match="is not in the split ledger"):
-        check(record, "0" * 64)
+        check(record("0" * 64), "0" * 64)
     with pytest.raises(SystemExit, match="is train in the split ledger"):
-        check(Record(0, shot, "a.png", "annotator_reviewed", "g", 1, 1, (), "test"), file_hash(shot))
+        check(record(file_hash(shot), "test"), file_hash(shot))
 
 
 def test_a_screenshot_must_be_the_bytes_its_manifest_row_was_exported_with(tmp_path: Path, ledger) -> None:
@@ -290,10 +292,10 @@ def test_a_screenshot_must_be_the_bytes_its_manifest_row_was_exported_with(tmp_p
     write_ledger([Entry(file_hash(shot), "train", "", "a.png"), Entry(file_hash(other), "train", "", "b.png")], ledger)
     check = T._ledger_bytes(ledger_snapshot()[0])
     exported = file_hash(shot)
-    check(Record(0, shot, "a.png", "annotator_reviewed", "g", 1, 1, (), "train", exported), exported)
+    check(Record(0, shot, "a.png", "annotator_reviewed", 1, 1, (), exported, "train"), exported)
     with pytest.raises(SystemExit, match="since it was exported"):
         # b's bytes are in the ledger as train too, but a's row was exported with a's
-        check(Record(0, shot, "a.png", "annotator_reviewed", "g", 1, 1, (), "train", exported), file_hash(other))
+        check(Record(0, shot, "a.png", "annotator_reviewed", 1, 1, (), exported, "train"), file_hash(other))
 
 
 def test_a_screenshot_replaced_between_the_ledger_check_and_the_build_is_refused(
@@ -314,20 +316,20 @@ def test_a_screenshot_replaced_between_the_ledger_check_and_the_build_is_refused
 
     monkeypatch.setattr(T, "_check_ledger", check_then_replace)
     out = tmp_path / "run"
-    with pytest.raises(SystemExit, match="changed since the ledger check"):
+    with pytest.raises(SystemExit, match="changed since it was exported"):  # (its row's SHA-256 is checked first)
         T.main(["--annotator-manifest", str(manifest), "--output-dir", str(out), "--dataset-only"])
-    assert not (out / "dataset").exists()  # (a cut-off build's dataset.partial is never loaded)
+    assert not (out / "dataset").exists() and not (out / "dataset.new").exists()  # (built beside it, removed)
 
 
 def test_a_resumed_run_keeps_its_checkpoints_ancestry(
     tmp_path: Path, fakes, ledger, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """--resume takes what the weights learned from the checkpoint it goes on from, not from the --init-from folder as
-    it is now: a run begun from a model without a list stays partial though that folder lists everything now
-    (CodeRabbit)."""
+    it is now (CodeRabbit)."""
     earlier = tmp_path / "earlier"
     earlier.mkdir()
     (earlier / "labels.json").write_text(json.dumps(LABELS))
+    (earlier / K.RF_DETR_TRAINED_ON).write_text("older.png\n")
     manifest = _export(tmp_path)
     _freeze(manifest, ledger)
     out = tmp_path / "run"
@@ -335,11 +337,16 @@ def test_a_resumed_run_keeps_its_checkpoints_ancestry(
             "--batch-size", "2", "--grad-accum", "1", "--device", "cpu", "--workers", "0",
             "--init-from", str(earlier)]  # fmt: skip
     assert T.main([*args, "--epochs", "1"]) == 0
-    (earlier / K.RF_DETR_TRAINED_ON).write_text("shot0.png\n")  # the folder lists something now
+    (earlier / K.RF_DETR_TRAINED_ON).write_text("other.png\n")  # the folder lists something else now
     # (the stand-in model's checkpoints have no config.json to compare classes with: test_resume_refuses_... does)
     monkeypatch.setattr(T, "check_resume_labels", lambda checkpoint, labels: None)
     assert T.main([*args, "--epochs", "2", "--resume"]) == 0
-    assert (out / "best" / K.RF_DETR_TRAINED_ON_PARTIAL).is_file()
+    assert (out / "best" / K.RF_DETR_TRAINED_ON).read_text().split() == [
+        "older.png",
+        "shot0.png",
+        "shot1.png",
+        "shot2.png",
+    ]
 
 
 def test_the_ledger_stops_a_manifest_that_moved_a_screenshot(tmp_path: Path, fakes, ledger) -> None:
@@ -411,22 +418,6 @@ def test_an_overwrite_after_a_cut_off_switch_goes_through_staging(tmp_path: Path
     args = ["--annotator-manifest", str(manifest), "--output-dir", str(out), "--dataset-only", "--overwrite-dataset"]
     assert T.main(args) == 0
     assert (out / "dataset" / "labels.json").is_file() and not (out / "dataset.previous").exists()
-
-
-def test_a_train_subset_keeps_only_its_screenshots(tmp_path: Path, fakes, ledger) -> None:
-    manifest = _export(tmp_path)
-    _freeze(manifest, ledger)
-    out = tmp_path / "run"
-    assert T.main(["--annotator-manifest", str(manifest), "--output-dir", str(out), "--dataset-only"]) == 0
-    subset = tmp_path / "subset.txt"
-    subset.write_text("shot0.png\nshot2.png\n")
-    from datasets import load_from_disk
-
-    dataset = T.train_subset(load_from_disk(str(out / "dataset")), subset)
-    assert dataset["train"]["source"] == ["shot0.png", "shot2.png"] and len(dataset["validation"]) == 2
-    subset.write_text("shot3.png\n")  # a validation screenshot
-    with pytest.raises(SystemExit, match="not training screenshots"):
-        T.train_subset(load_from_disk(str(out / "dataset")), subset)
 
 
 def test_a_checkpoint_switch_never_loses_the_last_good_one(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -617,21 +608,6 @@ def test_parameter_groups_follow_the_reference() -> None:
     assert sum(len(g["params"]) for g in groups) == sum(p.requires_grad for p in model.parameters())
 
 
-def test_an_eval_mode_loss_uses_one_query_group() -> None:
-    """Transformers' loss is always in training mode: in eval it would match the 8 eval queries in 2 groups."""
-    model = _tiny(LABELS).eval()
-    pixels = torch.randn(1, 3, 64, 64)
-    labels = [
-        {"class_labels": torch.tensor([0, 1]), "boxes": torch.tensor([[0.3, 0.3, 0.1, 0.1], [0.6, 0.6, 0.2, 0.2]])}
-    ]
-    with torch.no_grad():
-        grouped = float(model(pixel_values=pixels, labels=labels).loss)
-        with T.single_group(model):
-            assert model.config.group_detr == 1
-            single = float(model(pixel_values=pixels, labels=labels).loss)
-    assert model.config.group_detr == 2 and single != pytest.approx(grouped)
-
-
 def test_the_processor_sees_tiles_at_their_own_size(tmp_path: Path) -> None:
     """The trainer's processor loader on a real saved RF-DETR processor: the installed transformers knows the
     rf_detr image processor (pyproject asks for a release that does), sized to one tile."""
@@ -709,13 +685,15 @@ def test_an_explicit_device_that_is_not_there_stops_the_run(monkeypatch: pytest.
     T.check_device("cpu")
 
 
-def test_one_process_on_several_gpus_stops_the_run() -> None:
-    """DataParallel would split each image's targets apart from it: one visible GPU, or one process per GPU (the
-    Trainer's own n_gpu says which, not an environment variable: CodeRabbit)."""
+def test_training_runs_as_one_process_on_one_gpu() -> None:
+    """DataParallel would split each image's targets apart from it (the Trainer's own n_gpu says when, not an
+    environment variable: CodeRabbit); several processes (torchrun) are not supported."""
     with pytest.raises(SystemExit, match="2 GPUs"):
-        T.check_parallel(SimpleNamespace(n_gpu=2))  # not distributed, two GPUs: DataParallel
-    T.check_parallel(SimpleNamespace(n_gpu=1))  # one GPU, or one per torchrun process
-    T.check_parallel(SimpleNamespace(n_gpu=0))  # the CPU
+        T.check_single_process(SimpleNamespace(world_size=1, n_gpu=2))  # two GPUs: DataParallel
+    with pytest.raises(SystemExit, match="torchrun"):
+        T.check_single_process(SimpleNamespace(world_size=2, n_gpu=1))
+    T.check_single_process(SimpleNamespace(world_size=1, n_gpu=1))  # one GPU
+    T.check_single_process(SimpleNamespace(world_size=1, n_gpu=0))  # the CPU
 
 
 def test_a_skipped_optimizer_step_leaves_the_ema(tmp_path: Path) -> None:
@@ -741,9 +719,8 @@ def test_resume_refuses_a_checkpoint_of_other_classes(tmp_path: Path) -> None:
         T.check_resume_labels(tmp_path / "checkpoint-3", reordered)
 
 
-def test_only_the_global_main_process_writes_a_checkpoints_extras(tmp_path: Path) -> None:
-    """Under torchrun every process gets on_save: the EMA's files and the screenshot list are written by the global
-    main one alone (CodeRabbit); every process still updates its EMA."""
+def test_a_checkpoint_gets_its_ema_and_its_screenshot_lists(tmp_path: Path) -> None:
+    """on_save writes the EMA's files (the mark of a whole checkpoint) and the run's screenshot lists."""
     args = SimpleNamespace(output_dir=str(tmp_path))
     model = _tiny(LABELS)
     ema = T.EmaCallback(0.9, 10.0)
@@ -752,35 +729,11 @@ def test_only_the_global_main_process_writes_a_checkpoints_extras(tmp_path: Path
     assert int(ema.ema.n_averaged) == 1
     members = T.MembershipCallback(["b.png", "a.png"], "data-id")
     for callback in (members, ema):
-        callback.on_save(args, SimpleNamespace(global_step=1, is_world_process_zero=False), None)
-    assert not (tmp_path / "checkpoint-1").exists()
-    for callback in (members, ema):
-        callback.on_save(args, SimpleNamespace(global_step=1, is_world_process_zero=True), None)
+        callback.on_save(args, SimpleNamespace(global_step=1), None)
     assert (tmp_path / "checkpoint-1" / K.RF_DETR_TRAINED_ON).read_text() == "a.png\nb.png\n"
     assert (tmp_path / "checkpoint-1" / K.RF_DETR_RUN_SOURCES).read_text() == "a.png\nb.png\n"
     assert (tmp_path / "checkpoint-1" / K.RF_DETR_DATASET_ID).read_text() == "data-id"
     assert T.ema_complete(tmp_path / "checkpoint-1")
-
-
-def test_every_process_finishes_its_part_of_a_checkpoint_before_the_ema_marks_it_whole(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """Each process writes its own random state into a checkpoint: the global main one writes the EMA's files (the
-    mark of a whole checkpoint) only after a barrier every process reached, and the others reach it too
-    (CodeRabbit)."""
-    args = SimpleNamespace(output_dir=str(tmp_path))
-    model = _tiny(LABELS)
-    ema = T.EmaCallback(0.9, 10.0)
-    ema.on_train_begin(args, None, None, model=model)
-    events = []
-    monkeypatch.setattr(T, "wait_for_every_process", lambda: events.append("barrier"))
-    ema.on_save(args, SimpleNamespace(global_step=1, is_world_process_zero=False), None)
-    assert events == ["barrier"] and not (tmp_path / "checkpoint-1").exists()
-    real_replace = T.os.replace
-    monkeypatch.setattr(T.os, "replace", lambda *a: events.append("marked whole") or real_replace(*a))
-    events.clear()
-    ema.on_save(args, SimpleNamespace(global_step=1, is_world_process_zero=True), None)
-    assert events == ["barrier", "marked whole"]
 
 
 def test_a_process_that_may_not_save_writes_no_checkpoint_files(tmp_path: Path) -> None:
@@ -792,8 +745,8 @@ def test_a_process_that_may_not_save_writes_no_checkpoint_files(tmp_path: Path) 
 
 
 def test_resume_refuses_a_checkpoint_of_other_screenshots(tmp_path: Path) -> None:
-    """Another --train-subset or a rebuilt dataset: the checkpoint's weights, optimizer and EMA are another run's, so
-    --init-from in a new output folder is the way on (CodeRabbit)."""
+    """Other training screenshots or a rebuilt dataset: the checkpoint's weights, optimizer and EMA are another run's,
+    so --init-from in a new output folder is the way on (CodeRabbit)."""
     checkpoint = tmp_path / "checkpoint-3"
     checkpoint.mkdir()
     with pytest.raises(SystemExit, match="it lists none"):
@@ -853,21 +806,23 @@ def test_a_smoke_limit_must_fit_a_training_and_a_validation_screenshot() -> None
     assert T.parse_args(["--max-images", "2"]).max_images == 2
 
 
-def test_other_processes_load_the_dataset_the_main_one_built(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    """Under torchrun the global main process builds the dataset first; the others then load its folder (each
-    building into it would collide: CodeRabbit). One process builds as before."""
-    from contextlib import nullcontext
-
-    reused = []
-    monkeypatch.setattr(T, "_load_or_build_dataset", lambda args: reused.append(args.reuse_dataset))
-    args = T.parse_args(["--output-dir", str(tmp_path)])
-
-    def main_process_first(local=True, **kwargs):
-        assert local is False  # one build for every node's processes (a global barrier), not one per node
-        return nullcontext()
-
-    for rank in (0, 1):
-        training = SimpleNamespace(process_index=rank, main_process_first=main_process_first)
-        T.dataset_main_first(args, training)
-    T.dataset_main_first(args, None)
-    assert reused == [False, True, False] and args.reuse_dataset is False
+def test_init_from_takes_a_hugging_face_model_id(
+    tmp_path: Path, fakes, ledger, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """--init-from owner/name is resolved once (``model_folder``: the Hub download) and its training list carries over
+    as a folder's does."""
+    earlier = tmp_path / "downloaded"
+    earlier.mkdir()
+    (earlier / "labels.json").write_text(json.dumps(LABELS))
+    (earlier / K.RF_DETR_TRAINED_ON).write_text("older/shot.png\n")
+    asked = []
+    monkeypatch.setattr(T, "model_folder", lambda ref: asked.append(ref) or earlier)
+    manifest = _export(tmp_path)
+    _freeze(manifest, ledger)
+    out = tmp_path / "run"
+    args = ["--annotator-manifest", str(manifest), "--output-dir", str(out), "--epochs", "1",
+            "--tiles-per-image", "1", "--batch-size", "2", "--grad-accum", "1", "--device", "cpu",
+            "--workers", "0", "--init-from", "someone/atlas-rf-detr"]  # fmt: skip
+    assert T.main(args) == 0
+    assert asked == ["someone/atlas-rf-detr"]
+    assert (out / "best" / K.RF_DETR_TRAINED_ON).read_text().split()[0] == "older/shot.png"

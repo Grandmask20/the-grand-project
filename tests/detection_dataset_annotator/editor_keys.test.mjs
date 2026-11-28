@@ -37,16 +37,16 @@ test("Shift+digits pick the citadels and the rest, by key code on any keyboard l
   assert.equal(labelForKey(palette, "Digit3", true).name, "citadel_copper");
   assert.equal(labelForKey(palette, "Digit4", true).name, "breach_stronghold");
   assert.equal(labelForKey(palette, "Digit5", true).name, "reveal_button");
-  assert.equal(labelForKey(palette, "Digit7", true).name, "path");
-  assert.equal(labelForKey(palette, "Digit8", true).name, "fortress_wall");
+  assert.equal(labelForKey(palette, "Digit7", true), undefined); // (no label has Shift+7 or Shift+8)
+  assert.equal(labelForKey(palette, "Digit8", true), undefined);
 });
 
 test("a label's key wins over the character it types on other keyboard layouts", () => {
-  // Swiss Shift+1 types "+" (zoom), German Shift+7 types "/" (the label finder), French 6 types "-" (zoom out)
+  // Swiss Shift+1 types "+" (zoom), French 6 types "-" (zoom out)
   assert.equal(plainKeyTarget(palette, { key: "+", code: "Digit1", shiftKey: true }).label.name, "citadel_iron");
-  assert.equal(plainKeyTarget(palette, { key: "/", code: "Digit7", shiftKey: true }).label.name, "path");
   assert.equal(plainKeyTarget(palette, { key: "-", code: "Digit6", shiftKey: false }).label.name, "map_node_ezomyte");
-  // keys that are no label's keep their shortcut
+  // keys that are no label's keep their shortcut (German Shift+7 types "/": the label finder)
+  assert.deepEqual(plainKeyTarget(palette, { key: "/", code: "Digit7", shiftKey: true }), { shortcut: "/" });
   assert.deepEqual(plainKeyTarget(palette, { key: "+", code: "Equal", shiftKey: true }), { shortcut: "+" });
   assert.deepEqual(plainKeyTarget(palette, { key: "/", code: "Slash", shiftKey: false }), { shortcut: "/" });
   assert.deepEqual(plainKeyTarget(palette, { key: "J", code: "KeyJ", shiftKey: true }), { shortcut: "j" });

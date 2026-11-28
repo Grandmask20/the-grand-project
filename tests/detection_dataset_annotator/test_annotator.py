@@ -1,5 +1,5 @@
 """The detection dataset annotator (tools/detection_dataset_annotator): editor boxes map back to saved annotations,
-optional classes, discovery, export, and screenshots stay untouched (the review store has ``test_store.py``)."""
+the labels, discovery, export, and screenshots stay untouched (the review store has ``test_store.py``)."""
 
 import base64
 import hashlib
@@ -16,7 +16,7 @@ from PIL import Image
 from grand_project import cities, core
 from grand_project.detect import constants as detect_constants
 from grand_project.detect.icon_types import dataset_icon_types, icon_class
-from grand_project.detect.labels import annotator_labels, dataset_classes, structural_labels
+from grand_project.detect.labels import annotator_labels, dataset_classes
 from tools.detection_dataset_annotator import (
     DetectionOptions,
     ReviewStore,
@@ -38,7 +38,7 @@ from tools.detection_dataset_annotator import (
     resolve_input_paths,
 )
 from tools.detection_dataset_annotator import constants as K
-from tools.detection_dataset_annotator import export as export_module
+from tools.detection_dataset_annotator import state as state_module
 from tools.detection_dataset_annotator.export import export_dataset
 from tools.detection_dataset_annotator.split_ledger import read_ledger
 from tools.detection_dataset_annotator.state import discovery_order
@@ -148,7 +148,7 @@ def test_stale_editor_messages_and_queue_neighbours() -> None:
 def test_label_palette_has_colours_rules_and_registry_keys() -> None:
     """Keys come from the registry: 1-8 the node classes, 9 hall, 0 tower, Shift+digits the rest; icon types and
     custom labels get a hashed colour and no key; every registry label carries its box rule."""
-    labels = structural_labels()  # every registry label: the icon classes, path and fortress_wall too
+    labels = list(detect_constants.RF_DETR_LABEL_INFO)  # every registry label, the icon class too
     palette = {entry["name"]: entry for entry in label_palette([*labels, "icon_map_boss", "custom"])}
     keys = {name: (entry["hotkey"], entry["code"], entry["shift"]) for name, entry in palette.items()}
     assert keys["map_node"] == ("1", "Digit1", False)
@@ -214,19 +214,16 @@ def test_sure_city_types_are_right(test_data: Path) -> None:
 
 
 def test_label_names_offer_only_the_datasets_labels() -> None:
-    """User: with icons not named by type the list has one ``icon`` label, ``path`` and ``fortress_wall`` only with
-    their options, and labels the dataset no longer has (``deadly_boss_map``, the old ``city_<type>``) are never
-    offered, even while old boxes still use them."""
-    used = ["deadly_boss_map", "city_vaal", "icon_breachhive", "icon_unidentified", "map_node", "", "custom"]
+    """User: with icons not named by type the list has one ``icon`` label, and labels the dataset no longer has
+    (``deadly_boss_map``, the old ``city_<type>``, ``path``) are never offered, even while old boxes still use them."""
+    used = ["deadly_boss_map", "city_vaal", "path", "icon_breachhive", "icon_unidentified", "map_node", "", "custom"]
     plain = label_names(used, named_icons=False)
     assert plain == annotator_labels(named_icons=False)
-    assert plain[:2] == ["map_node", "map_node_grass"] and not {"path", "fortress_wall"} & set(plain)
+    assert plain[:2] == ["map_node", "map_node_grass"]
     assert [label for label in plain if label.startswith("icon")] == ["icon"]
-    assert "path" in label_names(used, named_icons=False, paths=True)
-    assert "fortress_wall" in label_names(used, named_icons=False, walls=True)
-    assert not {"deadly_boss_map", "city_vaal", "custom", "icon_unidentified"} & set(plain)
-    named = label_names(used, named_icons=True, paths=True, walls=True)
-    assert "icon" not in named and {"path", "fortress_wall", "icon_breachhive"} <= set(named)
+    assert not {"deadly_boss_map", "city_vaal", "path", "custom", "icon_unidentified"} & set(plain)
+    named = label_names(used, named_icons=True)
+    assert "icon" not in named and "path" not in named and "icon_breachhive" in named
     assert named[-1] == "icon_unidentified"  # still to be named
     assert not {"deadly_boss_map", "city_vaal", "custom"} & set(named)
 
@@ -259,28 +256,25 @@ def test_label_palette_shows_icon_pictures_and_names() -> None:
     assert palette["icon_unidentified"]["picture"] == ""  # no art and no stored picture: only its colour
 
 
-def test_named_icons_and_derived_classes_are_independent(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Named icon labels work while paths and fortress walls remain independently optional."""
-    monkeypatch.setattr(detect_constants, "RF_DETR_WALL_MIN_AREA", 100)
+def test_icons_are_named_only_with_named_icons_and_paths_are_no_boxes() -> None:
+    """Named icon labels with the option, else ``icon``; a traced path gives no box (paths are the classical
+    tracer's, not a dataset label)."""
     image = np.zeros((100, 100, 3), dtype=np.uint8)
-    wall_mask = np.zeros((100, 100), dtype=np.uint8)
-    wall_mask[10:30, 10:30] = 1
     detection = {"edges": [{"line": [[10, 20], [90, 30]]}], "icons": [{"x": 50, "y": 50, "name": "Map Boss"}]}
 
     def labels(options: DetectionOptions) -> list[str]:
-        annotations = detection_annotations(detection, image, image, options, wall_mask=wall_mask)
-        return [annotation["label"] for annotation in annotations]
+        return [annotation["label"] for annotation in detection_annotations(detection, image, image, options)]
 
-    assert labels(DetectionOptions(include_paths=True, named_icons=True)) == ["icon_map_boss", "path"]
-    assert labels(DetectionOptions(include_fortress_walls=True, named_icons=True)) == ["icon_map_boss", "fortress_wall"]
+    assert labels(DetectionOptions(named_icons=True)) == ["icon_map_boss"]
     assert labels(DetectionOptions()) == ["icon"]
 
 
 def test_detection_options_round_trip() -> None:
-    options = DetectionOptions(include_paths=True, named_icons=True)
+    options = DetectionOptions(named_icons=True)
     assert DetectionOptions.from_settings(options.as_settings()) == options
     assert DetectionOptions.from_settings({}) == DetectionOptions()
-    assert options.derived and not DetectionOptions(named_icons=True).derived
+    # a store's settings from before the path and wall options keep only what is an option now
+    assert DetectionOptions.from_settings({"include_paths": True, "named_icons": True}) == options
 
 
 def test_discovery_finds_images_once(tmp_path: Path) -> None:
@@ -364,11 +358,7 @@ def test_editor_never_changes_the_screenshot(tmp_path: Path, review_store: Revie
     result = export_dataset(review_store, tmp_path / "export")
     assert result.images == 1 and result.annotations == 2
     assert hashlib.sha256(shot.read_bytes()).hexdigest() == before
-    assert sorted(path.name for path in (tmp_path / "export").iterdir()) == [
-        "annotations.json",
-        "labels.json",
-        "manifest.json",
-    ]
+    assert sorted(path.name for path in (tmp_path / "export").iterdir()) == ["manifest.json"]
     manifest = json.loads(result.manifest_path.read_text(encoding="utf-8"))
     assert manifest["format"] == K.ANNOTATOR_MANIFEST_FORMAT
     assert manifest["images"][0]["source_type"] == "annotator_reviewed"
@@ -427,19 +417,15 @@ def _export_store(tmp_path: Path, store: ReviewStore) -> dict[str, str]:
 
 def test_export_takes_processed_screenshots_and_finite_boxes(tmp_path: Path, review_store: ReviewStore) -> None:
     """Screenshots never detected are left out (a reviewed one with no box stays); boxes that are not finite or round
-    to nothing are skipped; each screenshot's source group is its discovery root, else its folder."""
+    to nothing are skipped."""
     _export_store(tmp_path, review_store)
     result = export_dataset(review_store, tmp_path / "export", reviewed_only=False)
 
     assert (result.images, result.annotations, result.skipped_annotations) == (3, 2, 2)
     text = result.manifest_path.read_text(encoding="utf-8")
     assert "NaN" not in text
-    groups = {Path(image["path"]).name: image["source_group"] for image in json.loads(text)["images"]}
-    assert groups == {
-        "done.png": relative_source(tmp_path / "shots"),
-        "empty.png": relative_source(tmp_path / "shots"),
-        "outside.png": relative_source(tmp_path / "elsewhere"),
-    }
+    names = {Path(image["path"]).name for image in json.loads(text)["images"]}
+    assert names == {"done.png", "empty.png", "outside.png"}
     reviewed = export_dataset(review_store, tmp_path / "reviewed")
     assert (reviewed.images, reviewed.annotations) == (1, 0)  # only the reviewed screenshot
 
@@ -482,8 +468,8 @@ def test_an_export_gives_every_screenshot_its_block_split(tmp_path: Path, review
 def test_a_failed_export_keeps_the_previous_one(
     tmp_path: Path, review_store: ReviewStore, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """The three export files are one generation: when moving the new manifest into place fails, the files of the
-    previous export are all back, and no staging folder is left behind."""
+    """The manifest is written whole or not at all: when moving the new one into place fails, the previous export is
+    there as it was, and no temporary file is left behind."""
     keys = _export_store(tmp_path, review_store)
     output = tmp_path / "export"
     export_dataset(review_store, output, reviewed_only=False)
@@ -497,7 +483,7 @@ def test_a_failed_export_keeps_the_previous_one(
             raise OSError("disk full")
         return real_replace(source, destination)
 
-    monkeypatch.setattr(export_module.os, "replace", failing_replace)
+    monkeypatch.setattr(state_module.os, "replace", failing_replace)
     with pytest.raises(OSError, match="disk full"):
         export_dataset(review_store, output, reviewed_only=False)
 

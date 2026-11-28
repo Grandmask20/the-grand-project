@@ -29,7 +29,7 @@ def test_worker_returns_image_errors_as_json(tmp_path: Path) -> None:
     """A bad image or a bad request is reported for that job without stopping the persistent worker."""
     image = tmp_path / "not-an-image.png"
     image.write_bytes(b"not an image")
-    request = {"key": "sample", "path": str(image), "include_paths": False, "named_icons": False}
+    request = {"key": "sample", "path": str(image), "named_icons": False}
 
     bad_request, bad_image = _ask_worker("not json", json.dumps(request))
 
@@ -45,9 +45,7 @@ def test_worker_reads_and_answers_utf8_whatever_the_console_encoding(tmp_path: P
     (a Windows code page)."""
     image = tmp_path / "bild-ä€.png"
     image.write_bytes(b"not an image")
-    request = json.dumps(
-        {"key": "k", "path": str(image), "include_paths": False, "named_icons": False}, ensure_ascii=False
-    )
+    request = json.dumps({"key": "k", "path": str(image), "named_icons": False}, ensure_ascii=False)
     completed = subprocess.run(
         [sys.executable, "-u", "-m", K.ANNOTATOR_WORKER_MODULE],
         cwd=paths.ROOT,

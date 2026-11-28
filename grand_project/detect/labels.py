@@ -26,11 +26,6 @@ GENERIC_ICON = "icon"
 """The detector class of every icon type it does not keep as a class of its own."""
 
 
-def structural_labels() -> list[str]:
-    """Every registry label in export order (icon types are not registry labels)."""
-    return list(K.RF_DETR_LABEL_INFO)
-
-
 def info(label: str) -> dict[str, Any]:
     """A label's registry entry: its own, else its detector class's (an icon type's is ``icon``'s), else ``{}``."""
     entry = K.RF_DETR_LABEL_INFO.get(label)
@@ -67,8 +62,8 @@ def known(label: str) -> bool:
 
 
 def family(label: str) -> str | None:
-    """The family of a label's detector class (node, citadel, hall, tower, stronghold, button, icon, path, wall),
-    or None for a reviewer's own label."""
+    """The family of a label's detector class (node, citadel, hall, tower, stronghold, button, icon), or None for a
+    reviewer's own label."""
     return info(label).get("family")
 
 
@@ -139,19 +134,13 @@ def parent(label: str) -> str | None:
     return K.RF_DETR_LABEL_INFO.get(label, {}).get("parent")
 
 
-def annotator_labels(*, named_icons: bool, paths: bool = False, walls: bool = False) -> list[str]:
+def annotator_labels(*, named_icons: bool) -> list[str]:
     """The labels the editor offers.
 
-    Registry labels first (``path`` only with ``paths``, ``fortress_wall`` only with ``walls``: the annotator's
-    options), then the icon labels: with named icons every icon type (``dataset_icon_types``), else the one ``icon``
-    label (user: no icon types when icons are not named).
+    Registry labels first, then the icon labels: with named icons every icon type (``dataset_icon_types``), else the
+    one ``icon`` label (user: no icon types when icons are not named).
     """
-    optional = {"path": paths, "fortress_wall": walls}
-    labels = [
-        label
-        for label, entry in K.RF_DETR_LABEL_INFO.items()
-        if entry["family"] != "icon" and optional.get(label, True)
-    ]
+    labels = [label for label, entry in K.RF_DETR_LABEL_INFO.items() if entry["family"] != "icon"]
     if named_icons:
         labels.extend(icon_class(name) for name in dataset_icon_types())
     else:
@@ -162,9 +151,8 @@ def annotator_labels(*, named_icons: bool, paths: bool = False, walls: bool = Fa
 def dataset_classes(used: Iterable[str] = ()) -> list[str]:
     """The detector classes of an export, in id order.
 
-    Every registry label (an optional derived one only when some box uses it), then the classes of the other labels
-    in use (a reviewer's own labels) in alphabetical order, so their ids do not depend on which screenshot uses them
-    first.
+    Every registry label, then the classes of the other labels in use (a reviewer's own labels) in alphabetical
+    order, so their ids do not depend on which screenshot uses them first.
 
     Args:
         used: The stored labels in use.
@@ -173,7 +161,7 @@ def dataset_classes(used: Iterable[str] = ()) -> list[str]:
         The class names; a class's id is its position.
     """
     exported = {cls for cls in (export_class(label) for label in used) if cls is not None}
-    classes = [label for label, entry in K.RF_DETR_LABEL_INFO.items() if not entry.get("optional") or label in exported]
+    classes = list(K.RF_DETR_LABEL_INFO)
     known = set(classes)
     classes.extend(sorted(cls for cls in exported if cls not in known))
     return classes
@@ -220,6 +208,5 @@ __all__ = [
     "node_label",
     "node_labels",
     "parent",
-    "structural_labels",
     "warm_start_rows",
 ]

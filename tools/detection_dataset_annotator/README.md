@@ -41,7 +41,7 @@ in the side panel says when they are saved.
 | `Ctrl`+drag | move the selected boxes, even from a handle (small boxes are all handle) |
 | `1` … `8` | label the selected boxes as a map node class (`1` biome unknown, `2` grass, `3` desert, `4` water, `5` mountain, `6` Ezomyte, `7` Vaal, `8` Faridun city area), or pick it for new boxes |
 | `9`, `0` | hall, tower |
-| `Shift+1` … `Shift+8` | Iron, Stone, Copper citadel; Breach stronghold, reveal button; icon; path, fortress wall (keys shown in the side panel) |
+| `Shift+1` … `Shift+6` | Iron, Stone, Copper citadel; Breach stronghold, reveal button; icon (keys shown in the side panel) |
 | `/` | find a label: type words of its name, its icon's poe2db name or other names; `Enter` uses the first match, `Esc` clears |
 | `Del`, `Backspace` | delete selected |
 | `Ctrl+D` / `Ctrl+A` | duplicate selected / select all |
@@ -79,12 +79,8 @@ The work in progress (detections, edits, review flags, the detection settings) i
 output folder (default `tools/detection_dataset_annotator/detection-dataset`, which git ignores), a SQLite database
 (`store.py`). Each edit and each detection result saves only its own screenshot, in a few milliseconds however many
 screenshots are detected, and several browser tabs and a detection run can save at the same time. Exporting writes
-into the same folder:
-
-- `annotations.json`: COCO object-detection JSON with absolute `file_name` paths.
-- `manifest.json`: the project-native manifest accepted by `make prepare_rf_detr_data` through
-  `RF_DETR_ANNOTATOR_MANIFEST=...`.
-- `labels.json`: the numeric class ids and their classes.
+`manifest.json` into the same folder: the classes by id, each exported screenshot with its split, the SHA-256 of its
+bytes and its boxes, read by `make prepare_rf_detr_data` through `RF_DETR_ANNOTATOR_MANIFEST=...`.
 
 Only reviewed screenshots are exported by default. Every exported screenshot gets a train / validation / test split,
 which the store and the split ledger keep ([Splits](#splits)), and a screenshot a biome truth seeded carries that truth
@@ -111,7 +107,6 @@ it:
 | `breach_stronghold` | 150 px on the purple Breach stronghold structure, locked or open | classical (both kinds) |
 | `reveal_button` | 68×66 px on a square framed button that reveals maps when clicked: a locked stronghold's hand, the Expedition ship, … | the classical square-button finder, every kind (below) |
 | `icon` (`icon_<type>` with “Name icons by type”) | 34 px on any round map icon, the red deadly-boss icon included, except the Lost Tower and Checkpoint icons (no labels: `RF_DETR_ICON_EXCLUDED`) | classical finder and namer, plus the extra proposals (below) |
-| `path`, `fortress_wall` | optional derived boxes, offered only with their sidebar options | classical tracer and wall mask |
 
 Rules for every screenshot: box every visible object of every class (at least half on screen); the game's HUD is
 never labelled (training and inference paint it over). Every map node has exactly one node box: its city's area if it
@@ -127,7 +122,7 @@ out to the disc Fix seams protects (`BIOME_RING`, 19-38 px), each pixel classifi
 A map in the ocean is water whatever its island. White under a Delirium map's mist (that map and the maps within
 `BIOME_MIST_REACH`) is not mountain: it is left out and the guess dotted. A guess under `BIOME_SURE_SHARE` /
 `BIOME_SURE_MARGIN` is dotted (`biome_guess`). `python -m tools.detection_dataset_annotator.score_nodes` compares the
-guesses with reviewed screenshots (a confusion matrix; `--ring IN OUT` tries another ring).
+guesses with reviewed screenshots (a confusion matrix).
 
 **City areas**: on one screenshot, `cities.potential_maps` grows each city's area from its own map through the traced
 paths with the atlas-wide rules (about 10 maps, tightly linked, never through a Unique map, Tower, Hall, merchant ...,
@@ -218,9 +213,6 @@ manifest's, with the ledger (run it before each training round). Both print each
 run's store (1,947 screenshots, 2026-11-20) to the one being reviewed, so a new machine, a lost store or an old one
 comes out the same:
 
-0. a store an older annotator built (its tables or columns are not this one's: the page refuses to open it) is
-   backed up and brought up to date: every row is copied into the new layout, so every box, review flag, split and
-   pre-label is kept. Stop the annotator page first;
 1. back up the store (`review_state.before-build-<time>.sqlite3` next to it; safe while the page runs);
 2. discover the screenshots below the roots (the store's, else the four defaults; `--root` to change them) and queue
    the new ones;
@@ -236,7 +228,7 @@ Each step changes only what is not done yet, so a second run changes nothing; `-
 
 Rebuilding is not recovering: a run into a new `--output-dir` (a lost store, a new machine) detects every screenshot
 again and seeds the truths again, and the split ledger gives every screenshot its split back, but the review work
-(edited and drawn boxes, review flags, review times, model pre-labels and their arms) lives only in
+(edited and drawn boxes, review flags, model pre-labels) lives only in
 `review_state.sqlite3`. To keep it, keep that file and run `build_store` on its folder. If only a
 `review_state.before-build-*.sqlite3` backup is left, stop the annotator page, make a clean recovery folder, copy the
 backup there as `review_state.sqlite3` (keep the original backup as it is), and run `build_store --output-dir` on that
@@ -262,7 +254,7 @@ changed or not: the truth vouches for its city areas either way), so a bootstrap
 ([Training](#training)); a detection rerun drops the mark with the boxes it vouched for. Eligible means: unreviewed and
 detected, below the truth's folder, its file name no other screenshot's, and its file the very bytes the truth placed
 (each placement's `sha256`: a truth without them seeds nothing until it is refreshed) and the ones its boxes were
-detected on. A screenshot another truth seeded, one a model pre-labelled (`rf_detr` arm), one that cannot be read and
+detected on. A screenshot another truth seeded, one a model pre-labelled, one that cannot be read and
 one edited or reviewed while the seed runs are left unmarked too, and a bootstrap round does not train on them. Reviewed screenshots are never
 changed. It reports the truth Cities a screenshot shows without a
 citadel box (draw them) and the stronghold boxes far from every truth stronghold area (check them). On fr-atlas it
@@ -305,38 +297,23 @@ make train_rf_detr                       # trains into runs/rf-detr-small (best/
   from the last), `runs/<run>/best/` (the best EMA weights, the processor, `labels.json` and `trained_on.txt`, the
   screenshots it trained on, with those of the `--init-from` model) and `training_summary.json` (the recipe, every evaluation, the test scores, the data's
   hashes, the git commit). `--report-to tensorboard|trackio` logs to that tool when it is installed.
-- **The next round** goes on from a model: `--init-from runs/<run>/best` (each class keeps its rows by name, a new class
-  with a `parent` starts from its parent's).
+- **The next round** goes on from a model: `--init-from runs/<run>/best`, or its Hugging Face id `owner/name` (each
+  class keeps its rows by name, a new class with a `parent` starts from its parent's). The model must list what it
+  trained on (`trained_on.txt`, which every run writes), so the new list holds that too.
+- **One process, one GPU**: with several GPUs visible, expose one (`CUDA_VISIBLE_DEVICES=0`); torchrun is not
+  supported.
 
-## The iterative loop
+## Model pre-labels
 
 Classical detection and an ever-refined model take turns: a model trained on what is reviewed pre-labels the next
-screenshots, the review corrects them, the next model trains on more. Two tools measure whether that saves a reviewer
-work:
-
-- **Model pre-labels** (`python -m tools.detection_dataset_annotator.model_prelabel --model runs/<run>/best`, or the
-  page's sidebar *Model pre-labels*): the model's boxes, snapped to the box rules, joined with the classical ones
-  (`--policy`: `relabel`, the default, keeps the classical boxes and takes the model's class where they match, a
-  changed class dotted `rf_detr_guess`; `union` also adds the boxes only the model found, dotted; `model` takes the
-  model's boxes instead, a hand truth's box kept). Only unreviewed **training** screenshots without a reviewer's box
-  get them: a validation or test screenshot reviewed from a model's guesses would score the model on its own answers
-  (user's rule), and the model's own training screenshots (`trained_on.txt`) and those a hand truth seeded are left
-  too; a screenshot reviewed or edited while the pass runs keeps its review. It is an A/B test: a `--share` of the
-  eligible spatial blocks get the model's pre-labels, the others keep the classical ones, and each screenshot
-  records its arm.
-- **The review effort**: the store keeps what each screenshot was first shown (`prelabels`: written by detection,
-  truth seeding and model pre-labels, never by an edit), and the editor's review timer adds the active time (a gap
-  longer than `ANNOTATOR_IDLE_MS` is not counted) to the screenshot's review log. `python -m
-  tools.detection_dataset_annotator.effort` then gives, per arm, the boxes a review kept, relabelled, moved, deleted and
-  added per screenshot, their estimated seconds (`ANNOTATOR_EFFORT_SECONDS`) and the timer's; with enough timed reviews
-  it fits the seconds per kind of edit.
-- **The simulated loop** (`python -m tools.detection_dataset_annotator.simulate_loop --manifest ... --classical-store
-  ...`) plays the loop on a hand-labelled atlas without a reviewer: rounds reveal more of fr-atlas's training blocks,
-  each trains a model from the last, and every pre-label policy is scored on fr-atlas's validation and test blocks.
-  Gold is against the PM's truth: the city-area class of each node box at a map the truth has, and the citadels.
-  Silver is against the classical boxes: map nodes added or deleted (matched by place alone) and every edit to the
-  other families (icons, towers, halls, strongholds, reveal buttons). Neither counts a node relabelled from one biome
-  to another (the truth knows city areas, not the ground). Its report is the loop's learning curve.
+screenshots, the review corrects them, the next model trains on more. `python -m
+tools.detection_dataset_annotator.model_prelabel --model runs/<run>/best` (or a Hugging Face id `owner/name`, or the
+page's sidebar *Model pre-labels*) gives each classical box the class of the model's box it matches (a changed class
+dotted `rf_detr_guess`); the classical boxes stay where they are. Only unreviewed **training** screenshots without a
+reviewer's box get them: a validation or test screenshot reviewed from a model's guesses would score the model on
+its own answers (user's rule), and the model's own training screenshots (`trained_on.txt`) and those a hand truth
+seeded are left too; a screenshot reviewed or edited while the pass runs keeps its review (the store's `prelabels`,
+what each screenshot was first shown, tell an untouched screenshot from an edited one).
 
 ## Detection details
 
@@ -368,9 +345,7 @@ class for them (`labels.export_class`): the detector finds icons and the classic
 (`badges.name_found_icons`), as it names the classical finder's icons, so a new icon type never needs retraining and rare types (19 of 87 had 5 boxes or fewer) are no classes
 the model could not learn. Icons the detector could not name are `icon_unidentified`.
 
-Optional derived labels have independent toggles: paths (including their dashes) are grouped as `path`, and fortress
-walls use `fortress_wall`. They are optional because production inference currently derives them with the classical
-tracer and wall mask.
+Paths and fortress walls are no labels: the classical tracer and wall mask find them, for the RF-DETR detector too.
 
 Detection runs in worker processes, by default one per CPU but two, as far as the memory allows (each worker needs
 about 1.3 GB; adjustable in the sidebar). Each worker gets its share of the CPU's threads for OpenCV, OpenMP and
@@ -388,20 +363,18 @@ review flag.
 | `app.py` | the Streamlit page (sidebar, queue, autosave and navigation callbacks) |
 | `component/` | the box editor: a small Streamlit component (plain JavaScript and CSS, no build step) |
 | `state.py` | screenshot discovery, detection options, labels, the review queue |
-| `store.py` | the review state in `review_state.sqlite3`: one screenshot per save, safe between sessions; the pre-label snapshot |
+| `store.py` | the review state in `review_state.sqlite3`: one screenshot per save, safe between sessions |
 | `detection.py` | runs the classical detector; its result becomes boxes through `grand_project/detect/proposals.py` |
 | `icon_proposals.py` | the extra icons and hidden map nodes (above) |
 | `pool.py`, `worker.py` | detection in worker processes, driven by asyncio (`python -m tools.detection_dataset_annotator.worker`) |
 | `boxes.py` | the editor's boxes mapped back to saved annotations by stable id |
-| `export.py` | COCO and manifest export (also a command) |
+| `export.py` | the manifest export (also a command) |
 | `splits.py`, `blocks.py` | train / validation / test splits, drawn by spatial blocks of each atlas |
 | `split_ledger.py`, `splits.csv` | every screenshot's split by the SHA-256 of its bytes, kept in git (`freeze`, `check`) |
 | `build_store.py` | the store brought up to date in one run (back up, discover, remove copies, detect, seed truths) |
 | `truth_seed.py` | city areas and citadels from an atlas's hand-labelled biome truth |
 | `score_nodes.py` | the biome and city-area guesses against reviewed screenshots |
-| `effort.py` | what a review changed of the pre-labels, and the effort report by pre-label arm |
-| `model_prelabel.py` | an RF-DETR model's pre-labels on unreviewed training screenshots (an A/B test by block) |
-| `simulate_loop.py` | the iterative loop simulated on a hand-labelled atlas |
+| `model_prelabel.py` | an RF-DETR model's classes on unreviewed training screenshots' classical boxes |
 | `constants.py` | every threshold and setting (`ANNOTATOR_...`); the labels are the registry's (above) |
 
 Tests: `pytest tests/detection_dataset_annotator` (the worker pool's tests run against a stand-in worker,

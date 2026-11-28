@@ -2,7 +2,7 @@
 
     python -m tools.detection_dataset_annotator.worker
 
-Request: ``{"key", "path", "include_paths", "include_fortress_walls", "named_icons"}``. Answer: ``{"key", "result",
+Request: ``{"key", "path", "named_icons"}``. Answer: ``{"key", "result",
 "error": null}`` or ``{"key", "error"}``; a screenshot that fails is reported and the worker keeps running. The pool
 writes requests ahead of the answers, so they are answered strictly in order, one line each.
 

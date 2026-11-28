@@ -124,16 +124,10 @@ def test_a_hall_box_holds_its_node_and_the_whole_structure() -> None:
     assert bx0 <= x - K.RF_DETR_MAP_BOX / 2 and bx0 + bw > x + 100  # now the structure is right of the node
 
 
-def test_box_helpers_clip_to_the_image(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_box_helpers_clip_to_the_image() -> None:
     assert proposals.box_at_point(5, 5, 20, 20, 100, 100) == (0.0, 0.0, 15.0, 15.0)
     assert proposals.box_at_point(50, 50, 20, 40, 100, 100, anchor="base") == (40.0, 10.0, 20.0, 40.0)
     assert proposals.box_at_point(-50, -50, 20, 20, 100, 100) is None
-    assert proposals.box_around_line([[10, 20], [30, 40]], 5, 100, 100) == (5.0, 15.0, 30.0, 30.0)
-    mask = np.zeros((100, 100), np.uint8)
-    mask[10:40, 10:40] = 1
-    assert proposals.wall_boxes(mask) == []  # 900 px², under RF_DETR_WALL_MIN_AREA
-    monkeypatch.setattr(K, "RF_DETR_WALL_MIN_AREA", 100)
-    assert proposals.wall_boxes(mask) == [(10.0, 10.0, 30.0, 30.0)]
 
 
 @pytest.mark.data

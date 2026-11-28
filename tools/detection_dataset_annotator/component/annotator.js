@@ -53,7 +53,7 @@ const SHORTCUTS = [
   ["Alt+click", "cycle through boxes stacked under the pointer"],
   ["Drag box / handle", "move / resize"],
   ["Ctrl+drag", "move the selected boxes, even from a handle (small boxes)"],
-  ["1 … 9, 0, Shift+1 … 0", "label the selected boxes, or pick the label for new boxes (keys in the label list)"],
+  ["1 … 9, 0, Shift+1 … 6", "label the selected boxes, or pick the label for new boxes (keys in the label list)"],
   ["/", "find a label by its name, icon name or other names (Enter: use the first match, Esc: clear)"],
   ["Del, Backspace", "delete selected"],
   ["Ctrl+D", "duplicate selected"],
@@ -104,8 +104,7 @@ export function labelForKey(labels, code, shift) {
 }
 
 // What a plain key press does: a label's key picks the label before any character shortcut, since Shift+digit types
-// a shortcut's character on some layouts (Shift+1 is "+", zoom, on a Swiss keyboard; Shift+7 is "/", the label
-// finder, on a German one); any other key is the shortcut of the character it types (letters in lower case).
+// a shortcut's character on some layouts (Shift+1 is "+", zoom, on a Swiss keyboard); any other key is the shortcut of the character it types (letters in lower case).
 // Exported for tests/detection_dataset_annotator.
 export function plainKeyTarget(labels, { key, code, shiftKey }) {
   const label = labelForKey(labels, code, shiftKey);
@@ -251,8 +250,6 @@ class Annotator {
     this.helpOpener = null; // where the focus was when the shortcuts card opened
     this.seq = 0;
     this.sentSeq = 0;
-    this.activeMs = 0; // review time not sent yet (constants.ANNOTATOR_IDLE_MS: gaps longer than that are not counted)
-    this.lastInput = 0;
     this.autosaveTimer = null;
     this.destroyTimer = null;
     this.newId = 0;
@@ -322,8 +319,6 @@ class Annotator {
       this.sentLeave = null;
       this.seq = 0;
       this.sentSeq = 0;
-      this.activeMs = 0;
-      this.lastInput = 0;
     }
     if (this.img.dataset.src !== data.image_url) {
       this.img.dataset.src = data.image_url ?? "";
@@ -371,21 +366,6 @@ class Annotator {
     INSTANCES.delete(this.root);
   }
 
-  // The review timer: the time between a reviewer's key and pointer events counts, unless they were further apart
-  // than the idle cutoff (the reviewer was away). The page adds it to the screenshot's review log.
-  noteInput() {
-    const now = Date.now();
-    const idle = this.data?.idle_ms ?? 60000;
-    if (this.lastInput && now - this.lastInput <= idle) this.activeMs += now - this.lastInput;
-    this.lastInput = now;
-  }
-
-  takeActiveMs() {
-    const ms = Math.round(this.activeMs);
-    this.activeMs = 0;
-    return ms;
-  }
-
   payload() {
     // During a drag the boxes are only on their way: the last committed ones are sent (an autosave timer can fire
     // mid-drag, and a cancelled drag puts them back exactly as sent).
@@ -394,7 +374,6 @@ class Annotator {
       image_key: this.data.image_key,
       revision: this.data.revision,
       seq: this.seq,
-      active_ms: this.takeActiveMs(),
       // the source tells the page which boxes were edited here (manual), however little they moved
       boxes: boxes.map(({ id, label, x, y, w, h, source }) => ({
         id,
@@ -562,20 +541,6 @@ class Annotator {
 
   listen() {
     const viewport = this.viewport;
-    for (const type of ["pointerdown", "pointermove", "wheel"]) {
-      this.on(viewport, type, () => this.noteInput(), { passive: true });
-    }
-    // Keys typed in the editor count, not those typed in the page's own controls (a Streamlit field).
-    this.on(
-      document,
-      "keydown",
-      (event) => this.active && event.composedPath().includes(this.wrap) && this.noteInput(),
-      true,
-    );
-    // Time away from the editor never counts: the next input starts a new stretch.
-    this.on(this.wrap, "focusout", (event) => {
-      if (!(event.relatedTarget instanceof Node && this.wrap.contains(event.relatedTarget))) this.lastInput = 0;
-    });
     this.on(viewport, "pointerdown", (event) => this.pointerDown(event));
     this.on(viewport, "pointermove", (event) => this.pointerMove(event));
     this.on(viewport, "pointerup", (event) => this.pointerUp(event));
@@ -602,7 +567,6 @@ class Annotator {
   }
 
   setActive(active) {
-    if (!active) this.lastInput = 0; // the time until the reviewer comes back is not review time
     this.active = active;
     this.wrap.classList.toggle("ann-inactive", !active);
   }

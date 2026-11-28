@@ -30,7 +30,7 @@ def _store(tmp_path: Path, store: ReviewStore) -> dict[str, str]:
     store.save_review(
         keys["seeded"],
         1,
-        extra={K.ANNOTATOR_TRUTH_MARK: "atlas_test_data/fr-atlas/truth.json", K.ANNOTATOR_TRUTH_DIGEST: "d" * 64},
+        extra={K.ANNOTATOR_TRUTH_MARK: "atlas_test_data/fr-atlas/truth.json"},
     )
     return keys
 
@@ -49,10 +49,6 @@ def test_an_export_carries_the_truth_that_seeded_a_screenshot(tmp_path: Path, re
     out = tmp_path / "out"
     assert main(["--output-dir", str(out), "--unreviewed"]) == 0
     manifest = json.loads((out / K.ANNOTATOR_MANIFEST_FILE).read_text(encoding="utf-8"))
-    digests = {Path(image["path"]).stem: image.get(K.ANNOTATOR_TRUTH_DIGEST) for image in manifest["images"]}
-    assert digests["seeded"] == "d" * 64 and [d for name, d in digests.items() if name != "seeded"] == [None] * (
-        len(digests) - 1
-    )  # the truth's version goes into the manifest with its mark
     marks = {Path(image["path"]).stem: image.get(K.ANNOTATOR_TRUTH_MARK) for image in manifest["images"]}
     assert marks == {"reviewed": None, "seeded": "atlas_test_data/fr-atlas/truth.json", "plain": None}
     assert {image["split"] for image in manifest["images"]} <= set(K.ANNOTATOR_SPLITS)
@@ -92,8 +88,7 @@ def test_a_relative_screenshot_path_is_exported_where_the_file_is(
     out = tmp_path / "out"
     export.export_dataset(review_store, out, reviewed_only=False)
     manifest = json.loads((out / K.ANNOTATOR_MANIFEST_FILE).read_text(encoding="utf-8"))
-    coco = json.loads((out / K.ANNOTATOR_COCO_FILE).read_text(encoding="utf-8"))
-    assert manifest["images"][0]["path"] == coco["images"][0]["file_name"] == str(shot.resolve())
+    assert manifest["images"][0]["path"] == str(shot.resolve())
 
 
 def test_a_class_only_invalid_boxes_have_is_no_class_of_the_export(tmp_path: Path, review_store: ReviewStore) -> None:

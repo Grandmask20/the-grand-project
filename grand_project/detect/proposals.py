@@ -18,7 +18,8 @@ rules (``RF_DETR_LABEL_INFO``) are applied in one place:
 - icons: ``icon_<type>`` with named icons, else ``icon`` (the deadly-boss icon too); every icon type is exported as
   ``icon``. The icon types that are no icon labels (``RF_DETR_ICON_EXCLUDED``: the Lost Tower and Checkpoint icons;
   the Expedition ship, which is a reveal button) get no icon box.
-- optional traced paths and fortress-wall regions.
+
+Paths and fortress walls are no dataset labels: the classical tracer and wall mask find them, also for RF-DETR.
 
 Boxes are ``(x, y, width, height)`` in the detector's pixels (the 1080p copy ``core.read_screenshot`` makes).
 """
@@ -28,7 +29,6 @@ from __future__ import annotations
 import math
 from typing import Any
 
-import cv2
 import numpy as np
 
 from grand_project import cities
@@ -58,26 +58,6 @@ def box_at_point(
     left = x - box_width / 2
     top = y - box_height if anchor == "base" else y - box_height / 2
     return clip_box(left, top, left + box_width, top + box_height, width, height)
-
-
-def box_around_line(line: Any, pad: float, width: int, height: int) -> Box | None:
-    """A clipped box around a traced path's polyline."""
-    points = np.asarray(line, dtype=float).reshape(-1, 2)
-    if len(points) < 2:
-        return None
-    left, top = points.min(axis=0) - pad
-    right, bottom = points.max(axis=0) + pad
-    return clip_box(float(left), float(top), float(right), float(bottom), width, height)
-
-
-def wall_boxes(mask: np.ndarray) -> list[Box]:
-    """The classical fortress-wall mask as one box per large enough connected region."""
-    _count, _labels, stats, _centroids = cv2.connectedComponentsWithStats(mask.astype(np.uint8), 8)
-    return [
-        (float(x), float(y), float(width), float(height))
-        for x, y, width, height, area in stats[1:]
-        if area >= K.RF_DETR_WALL_MIN_AREA
-    ]
 
 
 def hall_box(img: np.ndarray, x: float, y: float) -> Box | None:
@@ -164,8 +144,6 @@ def dataset_boxes(
     img: np.ndarray,
     *,
     named_icons: bool = False,
-    include_paths: bool = False,
-    wall_mask: np.ndarray | None = None,
 ) -> list[dict[str, Any]]:
     """Turn a classical detection result into labelled dataset boxes.
 
@@ -173,8 +151,6 @@ def dataset_boxes(
         detection: the classical result (``detect_classical``: "nodes", "icons", "landmarks", "edges").
         img: the screenshot the detector read (detector px).
         named_icons: label icons by type (``icon_<type>``) instead of ``icon``.
-        include_paths: add a ``path`` box around every traced path.
-        wall_mask: the classical fortress-wall mask, for ``fortress_wall`` boxes (None: none).
 
     Returns:
         One dict per box: "label", "box" (x, y, w, h in detector px), "source" (``RF_DETR_SOURCE_*``) and "item"
@@ -227,23 +203,15 @@ def dataset_boxes(
             continue
         box = box_at_point(float(icon["x"]), float(icon["y"]), icon_box, icon_box, width, height)
         add(_icon_label(icon, named_icons), box, icon)
-    if include_paths:
-        for edge in detection.get("edges", []):
-            add("path", box_around_line(edge.get("line", []), K.RF_DETR_PATH_PAD, width, height), edge)
-    if wall_mask is not None:
-        for box in wall_boxes(wall_mask):
-            add("fortress_wall", box, {})
     return out
 
 
 __all__ = [
     "Box",
     "biome_class",
-    "box_around_line",
     "box_at_point",
     "clip_box",
     "dataset_boxes",
     "hall_box",
     "node_classes",
-    "wall_boxes",
 ]

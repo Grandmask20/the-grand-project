@@ -55,8 +55,6 @@ import shutil
 import subprocess
 import sys
 import time
-from collections.abc import Iterator
-from contextlib import contextmanager
 from pathlib import Path
 from typing import Any
 
@@ -65,7 +63,7 @@ from grand_project.detect.labels import warm_start_rows
 from grand_project.detect.rf_detr import build_dataset, load_annotator_manifest, load_dataset, tile_transform
 from grand_project.detect.rf_detr_cuda import prefer_pip_cuda_libraries
 from grand_project.detect.rf_detr_eval import evaluate, format_report
-from grand_project.detect.rf_detr_model import class_families, predict_tiles, trained_on
+from grand_project.detect.rf_detr_model import class_families, model_folder, predict_tiles, trained_on
 from grand_project.detect.rf_detr_tiles import (
     backbone_weight_decay,
     epoch_indices,
@@ -243,23 +241,6 @@ def parameter_groups(
     return [{"params": params, "lr": rate, "weight_decay": decay} for (rate, decay), params in sorted(groups.items())]
 
 
-@contextmanager
-def single_group(model) -> Iterator[None]:
-    """The loss as one query group, for a loss computed in eval mode.
-
-    Transformers builds the LW-DETR loss anew for every call, so the loss is always in training mode and matches the
-    eval model's 300 queries in 13 Group DETR groups of 23; the reference's criterion follows the model's mode and
-    uses one group in eval (roboflow/rf-detr ``models/criterion.py``). The model's own forward reads its mode, not
-    the config, so only the loss changes.
-    """
-    groups = model.config.group_detr
-    model.config.group_detr = 1
-    try:
-        yield
-    finally:
-        model.config.group_detr = groups
-
-
 def save_native(model, folder: Path, state_dict: dict | None = None) -> None:
     """Save a model in transformers' own key layout, not RF-DETR's default original (Roboflow) one: the Trainer
     reloads a checkpoint's weights file as it is (the best model at the end, --resume), without the key conversion
@@ -314,12 +295,6 @@ def last_complete_checkpoint(checkpoints: Path) -> Path | None:
     return None
 
 
-def wait_for_every_process() -> None:
-    """Wait until every process of a distributed run (torchrun) has reached this point; nothing with one process."""
-    if torch.distributed.is_available() and torch.distributed.is_initialized():
-        torch.distributed.barrier()
-
-
 class EmaCallback(TrainerCallback):
     """An exponential moving average of the weights, updated after every optimizer step and saved into every
     checkpoint (``<checkpoint>/ema``): it is the model the run evaluates and keeps.
@@ -360,11 +335,8 @@ class EmaCallback(TrainerCallback):
             self.ema.update_parameters(model)
 
     def on_save(self, args, state, control, **kwargs):
-        # every process writes some of a checkpoint (its own random state, beside the global main one's weights): the
-        # EMA's files mark it whole, so none are written before every process has finished its part
-        wait_for_every_process()
-        if self.ema is None or not state.is_world_process_zero:
-            return  # (several processes, torchrun: the global main one writes the checkpoint's EMA, once)
+        if self.ema is None:
+            return
         folder = Path(args.output_dir) / f"checkpoint-{state.global_step}" / EMA_DIR
         if isinstance(self.ema.module, PreTrainedModel):
             save_native(self.ema.module, folder)
@@ -382,29 +354,22 @@ class EmaCallback(TrainerCallback):
 
 class MembershipCallback(TrainerCallback):
     """Writes the run's training screenshots and its dataset's identity into every checkpoint
-    (``RF_DETR_TRAINED_ON``, ``RF_DETR_DATASET_ID``; from the global main process only), so --resume can refuse a
-    checkpoint trained on other data (``check_resume_sources``).
+    (``RF_DETR_TRAINED_ON``, ``RF_DETR_DATASET_ID``), so --resume can refuse a checkpoint trained on other data
+    (``check_resume_sources``).
 
     Listed before the EMA's callback: a checkpoint with its whole EMA (``ema_complete``, written last) has both.
     """
 
-    def __init__(
-        self, sources: list[str], dataset_id: str, inherited: set[str] = frozenset(), partial: bool = False
-    ) -> None:
+    def __init__(self, sources: list[str], dataset_id: str, inherited: set[str] = frozenset()) -> None:
         self.sources = sorted(sources)
         self.trained = sorted(set(sources) | set(inherited))  # what the weights learned: the model gone on from's too
         self.dataset_id = dataset_id
-        self.partial = partial
 
     def on_save(self, args, state, control, **kwargs):
-        if not state.is_world_process_zero:
-            return
         folder = Path(args.output_dir) / f"checkpoint-{state.global_step}"
         folder.mkdir(parents=True, exist_ok=True)
         _write_list(folder / K.RF_DETR_TRAINED_ON, self.trained)
         _write_list(folder / K.RF_DETR_RUN_SOURCES, self.sources)
-        if self.partial:
-            (folder / K.RF_DETR_TRAINED_ON_PARTIAL).write_text("", encoding="utf-8")
         (folder / K.RF_DETR_DATASET_ID).write_text(self.dataset_id, encoding="utf-8")
 
 
@@ -413,14 +378,21 @@ def _write_list(path: Path, names: list[str]) -> None:
     path.write_text("".join(f"{name}\n" for name in names), encoding="utf-8")
 
 
-def ancestry(init_from: Path | None) -> tuple[set[str], bool]:
-    """What the model a run goes on from trained on (``trained_on``), and whether that list is incomplete: it has none,
-    or its own misses an ancestor's (``RF_DETR_TRAINED_ON_PARTIAL``). None (the pre-trained checkpoint): nothing."""
+def ancestry(init_from: Path | None) -> set[str]:
+    """What the model a run goes on from trained on (``trained_on``); nothing for the pre-trained checkpoint (None).
+
+    Raises:
+        SystemExit: the model lists no training screenshots: the new model's list would miss them.
+    """
     if init_from is None:
-        return set(), False
-    folder = Path(init_from)
-    whole = (folder / K.RF_DETR_TRAINED_ON).is_file() and not (folder / K.RF_DETR_TRAINED_ON_PARTIAL).is_file()
-    return trained_on(folder), not whole
+        return set()
+    listed = trained_on(init_from)
+    if listed is None:
+        raise SystemExit(
+            f"{init_from} lists no training screenshots ({K.RF_DETR_TRAINED_ON}): a model gone on from it would not "
+            "know what it trained on; train it with tools.train_rf_detr, which writes the list"
+        )
+    return listed
 
 
 def checkpoints_to_keep(checkpoints: Path, best: str | None) -> set[Path]:
@@ -449,8 +421,6 @@ class PruneCallback(TrainerCallback):
     """
 
     def on_save(self, args, state, control, **kwargs):
-        if not state.is_world_process_zero:
-            return
         folder = Path(args.output_dir)
         keep = checkpoints_to_keep(folder, state.best_model_checkpoint)
         for path in folder.iterdir():
@@ -524,7 +494,6 @@ class RfDetrTrainer(Trainer):
         sampler: the training sampler.
         recipe: ``parameter_groups``'s keyword arguments.
         label_map: class id -> name.
-        val_tiles: the validation split's densest tiles for a validation loss, or None for none.
     """
 
     # The detection labels are lists of dicts, which the Trainer cannot count: the loss it gets is the mean over a
@@ -538,7 +507,6 @@ class RfDetrTrainer(Trainer):
         sampler: RepeatFactorSampler,
         recipe: dict[str, float],
         label_map: dict[str, str],
-        val_tiles=None,
         **kwargs,
     ) -> None:
         super().__init__(*args, **kwargs)
@@ -547,7 +515,6 @@ class RfDetrTrainer(Trainer):
         self.sampler = sampler
         self.recipe = recipe
         self.label_map = label_map
-        self.val_tiles = val_tiles
 
     def _save(self, output_dir: str | None = None, state_dict: dict | None = None) -> None:
         """A checkpoint as the Trainer saves one, its weights in transformers' own key layout (``save_native``)."""
@@ -572,18 +539,6 @@ class RfDetrTrainer(Trainer):
     def _get_train_sampler(self, train_dataset=None):
         return self.sampler
 
-    def validation_loss(self, model) -> float:
-        """The mean loss over the validation tiles (each screenshot's densest tile, one query group), a diagnostic."""
-        loader = torch.utils.data.DataLoader(
-            self.val_tiles, batch_size=self.args.per_device_train_batch_size, collate_fn=collate_fn
-        )
-        total, count = 0.0, 0
-        with torch.no_grad(), single_group(model), self.autocast_smart_context_manager():
-            for batch in loader:
-                total += float(model(**move_batch(batch, self.args.device)).loss)
-                count += 1
-        return total / max(1, count)
-
     def evaluate(self, eval_dataset=None, ignore_keys=None, metric_key_prefix: str = "eval") -> dict[str, float]:
         """Score the EMA weights on whole screenshots (``evaluate_split``) and tell the callbacks (early stopping,
         the best checkpoint) as the Trainer's own evaluation does."""
@@ -592,8 +547,6 @@ class RfDetrTrainer(Trainer):
         model = self.ema.model(self.model)
         result = evaluate_split(model, self.processing_class, split, self.label_map, self.args.device)
         metrics = metric_items(result, metric_key_prefix)
-        if self.val_tiles is not None and metric_key_prefix == "eval":
-            metrics[f"{metric_key_prefix}_loss"] = self.validation_loss(model)
         metrics[f"{metric_key_prefix}_runtime"] = round(time.time() - started, 2)
         self.log(metrics)
         self.control = self.callback_handler.on_evaluate(self.args, self.state, self.control, metrics)
@@ -625,9 +578,7 @@ def swap_in(staging: Path, target: Path) -> None:
     shutil.rmtree(previous, ignore_errors=True)
 
 
-def export_best(
-    checkpoint: Path, processor, best_dir: Path, label_map: dict[str, str], sources: list[str], partial: bool = False
-) -> None:
+def export_best(checkpoint: Path, processor, best_dir: Path, label_map: dict[str, str], sources: list[str]) -> None:
     """Put a checkpoint's EMA weights, the processor, the label map and the screenshots trained on
     (``RF_DETR_TRAINED_ON``: this run's and those of the model it went on from) at ``best_dir`` (the folder the program
     loads), switched in only once complete (``swap_in``)."""
@@ -638,24 +589,7 @@ def export_best(
     processor.save_pretrained(staging)
     (staging / "labels.json").write_text(json.dumps(label_map, indent=2) + "\n", encoding="utf-8")
     _write_list(staging / K.RF_DETR_TRAINED_ON, sorted(sources))
-    if partial:  # the list misses an ancestor's screenshots: a held-out check calls it unknown
-        (staging / K.RF_DETR_TRAINED_ON_PARTIAL).write_text("", encoding="utf-8")
     swap_in(staging, best_dir)
-
-
-def best_sha256(model_dir: Path) -> str | None:
-    """The SHA-256 of a kept model's weights (``model.safetensors``), or None without them."""
-    weights = model_dir / "model.safetensors"
-    return file_sha256(weights) if weights.is_file() else None
-
-
-def file_sha256(path: Path) -> str:
-    """The SHA-256 of a file's bytes."""
-    digest = hashlib.sha256()
-    with open(path, "rb") as handle:
-        for chunk in iter(lambda: handle.read(1 << 20), b""):
-            digest.update(chunk)
-    return digest.hexdigest()
 
 
 def _git_commit() -> str | None:
@@ -692,7 +626,7 @@ def _check_ledger(manifest: dict[str, Any], base: Path) -> tuple[str, list]:
 
 def _ledger_bytes(rows: list):
     """``build_dataset``'s ``check_bytes``: the bytes a screenshot is built from (read once and embedded) must be the
-    ones its manifest row was exported with (``Record.sha256``, when it has one) and ones the split ledger (``rows``,
+    ones its manifest row was exported with (``Record.sha256``) and ones the split ledger (``rows``,
     the snapshot the manifest was checked against) keeps with the screenshot's split. The ledger check vouched for the
     files as they were then; a file replaced since is stopped here, not trained on under a split it never had."""
     book: dict[str, Any] = {}
@@ -700,7 +634,7 @@ def _ledger_bytes(rows: list):
         book.setdefault(entry.sha256, entry)
 
     def check(record, digest: str) -> None:
-        if record.sha256 is not None and digest != record.sha256:
+        if digest != record.sha256:
             raise SystemExit(
                 f"{record.path} changed since it was exported: its bytes are not the ones the manifest names; "
                 "export again"
@@ -717,8 +651,8 @@ def _ledger_bytes(rows: list):
 
 
 def _published(dataset_dir: Path) -> bool:
-    """Whether a dataset folder is a whole one: ``build_dataset`` names it only once its labels and metadata are
-    written (an older or cut-off folder without them is no dataset to go on with)."""
+    """Whether a dataset folder is a whole one: ``build_dataset`` writes its labels and metadata last (a cut-off build
+    has none)."""
     return (dataset_dir / "labels.json").is_file() and (dataset_dir / "metadata.json").is_file()
 
 
@@ -735,6 +669,14 @@ def _load_or_build_dataset(args: argparse.Namespace):
         return dataset, json.loads(label_file.read_text(encoding="utf-8")), dataset_dir
     if args.annotator_manifest is None:
         raise SystemExit("--annotator-manifest is needed (export the dataset from the annotator first)")
+    if dataset_dir.is_file():
+        raise ValueError(f"dataset path is a file, not a directory: {dataset_dir}")
+    # an existing one is replaced only when asked, also one whose switch was cut off (only <dataset>.previous left:
+    # swap_in keeps it until the new one is in place)
+    previous = dataset_dir.with_name(f"{dataset_dir.name}.previous")
+    there = (dataset_dir.exists() and any(dataset_dir.iterdir())) or previous.exists()
+    if there and not args.overwrite_dataset:
+        raise FileExistsError(f"dataset output directory is not empty: {dataset_dir} (--overwrite-dataset replaces it)")
     # read once: the ledger check, the records and the recorded SHA-256 are of the same bytes (an export written
     # meanwhile would otherwise be checked as one file and built as another)
     raw = args.annotator_manifest.read_bytes()
@@ -750,49 +692,24 @@ def _load_or_build_dataset(args: argparse.Namespace):
         "truth_seeded": bool(args.truth_seeded),
         "max_images": args.max_images,  # None: every screenshot (a smoke build's cap is no dataset to reuse)
     }
-    previous = dataset_dir.with_name(f"{dataset_dir.name}.previous")
-    target = dataset_dir
-    # an overwrite, also of one whose switch was cut off (only <dataset>.previous left: swap_in keeps it until the
-    # new one is in place)
-    if args.overwrite_dataset and (dataset_dir.exists() or previous.exists()):
-        if dataset_dir.is_file():
-            raise ValueError(f"dataset path is a file, not a directory: {dataset_dir}")
-        # Built beside the old one and swapped in only when complete: a failed build (no validation screenshot, a
-        # full disk) keeps the old dataset.
-        target = dataset_dir.with_name(f"{dataset_dir.name}.new")
-        if target.exists():
-            shutil.rmtree(target)
-    build_dataset(
-        records, label_map=label_map, output_dir=target, provenance=provenance, check_bytes=_ledger_bytes(ledger_rows)
-    )
-    if target != dataset_dir:
-        swap_in(target, dataset_dir)
-    # the folder as saved, the same on every process (the others load it: dataset_main_first)
-    return load_dataset(dataset_dir), label_map, dataset_dir
-
-
-def dataset_main_first(args: argparse.Namespace, training_args: TrainingArguments | None):
-    """``_load_or_build_dataset``; with several processes (torchrun) the global main one builds it while the others
-    wait, and they then load the folder it saved (each building into the same folder would collide)."""
-    if training_args is None:  # --dataset-only: one process, no training
-        return _load_or_build_dataset(args)
-    with training_args.main_process_first(local=False, desc="the dataset"):
-        if training_args.process_index != 0:
-            args = argparse.Namespace(**{**vars(args), "reuse_dataset": True})
-        return _load_or_build_dataset(args)
-
-
-def train_subset(dataset, subset_file: Path):
-    """Keep only the training screenshots ``subset_file`` lists (one project-relative path, the dataset's
-    ``source``, a line): a simulated review round's revealed blocks. Validation and test stay whole."""
-    keep = {line.strip() for line in subset_file.read_text(encoding="utf-8").splitlines() if line.strip()}
-    missing = keep - set(dataset["train"]["source"])
-    if missing:
-        raise SystemExit(
-            f"{len(missing)} screenshots of {subset_file} are not training screenshots: {sorted(missing)[:5]}"
+    # built beside the old one and swapped in only when complete: a failed build (no validation screenshot, a full
+    # disk) keeps the old dataset
+    staging = dataset_dir.with_name(f"{dataset_dir.name}.new")
+    if staging.exists():
+        shutil.rmtree(staging)
+    try:
+        build_dataset(
+            records,
+            label_map=label_map,
+            output_dir=staging,
+            provenance=provenance,
+            check_bytes=_ledger_bytes(ledger_rows),
         )
-    dataset["train"] = dataset["train"].filter(lambda source: source in keep, input_columns="source")
-    return dataset
+    except BaseException:
+        shutil.rmtree(staging, ignore_errors=True)
+        raise
+    swap_in(staging, dataset_dir)
+    return load_dataset(dataset_dir), label_map, dataset_dir
 
 
 # ---- the run -----------------------------------------------------------------------------------------------------
@@ -842,9 +759,8 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         help="also train on the unreviewed screenshots a hand-labelled biome truth seeded (a bootstrap round)",
     )
     parser.add_argument(
-        "--train-subset", type=Path, default=None, help="train only on the screenshots this file lists (one a line)"
+        "--init-from", default=None, help="an earlier model to go on from: its folder or Hugging Face id (owner/name)"
     )
-    parser.add_argument("--init-from", type=Path, default=None, help="an earlier checkpoint to go on from")
     parser.add_argument("--resume", action="store_true", help="go on from OUTPUT_DIR's last checkpoint")
     parser.add_argument("--epochs", type=int, default=100, help="most epochs; --patience usually stops sooner")
     parser.add_argument("--patience", type=int, default=K.RF_DETR_PATIENCE)
@@ -863,7 +779,6 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument(
         "--max-images", type=_at_least_two, default=None, help="limit images for a smoke test (2 or more)"
     )
-    parser.add_argument("--val-loss", action="store_true", help="also log a validation loss (a diagnostic)")
     parser.add_argument(
         "--report-to", default="none", help="Trainer report_to: none, tensorboard, trackio, ... (installed separately)"
     )
@@ -879,15 +794,14 @@ def check_device(device: str) -> None:
         raise SystemExit("--device mps: PyTorch sees no Apple GPU (use --device auto or cpu)")
 
 
-def check_parallel(training: TrainingArguments) -> None:
-    """Stop when the Trainer would run one process on several GPUs: it wraps the model in DataParallel, whose scatter
-    splits each image's target dict apart from its image. Judged by the Trainer's own settings (``n_gpu`` is above 1
-    only then), not an environment variable: one GPU, or one process per GPU (torchrun), is fine."""
+def check_single_process(training: TrainingArguments) -> None:
+    """Stop when the run would train on several GPUs: one process on several wraps the model in DataParallel, whose
+    scatter splits each image's target dict apart from its image (``n_gpu`` is above 1 only then); several processes
+    (torchrun) are not supported. One GPU trains."""
+    if training.world_size > 1:
+        raise SystemExit("one training process only: run it without torchrun (one GPU trains)")
     if training.n_gpu > 1:
-        raise SystemExit(
-            f"{training.n_gpu} GPUs visible to one process: expose one (CUDA_VISIBLE_DEVICES=0) or "
-            "launch one process per GPU (torchrun)"
-        )
+        raise SystemExit(f"{training.n_gpu} GPUs visible to the process: expose one (CUDA_VISIBLE_DEVICES=0)")
 
 
 def check_resume_labels(checkpoint: Path, label_map: dict[str, str]) -> None:
@@ -911,13 +825,13 @@ def dataset_id(dataset_dir: Path) -> str:
     """The identity of a saved dataset: the SHA-256 of its ``metadata.json`` (the manifest's and the ledger's
     SHA-256, the kinds per split, the limit), or "" when it has none."""
     meta = dataset_dir / "metadata.json"
-    return file_sha256(meta) if meta.is_file() else ""
+    return hashlib.sha256(meta.read_bytes()).hexdigest() if meta.is_file() else ""
 
 
 def check_resume_sources(checkpoint: Path, sources: list[str], dataset: str) -> None:
-    """Stop when a checkpoint to resume from was trained on other data than this run trains on (another
-    --train-subset; a dataset built from another export, even of the same screenshots): its weights, optimizer and
-    EMA would go on as if they were the same run.
+    """Stop when a checkpoint to resume from was trained on other data than this run trains on (a dataset built from
+    another export, even of the same screenshots): its weights, optimizer and EMA would go on as if they were the
+    same run.
 
     Args:
         checkpoint: the checkpoint folder.
@@ -990,12 +904,15 @@ def main(argv: list[str] | None = None) -> int:
     """Prepare the dataset, then fine-tune and save the best RF-DETR checkpoint."""
     args = parse_args(argv)
     checkpoints = args.output_dir / "checkpoints"
-    training_args = None
+    inherited: set[str] = set()
+    # a Hub id is downloaded once, here: the list read and the weights loaded are of the same download
+    init_from = model_folder(args.init_from) if args.init_from and not args.dataset_only else None
     if not args.dataset_only:
         check_device(args.device)  # before a dataset is built or a model loaded
-        # before the dataset: under torchrun it starts the processes' group, which the dataset's build waits on
         training_args = training_arguments(args, checkpoints)
-        check_parallel(training_args)
+        check_single_process(training_args)
+        if not args.resume:
+            inherited = ancestry(init_from)  # (a model without its list stops here, before any work)
         if not args.resume and checkpoints.is_dir() and any(checkpoints.glob("checkpoint-*")):
             # a fresh run among an earlier run's checkpoints: the Trainer's best-model and pruning would take them for
             # its own; refused before the dataset is built, which would replace the one those checkpoints name
@@ -1004,9 +921,7 @@ def main(argv: list[str] | None = None) -> int:
                 f"{checkpoints} holds an earlier run's checkpoints: go on from them with --resume, or train into a "
                 "new --output-dir"
             )
-    dataset, label_map, dataset_dir = dataset_main_first(args, training_args)
-    if args.train_subset is not None:
-        dataset = train_subset(dataset, args.train_subset)
+    dataset, label_map, dataset_dir = _load_or_build_dataset(args)
     sizes = {split: len(rows) for split, rows in dataset.items()}
     print(f"dataset: {sizes} -> {dataset_dir}")
     print(f"classes ({len(label_map)}): {', '.join(label_map.values())}")
@@ -1019,15 +934,15 @@ def main(argv: list[str] | None = None) -> int:
     resume_from = last_complete_checkpoint(checkpoints) if args.resume else None
     if args.resume and resume_from is None:  # before a model is downloaded or loaded
         raise SystemExit(f"--resume: no checkpoint (with its EMA) in {checkpoints}")
-    run_sources = sorted(set(dataset["train"]["source"]))  # this run's training screenshots (after --train-subset)
+    run_sources = sorted(set(dataset["train"]["source"]))  # this run's training screenshots
     run_dataset = dataset_id(dataset_dir)
     if resume_from is not None:
         check_resume_labels(resume_from, label_map)
         check_resume_sources(resume_from, run_sources, run_dataset)
-    # a resumed run's ancestry is its checkpoint's (what the weights it goes on with learned), whatever --init-from
-    # says now; a fresh run's is the model it starts from
-    inherited, partial = ancestry(resume_from if resume_from is not None else args.init_from)
-    base = args.init_from or K.RF_DETR_MODEL_NAME
+        # a resumed run's ancestry is its checkpoint's (what the weights it goes on with learned), whatever
+        # --init-from says now; a fresh run's is the model it starts from
+        inherited = ancestry(resume_from)
+    base = init_from or K.RF_DETR_MODEL_NAME
     # resumed: the processor and the model from the checkpoint itself (the Trainer then restores its weights), never
     # a download or an --init-from folder that may have changed since
     source = resume_from or base
@@ -1041,13 +956,13 @@ def main(argv: list[str] | None = None) -> int:
     trainer = RfDetrTrainer(
         model=model,
         args=training_args,
-        train_dataset=dataset["train"].with_transform(tile_transform(processor, train=True, seed=args.seed, rare=rare)),
+        train_dataset=dataset["train"].with_transform(tile_transform(processor, seed=args.seed, rare=rare)),
         eval_dataset=dataset["validation"],
         data_collator=collate_fn,
         processing_class=processor,
         # the membership first: the EMA's files, written last, mark a checkpoint whole (ema_complete)
         callbacks=[
-            MembershipCallback(run_sources, run_dataset, inherited, partial),
+            MembershipCallback(run_sources, run_dataset, inherited),
             ema,
             PruneCallback(),  # after the EMA: a checkpoint is whole before an older one goes
             EarlyStoppingCallback(args.patience, K.RF_DETR_EARLY_STOP_DELTA),
@@ -1062,9 +977,6 @@ def main(argv: list[str] | None = None) -> int:
             "weight_decay": args.weight_decay,
         },
         label_map=label_map,
-        val_tiles=dataset["validation"].with_transform(tile_transform(processor, train=False))
-        if args.val_loss
-        else None,
     )
     started = time.time()
     trainer.train(resume_from_checkpoint=str(resume_from) if resume_from else None)
@@ -1074,19 +986,10 @@ def main(argv: list[str] | None = None) -> int:
     if best is None:
         raise SystemExit("no checkpoint was evaluated: nothing to keep")
     best_dir = args.output_dir / "best"
-    if trainer.is_world_process_zero():  # (several processes, torchrun: the global main one publishes, once)
-        # a model gone on from another (--init-from) has also learned what that one trained on
-        sources = set(run_sources) | inherited
-        export_best(Path(best), processor, best_dir, label_map, sorted(sources), partial)
-        print(
-            f"saved {best_dir} (the EMA weights of {Path(best).name}, validation mean AP "
-            f"{trainer.state.best_metric:.4f})"
-        )
-    # every process waits until best/ is whole; then the global main one alone scores the test split from it and
-    # writes the summary
-    trainer.accelerator.wait_for_everyone()
-    if not trainer.is_world_process_zero():
-        return 0
+    # a model gone on from another (--init-from) has also learned what that one trained on
+    export_best(Path(best), processor, best_dir, label_map, sorted(set(run_sources) | inherited))
+    mean_ap = trainer.state.best_metric
+    print(f"saved {best_dir} (the EMA weights of {Path(best).name}, validation mean AP {mean_ap:.4f})")
 
     test_metrics = None
     if len(dataset["test"]):
@@ -1100,7 +1003,6 @@ def main(argv: list[str] | None = None) -> int:
         "git_commit": _git_commit(),
         "dataset_dir": str(dataset_dir),
         "dataset": json.loads(metadata_file.read_text(encoding="utf-8")) if metadata_file.is_file() else None,
-        "train_subset": str(args.train_subset) if args.train_subset else None,
         "screenshots": sizes,
         "classes": label_map,
         "tile": K.RF_DETR_TILE,
@@ -1118,7 +1020,6 @@ def main(argv: list[str] | None = None) -> int:
             "tiles_per_image": args.tiles_per_image,
             "patience": args.patience,
             "precision": "bf16" if trainer.args.bf16 else "fp16" if trainer.args.fp16 else "fp32",
-            "flip_probability": K.RF_DETR_AUGMENT_FLIP_PROBABILITY,
             "render_probability": K.RF_DETR_AUGMENT_RENDER_PROBABILITY,
             "photo_probability": K.RF_DETR_AUGMENT_PHOTO_PROBABILITY,
             "scale_jitter": K.RF_DETR_AUGMENT_SCALE_JITTER,
@@ -1126,8 +1027,6 @@ def main(argv: list[str] | None = None) -> int:
         },
         "init_from": str(args.init_from) if args.init_from else None,
         "best_checkpoint": Path(best).name,
-        # the weights kept in best/: a scoring of best/ (simulate_loop) checks this summary is about them
-        "best_sha256": best_sha256(best_dir),
         "best_validation_mean_ap": trainer.state.best_metric,
         "test": test_metrics,
         "history": trainer.state.log_history,

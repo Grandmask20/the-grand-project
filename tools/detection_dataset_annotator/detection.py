@@ -22,7 +22,7 @@ from . import constants as K
 from .state import DetectionOptions
 
 DEFAULT_OPTIONS = DetectionOptions()
-"""Generic ``icon`` labels (the deadly-boss icon too), no paths, no walls."""
+"""Generic ``icon`` labels (the deadly-boss icon too)."""
 
 
 def _read(path: Path, *, digest: bool) -> tuple[np.ndarray, str | None] | None:
@@ -70,22 +70,13 @@ def detection_annotations(
     detector_image: np.ndarray,
     raw_image: np.ndarray,
     options: DetectionOptions = DEFAULT_OPTIONS,
-    *,
-    wall_mask: np.ndarray | None = None,
 ) -> list[dict[str, Any]]:
     """Convert a classical detector result to editable source-image ``xywh`` annotations (``dataset_boxes``)."""
     height, width = detector_image.shape[:2]
     raw_height, raw_width = raw_image.shape[:2]
     scale_x, scale_y = raw_width / width, raw_height / height
     annotations: list[dict[str, Any]] = []
-    proposals = dataset_boxes(
-        detection,
-        detector_image,
-        named_icons=options.named_icons,
-        include_paths=options.include_paths,
-        wall_mask=wall_mask if options.include_fortress_walls else None,
-    )
-    for proposal in proposals:
+    for proposal in dataset_boxes(detection, detector_image, named_icons=options.named_icons):
         x, y, box_width, box_height = proposal["box"]
         bbox = [
             round(x * scale_x, 2),
@@ -147,11 +138,6 @@ def run_classical_detector(path: Path, options: DetectionOptions = DEFAULT_OPTIO
     detection["nodes"], detection["icons"], detection["landmarks"] = expedition_rules(
         detection["nodes"], detection["icons"], detection.get("landmarks", [])
     )
-    wall_mask = None
-    if options.include_fortress_walls:
-        from grand_project.detect.walls import fortress_walls
-
-        wall_mask = fortress_walls(detector_image)
     return {
         "detected": True,
         "detector": K.ANNOTATOR_CLASSICAL_SOURCE,
@@ -159,7 +145,7 @@ def run_classical_detector(path: Path, options: DetectionOptions = DEFAULT_OPTIO
         "height": int(raw_image.shape[0]),
         "detector_width": int(detector_image.shape[1]),
         "detector_height": int(detector_image.shape[0]),
-        "annotations": detection_annotations(detection, detector_image, raw_image, options, wall_mask=wall_mask),
+        "annotations": detection_annotations(detection, detector_image, raw_image, options),
         "error": None,
         K.ANNOTATOR_DETECTED_SHA: digest,  # the bytes these boxes frame (state.changed_since_detection)
     }

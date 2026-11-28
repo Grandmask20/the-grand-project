@@ -94,7 +94,7 @@ def test_the_tool_reads_reviewed_screenshots(tmp_path: Path, capsys) -> None:
         store.record_detection(key, {**result, K.ANNOTATOR_DETECTED_SHA: file_hash(shot)}, force=False)
         assert main(["--output-dir", str(out)]) == 1  # nothing reviewed yet
         assert store.save_review(key, 1, reviewed=True)
-    assert main(["--output-dir", str(out), "--ring", "20", "40"]) == 0
+    assert main(["--output-dir", str(out)]) == 0
     assert "1 nodes, 100.0% right" in capsys.readouterr().out
     assert main(["--output-dir", str(out), "--limit", "0"]) == 1  # none read
     with pytest.raises(SystemExit):
@@ -166,12 +166,6 @@ def test_a_reviewed_hall_is_at_its_map_node(tmp_path: Path, monkeypatch: pytest.
     ]
     guess_nodes(image, boxes, 1920, 1080)
     assert [(lm["kind"], lm["x"], lm["y"]) for lm in seen["landmarks"]] == [("Hall", 1000.5, 700.5)]  # its middle
-
-
-@pytest.mark.parametrize("ring", [["38", "19"], ["-1", "10"], ["nan", "38"], ["10", "inf"], ["10", "1e9"]])
-def test_a_ring_that_is_no_ring_is_refused(ring: list[str], tmp_path: Path) -> None:
-    with pytest.raises(SystemExit):
-        main(["--ring", *ring, "--output-dir", str(tmp_path)])
 
 
 def test_paths_across_a_fortress_wall_are_left_out_as_the_detector_does(

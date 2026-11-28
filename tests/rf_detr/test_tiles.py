@@ -147,6 +147,16 @@ def test_brightness_and_contrast_change_and_the_hue_stays(
     assert abs(int(cv2.cvtColor(changed[:1, :1], cv2.COLOR_RGB2HSV)[0, 0, 0]) - same) <= 2  # lighter, the same green
 
 
+def _iou(a, b) -> float:
+    """Intersection over union of two ``[x0, y0, x1, y1]`` boxes, pair by pair (the rule NMS vectorises)."""
+    w = min(a[2], b[2]) - max(a[0], b[0])
+    h = min(a[3], b[3]) - max(a[1], b[1])
+    if w <= 0 or h <= 0:
+        return 0.0
+    inter = w * h
+    return inter / max(1e-9, (a[2] - a[0]) * (a[3] - a[1]) + (b[2] - b[0]) * (b[3] - b[1]) - inter)
+
+
 def test_nms_of_many_boxes_is_the_pairwise_rule(rng: random.Random) -> None:
     """The vectorised NMS keeps what the pairwise rule keeps (a weak model's thousands of boxes take milliseconds)."""
     detections = []
@@ -158,7 +168,7 @@ def test_nms_of_many_boxes_is_the_pairwise_rule(rng: random.Random) -> None:
     kept = T.nms(detections, 0.5)
     expected = []
     for det in sorted(detections, key=lambda d: -d["score"]):
-        if all(o["family"] != det["family"] or T.box_iou(det["box"], o["box"]) < 0.5 for o in expected):
+        if all(o["family"] != det["family"] or _iou(det["box"], o["box"]) < 0.5 for o in expected):
             expected.append(det)
     assert kept == expected
 
@@ -197,33 +207,7 @@ def test_tiles_are_centred_on_rare_classes_often(seed: int, runs) -> None:
     assert share({7}) > share(set()) + 0.3
 
 
-def test_flips_mirror_pixels_and_boxes_together_when_turned_on(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Off by default (the atlas is never mirrored); turned on for an experiment, the tile is the unflipped one
-    mirrored, and so is its box (a square object alone would look the same unflipped: CodeRabbit)."""
-    monkeypatch.setattr(K, "RF_DETR_AUGMENT_RENDER_PROBABILITY", 0.0)
-    monkeypatch.setattr(K, "RF_DETR_AUGMENT_PHOTO_PROBABILITY", 0.0)
-    monkeypatch.setattr(K, "RF_DETR_AUGMENT_SCALE_JITTER", 0.0)
-    image = np.zeros((1080, 1920, 3), np.uint8)
-    image[500:539, 900:939] = 255
-    image[500:539, 900:910] = 128  # a left edge to tell the sides apart
-    boxes = [[900.0, 500.0, 39.0, 39.0]]
-
-    def draw(flip: float):
-        monkeypatch.setattr(K, "RF_DETR_AUGMENT_FLIP_PROBABILITY", flip)
-        return T.random_tile(image, boxes, [0], random.Random(1))  # the same draws: the same crop
-
-    plain, _keep, (box,) = draw(0.0)
-    flipped, _keep, (mirrored,) = draw(1.0)
-    size = plain.shape[1]
-    assert (flipped == plain[:, ::-1]).all() and not (flipped == plain).all()
-    assert mirrored == pytest.approx([size - box[0] - box[2], box[1], box[2], box[3]])
-    x, y, w, h = (round(v) for v in mirrored)
-    assert (flipped[y : y + h, x + w - 10 : x + w] == 128).all()  # the left edge is now on the right
-
-
-def test_the_validation_tile_of_an_empty_screenshot() -> None:
-    tile, keep, kept = T.densest_tile(np.zeros((1080, 1920, 3), np.uint8), [])
-    assert tile.shape == (K.RF_DETR_TILE, K.RF_DETR_TILE, 3) and keep == [] and kept == []
+def test_an_empty_training_set_has_no_repeats_and_no_rare_class() -> None:
     assert T.repeat_factors([]) == [] and T.rare_classes([]) == set()
 
 

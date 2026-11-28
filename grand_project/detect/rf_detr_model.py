@@ -47,6 +47,8 @@ from .walls import fortress_walls, wall_share
 _RUNTIME: dict[str, Any] | None = None
 _DIGESTS: dict[str, str] = {}
 """Model folder -> its checkpoint digest, worked out once per process (``checkpoint_digest``)."""
+_FOLDERS: dict[str, Path] = {}
+"""Model reference -> its folder, resolved once per process (``model_folder``: a Hub id is downloaded once)."""
 
 
 def rf_detr_enabled() -> bool:
@@ -54,26 +56,70 @@ def rf_detr_enabled() -> bool:
     return os.environ.get(K.RF_DETR_USE_ENV, "").strip().lower() in {"1", "true", "yes", "on"}
 
 
+def _hub_id(ref: str) -> tuple[str, str | None] | None:
+    """``owner/name`` or ``owner/name@revision`` as (repo id, revision), else None (a path)."""
+    repo, _, revision = ref.partition("@")
+    parts = repo.split("/")
+    # (a drive letter, a backslash or a leading ".", "~", "/" is a path; Hub ids hold none of them)
+    if any(c in ref for c in ":\\") or ref.startswith((".", "~", "/")) or len(parts) != 2 or not all(parts):
+        return None
+    return repo, revision or None
+
+
+def model_folder(ref: str | Path) -> Path:
+    """The folder of a fine-tuned model: a local folder as it is, else a Hugging Face model id (``owner/name``,
+    optionally ``@revision``) downloaded into the Hugging Face cache (only ``RF_DETR_HUB_FILES``). Worked out once per
+    process, so the detector stamp and the loaded weights are of the same download; a reference that is neither (a
+    folder not there yet) is returned as the path it names.
+
+    Raises:
+        RuntimeError: the id's model could not be downloaded (and is not in the cache).
+    """
+    key = str(ref)
+    if key not in _FOLDERS:
+        path = Path(key).expanduser()
+        hub = None if path.is_dir() else _hub_id(key)
+        if hub is None:
+            return path  # (not kept: it may appear later, a training run finishing)
+        from huggingface_hub import snapshot_download
+
+        repo, revision = hub
+        try:
+            folder = snapshot_download(repo, revision=revision, allow_patterns=list(K.RF_DETR_HUB_FILES))
+        except Exception as exc:
+            raise RuntimeError(
+                f"no local folder {key}, and no Hugging Face model of that id downloaded: {exc}"
+            ) from exc
+        _FOLDERS[key] = Path(folder)
+    return _FOLDERS[key]
+
+
 def rf_detr_model_path() -> Path:
-    """Return the configured fine-tuned model directory."""
-    value = os.environ.get(K.RF_DETR_MODEL_ENV)
-    return Path(value).expanduser() if value else K.RF_DETR_DEFAULT_MODEL_DIR
+    """Return the configured fine-tuned model's folder (``GRAND_PROJECT_RF_DETR_MODEL``: a folder or a Hugging Face
+    model id, ``model_folder``)."""
+    return model_folder(os.environ.get(K.RF_DETR_MODEL_ENV) or K.RF_DETR_DEFAULT_MODEL_DIR)
 
 
-def trained_on(model_dir: Path) -> set[str]:
-    """The screenshots (project-relative paths) a kept model trained on, as its ``RF_DETR_TRAINED_ON`` lists them
-    (empty when it has no such list)."""
-    listed = Path(model_dir) / K.RF_DETR_TRAINED_ON
+def trained_on(model: str | Path) -> set[str] | None:
+    """The screenshots (project-relative paths) a kept model trained on, as its ``RF_DETR_TRAINED_ON`` lists them;
+    None when it has no such list (not known, which is not a list of none).
+
+    Args:
+        model: its folder or Hugging Face model id (``model_folder``).
+    """
+    listed = model_folder(model) / K.RF_DETR_TRAINED_ON
     if not listed.is_file():
-        return set()
+        return None
     return {line.strip() for line in listed.read_text(encoding="utf-8").splitlines() if line.strip()}
 
 
 def reset_rf_detr_runtime() -> None:
-    """Forget a loaded model and the checkpoint digests; useful when a test swaps the model path or feature flag."""
+    """Forget a loaded model, the checkpoint digests and the resolved model folders; useful when a test swaps the
+    model path or feature flag."""
     global _RUNTIME
     _RUNTIME = None
     _DIGESTS.clear()
+    _FOLDERS.clear()
 
 
 def _hash_checkpoint(model_dir: Path) -> str:
@@ -125,18 +171,17 @@ def _device(torch):
 
 
 def _labels(model_dir: Path, model) -> dict[int, str]:
-    """Read the saved label map, falling back to the Transformers config.
+    """Read the saved label map (``labels.json``, which the trainer writes beside the weights).
 
     Raises:
-        RuntimeError: the map's ids are not exactly the model head's classes (0 .. num_labels - 1): an id beyond the
-            head cannot be scored, a class left out would be silently dropped.
+        RuntimeError: there is none, or its ids are not exactly the model head's classes (0 .. num_labels - 1): an id
+            beyond the head cannot be scored, a class left out would be silently dropped.
     """
     label_file = model_dir / "labels.json"
-    if label_file.is_file():
-        raw = json.loads(label_file.read_text(encoding="utf-8"))
-        labels = {int(index): str(name) for index, name in raw.items()}
-    else:
-        labels = {int(index): str(name) for index, name in model.config.id2label.items()}
+    if not label_file.is_file():
+        raise RuntimeError(f"the RF-DETR model in {model_dir} has no labels.json: train it with tools.train_rf_detr")
+    raw = json.loads(label_file.read_text(encoding="utf-8"))
+    labels = {int(index): str(name) for index, name in raw.items()}
     classes = int(model.config.num_labels)
     if sorted(labels) != list(range(classes)):
         raise RuntimeError(
@@ -188,14 +233,9 @@ def load_detector(model_dir: Path) -> dict[str, Any]:
     except Exception as exc:
         raise RuntimeError(f"could not load the RF-DETR model from {model_dir}: {exc}") from exc
     labels = _labels(model_dir, model)
-    listed = model_dir / K.RF_DETR_TRAINED_ON
-    trained = trained_on(model_dir) if listed.is_file() else None  # with the weights: the same checkpoint state
-    complete = not (model_dir / K.RF_DETR_TRAINED_ON_PARTIAL).is_file()
     # the files as loaded, labels.json too, must be the ones the detector stamp names (a training run swapping a new
     # best/ in meanwhile would give detections of other weights under the old stamp): the digest from before the load,
     # checked after everything was read
-    # the marker and the list are read from the folder the weights were: a folder swapped out meanwhile has no marker
-    # (a stable partial list would read as whole), so it is refused, not taken for an absent marker
     try:
         same_generation = folder_identity(model_dir) == generation
         same_files = same_generation and _hash_checkpoint(model_dir) == expected
@@ -221,21 +261,8 @@ def load_detector(model_dir: Path) -> dict[str, Any]:
         "model": model,
         "device": device,
         "families": class_families(labels),
-        "trained_on": trained,
-        "trained_on_complete": complete,
         "digest": expected,  # the checkpoint state these weights are (the detector stamp's)
     }
-
-
-def runtime_trained_on(model_dir: Path) -> tuple[set[str] | None, bool]:
-    """The screenshots the detector in use trained on (None: its folder lists none) and whether that list is whole (no
-    ``RF_DETR_TRAINED_ON_PARTIAL``: no ancestor's screenshots missing from it): the loaded model's, read with its
-    weights (a new best/ swapped in since would list other ones), else the folder's."""
-    if _RUNTIME is not None and "trained_on" in _RUNTIME:
-        return _RUNTIME["trained_on"], bool(_RUNTIME.get("trained_on_complete", True))
-    folder = Path(model_dir)
-    listed = trained_on(folder) if (folder / K.RF_DETR_TRAINED_ON).is_file() else None
-    return listed, not (folder / K.RF_DETR_TRAINED_ON_PARTIAL).is_file()
 
 
 def _load_runtime() -> dict[str, Any]:
@@ -536,8 +563,7 @@ def detect_rf_detr(img: np.ndarray, book: dict | None = None) -> dict:
         or all(np.hypot(node["x"] - base["x"], node["y"] - base["y"]) > K.TOWER_NMS for base in bases)
     ]
     edges = trace_paths(nodes, classical_path_dashes(img), img)
-    # the classical wall mask alone decides, as in the classical detector: a learned wall box is no exact wall and
-    # would cut paths the mask lets through
+    # the classical wall mask decides, as in the classical detector (walls are no RF-DETR class)
     wall = fortress_walls(img)
     edges = [edge for edge in edges if wall_share(edge["line"], wall) < K.WALL_CROSS]
     return {
@@ -562,6 +588,5 @@ __all__ = [
     "reset_rf_detr_runtime",
     "rf_detr_enabled",
     "rf_detr_model_path",
-    "runtime_trained_on",
     "trained_on",
 ]

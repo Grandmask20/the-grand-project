@@ -8,7 +8,7 @@ import numpy as np
 from grand_project import icon_refs
 from grand_project.detect import constants as K
 from grand_project.detect import models
-from grand_project.detect.icon_types import dataset_icon_types, file_picture, icon_class, icon_picture, icon_type
+from grand_project.detect.icon_types import dataset_icon_types, file_picture, icon_class, icon_picture, icon_type, slug
 
 
 def _nameable() -> set[str]:
@@ -72,3 +72,8 @@ def test_an_empty_or_broken_picture_file_is_no_picture(tmp_path) -> None:
     empty.write_bytes(b"")
     broken.write_bytes(b"not a picture")
     assert file_picture(empty, 34) is None and file_picture(broken, 34) is None
+
+
+def test_category_slug_is_stable_and_safe() -> None:
+    assert slug("Map Boss Special") == "map_boss_special"
+    assert slug("!!!") == "unknown"
