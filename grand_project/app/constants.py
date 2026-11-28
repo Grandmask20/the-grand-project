@@ -139,6 +139,8 @@ STATE_TRIES = 3  # the page's state is put together again at most this often whe
 IMAGE_IDLE_RELEASE_S = 120.0
 IDLE_LOOK_EVERY_S = 30.0  # how often the app looks whether it went idle
 SHUTDOWN_WAIT = 30.0  # s: how long closing waits for the job running (then it is cut off, and the log says so)
+DETECT_POOL_IDLE_S = 600.0  # s: detection worker processes kept after a job (builder.WarmPool): the next job, auto-add
+# a screenshot or two at a time, skips their ~3.3 s start; then they close, giving back ~1.3 GB each
 FOLDER_FRONT_WAIT = 3.0  # s: how long an atlas folder's newly opened Explorer window is looked for
 FOLDER_PATHS_WAIT = 5.0  # s: at most this long for the Windows shell to say which folders Explorer shows
 FOLDER_FRONT_POLL = 0.05  # s: how often it is looked for (it shows where Explorer puts it until found and moved)
